@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #2e1f4f;
+  --color-secondary: #8a3c8c;
+  --color-accent: #f06d22;
+  --color-neutralLight: #f7f4ef;
+  --color-textLight: #e1d458;
+  --color-bgDark: #0b0712;
+  --color-purpleMain: #3b1d5a;
+  --color-purpleSecondary: #6a2ca0;
+  --color-purpleGlow: #9b5cff;
+  --color-purpleSoft: #c084fc;
+  --color-textLight: #ede9fe;
+
+  /* Bg image */
+  --background-image-cosmic-gradient: linear-gradient(
+    101.98deg,
+    #6a2ca0 0%,
+    #3b1d5a 35%,
+    #0b0712 75%
+  );
+
+  --background-image-custom: linear-gradient(
+    101.98deg,
+    oklch(0.53 0.25 259) 41.25%,
+    oklch(0.75 0.19 194) 130.18%
+  );
+
+  /* Box Shadow */
+  --shadow-glow: 0 0 40px rgba(155, 92, 255, 0.35);
+}
