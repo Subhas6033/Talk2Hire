@@ -5,7 +5,7 @@ const Footer = () => (
   <footer
     className="
       relative
-      bg-gradient-to-r from-bgDark via-purpleMain to-purpleSecondary
+      bg-linear-to-r from-bgDark via-purpleMain to-purpleSecondary
       text-textLight
       border-t border-white/10
     "
@@ -15,12 +15,11 @@ const Footer = () => (
 
     <div className="relative mx-auto max-w-7xl px-6 py-8">
       <div className="flex flex-col md:flex-row md:justify-between items-center gap-6">
-        {/* Branding */}
         <div className="text-sm text-center md:text-left">
           <div
             className="
               text-lg font-bold
-              bg-gradient-to-r from-purpleGlow to-purpleSoft
+              bg-linear-to-r from-purpleGlow to-purpleSoft
               bg-clip-text text-transparent
             "
           >
@@ -31,7 +30,6 @@ const Footer = () => (
           </p>
         </div>
 
-        {/* Links */}
         <div className="flex flex-wrap justify-center gap-6 text-sm text-white/80">
           <Link
             to="/privacy"

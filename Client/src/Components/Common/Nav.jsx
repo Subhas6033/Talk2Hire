@@ -1,5 +1,6 @@
 import React from "react";
 import { Link, useNavigate } from "react-router-dom";
+import Button from "./Button";
 
 const Nav = () => {
   const navigate = useNavigate();
@@ -86,20 +87,9 @@ const Nav = () => {
               </Link>
             </>
           ) : (
-            <button
-              onClick={handleLogout}
-              className="
-                rounded-lg
-                border border-white/20
-                px-4 py-2
-                text-sm text-textLight
-                hover:bg-white/10
-                hover:text-purpleGlow
-                transition
-              "
-            >
+            <Button onClick={handleLogout} variants="secondary">
               Logout
-            </button>
+            </Button>
           )}
         </div>
       </nav>
