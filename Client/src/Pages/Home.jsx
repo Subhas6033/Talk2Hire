@@ -10,7 +10,7 @@ import {
   TrustedCompaniesSlider,
   PricingSection,
   TestimonialsSection,
-} from "../Components";
+} from "../Components/index";
 import { Card, CardHeader, CardBody } from "../Components/Common/Card";
 import { useNavigate } from "react-router-dom";
 import { featuresData } from "../Data/HomePageData";
@@ -42,7 +42,11 @@ const Home = () => {
         <div className="relative mx-auto max-w-7xl px-6 pt-28 pb-20">
           <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-12">
             {/* Left Side of the Hero Section */}
-            <motion.div {...fadeUp} className="max-w-3xl">
+            <motion.div
+              initial={fadeUp.initial}
+              animate={fadeUp.animate}
+              className="max-w-3xl"
+            >
               <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold leading-tight">
                 <span className="bg-linear-to-r from-purpleGlow to-purpleSoft bg-clip-text text-transparent">
                   AI-Powered
@@ -72,7 +76,7 @@ const Home = () => {
               </div>
             </motion.div>
 
-            {/*  Video Preview */}
+            {/* Video Preview */}
             <motion.div
               initial={{ opacity: 0, x: 40 }}
               animate={{ opacity: 1, x: 0 }}
@@ -81,15 +85,13 @@ const Home = () => {
             >
               <div className="relative w-full max-w-lg rounded-2xl overflow-hidden shadow-[0_0_60px_rgba(155,92,255,0.35)] border border-white/10 bg-black/20">
                 <video
-                  src="/interviewPreview.mp4" // Video URL
+                  src="/interviewPreview.mp4"
                   autoPlay
                   loop
                   muted
                   playsInline
                   className="w-full h-full object-cover"
                 />
-
-                {/* Play button */}
                 <div className="absolute inset-0 bg-linear-to-t from-purple-500/60 via-transparent to-black/40 pointer-events-none" />
               </div>
             </motion.div>
@@ -99,7 +101,8 @@ const Home = () => {
           <motion.div
             variants={staggerContainer(0.15)}
             initial="hidden"
-            animate="show"
+            whileInView="show"
+            viewport={{ once: true, amount: 0.2 }}
             className="mt-20 grid gap-6 sm:grid-cols-2 lg:grid-cols-3"
           >
             {featuresData.map((item, index) => (
@@ -116,10 +119,10 @@ const Home = () => {
         {/* Trusted Companies Slider */}
         <TrustedCompaniesSlider />
 
-        {/* Subscriptions */}
+        {/* Pricing Section */}
         <PricingSection />
 
-        {/* Testimonials Sections */}
+        {/* Testimonials Section */}
         <TestimonialsSection />
       </section>
     </>

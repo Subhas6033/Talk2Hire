@@ -13,7 +13,8 @@ export const TestimonialsSlider = () => {
       <div className="relative mx-auto max-w-7xl px-6">
         {/* Section Header */}
         <motion.div
-          {...fadeUp}
+          initial={fadeUp.initial}
+          whileInView={fadeUp.animate}
           viewport={{ once: true, amount: 0.3 }}
           className="text-center mb-16"
         >
@@ -31,11 +32,7 @@ export const TestimonialsSlider = () => {
           <motion.div
             className="flex gap-8"
             animate={{ x: ["0%", "-50%"] }}
-            transition={{
-              repeat: Infinity,
-              ease: "linear",
-              duration: 35,
-            }}
+            transition={{ repeat: Infinity, ease: "linear", duration: 35 }}
             whileHover={{ animationPlayState: "paused" }}
           >
             {[...testimonials, ...testimonials].map((item, index) => (
@@ -57,7 +54,7 @@ export const TestimonialsSlider = () => {
 
                   {/* Quote */}
                   <CardBody className="flex-1 text-white/75">
-                    “{item.quote}”
+                    "{item.quote}"
                   </CardBody>
                 </Card>
               </div>

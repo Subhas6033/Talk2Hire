@@ -12,6 +12,8 @@ import {
   NotFound,
   Privacy,
   Terms,
+  Contact,
+  InterviewDashboard,
 } from "./Pages/index.pages.js";
 
 const router = createBrowserRouter([
@@ -46,6 +48,14 @@ const router = createBrowserRouter([
       {
         path: "/terms",
         element: <Terms />,
+      },
+      {
+        path: "/contact",
+        element: <Contact />,
+      },
+      {
+        path: "/dashboard",
+        element: <InterviewDashboard />,
       },
       {
         path: "*",

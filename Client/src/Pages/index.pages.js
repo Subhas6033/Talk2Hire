@@ -6,5 +6,18 @@ import Signup from "./Auth/Signup";
 import Login from "./Auth/Login";
 import Privacy from "./Private/Privacy";
 import Terms from "./Private/Terms";
+import Contact from "./Contact";
+import InterviewDashboard from "./Dashboard";
 
-export { Home, About, NotFound, Interview, Signup, Login, Privacy, Terms };
+export {
+  Home,
+  About,
+  NotFound,
+  Interview,
+  Signup,
+  Login,
+  Privacy,
+  Terms,
+  Contact,
+  InterviewDashboard,
+};

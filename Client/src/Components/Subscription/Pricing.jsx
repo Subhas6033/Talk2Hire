@@ -13,7 +13,6 @@ export const PricingSection = () => {
   const navigate = useNavigate();
 
   const handleOpenModal = (plan) => {
-    // Skip modal for non-payable plans
     if (plan.price === "Contact Us") return;
 
     setSelectedPlan({
@@ -24,28 +23,23 @@ export const PricingSection = () => {
       billingNote: plan.billingNote || "Billed monthly",
       features: plan.features,
     });
-
     setIsModalOpen(true);
   };
 
   const handlePayment = async (paymentData) => {
     console.log("Selected plan:", selectedPlan);
     console.log("Payment data:", paymentData);
-
     await new Promise((resolve) => setTimeout(resolve, 2000));
-
     setIsModalOpen(false);
   };
 
   return (
     <>
       <section className="relative py-28 bg-black/20 overflow-hidden">
-        {/* Section Title */}
         <motion.div
           initial={fadeUp.initial}
           whileInView={fadeUp.animate}
           viewport={{ once: true, amount: 0.3 }}
-          transition={fadeUp.transition}
           className="text-center mb-16"
         >
           <h2 className="text-3xl sm:text-4xl font-bold text-white/90">
@@ -56,7 +50,6 @@ export const PricingSection = () => {
           </p>
         </motion.div>
 
-        {/* Pricing Cards */}
         <div className="max-w-7xl mx-auto grid gap-8 sm:grid-cols-2 lg:grid-cols-3 px-6">
           {pricingPlans.map((plan, index) => (
             <motion.div
@@ -64,10 +57,7 @@ export const PricingSection = () => {
               initial={fadeUp.initial}
               whileInView={fadeUp.animate}
               viewport={{ once: true, amount: 0.3 }}
-              transition={{
-                ...fadeUp.transition,
-                delay: index * 0.15,
-              }}
+              transition={{ delay: index * 0.15 }}
               className="h-full"
             >
               <Card
@@ -80,7 +70,6 @@ export const PricingSection = () => {
                   <CardHeader className="text-xl font-bold">
                     {plan.name}
                   </CardHeader>
-
                   <CardBody>
                     <p className="text-3xl font-semibold mt-2 mb-4 text-white">
                       {plan.price}
@@ -88,9 +77,7 @@ export const PricingSection = () => {
                         <span className="text-sm text-white/70">/month</span>
                       )}
                     </p>
-
                     <p className="mb-4 text-white/70">{plan.description}</p>
-
                     <ul className="space-y-2 mb-6 list-disc list-inside text-white/70">
                       {plan.features.map((feature, i) => (
                         <li key={i}>{feature}</li>
@@ -119,7 +106,7 @@ export const PricingSection = () => {
         </div>
       </section>
 
-      {/* Payment Model */}
+      {/* Payment Modal */}
       {selectedPlan && (
         <PricingModal
           isOpen={isModalOpen}
