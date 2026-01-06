@@ -11,6 +11,8 @@ import {
   difficultyLevels,
 } from "../Data/InterviewQuestions";
 import { useNavigate } from "react-router-dom";
+import ResumeUpload from "../Components/Others/UploadFile";
+import { scoreAnswer } from "../lib/CheckScore";
 
 const STORAGE_KEY = "ai_interview_session";
 
@@ -127,15 +129,19 @@ const ConfigureInterview = ({ onStart }) => {
   };
 
   const handleNextQuestion = () => {
+    const score = scoreAnswer(answerText, questions[currentIndex]);
     const updatedAnswers = {
       ...answers,
-      [currentIndex]: answerText,
+      [currentIndex]: {
+        text: "",
+        score: 0,
+      },
     };
 
     setAnswers(updatedAnswers);
     stopRecording();
 
-    // 💾 persist answers
+    // persist answers
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
     if (stored) {
       localStorage.setItem(
@@ -171,7 +177,6 @@ const ConfigureInterview = ({ onStart }) => {
       difficulty,
       startedAt: new Date().toISOString(),
     };
-
     setInterviewConfig(config);
     loadQuestions();
     setOpenQuestions(true);
@@ -190,10 +195,25 @@ const ConfigureInterview = ({ onStart }) => {
     onStart?.({ resume, ...config });
   };
 
-  const handleFileUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) setResume(file);
+  const speakQuestion = (text) => {
+    if (!window.speechSynthesis) return;
+
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-US";
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+
+    window.speechSynthesis.speak(utterance);
   };
+
+  useEffect(() => {
+    if (openQuestions && questions.length > 0) {
+      speakQuestion(questions[currentIndex]);
+    }
+  }, [currentIndex, openQuestions]);
 
   return (
     <>
@@ -208,26 +228,9 @@ const ConfigureInterview = ({ onStart }) => {
           </p>
 
           {/* Resume Upload */}
-          <label className="block border-2 border-dashed border-blue-600 rounded-xl p-12 text-center cursor-pointer hover:border-purpleGlow transition mb-6">
-            <input
-              type="file"
-              accept=".pdf,.doc,.docx"
-              className="hidden"
-              onChange={handleFileUpload}
-            />
-            <div className="flex flex-col items-center gap-2 text-white/70">
-              <span className="font-semibold text-white">
-                Upload Your Resume
-              </span>
-              <span className="text-xs text-white/40">PDF, DOC, DOCX</span>
-              {resume && (
-                <p className="text-xs text-purpleGlow mt-2">{resume.name}</p>
-              )}
-            </div>
-          </label>
-
+          <ResumeUpload resume={resume} onFileSelect={setResume} />
           {/* Dropdowns */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 my-6">
             {[
               ["Job Sector", sector, setSector, jobSectors],
               ["Job Role", role, setRole, jobRoles],

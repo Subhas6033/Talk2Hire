@@ -5,7 +5,7 @@ import Modal from "./Common/Modal";
 import { TrustedCompaniesSlider } from "./Slider/Slider";
 import { PricingSection } from "./Subscription/Pricing";
 import TestimonialsSection from "./Common/Testimonials";
-import ConfigureInterview from "./Others/InterviewSetUpCard";
+import ConfigureInterview from "./Others/UploadFile";
 
 export {
   Nav,

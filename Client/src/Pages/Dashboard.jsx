@@ -68,7 +68,8 @@ const InterviewDashboard = ({
 
     questions.forEach((q, index) => {
       reportLines.push(`Q${index + 1}: ${q}`);
-      reportLines.push(`Answer: ${answers[index]?.trim() || "Skipped"}`);
+      reportLines.push(`Answer: ${answers[index]?.text?.trim() || "Skipped"}`);
+      reportLines.push(`Score : ${answers[index]?.score ?? 0} / 5`);
       reportLines.push("");
     });
 
@@ -87,6 +88,11 @@ const InterviewDashboard = ({
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   };
+
+  const totalScore = Object.values(answers).reduce(
+    (sum, a) => sum + (a?.score || 0),
+    0
+  );
 
   return (
     <motion.div
@@ -107,13 +113,14 @@ const InterviewDashboard = ({
         variants={staggerContainer(0.12)}
         initial="hidden"
         animate="show"
-        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-12"
+        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mb-12"
       >
         {[
           { label: "Sector", value: config.sector || "—" },
           { label: "Role", value: config.role || "—" },
           { label: "Difficulty", value: config.difficulty || "—" },
           { label: "Questions", value: questions.length },
+          { label: "Total Score", value: totalScore / (questions.length * 5) },
         ].map((item, i) => (
           <motion.div key={i} variants={fadeUpItem}>
             <Card variant="glow" hoverable>
@@ -145,7 +152,10 @@ const InterviewDashboard = ({
               <CardBody>
                 <p className="mb-3 text-white">{q}</p>
                 <div className="bg-black/30 rounded-xl p-4 text-white/70">
-                  {answers[index]?.trim() || "Skipped"}
+                  {answers[index]?.text?.trim() || "Skipped"}
+                </div>
+                <div className="mt-2 text-xs text-purpleGlow">
+                  Score: {answers[index]?.score ?? 0} / 5
                 </div>
               </CardBody>
             </Card>
