@@ -66,5 +66,5 @@ export const CardBody = ({ children }) => (
 );
 
 export const CardFooter = ({ children }) => (
-  <div className="mt-6 flex items-center justify-end gap-3">{children}</div>
+  <div className="mt-6 flex items-center justify-center gap-3">{children}</div>
 );
