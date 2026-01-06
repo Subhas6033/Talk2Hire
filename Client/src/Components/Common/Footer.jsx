@@ -31,6 +31,9 @@ const Footer = () => (
         </div>
 
         <div className="flex flex-wrap justify-center gap-6 text-sm text-white/80">
+          <Link to="/about" className="hover:text-purpleGlow transition-colors">
+            About us
+          </Link>
           <Link
             to="/privacy"
             className="hover:text-purpleGlow transition-colors"
@@ -41,7 +44,7 @@ const Footer = () => (
             Terms of Service
           </Link>
           <Link
-            to="/support"
+            to="/contact"
             className="hover:text-purpleGlow transition-colors"
           >
             Support

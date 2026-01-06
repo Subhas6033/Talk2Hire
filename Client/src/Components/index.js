@@ -6,6 +6,7 @@ import { TrustedCompaniesSlider } from "./Slider/Slider";
 import { PricingSection } from "./Subscription/Pricing";
 import TestimonialsSection from "./Common/Testimonials";
 import ConfigureInterview from "./Others/UploadFile";
+import ScrollToTop from "./Others/ScrollToTop";
 
 export {
   Nav,
@@ -16,4 +17,5 @@ export {
   PricingSection,
   TestimonialsSection,
   ConfigureInterview,
+  ScrollToTop,
 };

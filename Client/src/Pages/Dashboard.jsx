@@ -95,110 +95,125 @@ const InterviewDashboard = ({
     0
   );
 
+  const maxScore = questions.length * 5;
+  const accuracy = (totalScore / maxScore) * 100;
+
   return (
-    <motion.div
-      variants={fadeUp}
-      initial="initial"
-      animate="animate"
-      className="max-w-7xl mx-auto px-6 py-16"
-    >
+    <>
+      <title>QuantamHash Corporation | Dashboard</title>
       <motion.div
-        variants={fadeIn}
-        className="mb-12 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4"
+        variants={fadeUp}
+        initial="initial"
+        animate="animate"
+        className="max-w-7xl mx-auto px-6 py-16"
       >
-        {/* Title */}
-        <div>
-          <h1 className="text-3xl font-bold text-white mb-1">
-            Interview Summary
-          </h1>
-          <p className="text-white/60">Review your performance and responses</p>
-        </div>
+        <motion.div
+          variants={fadeIn}
+          className="mb-12 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4"
+        >
+          {/* Title */}
+          <div>
+            <h1 className="text-3xl font-bold text-white mb-1">
+              Interview Summary
+            </h1>
+            <p className="text-white/60">
+              Review your performance and responses
+            </p>
+          </div>
 
-        {/* Top Right Actions */}
-        <div className="flex gap-3 flex-wrap">
-          <Button variant="ghost" size="sm" onClick={() => navigate("/")}>
-            Go to Home
-          </Button>
+          {/* Top Right Actions */}
+          <div className="flex gap-3 flex-wrap">
+            <div className="px-3 py-2 rounded-full bg-linear-to-r from-purpleSoft to-purpleGlow text-white font-semibold text-sm shadow-md">
+              Accuracy: {accuracy.toFixed(2)}%
+            </div>
 
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => navigate("/interview")}
-          >
-            Retry
-          </Button>
+            <Button variant="primary" size="sm" onClick={handleDownloadReport}>
+              Download Report
+            </Button>
 
-          <Button variant="primary" size="sm" onClick={handleDownloadReport}>
-            Download Report
-          </Button>
-        </div>
-      </motion.div>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => navigate("/interview")}
+            >
+              Retry
+            </Button>
+          </div>
+        </motion.div>
 
-      {/* Statistics */}
-      <motion.div
-        variants={staggerContainer(0.12)}
-        initial="hidden"
-        animate="show"
-        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mb-12"
-      >
-        {[
-          { label: "Sector", value: config.sector || "—" },
-          { label: "Role", value: config.role || "—" },
-          { label: "Difficulty", value: config.difficulty || "—" },
-          { label: "Questions", value: questions.length },
-          { label: "Total Score", value: totalScore / (questions.length * 5) },
-        ].map((item, i) => (
-          <motion.div key={i} variants={fadeUpItem}>
-            <Card variant="glow" hoverable>
-              <CardHeader>{item.label}</CardHeader>
-              <CardBody>
-                <span className="text-xl font-semibold text-white">
-                  {item.value}
-                </span>
-              </CardBody>
-            </Card>
-          </motion.div>
-        ))}
-      </motion.div>
-
-      <motion.div
-        variants={staggerContainer(0.15)}
-        initial="hidden"
-        animate="show"
-        className="space-y-6"
-      >
-        <h2 className="text-xl font-semibold text-purpleSoft mb-4">
-          Question Review
-        </h2>
-
-        {questions.map((q, index) => (
-          <motion.div key={index} variants={fadeUpItem}>
-            <Card className="w-full">
-              <CardHeader>Question {index + 1}</CardHeader>
-              <CardBody>
-                <p className="mb-3 text-white">{q}</p>
-                <div className="bg-black/30 rounded-xl p-4 text-white/70">
-                  {answers[index]?.text?.trim() || "Skipped"}
-                </div>
-
-                <div className="mt-2 flex flex-wrap gap-4 items-center">
-                  <span className="text-xs text-purpleGlow">
-                    Score: {answers[index]?.score ?? 0} / 5
+        {/* Statistics */}
+        <motion.div
+          variants={staggerContainer(0.12)}
+          initial="hidden"
+          animate="show"
+          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mb-12"
+        >
+          {[
+            { label: "Sector", value: config.sector || "—" },
+            { label: "Role", value: config.role || "—" },
+            { label: "Difficulty", value: config.difficulty || "—" },
+            { label: "Questions", value: questions.length },
+            {
+              label: "Total Score",
+              value: `${totalScore} / ${questions.length * 5}`,
+            },
+          ].map((item, i) => (
+            <motion.div key={i} variants={fadeUpItem} className="h-full">
+              <Card
+                variant="glow"
+                hoverable
+                className="flex flex-col justify-between h-full"
+              >
+                <CardHeader>{item.label}</CardHeader>
+                <CardBody>
+                  <span className="text-xl font-semibold text-white">
+                    {item.value}
                   </span>
+                </CardBody>
+              </Card>
+            </motion.div>
+          ))}
+        </motion.div>
 
-                  <span className="text-xs text-white/50">
-                    Suggestion:{" "}
-                    <span className="text-white/70">
-                      {getSuggestionByScore(answers[index]?.score ?? 0)}
+        <motion.div
+          variants={staggerContainer(0.15)}
+          initial="hidden"
+          animate="show"
+          className="space-y-6"
+        >
+          <h2 className="text-xl font-semibold text-purpleSoft mb-4">
+            Question Review
+          </h2>
+
+          {questions.map((q, index) => (
+            <motion.div key={index} variants={fadeUpItem}>
+              <Card className="w-full">
+                <CardHeader>Question {index + 1}</CardHeader>
+                <CardBody>
+                  <p className="mb-3 text-white">{q}</p>
+                  <div className="bg-black/30 rounded-xl p-4 text-white/70">
+                    {answers[index]?.text?.trim() || "Skipped"}
+                  </div>
+
+                  <div className="mt-2 flex flex-wrap gap-4 items-center">
+                    <span className="text-xs text-purpleGlow">
+                      Score: {answers[index]?.score ?? 0} / 5
                     </span>
-                  </span>
-                </div>
-              </CardBody>
-            </Card>
-          </motion.div>
-        ))}
+
+                    <span className="text-xs text-white/50">
+                      Suggestion:{" "}
+                      <span className="text-white/70">
+                        {getSuggestionByScore(answers[index]?.score ?? 0)}
+                      </span>
+                    </span>
+                  </div>
+                </CardBody>
+              </Card>
+            </motion.div>
+          ))}
+        </motion.div>
       </motion.div>
-    </motion.div>
+    </>
   );
 };
 

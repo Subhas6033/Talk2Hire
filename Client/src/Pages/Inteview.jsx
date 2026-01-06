@@ -217,6 +217,7 @@ const ConfigureInterview = ({ onStart }) => {
 
   return (
     <>
+      <title>QuantamHash Corporation | Interview</title>
       {/* Interview setup UI*/}
       <div className="w-full max-w-7xl mx-auto py-16 px-6">
         <Card variant="glow" padding="lg" className="border-transparent">

@@ -4,6 +4,7 @@ import Layout from "./Layout/Layout";
 import Loader from "./Components/Loader/Loader";
 import { AnimatePresence, motion } from "motion/react";
 import { pageTransition } from "./Animations/CommonAnimation";
+import { ScrollToTop } from "./Components/index";
 
 const App = () => {
   const [isLoading, setIsLoading] = useState(true);
@@ -23,6 +24,7 @@ const App = () => {
 
   return (
     <Layout>
+      <ScrollToTop />
       <AnimatePresence mode="wait" initial={false}>
         <motion.main
           key={location.pathname}
