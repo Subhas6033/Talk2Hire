@@ -5,7 +5,12 @@ import {
   staggerContainer,
   fadeUpItem,
 } from "../Animations/CommonAnimation";
-import { Button, TrustedCompaniesSlider } from "../Components";
+import {
+  Button,
+  TrustedCompaniesSlider,
+  PricingSection,
+  TestimonialsSection,
+} from "../Components";
 import { Card, CardHeader, CardBody } from "../Components/Common/Card";
 import { useNavigate } from "react-router-dom";
 import { featuresData } from "../Data/HomePageData";
@@ -28,7 +33,7 @@ const Home = () => {
       <meta name="robots" content="index, follow" />
       <link rel="canonical" href="https://www.google.com/" />
 
-      {/*  Hero Sections */}
+      {/* Hero Section */}
       <section className="relative overflow-hidden">
         {/* Decorative Glows */}
         <div className="absolute top-[-20%] left-[-10%] h-125 w-125 rounded-full bg-purpleGlow/20 blur-[140px]" />
@@ -36,6 +41,7 @@ const Home = () => {
 
         <div className="relative mx-auto max-w-7xl px-6 pt-28 pb-20">
           <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-12">
+            {/* Left Side of the Hero Section */}
             <motion.div {...fadeUp} className="max-w-3xl">
               <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold leading-tight">
                 <span className="bg-linear-to-r from-purpleGlow to-purpleSoft bg-clip-text text-transparent">
@@ -65,9 +71,31 @@ const Home = () => {
                 </Button>
               </div>
             </motion.div>
+
+            {/*  Video Preview */}
+            <motion.div
+              initial={{ opacity: 0, x: 40 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.8, ease: "easeOut" }}
+              className="hidden lg:flex justify-center"
+            >
+              <div className="relative w-full max-w-lg rounded-2xl overflow-hidden shadow-[0_0_60px_rgba(155,92,255,0.35)] border border-white/10 bg-black/20">
+                <video
+                  src="/interviewPreview.mp4" // Video URL
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className="w-full h-full object-cover"
+                />
+
+                {/* Play button */}
+                <div className="absolute inset-0 bg-linear-to-t from-purple-500/60 via-transparent to-black/40 pointer-events-none" />
+              </div>
+            </motion.div>
           </div>
 
-          {/* Features Sections */}
+          {/* Features Section */}
           <motion.div
             variants={staggerContainer(0.15)}
             initial="hidden"
@@ -85,10 +113,14 @@ const Home = () => {
           </motion.div>
         </div>
 
-        {/* Trusted Companies */}
-        <div>
-          <TrustedCompaniesSlider />
-        </div>
+        {/* Trusted Companies Slider */}
+        <TrustedCompaniesSlider />
+
+        {/* Subscriptions */}
+        <PricingSection />
+
+        {/* Testimonials Sections */}
+        <TestimonialsSection />
       </section>
     </>
   );

@@ -5,35 +5,15 @@ import { Card } from "../Common/Card";
 
 export const TrustedCompaniesSlider = () => {
   const companies = [
-    {
-      name: "Google",
-      logo: "/google.webp",
-      className: "h-10",
-    },
-    {
-      name: "Amazon",
-      logo: "/amazon.png",
-      className: "h-12",
-    },
-    {
-      name: "Microsoft",
-      logo: "/microsoft.png",
-      className: "h-20",
-    },
-    {
-      name: "Netflix",
-      logo: "/netflix.png",
-      className: "h-9",
-    },
-    {
-      name: "Meta",
-      logo: "/meta.png",
-      className: "h-10",
-    },
+    { name: "Google", logo: "/google.webp", className: "h-10" },
+    { name: "Amazon", logo: "/amazon.png", className: "h-12" },
+    { name: "Microsoft", logo: "/microsoft.png", className: "h-20" },
+    { name: "Netflix", logo: "/netflix.png", className: "h-9" },
+    { name: "Meta", logo: "/meta.png", className: "h-10" },
   ];
 
   return (
-    <section className="relative mt-28 overflow-hidden">
+    <section className="relative my-5 py-2 overflow-hidden">
       {/* Section Title */}
       <div className="mb-10 text-center">
         <p className="text-2xl font-semibold uppercase tracking-wider text-purpleSoft">
@@ -41,28 +21,25 @@ export const TrustedCompaniesSlider = () => {
         </p>
       </div>
 
-      {/* Slider */}
+      {/* Slider Container */}
       <div className="relative overflow-hidden">
         <motion.div
           className="flex gap-12"
           aria-label="Trusted companies"
           animate={{ x: ["0%", "-50%"] }}
-          transition={{
-            repeat: Infinity,
-            ease: "linear",
-            duration: 30,
-          }}
+          transition={{ repeat: Infinity, ease: "linear", duration: 30 }}
+          whileHover={{ animationPlayState: "paused" }}
         >
           {[...companies, ...companies].map((company, index) => (
             <div
               key={`${company.name}-${index}`}
-              className="flex min-w-45items-center justify-center"
+              className="flex min-w-45 items-center justify-center"
             >
               <Card
                 variant="glow"
                 padding="sm"
                 hoverable
-                className="h-20 w-40 flex items-center justify-center"
+                className="h-20 w-40 flex items-center justify-center group"
               >
                 <img
                   src={company.logo}
