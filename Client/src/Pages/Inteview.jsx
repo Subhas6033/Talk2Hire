@@ -11,7 +11,6 @@ import {
   difficultyLevels,
 } from "../Data/InterviewQuestions";
 import { useNavigate } from "react-router-dom";
-import { handleFileUpload } from "../Functions/Speec";
 
 const STORAGE_KEY = "ai_interview_session";
 
