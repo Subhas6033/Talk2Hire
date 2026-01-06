@@ -49,24 +49,16 @@ export const TestimonialsSlider = () => {
                   hoverable
                   className="h-full flex flex-col"
                 >
+                  {/* User */}
+                  <div className="mb-4">
+                    <p className="font-semibold text-white">{item.name}</p>
+                    <p className="text-sm text-white/60">{item.role}</p>
+                  </div>
+
                   {/* Quote */}
                   <CardBody className="flex-1 text-white/75">
                     “{item.quote}”
                   </CardBody>
-
-                  {/* User */}
-                  <div className="mt-6 flex items-center gap-4">
-                    <img
-                      src={item.avatar}
-                      alt={item.name}
-                      loading="lazy"
-                      className="h-12 w-12 rounded-full object-cover border border-white/10"
-                    />
-                    <div>
-                      <p className="font-semibold text-white">{item.name}</p>
-                      <p className="text-sm text-white/60">{item.role}</p>
-                    </div>
-                  </div>
                 </Card>
               </div>
             ))}

@@ -10,6 +10,8 @@ import {
   Login,
   Signup,
   NotFound,
+  Privacy,
+  Terms,
 } from "./Pages/index.pages.js";
 
 const router = createBrowserRouter([
@@ -36,6 +38,14 @@ const router = createBrowserRouter([
       {
         path: "/signup",
         element: <Signup />,
+      },
+      {
+        path: "/privacy",
+        element: <Privacy />,
+      },
+      {
+        path: "/terms",
+        element: <Terms />,
       },
       {
         path: "*",

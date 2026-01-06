@@ -58,28 +58,24 @@ export const testimonials = [
   {
     name: "Rahul Sharma",
     role: "Frontend Developer",
-    avatar: "/avatars/user1.jpg",
     quote:
       "This AI interview platform completely changed how I prepare. The feedback feels incredibly real.",
   },
   {
     name: "Ananya Patel",
     role: "Software Engineer",
-    avatar: "/avatars/user2.jpg",
     quote:
       "The voice-based interviews boosted my confidence before real interviews. Highly recommended!",
   },
   {
     name: "Daniel Kim",
     role: "Full Stack Developer",
-    avatar: "/avatars/user3.jpg",
     quote:
       "Best AI mock interview tool I’ve used. The scoring system is brutally honest — in a good way.",
   },
   {
     name: "Sophia Martinez",
     role: "Backend Engineer",
-    avatar: "/avatars/user4.jpg",
     quote:
       "Feels like practicing with a real interviewer. The analytics helped me fix weak areas fast.",
   },

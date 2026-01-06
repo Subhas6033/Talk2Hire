@@ -72,7 +72,7 @@ const Nav = () => {
               </Link>
 
               <Link
-                to="/register"
+                to="/signup"
                 className="
                   rounded-lg
                   bg-purpleGlow
