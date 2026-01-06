@@ -5,15 +5,22 @@ import {
   CardBody,
   CardFooter,
 } from "../../Components/Common/Card";
-import Button from "../../Components/Common/Button";
+import { Button, Modal } from "../../Components/index";
 import { FormField } from "../../Components/Common/Input";
 import { Eye, EyeOff } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useForm } from "react-hook-form";
 
+const Loader = () => (
+  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+);
+
 const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isMailSending, setIsMailSending] = useState(false);
 
+  // Login Form
   const {
     register,
     handleSubmit,
@@ -26,7 +33,34 @@ const Login = () => {
     },
   });
 
-  const onSubmit = (data) => console.log("Login Data", data);
+  const onSubmit = (data) => {
+    console.log("Login Data", data);
+  };
+
+  // Forgot password form
+  const {
+    register: registerReset,
+    handleSubmit: handleResetSubmit,
+    formState: { errors: resetErrors, isValid: isResetValid },
+  } = useForm({
+    mode: "onTouched",
+    defaultValues: {
+      resetEmail: "",
+    },
+  });
+
+  const onResetSubmit = async (data) => {
+    try {
+      setIsMailSending(true);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      console.log("Reset mail sent to:", data.resetEmail);
+      setIsModalOpen(false);
+    } catch (error) {
+      console.error("Error sending reset mail:", error);
+    } finally {
+      setIsMailSending(false);
+    }
+  };
 
   return (
     <section className="min-h-screen flex items-center justify-center px-6 py-20 relative overflow-hidden">
@@ -36,7 +70,6 @@ const Login = () => {
 
       <div className="relative w-full max-w-md">
         <Card variant="glow" padding="lg">
-          {/* Header */}
           <CardHeader>
             <div className="text-center">
               <h1 className="text-2xl font-bold text-white">Welcome back</h1>
@@ -46,10 +79,8 @@ const Login = () => {
             </div>
           </CardHeader>
 
-          {/* Body */}
           <CardBody>
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
-              {/* Email */}
               <FormField
                 label="Email Address"
                 type="email"
@@ -64,7 +95,6 @@ const Login = () => {
                 })}
               />
 
-              {/* Password */}
               <div className="space-y-1">
                 <label className="text-sm font-medium text-white/80">
                   Password
@@ -95,17 +125,6 @@ const Login = () => {
                 </div>
               </div>
 
-              {/* Forgot password */}
-              <div className="flex justify-end">
-                <Link
-                  to="/forgot-password"
-                  className="text-sm text-purpleSoft hover:text-purpleGlow transition"
-                >
-                  Forgot password?
-                </Link>
-              </div>
-
-              {/* Submit */}
               <Button
                 type="submit"
                 size="lg"
@@ -117,7 +136,12 @@ const Login = () => {
             </form>
           </CardBody>
 
-          {/* Footer */}
+          <div className="flex justify-center my-3">
+            <Button variant="ghost" onClick={() => setIsModalOpen(true)}>
+              Forgot password?
+            </Button>
+          </div>
+
           <CardFooter>
             <p className="text-sm text-white/60">
               Don’t have an account?{" "}
@@ -131,6 +155,65 @@ const Login = () => {
           </CardFooter>
         </Card>
       </div>
+
+      {/* Forgot password section */}
+      <Modal
+        isOpen={isModalOpen}
+        onClose={() => !isMailSending && setIsModalOpen(false)}
+        title="Reset your password"
+        footer={
+          <div className="flex justify-end gap-3">
+            <Button
+              variant="ghost"
+              onClick={() => setIsModalOpen(false)}
+              disabled={isMailSending}
+            >
+              Cancel
+            </Button>
+
+            <Button
+              type="submit"
+              form="reset-password-form"
+              disabled={!isResetValid || isMailSending}
+              className="flex items-center gap-2"
+            >
+              {isMailSending ? (
+                <>
+                  <Loader />
+                  Sending...
+                </>
+              ) : (
+                "Send reset link"
+              )}
+            </Button>
+          </div>
+        }
+      >
+        <form
+          id="reset-password-form"
+          onSubmit={handleResetSubmit(onResetSubmit)}
+          className="space-y-4"
+        >
+          <p className="text-sm text-white/60">
+            Enter your email address and we’ll send you a password reset link.
+          </p>
+
+          <FormField
+            label="Email Address"
+            type="email"
+            placeholder="you@example.com"
+            disabled={isMailSending}
+            error={resetErrors.resetEmail?.message}
+            {...registerReset("resetEmail", {
+              required: "Email is required",
+              pattern: {
+                value: /^\S+@\S+\.\S+$/,
+                message: "Enter a valid email address",
+              },
+            })}
+          />
+        </form>
+      </Modal>
     </section>
   );
 };
