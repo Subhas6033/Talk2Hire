@@ -191,6 +191,11 @@ const ConfigureInterview = ({ onStart }) => {
     onStart?.({ resume, ...config });
   };
 
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) setResume(file);
+  };
+
   return (
     <>
       {/* Interview setup UI*/}
