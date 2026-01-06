@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { Card, CardHeader, CardBody } from "../Components/Common/Card";
-import { Button } from "../Components/index";
+import { Button, Modal } from "../Components/index";
 import {
   fadeUp,
   fadeIn,
@@ -9,6 +9,7 @@ import {
   fadeUpItem,
 } from "../Animations/CommonAnimation";
 import { useNavigate } from "react-router-dom";
+import { getSuggestionByScore } from "../lib/Suggestions";
 
 const STORAGE_KEY = "ai_interview_session";
 
@@ -101,11 +102,36 @@ const InterviewDashboard = ({
       animate="animate"
       className="max-w-7xl mx-auto px-6 py-16"
     >
-      <motion.div variants={fadeIn} className="mb-12">
-        <h1 className="text-3xl font-bold text-white mb-2">
-          Interview Summary
-        </h1>
-        <p className="text-white/60">Review your performance and responses</p>
+      <motion.div
+        variants={fadeIn}
+        className="mb-12 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4"
+      >
+        {/* Title */}
+        <div>
+          <h1 className="text-3xl font-bold text-white mb-1">
+            Interview Summary
+          </h1>
+          <p className="text-white/60">Review your performance and responses</p>
+        </div>
+
+        {/* Top Right Actions */}
+        <div className="flex gap-3 flex-wrap">
+          <Button variant="ghost" size="sm" onClick={() => navigate("/")}>
+            Go to Home
+          </Button>
+
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => navigate("/interview")}
+          >
+            Retry
+          </Button>
+
+          <Button variant="primary" size="sm" onClick={handleDownloadReport}>
+            Download Report
+          </Button>
+        </div>
       </motion.div>
 
       {/* Statistics */}
@@ -154,34 +180,23 @@ const InterviewDashboard = ({
                 <div className="bg-black/30 rounded-xl p-4 text-white/70">
                   {answers[index]?.text?.trim() || "Skipped"}
                 </div>
-                <div className="mt-2 text-xs text-purpleGlow">
-                  Score: {answers[index]?.score ?? 0} / 5
+
+                <div className="mt-2 flex flex-wrap gap-4 items-center">
+                  <span className="text-xs text-purpleGlow">
+                    Score: {answers[index]?.score ?? 0} / 5
+                  </span>
+
+                  <span className="text-xs text-white/50">
+                    Suggestion:{" "}
+                    <span className="text-white/70">
+                      {getSuggestionByScore(answers[index]?.score ?? 0)}
+                    </span>
+                  </span>
                 </div>
               </CardBody>
             </Card>
           </motion.div>
         ))}
-      </motion.div>
-
-      <motion.div
-        variants={fadeUp}
-        className="mt-12 flex flex-wrap gap-4 justify-center"
-      >
-        <Button variant="primary" size="lg" onClick={() => navigate("/")}>
-          Go to Home
-        </Button>
-
-        <Button
-          variant="secondary"
-          size="lg"
-          onClick={() => navigate("/interview")}
-        >
-          Retry Interview
-        </Button>
-
-        <Button variant="ghost" size="lg" onClick={handleDownloadReport}>
-          Download Report
-        </Button>
       </motion.div>
     </motion.div>
   );

@@ -96,6 +96,104 @@ export const Questions = {
   },
 };
 
+export const Suggestions = {
+  Technology: {
+    Easy: [
+      "Clearly define the concept using simple language.",
+      "Explain why the technology is used in real-world applications.",
+      "Provide a basic example to support your explanation.",
+      "Avoid unnecessary technical jargon.",
+      "Keep the answer structured and easy to understand.",
+    ],
+    Medium: [
+      "Explain the concept in detail and why it is important.",
+      "Include a real-world or practical use case.",
+      "Mention advantages and common challenges.",
+      "Use correct technical terminology clearly.",
+      "Show understanding of how the concept works internally.",
+    ],
+    Hard: [
+      "Break down the concept step-by-step before diving deep.",
+      "Explain internal architecture or system-level behavior.",
+      "Discuss performance, scalability, or security considerations.",
+      "Mention trade-offs and alternative approaches.",
+      "Support your answer with real-world system examples.",
+    ],
+  },
+
+  Finance: {
+    Easy: [
+      "Define the financial term clearly.",
+      "Use simple numerical or daily-life examples.",
+      "Explain why the concept is important for individuals.",
+      "Avoid complex financial terminology.",
+      "Keep calculations and explanations easy to follow.",
+    ],
+    Medium: [
+      "Explain the financial concept with business relevance.",
+      "Include formulas or metrics where applicable.",
+      "Discuss advantages and limitations.",
+      "Explain how the concept impacts decision-making.",
+      "Use real-world financial scenarios.",
+    ],
+    Hard: [
+      "Explain advanced financial mechanisms clearly.",
+      "Discuss market impact, risk, and return.",
+      "Use professional financial terminology accurately.",
+      "Include strategic or analytical perspectives.",
+      "Demonstrate understanding of real-world financial markets.",
+    ],
+  },
+
+  Healthcare: {
+    Easy: [
+      "Explain the concept in simple, patient-friendly language.",
+      "Focus on safety, hygiene, or basic healthcare principles.",
+      "Use common healthcare examples.",
+      "Avoid unnecessary medical jargon.",
+      "Explain why the concept matters in patient care.",
+    ],
+    Medium: [
+      "Explain how the concept improves patient outcomes.",
+      "Discuss challenges faced by healthcare professionals.",
+      "Mention best practices or standards.",
+      "Include clinical or hospital-based examples.",
+      "Show awareness of ethical and safety concerns.",
+    ],
+    Hard: [
+      "Discuss data, technology, and ethical challenges.",
+      "Explain system-level healthcare implications.",
+      "Demonstrate understanding of healthcare regulations.",
+      "Include real-world healthcare case studies.",
+      "Explain how outcomes and efficiency can be improved.",
+    ],
+  },
+
+  Education: {
+    Easy: [
+      "Explain the concept in a classroom context.",
+      "Use examples involving teachers or students.",
+      "Focus on basic learning principles.",
+      "Avoid overly academic language.",
+      "Explain how the concept supports learning.",
+    ],
+    Medium: [
+      "Discuss teaching strategies and learning outcomes.",
+      "Explain benefits and challenges of the approach.",
+      "Include real classroom or online learning examples.",
+      "Address different learning styles.",
+      "Show understanding of educational objectives.",
+    ],
+    Hard: [
+      "Explain long-term impact on education systems.",
+      "Discuss ethical or data-related considerations.",
+      "Demonstrate strategic thinking in curriculum design.",
+      "Explain evaluation or assessment techniques.",
+      "Link the concept to modern educational challenges.",
+    ],
+  },
+};
+
 export const jobSectors = ["Technology", "Finance", "Healthcare", "Education"];
 export const jobRoles = [
   "Frontend Developer",
