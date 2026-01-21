@@ -10,8 +10,6 @@ import { FormField } from "../../Components/Common/Input";
 import { Eye, EyeOff } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useForm } from "react-hook-form";
-import { motion } from "motion/react";
-import { pageTransition } from "../../Animations/CommonAnimation";
 
 const Signup = () => {
   const [showPassword, setShowPassword] = useState(false);

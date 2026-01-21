@@ -21,7 +21,6 @@ const Home = () => {
   return (
     <>
       {/* SEO */}
-      <title>AI Interview Preparation | Homepage</title>
       <meta
         name="description"
         content="AI Online Voice Interview System: Conduct dynamic, secure, voice-based technical interviews. Upload your resume, answer AI-generated questions, and receive detailed scoring and feedback."

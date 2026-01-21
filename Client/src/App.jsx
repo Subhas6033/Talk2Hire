@@ -18,22 +18,24 @@ const App = () => {
     return () => clearTimeout(timer);
   }, []);
 
-  if (isLoading) {
-    return <Loader label="Setting up your interview" />;
-  }
-
   return (
     <Layout>
-      <ScrollToTop />
-      <AnimatePresence mode="wait" initial={false}>
-        <motion.main
-          key={location.pathname}
-          {...pageTransition}
-          className="flex-1"
-        >
-          <Outlet />
-        </motion.main>
-      </AnimatePresence>
+      {isLoading ? (
+        <Loader label="Setting up your interview" />
+      ) : (
+        <>
+          <ScrollToTop />
+          <AnimatePresence mode="wait" initial={true}>
+            <motion.main
+              key={location.pathname}
+              {...pageTransition}
+              className="flex-1"
+            >
+              <Outlet />
+            </motion.main>
+          </AnimatePresence>
+        </>
+      )}
     </Layout>
   );
 };
