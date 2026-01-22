@@ -15,6 +15,8 @@ import {
   Contact,
   InterviewDashboard,
 } from "./Pages/index.pages.js";
+import { Provider } from "react-redux";
+import { store } from "./Store/store.js";
 
 const router = createBrowserRouter([
   {
@@ -67,8 +69,10 @@ const router = createBrowserRouter([
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>
-    <RouterProvider router={router}>
-      <App />
-    </RouterProvider>
+    <Provider store={store}>
+      <RouterProvider router={router}>
+        <App />
+      </RouterProvider>
+    </Provider>
   </StrictMode>
 );

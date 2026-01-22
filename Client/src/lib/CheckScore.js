@@ -19,7 +19,7 @@ export const scoreAnswer = (answer, question) => {
     answer.toLowerCase().includes(k)
   ).length;
 
-  // 🎯 Scoring logic
+  // Scoring logic
   if (length > 80 && keywordMatches >= 3 && hasConfidence) return 5;
   if (length > 60 && keywordMatches >= 2) return 4;
   if (length > 40 && keywordMatches >= 1) return 3;

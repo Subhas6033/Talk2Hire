@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Card,
   CardHeader,
@@ -10,6 +10,8 @@ import { FormField } from "../../Components/Common/Input";
 import { Eye, EyeOff } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useForm } from "react-hook-form";
+import { useAuth } from "../../Hooks/useAuthHook";
+import { useNavigate } from "react-router-dom";
 
 const Loader = () => (
   <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
@@ -19,8 +21,9 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isMailSending, setIsMailSending] = useState(false);
+  const { login, loading, error, isAuthenticated } = useAuth();
+  const navigate = useNavigate();
 
-  // Login Form
   const {
     register,
     handleSubmit,
@@ -34,8 +37,18 @@ const Login = () => {
   });
 
   const onSubmit = (data) => {
-    console.log("Login Data", data);
+    login({
+      email: data.email,
+      password: data.password,
+    });
   };
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      console.log("Successfully logged in");
+      navigate("/", { replace: true });
+    }
+  }, [isAuthenticated, navigate]);
 
   // Forgot password form
   const {
@@ -65,6 +78,7 @@ const Login = () => {
   return (
     <>
       <title>QuantamHash Corporation | login</title>
+
       <section className="min-h-screen flex items-center justify-center px-6 py-20 relative overflow-hidden">
         {/* Background glows */}
         <div className="absolute top-[-30%] left-[-20%] h-125 w-125 rounded-full bg-purpleGlow/20 blur-[160px]" />
@@ -127,13 +141,25 @@ const Login = () => {
                   </div>
                 </div>
 
+                {/* Error from the backend will show here  */}
+                {error && (
+                  <p className="text-sm text-red-400 text-center">{error}</p>
+                )}
+
                 <Button
                   type="submit"
                   size="lg"
-                  className="w-full"
-                  disabled={!isValid}
+                  className="w-full flex items-center justify-center gap-2"
+                  disabled={!isValid || loading}
                 >
-                  Sign In
+                  {loading ? (
+                    <>
+                      <Loader />
+                      Signing in...
+                    </>
+                  ) : (
+                    "Sign In"
+                  )}
                 </Button>
               </form>
             </CardBody>
@@ -158,7 +184,7 @@ const Login = () => {
           </Card>
         </div>
 
-        {/* Forgot password section */}
+        {/* Forgot password modal */}
         <Modal
           isOpen={isModalOpen}
           onClose={() => !isMailSending && setIsModalOpen(false)}

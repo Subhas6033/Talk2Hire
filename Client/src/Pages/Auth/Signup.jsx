@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Card,
   CardHeader,
@@ -8,11 +8,19 @@ import {
 import { Button } from "../../Components";
 import { FormField } from "../../Components/Common/Input";
 import { Eye, EyeOff } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
+import { useAuth } from "../../Hooks/useAuthHook";
+
+/* Loader Component */
+const Loader = () => (
+  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+);
 
 const Signup = () => {
   const [showPassword, setShowPassword] = useState(false);
+  const { registerUser, loading, error, isAuthenticated } = useAuth();
+  const navigate = useNavigate();
 
   const {
     register,
@@ -28,21 +36,27 @@ const Signup = () => {
     },
   });
 
-  const onSubmit = (data) => {
-    console.log("Signup data:", data);
+  const onSubmit = async (data) => {
+    await registerUser({
+      fullName: data.fullName,
+      email: data.email,
+      password: data.password,
+    });
   };
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      navigate("/", { replace: true });
+      console.log("Successfully signned up");
+    }
+  }, [isAuthenticated]);
 
   return (
     <>
       <title>QuantamHash Corporation | Signup</title>
       <section className="min-h-screen flex items-center justify-center px-6 py-20 relative overflow-hidden">
-        {/* Background glows */}
-        <div className="absolute top-[-30%] left-[-20%] h-125 w-125 rounded-full bg-purpleGlow/20 blur-[160px]" />
-        <div className="absolute bottom-[-30%] right-[-20%] h-125 w-125 rounded-full bg-purpleSoft/20 blur-[160px]" />
-
         <div className="relative w-full max-w-md">
           <Card variant="glow" padding="lg">
-            {/* Header */}
             <CardHeader>
               <div className="text-center">
                 <h1 className="text-2xl font-bold text-white">
@@ -54,7 +68,6 @@ const Signup = () => {
               </div>
             </CardHeader>
 
-            {/* Body */}
             <CardBody>
               <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
                 {/* Full Name */}
@@ -91,7 +104,6 @@ const Signup = () => {
                   <label className="text-sm font-medium text-white/80">
                     Password
                   </label>
-
                   <div className="relative">
                     <FormField
                       type={showPassword ? "text" : "password"}
@@ -101,16 +113,15 @@ const Signup = () => {
                       {...register("password", {
                         required: "Password is required",
                         minLength: {
-                          value: 8,
-                          message: "Password must be at least 8 characters",
+                          value: 6,
+                          message: "Password must be at least 6 characters",
                         },
                       })}
                     />
-
                     <button
                       type="button"
                       onClick={() => setShowPassword((prev) => !prev)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-white/60 hover:text-purpleGlow transition"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-white/60"
                     >
                       {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                     </button>
@@ -126,35 +137,36 @@ const Signup = () => {
                       required: "You must accept the terms",
                     })}
                   />
-                  <span>
-                    I agree to the{" "}
-                    <span className="text-purpleSoft hover:underline cursor-pointer">
-                      Terms
-                    </span>{" "}
-                    and{" "}
-                    <span className="text-purpleSoft hover:underline cursor-pointer">
-                      Privacy Policy
-                    </span>
-                  </span>
+                  <span>I agree to the Terms and Privacy Policy</span>
                 </label>
 
                 {errors.terms && (
                   <p className="text-xs text-red-400">{errors.terms.message}</p>
                 )}
 
+                {/* Backend Error */}
+                {error && (
+                  <p className="text-sm text-red-400 text-center">{error}</p>
+                )}
+
                 {/* Submit */}
                 <Button
                   type="submit"
                   size="lg"
-                  className="w-full"
-                  disabled={!isValid}
+                  className="w-full flex justify-center items-center gap-2"
+                  disabled={!isValid || loading}
                 >
-                  Create Account
+                  {loading ? (
+                    <>
+                      <Loader /> Creating account...
+                    </>
+                  ) : (
+                    "Create Account"
+                  )}
                 </Button>
               </form>
             </CardBody>
 
-            {/* Footer */}
             <CardFooter>
               <p className="text-sm text-white/60">
                 Already have an account?{" "}

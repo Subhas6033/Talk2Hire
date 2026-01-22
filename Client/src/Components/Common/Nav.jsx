@@ -1,13 +1,14 @@
 import React from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Button from "./Button";
+import { useAuth } from "../../Hooks/useAuthHook";
 
 const Nav = () => {
   const navigate = useNavigate();
-  const token = localStorage.getItem("token");
+  const { isAuthenticated, logout } = useAuth();
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
+    logout({});
     navigate("/login");
   };
 
@@ -36,7 +37,7 @@ const Nav = () => {
 
         {/* Links */}
         <div className="hidden md:flex gap-8 text-sm font-medium text-textLight">
-          {token && (
+          {isAuthenticated && (
             <>
               <Link
                 to="/dashboard"
@@ -62,7 +63,7 @@ const Nav = () => {
 
         {/* Auth Buttons */}
         <div className="flex items-center gap-4">
-          {!token ? (
+          {!isAuthenticated ? (
             <>
               <Link
                 to="/login"
