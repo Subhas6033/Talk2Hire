@@ -4,13 +4,17 @@ const {
   loginUser,
   logoutUser,
   forgotPassword,
+  getCurrentUser,
+  refreshAccessToken,
 } = require("../Controllers/auth.controllers.js");
 const authMiddleware = require("../Middlewares/auth.middlewares.js");
 
 router
   .post("/register", registerUser)
   .post("/login", loginUser)
-  .post("/logout", authMiddleware, loginUser)
-  .post("/forgot-password", forgotPassword);
+  .post("/logout", authMiddleware, logoutUser)
+  .post("/forgot-password", forgotPassword)
+  .get("/get-current-user", authMiddleware, getCurrentUser)
+  .post("/refresh-access-token", refreshAccessToken);
 
 module.exports = router;

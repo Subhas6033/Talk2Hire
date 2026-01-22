@@ -3,17 +3,27 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const User = require("../Models/user.models.js");
 
-const generateRefreshAndAccessTokens = async (userId) => {
-  const refreshToken = await jwt.sign(
-    { data: userId },
+const generateRefreshAndAccessTokens = async (user) => {
+  const refreshToken = jwt.sign(
+    {
+      id: user.id,
+      email: user.email,
+    },
     process.env.REFRESH_TOKEN_SECRET,
-    { expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || "15d" }
+    {
+      expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || "15d",
+    }
   );
 
-  const accessToken = await jwt.sign(
-    { data: userId },
+  const accessToken = jwt.sign(
+    {
+      id: user.id,
+      email: user.email,
+    },
     process.env.ACCESS_TOKEN_SECRET,
-    { expiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN || "1d" }
+    {
+      expiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN || "1d",
+    }
   );
 
   return { refreshToken, accessToken };
@@ -45,8 +55,10 @@ const registerUser = asyncHandler(async (req, res) => {
     hashPassword: passwordHash,
   });
 
-  const { refreshToken, accessToken } =
-    await generateRefreshAndAccessTokens(userId);
+  const { refreshToken, accessToken } = await generateRefreshAndAccessTokens({
+    id: userId,
+    email,
+  });
 
   await User.updateRefreshToken(userId, refreshToken);
 
@@ -97,9 +109,10 @@ const loginUser = asyncHandler(async (req, res) => {
     throw new APIERR(401, "Incorrect Password");
   }
 
-  const { refreshToken, accessToken } = await generateRefreshAndAccessTokens(
-    isUserExist.id
-  );
+  const { refreshToken, accessToken } = await generateRefreshAndAccessTokens({
+    id: isUserExist.id,
+    email,
+  });
 
   await User.updateRefreshToken(isUserExist.id, refreshToken);
 
@@ -150,6 +163,20 @@ const logoutUser = asyncHandler(async (req, res) => {
   res.status(200).json(new APIRES("User Logged out successfully"));
 });
 
+const getCurrentUser = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user.id);
+
+  if (!user) {
+    throw new APIERR(404, "User not found");
+  }
+
+  // Delete the sensitive data from the response
+  delete user.hashPassword;
+  delete user.refreshToken;
+
+  res.status(200).json(new APIRES(200, user, "User fetched"));
+});
+
 const forgotPassword = asyncHandler(async (req, res) => {
   const { email } = req.body;
   if (!email) {
@@ -167,10 +194,49 @@ const forgotPassword = asyncHandler(async (req, res) => {
   // await sendMail(email)
 });
 
+const refreshAccessToken = asyncHandler(async (req, res) => {
+  const refreshToken = req.cookies?.refreshToken;
+
+  if (!refreshToken) {
+    throw new APIERR(401, "Refresh token missing");
+  }
+
+  const decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET);
+
+  const user = await User.findById(decoded.id);
+
+  if (!user || user.refreshToken !== refreshToken) {
+    throw new APIERR(401, "Invalid refresh token");
+  }
+
+  const accessToken = jwt.sign(
+    {
+      id: user.id,
+      email: user.email,
+    },
+    process.env.ACCESS_TOKEN_SECRET,
+    {
+      expiresIn: "1d",
+    }
+  );
+
+  res.cookie("accessToken", accessToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    path: "/",
+    maxAge: 24 * 60 * 60 * 1000,
+  });
+
+  res.status(200).json(new APIRES(200, null, "Access token refreshed"));
+});
+
 module.exports = {
   generateRefreshAndAccessTokens,
   registerUser,
   loginUser,
   logoutUser,
   forgotPassword,
+  getCurrentUser,
+  refreshAccessToken,
 };
