@@ -28,6 +28,10 @@ const registerUser = asyncHandler(async (req, res) => {
     throw new APIERR(400, "All fields are required");
   }
 
+  if (password.length < 6) {
+    throw new APIERR(400, "Password must be at least 6 characters");
+  }
+
   const existingUser = await User.findByEmail(email);
   if (existingUser) {
     throw new APIERR(409, "Email is already registered");
@@ -85,13 +89,12 @@ const loginUser = asyncHandler(async (req, res) => {
   if (!isUserExist) {
     throw new APIERR(404, "No account found with this mail");
   }
-
   const isPasswordValid = await bcrypt.compare(
     password,
     isUserExist.hashPassword
   );
   if (!isPasswordValid) {
-    throw new APIERR(401, "Invalid Password");
+    throw new APIERR(401, "Incorrect Password");
   }
 
   const { refreshToken, accessToken } = await generateRefreshAndAccessTokens(

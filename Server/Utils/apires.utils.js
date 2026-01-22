@@ -1,7 +1,7 @@
 class APIRES {
-  constructor(message = "Request successful", statusCode = 200, data = {}) {
-    this.message = message;
+  constructor(statusCode = 200, message = "Request successful", data = {}) {
     this.statusCode = statusCode;
+    this.message = message;
     this.data = data;
   }
 }

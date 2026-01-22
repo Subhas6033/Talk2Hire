@@ -1,7 +1,8 @@
 class APIERR extends Error {
-  constructor(message = "Something went wrong", statusCode, stack, data) {
+  constructor(statusCode, message = "Something went wrong", stack, data) {
     super(message);
     this.statusCode = statusCode;
+    this.message = message;
     this.data = data;
 
     if (stack) {
