@@ -9,15 +9,28 @@ const NotFoundPage = () => {
   return (
     <>
       <title>QuantamHash Corporation | Not Found</title>
-      <div className="min-h-screen flex items-center justify-center bg-[#0f111a] px-4">
+
+      <div
+        className="
+          min-h-screen flex items-center justify-center px-4
+          bg-bgDark/90 backdrop-blur-xl
+          relative overflow-hidden
+        "
+      >
+        {/* Soft background glow (same family as footer) */}
+        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_center,rgba(155,92,255,0.12),transparent_60%)]" />
+
         <Card
           variant="glow"
           padding="lg"
-          className="max-w-md w-full text-center border-transparent"
+          className="relative z-10 max-w-lg w-full text-center border-transparent"
         >
           <CardHeader>
-            <h1 className="text-6xl font-bold text-white mb-2">404</h1>
+            <h1 className="text-6xl font-bold text-white mb-2">
+              404 Not Found
+            </h1>
           </CardHeader>
+
           <CardBody>
             <p className="text-white/60 mb-6">
               Oops! The page you are looking for does not exist.

@@ -7,6 +7,10 @@ import { PricingSection } from "./Subscription/Pricing";
 import TestimonialsSection from "./Common/Testimonials";
 import ConfigureInterview from "./Others/UploadFile";
 import ScrollToTop from "./Others/ScrollToTop";
+import Guidlines from "./Others/Guidlines";
+import Avatar from "./Common/Avatar";
+import SocialMediaSection from "./SocialMedia";
+import PreviousInterview from "./PreviousInterview";
 
 export {
   Nav,
@@ -18,4 +22,8 @@ export {
   TestimonialsSection,
   ConfigureInterview,
   ScrollToTop,
+  Guidlines,
+  Avatar,
+  SocialMediaSection,
+  PreviousInterview,
 };

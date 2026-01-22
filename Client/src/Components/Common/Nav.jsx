@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useNavigate } from "react-router-dom";
-import Button from "./Button";
+import { Button, Avatar } from "../index";
 import { useAuth } from "../../Hooks/useAuthHook";
 
 const Nav = () => {
@@ -16,7 +16,7 @@ const Nav = () => {
     <header
       className="
         sticky top-0 z-50
-        bg-linear-to-r from-purpleSecondary via-purpleMain to-bgDark
+        bg-linear-to-br from-[#0b0f1f]/90 via-[#11162a]/90 to-[#0b0f1f]/90
         backdrop-blur-xl
         border-b border-white/10
       "
@@ -28,7 +28,7 @@ const Nav = () => {
           className="
             text-xl font-bold
             bg-linear-to-r from-purpleGlow to-purpleSoft
-            bg-clip-text text-transparent
+            bg-clip-text text-white
             tracking-tight
           "
         >
@@ -36,7 +36,7 @@ const Nav = () => {
         </Link>
 
         {/* Links */}
-        <div className="hidden md:flex gap-8 text-sm font-medium text-textLight">
+        <div className="hidden md:flex gap-8 text-sm font-medium text-white/70">
           {isAuthenticated && (
             <>
               <Link
@@ -67,7 +67,7 @@ const Nav = () => {
             <>
               <Link
                 to="/login"
-                className="text-sm text-textLight hover:text-purpleGlow transition"
+                className="text-sm text-white/70 hover:text-purpleGlow transition"
               >
                 Login
               </Link>
@@ -75,7 +75,7 @@ const Nav = () => {
               <Link
                 to="/signup"
                 className="
-                  rounded-lg
+                  rounded-xl
                   bg-purpleGlow
                   px-4 py-2
                   text-sm font-semibold text-white
@@ -88,9 +88,7 @@ const Nav = () => {
               </Link>
             </>
           ) : (
-            <Button onClick={handleLogout} variants="secondary">
-              Logout
-            </Button>
+            <Avatar />
           )}
         </div>
       </nav>

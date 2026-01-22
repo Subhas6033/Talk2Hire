@@ -79,7 +79,7 @@ const Login = () => {
     <>
       <title>QuantamHash Corporation | login</title>
 
-      <section className="min-h-screen flex items-center justify-center px-6 py-20 relative overflow-hidden">
+      <section className="min-h-screen flex items-center justify-center px-6 py-20 relative overflow-hidden bg-linear-to-br from-bgDark via-[#11162a] to-bgDark">
         {/* Background glows */}
         <div className="absolute top-[-30%] left-[-20%] h-125 w-125 rounded-full bg-purpleGlow/20 blur-[160px]" />
         <div className="absolute bottom-[-30%] right-[-20%] h-125 w-125 rounded-full bg-purpleSoft/20 blur-[160px]" />

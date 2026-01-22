@@ -9,7 +9,8 @@ const AboutPage = () => {
   return (
     <>
       <title>QuantamHash Corporation | About</title>
-      <div className="min-h-screen bg-[#0f111a] px-4 py-16 flex justify-center">
+
+      <div className="min-h-screen bg-linear-to-br from-[#0b0f1f] via-[#11162a] to-[#0b0f1f] px-4 py-16 flex justify-center">
         <div className="max-w-5xl w-full space-y-8">
           {/* Page Header */}
           <Card
@@ -32,50 +33,41 @@ const AboutPage = () => {
             </CardBody>
           </Card>
 
-          {/* Features / Highlights */}
+          {/* Features */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-            <Card variant="glow" padding="md" className="border-transparent">
-              <CardHeader>Realistic AI Interviews</CardHeader>
-              <CardBody>
-                <p className="text-white/70 text-sm">
-                  Simulate real interview conditions with AI-driven questions
-                  and voice recognition.
-                </p>
-              </CardBody>
-            </Card>
-
-            <Card variant="glow" padding="md" className="border-transparent">
-              <CardHeader>Instant Scoring</CardHeader>
-              <CardBody>
-                <p className="text-white/70 text-sm">
-                  Get instant feedback with a rubric-based scoring system for
-                  every answer.
-                </p>
-              </CardBody>
-            </Card>
-
-            <Card variant="glow" padding="md" className="border-transparent">
-              <CardHeader>Suggestions & Tips</CardHeader>
-              <CardBody>
-                <p className="text-white/70 text-sm">
-                  Receive personalized suggestions to improve clarity,
-                  confidence, and technical depth.
-                </p>
-              </CardBody>
-            </Card>
-
-            <Card variant="glow" padding="md" className="border-transparent">
-              <CardHeader>Multi-domain Coverage</CardHeader>
-              <CardBody>
-                <p className="text-white/70 text-sm">
-                  Covers multiple domains including Technology, Finance,
-                  Healthcare, and Education.
-                </p>
-              </CardBody>
-            </Card>
+            {[
+              {
+                title: "Realistic AI Interviews",
+                desc: "Simulate real interview conditions with AI-driven questions and voice recognition.",
+              },
+              {
+                title: "Instant Scoring",
+                desc: "Get instant feedback with a rubric-based scoring system for every answer.",
+              },
+              {
+                title: "Suggestions & Tips",
+                desc: "Receive personalized suggestions to improve clarity, confidence, and technical depth.",
+              },
+              {
+                title: "Multi-domain Coverage",
+                desc: "Covers multiple domains including Technology, Finance, Healthcare, and Education.",
+              },
+            ].map((item, i) => (
+              <Card
+                key={i}
+                variant="glow"
+                padding="md"
+                className="border-transparent"
+              >
+                <CardHeader>{item.title}</CardHeader>
+                <CardBody>
+                  <p className="text-white/70 text-sm">{item.desc}</p>
+                </CardBody>
+              </Card>
+            ))}
           </div>
 
-          {/* Call to Action */}
+          {/* CTA */}
           <div className="text-center mt-6">
             <Button
               variant="primary"

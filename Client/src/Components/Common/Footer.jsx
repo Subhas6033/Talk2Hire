@@ -5,16 +5,18 @@ const Footer = () => (
   <footer
     className="
       relative
-      bg-linear-to-r from-bgDark via-purpleMain to-purpleSecondary
-      text-textLight
+      bg-linear-to-br from-[#0b0f1f]/95 via-[#11162a]/95 to-[#0b0f1f]/95
+      backdrop-blur-xl
       border-t border-white/10
+      text-white
     "
   >
-    {/* Soft glow overlay */}
-    <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_bottom,rgba(155,92,255,0.15),transparent_60%)]" />
+    {/* Subtle purple glow */}
+    <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_bottom,rgba(155,92,255,0.12),transparent_65%)]" />
 
-    <div className="relative mx-auto max-w-7xl px-6 py-8">
+    <div className="relative mx-auto max-w-7xl px-6 py-10">
       <div className="flex flex-col md:flex-row md:justify-between items-center gap-6">
+        {/* Brand */}
         <div className="text-sm text-center md:text-left">
           <div
             className="
@@ -30,9 +32,10 @@ const Footer = () => (
           </p>
         </div>
 
-        <div className="flex flex-wrap justify-center gap-6 text-sm text-white/80">
+        {/* Links */}
+        <div className="flex flex-wrap justify-center gap-6 text-sm text-white/70">
           <Link to="/about" className="hover:text-purpleGlow transition-colors">
-            About us
+            About Us
           </Link>
           <Link
             to="/privacy"
@@ -52,8 +55,8 @@ const Footer = () => (
         </div>
       </div>
 
-      {/* Bottom */}
-      <div className="mt-6 border-t border-white/10 pt-4 text-center text-xs text-white/60">
+      {/* Bottom bar */}
+      <div className="mt-8 border-t border-white/10 pt-4 text-center text-xs text-white/60">
         &copy; {new Date().getFullYear()} AI Interview System. All rights
         reserved.
       </div>

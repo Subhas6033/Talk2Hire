@@ -8,6 +8,7 @@ import Privacy from "./Private/Privacy";
 import Terms from "./Private/Terms";
 import Contact from "./Contact";
 import InterviewDashboard from "./Dashboard";
+import Profile from "./Profile.jsx";
 
 export {
   Home,
@@ -20,4 +21,5 @@ export {
   Terms,
   Contact,
   InterviewDashboard,
+  Profile,
 };

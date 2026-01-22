@@ -14,7 +14,9 @@ import {
   Terms,
   Contact,
   InterviewDashboard,
+  Profile,
 } from "./Pages/index.pages.js";
+import { Guidlines } from "./Components/index.js";
 import { Provider } from "react-redux";
 import { store } from "./Store/store.js";
 import ProtectedRoutes from "./Security/ProtectedRoutes.jsx";
@@ -61,12 +63,20 @@ const router = createBrowserRouter([
         element: <Contact />,
       },
       {
+        path: "/guidlines",
+        element: <Guidlines />,
+      },
+      {
         path: "/dashboard",
         element: (
           <ProtectedRoutes>
             <InterviewDashboard />
           </ProtectedRoutes>
         ),
+      },
+      {
+        path: "/profile/:id",
+        element: <Profile />,
       },
       {
         path: "*",

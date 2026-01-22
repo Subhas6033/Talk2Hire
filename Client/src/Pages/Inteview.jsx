@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Card } from "../Components/Common/Card";
-import { Button } from "../Components";
+import { Button, Guidlines } from "../Components";
 import Modal from "../Components/Common/Modal";
 import { ArrowRight, Mic, LayoutDashboard, Timer } from "lucide-react";
 import {
@@ -169,30 +169,7 @@ const ConfigureInterview = ({ onStart }) => {
       alert("Please fill all fields and upload your resume.");
       return;
     }
-
-    const config = {
-      sector,
-      role,
-      experience,
-      difficulty,
-      startedAt: new Date().toISOString(),
-    };
-    setInterviewConfig(config);
-    loadQuestions();
-    setOpenQuestions(true);
-
-    // Save initial interview session
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        config,
-        questions: Questions?.[sector]?.[difficulty] || [],
-        answers: {},
-        timeLeft: TOTAL_TIME,
-      })
-    );
-
-    onStart?.({ resume, ...config });
+    navigate("/guidlines");
   };
 
   const speakQuestion = (text) => {

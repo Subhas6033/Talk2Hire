@@ -1,32 +1,40 @@
 @import "tailwindcss";
 
 @theme {
-  --color-primary: #2e1f4f;
-  --color-secondary: #8a3c8c;
-  --color-accent: #f06d22;
-  --color-neutralLight: #f7f4ef;
-  --color-textLight: #e1d458;
-  --color-bgDark: #0b0712;
-  --color-purpleMain: #3b1d5a;
-  --color-purpleSecondary: #6a2ca0;
-  --color-purpleGlow: #9b5cff;
-  --color-purpleSoft: #c084fc;
-  --color-textLight: #ede9fe;
+  /* Core brand */
+  --color-primary: #2a1b4d; /* deep royal purple */
+  --color-secondary: #7a3fb3; /* vibrant purple accent */
+  --color-accent: #f06d22; /* unchanged (orange accent) */
 
-  /* Bg image */
+  /* Text */
+  --color-textLight: #ede9fe; /* soft lavender white */
+  --color-neutralLight: #f7f4ef;
+
+  /* Backgrounds */
+  --color-bgDark: #0b0f1f; /* main app background (matches navbar/footer) */
+  --background-color: #0b0f1f;
+
+  /* Purple system */
+  --color-purpleMain: #3a1d6e; /* deep base purple */
+  --color-purpleSecondary: #5f2ca8; /* secondary purple */
+  --color-purpleGlow: #9b5cff; /* glow highlight (kept) */
+  --color-purpleSoft: #c084fc; /* soft gradient purple */
+
+  /* Gradients */
   --background-image-cosmic-gradient: linear-gradient(
-    101.98deg,
-    #6a2ca0 0%,
-    #3b1d5a 35%,
-    #0b0712 75%
+    120deg,
+    #2a1458 0%,
+    #3a1d6e 45%,
+    #5f2ca8 100%
   );
 
   --background-image-custom: linear-gradient(
-    101.98deg,
-    oklch(0.53 0.25 259) 41.25%,
-    oklch(0.75 0.19 194) 130.18%
+    120deg,
+    #0b0f1f 0%,
+    #11162a 45%,
+    #1a1f3c 100%
   );
 
-  /* Box Shadow */
+  /* Glow & shadows */
   --shadow-glow: 0 0 40px rgba(155, 92, 255, 0.35);
 }

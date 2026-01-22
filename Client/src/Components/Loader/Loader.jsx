@@ -5,7 +5,7 @@ export default function Loader({ label = "" }) {
     <div
       role="status"
       aria-live="polite"
-      className="flex min-h-screen flex-col items-center justify-center gap-6 bg-cosmic-gradient"
+      className="flex min-h-screen flex-col items-center justify-center gap-6 bg-linear-to-br from-bgDark via-[#11162a] to-bgDark"
     >
       {/* Brain Pulse */}
       <motion.div

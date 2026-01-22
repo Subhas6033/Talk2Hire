@@ -48,7 +48,7 @@ const InterviewDashboard = ({
         <p className="text-white/60 mb-6">
           Please complete an interview to view the summary.
         </p>
-        <Button onClick={() => navigate("/")}>Start Interview</Button>
+        <Button onClick={() => navigate("/interview")}>Start Interview</Button>
       </div>
     );
   }
@@ -105,7 +105,12 @@ const InterviewDashboard = ({
         variants={fadeUp}
         initial="initial"
         animate="animate"
-        className="max-w-7xl mx-auto px-6 py-16"
+        className="
+     mx-auto px-6 py-16
+     max-w-7xl
+    
+    backdrop-blur-xl
+  "
       >
         <motion.div
           variants={fadeIn}

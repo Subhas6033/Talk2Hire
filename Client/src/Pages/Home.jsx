@@ -33,7 +33,7 @@ const Home = () => {
       <link rel="canonical" href="https://www.google.com/" />
 
       {/* Hero Section */}
-      <section className="relative overflow-hidden">
+      <section className="relative overflow-hidden bg-linear-to-br from-[#0b0f1f] via-[#11162a] to-[#0b0f1f]">
         {/* Decorative Glows */}
         <div className="absolute top-[-20%] left-[-10%] h-125 w-125 rounded-full bg-purpleGlow/20 blur-[140px]" />
         <div className="absolute bottom-[-20%] right-[-10%] h-125 w-125 rounded-full bg-purpleSoft/20 blur-[160px]" />

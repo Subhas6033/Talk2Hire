@@ -12,9 +12,10 @@ const baseStyles = `
 
 const variants = {
   primary: `
-    bg-purpleGlow text-white
-    shadow-[0_0_30px_rgba(155,92,255,0.6)]
-    hover:shadow-[0_0_45px_rgba(155,92,255,0.9)]
+    bg-linear-to-r from-purpleGlow via-purpleSoft to-purpleGlow
+    text-white
+    shadow-[0_0_25px_rgba(155,92,255,0.45)]
+    hover:shadow-[0_0_40px_rgba(155,92,255,0.75)]
     hover:scale-[1.03]
     active:scale-[0.97]
   `,
