@@ -3,11 +3,14 @@ const {
   registerUser,
   loginUser,
   logoutUser,
+  forgotPassword,
 } = require("../Controllers/auth.controllers.js");
 const authMiddleware = require("../Middlewares/auth.middlewares.js");
 
-router.post("/register", registerUser);
-router.post("/login", loginUser);
-router.post("/logout", authMiddleware, logoutUser);
+router
+  .post("/register", registerUser)
+  .post("/login", loginUser)
+  .post("/logout", authMiddleware, loginUser)
+  .post("/forgot-password", forgotPassword);
 
 module.exports = router;

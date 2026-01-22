@@ -16,6 +16,15 @@ const User = {
     return rows[0];
   },
 
+  async findById(userId) {
+    const db = await connectDB();
+    const [rows] = await db.execute(
+      "SELECT * FROM users WHERE id = ? LIMIT 1",
+      [userId]
+    );
+    return rows[0];
+  },
+
   async create({ fullName, email, hashPassword, refreshToken = "" }) {
     if (!isValidEmail(email)) {
       throw new APIERR(400, "Please enter a valid mail");

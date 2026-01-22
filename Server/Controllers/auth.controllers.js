@@ -125,6 +125,7 @@ const loginUser = asyncHandler(async (req, res) => {
       {
         id: isUserExist.id,
         email,
+        fullName: isUserExist.fullName,
       },
       "Successfully logged in"
     )
@@ -149,9 +150,27 @@ const logoutUser = asyncHandler(async (req, res) => {
   res.status(200).json(new APIRES("User Logged out successfully"));
 });
 
+const forgotPassword = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+  if (!email) {
+    throw new APIERR(400, "Please enter the mail");
+  }
+
+  const isUserExist = await User.findByEmail(email);
+  if (!isUserExist) {
+    throw new APIERR(
+      404,
+      "User with this mail not found. Please sign up first"
+    );
+  }
+  // TODO: sent the mail
+  // await sendMail(email)
+});
+
 module.exports = {
   generateRefreshAndAccessTokens,
   registerUser,
   loginUser,
   logoutUser,
+  forgotPassword,
 };
