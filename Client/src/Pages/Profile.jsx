@@ -24,7 +24,8 @@ const ProfilePage = () => {
 
   if (!user) return null;
 
-  const firstLetter = user.fullName?.charAt(0).toUpperCase();
+  // const firstLetter = user.fullName?.charAt(0).toUpperCase();
+  const firstLetter = user?.fullName.split(" ")[0];
 
   // Drag & Drop
   const handleDragOver = (e) => e.preventDefault();

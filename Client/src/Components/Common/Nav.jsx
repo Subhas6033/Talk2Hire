@@ -16,7 +16,7 @@ const Nav = () => {
     <header
       className="
         sticky top-0 z-50
-        bg-linear-to-br from-[#0b0f1f]/90 via-[#11162a]/90 to-[#0b0f1f]/90
+        bg-linear-to-br from-bgDark/90 via-[#11162a]/90 to-bgDark/90
         backdrop-blur-xl
         border-b border-white/10
       "

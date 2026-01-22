@@ -1,11 +1,9 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import axios from "axios";
 
-const baseURL = import.meta.env.VITE_BACKEND_URL;
-
 // axios instances
 const api = axios.create({
-  baseURL,
+  baseURL: import.meta.env.VITE_BACKEND_URL,
   withCredentials: true,
   headers: {
     "Content-Type": "application/json",
@@ -56,6 +54,20 @@ export const logoutUser = createAsyncThunk(
   }
 );
 
+export const getCurrentUser = createAsyncThunk(
+  "auth/getCurrentUser",
+  async (_, { rejectWithValue }) => {
+    try {
+      const response = await api.get("/get-current-user");
+      return response.data;
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Not authenticated"
+      );
+    }
+  }
+);
+
 const initialState = {
   user: null,
   isAuthenticated: false,
@@ -102,6 +114,20 @@ const authSlice = createSlice({
 
       // logout
       .addCase(logoutUser.fulfilled, (state) => {
+        state.user = null;
+        state.isAuthenticated = false;
+      })
+      // get current user
+      .addCase(getCurrentUser.pending, (state) => {
+        state.loading = true;
+      })
+      .addCase(getCurrentUser.fulfilled, (state, action) => {
+        state.loading = false;
+        state.user = action.payload.data;
+        state.isAuthenticated = true;
+      })
+      .addCase(getCurrentUser.rejected, (state) => {
+        state.loading = false;
         state.user = null;
         state.isAuthenticated = false;
       });

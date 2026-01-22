@@ -5,18 +5,24 @@ import Loader from "./Components/Loader/Loader";
 import { AnimatePresence, motion } from "motion/react";
 import { pageTransition } from "./Animations/CommonAnimation";
 import { ScrollToTop } from "./Components/index";
+import { useDispatch } from "react-redux";
+import { getCurrentUser } from "./API/authApi";
 
 const App = () => {
   const [isLoading, setIsLoading] = useState(true);
   const location = useLocation();
+  const dispatch = useDispatch();
 
   useEffect(() => {
+    // Restore auth session on app load
+    dispatch(getCurrentUser());
+
     const timer = setTimeout(() => {
       setIsLoading(false);
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, []);
+  }, [dispatch]);
 
   return (
     <Layout>

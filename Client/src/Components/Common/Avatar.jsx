@@ -17,18 +17,21 @@ const Avatar = () => {
 
   const handleLogout = () => {
     dispatch(logoutUser());
+    navigate("/");
   };
 
   return (
     <div
-      className="relative inline-block"
+      className="relative"
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
     >
-      {/* Avatar Button */}
-      <Button
-        variant="secondary"
-        className="h-9 w-9 rounded-full flex items-center justify-center"
+      {/* Avatar */}
+      <div
+        className="h-9 w-9 rounded-full flex items-center justify-center
+        bg-linear-to-br from-zinc-900 via-zinc-800 to-zinc-900
+        backdrop-blur-md border border-white/10
+        shadow-lg shadow-black/40 cursor-pointer"
       >
         {user.profileImage ? (
           <img
@@ -37,36 +40,37 @@ const Avatar = () => {
             className="h-9 w-9 rounded-full object-cover"
           />
         ) : (
-          <span className="px-3 py-1 rounded-full text-white font-bold text-sm">
+          <span className="text-zinc-100 font-bold text-lg">
             {firstName.charAt(0).toUpperCase()}
           </span>
         )}
-      </Button>
+      </div>
 
-      {/* Hover Menu */}
+      {/* Dropdown */}
       <div
-        className={`absolute right-0 mt-2 w-fit rounded-xl bg-white shadow-xl border border-gray-100 overflow-hidden transition-all duration-200 transform ${
+        className={`absolute right-0 top-full mt-1 min-w-45
+        rounded-xl bg-white shadow-xl border border-gray-100
+        transition-all duration-200 origin-top-right
+        ${
           open
             ? "opacity-100 scale-100"
             : "opacity-0 scale-95 pointer-events-none"
         }`}
       >
-        {/* Menu Header */}
         <div className="px-4 py-3 border-b border-gray-100">
           <p className="text-sm font-semibold text-gray-800">{user.fullName}</p>
           <p className="text-xs text-gray-500">{user.email}</p>
         </div>
 
-        {/* Menu Items */}
         <button
-          className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+          className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
           onClick={() => navigate(`/profile/${user.id}`)}
         >
           Profile
         </button>
 
         <button
-          className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+          className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
           onClick={handleLogout}
         >
           Logout
