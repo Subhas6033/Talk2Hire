@@ -17,6 +17,7 @@ import {
 } from "./Pages/index.pages.js";
 import { Provider } from "react-redux";
 import { store } from "./Store/store.js";
+import ProtectedRoutes from "./Security/ProtectedRoutes.jsx";
 
 const router = createBrowserRouter([
   {
@@ -33,7 +34,11 @@ const router = createBrowserRouter([
       },
       {
         path: "/interview",
-        element: <Interview />,
+        element: (
+          <ProtectedRoutes>
+            <Interview />
+          </ProtectedRoutes>
+        ),
       },
       {
         path: "/login",
@@ -57,7 +62,11 @@ const router = createBrowserRouter([
       },
       {
         path: "/dashboard",
-        element: <InterviewDashboard />,
+        element: (
+          <ProtectedRoutes>
+            <InterviewDashboard />
+          </ProtectedRoutes>
+        ),
       },
       {
         path: "*",
