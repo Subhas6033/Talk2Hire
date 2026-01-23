@@ -6,6 +6,8 @@ const {
   forgotPassword,
   getCurrentUser,
   refreshAccessToken,
+  verifyResetPasswordOtp,
+  resetPassword,
 } = require("../Controllers/auth.controllers.js");
 const authMiddleware = require("../Middlewares/auth.middlewares.js");
 
@@ -14,6 +16,8 @@ router
   .post("/login", loginUser)
   .post("/logout", authMiddleware, logoutUser)
   .post("/forgot-password", forgotPassword)
+  .post("/verify-password", verifyResetPasswordOtp)
+  .put("/update-password", resetPassword)
   .get("/get-current-user", authMiddleware, getCurrentUser)
   .post("/refresh-access-token", refreshAccessToken);
 
