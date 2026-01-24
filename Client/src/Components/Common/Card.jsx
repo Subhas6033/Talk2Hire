@@ -57,8 +57,10 @@ export const Card = ({
   );
 };
 
-export const CardHeader = ({ children }) => (
-  <div className="mb-4 text-lg font-semibold text-purpleSoft">{children}</div>
+export const CardHeader = ({ children, headerClass }) => (
+  <div className={`mb-4 text-lg font-semibold text-purpleSoft ${headerClass}`}>
+    {children}
+  </div>
 );
 
 export const CardBody = ({ children }) => (

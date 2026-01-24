@@ -4,7 +4,7 @@ import { motion } from "motion/react";
 
 const Layout = ({ children }) => {
   return (
-    <div className="min-h-screen bg-linear-to-br from-[#0b0f1f] via-[#11162a] to-[#0b0f1f] text-textLight flex flex-col">
+    <div className="min-h-screen bg-linear-to-br from-bgDark via-[#11162a] to-bgDark text-textLight flex flex-col">
       <Nav />
 
       <motion.main

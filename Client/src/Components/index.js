@@ -11,6 +11,9 @@ import Guidlines from "./Others/Guidlines";
 import Avatar from "./Common/Avatar";
 import SocialMediaSection from "./SocialMedia";
 import PreviousInterview from "./PreviousInterview";
+import ResumeUploadCard from "./Others/UploadFile";
+import InterviewSettings from "./Others/InterviewSettings";
+import Select from "./Common/Select";
 
 export {
   Nav,
@@ -26,4 +29,7 @@ export {
   Avatar,
   SocialMediaSection,
   PreviousInterview,
+  ResumeUploadCard,
+  InterviewSettings,
+  Select,
 };

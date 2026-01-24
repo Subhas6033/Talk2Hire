@@ -37,11 +37,7 @@ const router = createBrowserRouter([
       },
       {
         path: "/interview",
-        element: (
-          <ProtectedRoutes>
-            <Interview />
-          </ProtectedRoutes>
-        ),
+        element: <Interview />,
       },
       {
         path: "/login",
