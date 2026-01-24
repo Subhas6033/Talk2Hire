@@ -16,6 +16,8 @@
     "dev": "nodemon index.js"
   },
   "dependencies": {
+    "@mistralai/mistralai": "^1.13.0",
+    "basic-ftp": "^5.1.0",
     "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -23,8 +25,14 @@
     "express": "^5.2.1",
     "ftp": "^0.3.10",
     "jsonwebtoken": "^9.0.3",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.11.0",
+    "multer": "^2.0.2",
     "mysql2": "^3.16.1",
+    "node-fetch": "^3.3.2",
     "nodemailer": "^7.0.12",
-    "nodemon": "^3.1.11"
+    "nodemon": "^3.1.11",
+    "stream": "^0.0.3",
+    "xlsx": "^0.18.5"
   }
 }

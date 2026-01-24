@@ -3,6 +3,8 @@ const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const authRoutes = require("./Routes/auth.routes.js");
+const fileUploadRoutes = require("./Middlewares/multer.middlewares.js");
+const readFileRoutes = require("./Routes/mistral.routes.js");
 
 const app = express();
 dotenv.config();
@@ -30,5 +32,7 @@ app.use(
 app.use(cookieParser());
 
 app.use("/api/v1/auth", authRoutes);
+app.use("/api/v1/file", fileUploadRoutes);
+app.use("/api/v1/mistral", readFileRoutes);
 
 module.exports = app;
