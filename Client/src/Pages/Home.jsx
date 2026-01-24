@@ -33,7 +33,7 @@ const Home = () => {
       <link rel="canonical" href="https://www.google.com/" />
 
       {/* Hero Section */}
-      <section className="relative overflow-hidden bg-linear-to-br from-[#0b0f1f] via-[#11162a] to-[#0b0f1f]">
+      <section className="relative overflow-hidden bg-linear-to-br from-bgDark via-[#11162a] to-bgDark">
         {/* Decorative Glows */}
         <div className="absolute top-[-20%] left-[-10%] h-125 w-125 rounded-full bg-purpleGlow/20 blur-[140px]" />
         <div className="absolute bottom-[-20%] right-[-10%] h-125 w-125 rounded-full bg-purpleSoft/20 blur-[160px]" />
@@ -91,7 +91,7 @@ const Home = () => {
                   playsInline
                   className="w-full h-full object-cover"
                 />
-                <div className="absolute inset-0 bg-linear-to-t from-purple-500/60 via-transparent to-black/40 pointer-events-none" />
+                <div className="absolute inset-0 bg-linear-to-t from-gray-900/60 via-transparent to-black/40 pointer-events-none" />
               </div>
             </motion.div>
           </div>

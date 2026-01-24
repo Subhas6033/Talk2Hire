@@ -9,6 +9,7 @@ import Terms from "./Private/Terms";
 import Contact from "./Contact";
 import InterviewDashboard from "./Dashboard";
 import Profile from "./Profile.jsx";
+import VerifyPassword from "./Auth/VerifyPassword.jsx";
 
 export {
   Home,
@@ -22,4 +23,5 @@ export {
   Contact,
   InterviewDashboard,
   Profile,
+  VerifyPassword,
 };

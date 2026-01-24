@@ -12,6 +12,7 @@ import { Link } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { useAuth } from "../../Hooks/useAuthHook";
 import { useNavigate } from "react-router-dom";
+import { usePassword } from "../../Hooks/usePassHook";
 
 const Loader = () => (
   <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
@@ -22,6 +23,12 @@ const Login = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isMailSending, setIsMailSending] = useState(false);
   const { login, loading, error, isAuthenticated } = useAuth();
+  const {
+    sendForgotPasswordEmail,
+    loading: forgotLoading,
+    error: forgotError,
+  } = usePassword();
+
   const navigate = useNavigate();
 
   const {
@@ -62,12 +69,14 @@ const Login = () => {
     },
   });
 
+  // Forgot password handler
   const onResetSubmit = async (data) => {
     try {
       setIsMailSending(true);
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      console.log("Reset mail sent to:", data.resetEmail);
+
+      await sendForgotPasswordEmail(data.resetEmail).unwrap();
       setIsModalOpen(false);
+      navigate("/verify-password");
     } catch (error) {
       console.error("Error sending reset mail:", error);
     } finally {
@@ -214,6 +223,9 @@ const Login = () => {
                   "Send reset link"
                 )}
               </Button>
+              {forgotError && (
+                <p className="text-sm text-red-400">{forgotError}</p>
+              )}
             </div>
           }
         >
