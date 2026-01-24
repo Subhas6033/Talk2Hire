@@ -8,6 +8,7 @@ import {
   jobDifficulty as jobDifficultyOptions,
   experienceLevel,
 } from "../../Data/InterviewQuestions";
+import useFileResponse from "../../Hooks/useFileResponseHook";
 
 const InterviewSettings = () => {
   const {
@@ -26,6 +27,8 @@ const InterviewSettings = () => {
       resume: null,
     },
   });
+  // Hooks
+  const { startInterview, loading, error, data } = useFileResponse();
 
   const [openGuideLines, setOpenGuideLines] = useState(false);
   const domain = watch("domain");
@@ -35,9 +38,12 @@ const InterviewSettings = () => {
 
   const roleOptions = domain ? categoryMap[domain] : [];
 
-  const onSubmit = (data) => {
-    console.log("Interview Settings:", data);
-    setOpenGuideLines(true);
+  const onSubmit = async (formData) => {
+    const res = await startInterview(formData);
+
+    if (res.meta.requestStatus === "fulfilled") {
+      setOpenGuideLines(true);
+    }
   };
 
   // Reset dependent fields
@@ -142,14 +148,17 @@ const InterviewSettings = () => {
             />
           </div>
 
-          {/* CTA */}
           <div className="pt-8 flex justify-center">
             <Button
               type="submit"
-              disabled={!isValid || !resume}
-              className="px-10"
+              disabled={!isValid || !resume || loading}
+              className="px-10 flex items-center gap-2"
             >
-              Start the Interview
+              {loading && (
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              )}
+
+              {loading ? "Setting Interview..." : "Start the Interview"}
             </Button>
           </div>
         </form>

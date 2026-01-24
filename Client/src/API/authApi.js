@@ -3,7 +3,7 @@ import axios from "axios";
 
 // axios instances
 const api = axios.create({
-  baseURL: import.meta.env.VITE_BACKEND_URL,
+  baseURL: `${import.meta.env.VITE_BACKEND_URL}/api/v1/auth`,
   withCredentials: true,
   headers: {
     "Content-Type": "application/json",
@@ -35,7 +35,6 @@ export const loginUser = createAsyncThunk(
         email,
         password,
       });
-      console.log(response);
       return response.data;
     } catch (error) {
       return rejectWithValue(error.response?.data?.message || error.message);

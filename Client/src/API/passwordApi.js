@@ -5,7 +5,9 @@ export const forgotPassword = createAsyncThunk(
   "password/forgotPassword",
   async ({ email }, { rejectWithValue }) => {
     try {
-      const response = await api.post("/forgot-password", { email });
+      const response = await api.post("/api/v1/auth/forgot-password", {
+        email,
+      });
       return response.data;
     } catch (error) {
       return rejectWithValue(error.response?.data?.message || error.message);
@@ -17,7 +19,7 @@ export const verifyResetPasswordOTP = createAsyncThunk(
   "password/verifyResetPasswordOTP",
   async ({ email, otp }, { rejectWithValue }) => {
     try {
-      const response = await api.post("/verify-password", {
+      const response = await api.post("/api/v1/auth/verify-password", {
         email,
         otp,
       });
@@ -32,7 +34,7 @@ export const resetPassword = createAsyncThunk(
   "password/resetPassword",
   async ({ email, newPassword, confirmPassword }, { rejectWithValue }) => {
     try {
-      const response = await api.put("/update-password", {
+      const response = await api.put("/api/v1/auth/update-password", {
         email,
         newPassword,
         confirmPassword,

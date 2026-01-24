@@ -36,6 +36,7 @@ const router = createBrowserRouter([
         element: <About />,
       },
       {
+        // TODO: add this route as a protected routes
         path: "/interview",
         element: <Interview />,
       },
