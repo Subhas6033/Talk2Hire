@@ -14,7 +14,7 @@ const authMiddleware = (req, res, next) => {
     }
 
     if (!token) {
-      throw new APIERR(401, "Authentication required");
+      return next(new APIERR(401, "Authentication required"));
     }
 
     const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
@@ -26,8 +26,15 @@ const authMiddleware = (req, res, next) => {
 
     next();
   } catch (error) {
-    console.log("Auth Middleware Error:", error);
-    next(error);
+    if (error.name === "TokenExpiredError") {
+      return next(new APIERR(401, "Token expired. Please login again."));
+    }
+
+    if (error.name === "JsonWebTokenError") {
+      return next(new APIERR(401, "Invalid token. Please login again."));
+    }
+
+    next(new APIERR(401, "Unauthorized access."));
   }
 };
 

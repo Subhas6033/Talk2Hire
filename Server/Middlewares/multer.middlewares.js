@@ -11,7 +11,8 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 router.post(
   "/generate-questions",
-  authMiddleware,
+  // TODO: add the authMiddleWare on productions
+  // authMiddleware,
   upload.single("file"),
   generateQuestions
 );

@@ -1,4 +1,4 @@
-const { asyncHandler, APIERR } = require("../Utils/index.utils.js");
+const { asyncHandler, APIERR, APIRES } = require("../Utils/index.utils.js");
 const { uploadFileMicro } = require("./uploadFile.controllers");
 const { mistralResponse } = require("./mistral.controllers.js");
 const { openai } = require("../Config/openai.config.js");
@@ -78,10 +78,16 @@ STRICT RULES:
     throw new APIERR(500, "AI returned invalid JSON");
   }
 
-  res.status(200).json({
-    questions: parsed.questions || [],
-    duration: 300,
-  });
+  res.status(200).json(
+    new APIRES(
+      200,
+      {
+        questions: parsed.questions || [],
+        duration: 500, //by default
+      },
+      "Successfully generate the questions"
+    )
+  );
 });
 
 module.exports = { generateQuestions };
