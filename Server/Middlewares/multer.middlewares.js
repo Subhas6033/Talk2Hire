@@ -1,21 +1,19 @@
-const multer = require("multer");
 const { Router } = require("express");
-const authMiddleware = require("./auth.middlewares.js");
+const multer = require("multer");
 const {
-  uploadAndProcessFile,
-} = require("../Controllers/aiResponse.controllers.js");
+  generateQuestions,
+} = require("../Controllers/generateQuestions.controller");
+const authMiddleware = require("./auth.middlewares");
 
 const router = Router();
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-});
+const upload = multer({ storage: multer.memoryStorage() });
 
 router.post(
-  "/file-process",
+  "/generate-questions",
   authMiddleware,
   upload.single("file"),
-  uploadAndProcessFile
+  generateQuestions
 );
 
 module.exports = router;
