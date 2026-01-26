@@ -38,7 +38,11 @@ const router = createBrowserRouter([
       {
         // TODO: add this route as a protected routes
         path: "/interview",
-        element: <Interview />,
+        element: (
+          <ProtectedRoutes>
+            <Interview />
+          </ProtectedRoutes>
+        ),
       },
       {
         path: "/login",

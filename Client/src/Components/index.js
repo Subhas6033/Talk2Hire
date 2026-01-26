@@ -14,6 +14,9 @@ import PreviousInterview from "./PreviousInterview";
 import ResumeUploadCard from "./Others/UploadFile";
 import InterviewSettings from "./Others/InterviewSettings";
 import Select from "./Common/Select";
+import InterviewQuestions from "./Others/InterviewQuestions";
+import MicrophoneCheck from "./Others/MicrophoneCheck";
+import CameraCheck from "./Others/CamerCheck";
 
 export {
   Nav,
@@ -32,4 +35,7 @@ export {
   ResumeUploadCard,
   InterviewSettings,
   Select,
+  InterviewQuestions,
+  MicrophoneCheck,
+  CameraCheck,
 };

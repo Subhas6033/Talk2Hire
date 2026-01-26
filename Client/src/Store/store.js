@@ -1,7 +1,7 @@
 import { configureStore } from "@reduxjs/toolkit";
 import authReducer from "../API/authApi";
 import passwordReducer from "../API/passwordApi";
-import interviewReducer from "../API/processFileApi";
+import interviewReducer from "../API/interviewApi";
 
 export const store = configureStore({
   reducer: {

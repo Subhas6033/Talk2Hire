@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react";
 import { useForm, Controller } from "react-hook-form";
-import { Select, ResumeUploadCard, Button, Guidlines, Modal } from "../index";
+import {
+  Select,
+  ResumeUploadCard,
+  Button,
+  Guidlines,
+  Modal,
+  MicrophoneCheck,
+  CameraCheck,
+} from "../index";
 import { Card } from "../Common/Card";
 import {
   jobDomainOptions,
@@ -8,9 +16,9 @@ import {
   jobDifficulty as jobDifficultyOptions,
   experienceLevel,
 } from "../../Data/InterviewQuestions";
-import useFileResponse from "../../Hooks/useFileResponseHook";
+import useInterview from "../../Hooks/useInterviewHook";
 
-const InterviewSettings = () => {
+const InterviewSettings = ({ onInterviewReady }) => {
   const {
     control,
     watch,
@@ -27,10 +35,12 @@ const InterviewSettings = () => {
       resume: null,
     },
   });
-  // Hooks
-  const { startInterview, loading, error, data } = useFileResponse();
 
+  const { loadQuestions, status, error } = useInterview();
   const [openGuideLines, setOpenGuideLines] = useState(false);
+  const [isMicOpen, setIsMicOpen] = useState(false);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+
   const domain = watch("domain");
   const role = watch("role");
   const experience = watch("experience");
@@ -39,14 +49,14 @@ const InterviewSettings = () => {
   const roleOptions = domain ? categoryMap[domain] : [];
 
   const onSubmit = async (formData) => {
-    const res = await startInterview(formData);
+    const res = await loadQuestions(formData);
 
     if (res.meta.requestStatus === "fulfilled") {
       setOpenGuideLines(true);
     }
   };
 
-  // Reset dependent fields
+  // Reset the fields
   useEffect(() => {
     setValue("role", "");
     setValue("experience", "");
@@ -76,9 +86,7 @@ const InterviewSettings = () => {
         </div>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-8">
-          {/* Select Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-            {/* Job Sector */}
             <Controller
               name="domain"
               control={control}
@@ -93,7 +101,6 @@ const InterviewSettings = () => {
               )}
             />
 
-            {/* Job Role */}
             <Controller
               name="role"
               control={control}
@@ -109,7 +116,6 @@ const InterviewSettings = () => {
               )}
             />
 
-            {/* Experience Level */}
             <Controller
               name="experience"
               control={control}
@@ -129,7 +135,6 @@ const InterviewSettings = () => {
               )}
             />
 
-            {/* Difficulty */}
             <Controller
               name="difficulty"
               control={control}
@@ -147,34 +152,64 @@ const InterviewSettings = () => {
               )}
             />
           </div>
-
+          {/* Show the err */}
+          {error && (
+            <p className="text-red-500 mt-2 text-center">
+              {typeof error === "string"
+                ? error
+                : error.message || "Something went wrong"}
+            </p>
+          )}
           <div className="pt-8 flex justify-center">
             <Button
               type="submit"
-              disabled={!isValid || !resume || loading}
+              disabled={!isValid || !resume || status === "loading"}
               className="px-10 flex items-center gap-2"
             >
-              {loading && (
+              {status === "loading" && (
                 <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
               )}
-
-              {loading ? "Setting Interview..." : "Start the Interview"}
+              {status === "loading"
+                ? "Setting Interview..."
+                : "Start the Interview"}
             </Button>
           </div>
         </form>
       </Card>
 
-      {/* Show the guidelines modal  after successfull form submission */}
-      <div>
-        <Modal
-          isOpen={openGuideLines}
-          onClose={() => setOpenGuideLines(false)}
-          title="AI Interview Guidelines"
-          size="xl"
-        >
-          <Guidlines />
-        </Modal>
-      </div>
+      {/* Guidelines Modal */}
+      <Modal
+        isOpen={openGuideLines}
+        onClose={() => setOpenGuideLines(false)}
+        title="AI Interview Guidelines"
+        size="xl"
+      >
+        <Guidlines
+          onClick={() => {
+            setOpenGuideLines(false); //close guidelines
+            setIsMicOpen(true); // open mic check
+          }}
+        />
+      </Modal>
+
+      {/* Mic testing components */}
+      <MicrophoneCheck
+        isOpen={isMicOpen}
+        onClose={() => setIsMicOpen(false)}
+        onSuccess={() => {
+          setIsMicOpen(false);
+          setIsCameraOpen(true);
+        }}
+      />
+
+      <CameraCheck
+        isOpen={isCameraOpen}
+        onClose={() => setIsCameraOpen(false)}
+        onSuccess={() => {
+          setIsCameraOpen(false);
+          onInterviewReady();
+        }}
+      />
     </>
   );
 };
