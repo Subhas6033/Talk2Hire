@@ -106,7 +106,19 @@ async function mistralResponse({ ftpUrl, mimeType, originalFileName }) {
     messages: [
       {
         role: "system",
-        content: "Return STRICTLY valid JSON only. No markdown or backticks.",
+        content: `
+Return STRICTLY valid JSON only.
+Do NOT use markdown.
+Do NOT use backticks.
+
+Rules:
+- key_points must include:
+  - technologies
+  - tools
+  - frameworks
+  - projects
+  - measurable outcomes (numbers, %)
+        `,
       },
       {
         role: "user",
@@ -128,8 +140,24 @@ ${summaries.join("\n\n")}
   const cleanJson = finalResponse.choices[0].message.content
     .replace(/```json|```/gi, "")
     .trim();
+
   const parsed = JSON.parse(cleanJson);
-  parsed.raw_text = extractedText;
+
+  // --- Enrich raw_text with key_points (NO OTHER CHANGES) ---
+  const enrichedRawText = `
+=== KEY POINTS (IMPORTANT FOR INTERVIEW QUESTIONS) ===
+${
+  Array.isArray(parsed.key_points)
+    ? parsed.key_points.map((p) => `- ${p}`).join("\n")
+    : ""
+}
+
+=== FULL RESUME TEXT ===
+${extractedText}
+  `.trim();
+
+  parsed.raw_text = enrichedRawText;
+
   console.log(parsed);
   return parsed;
 }

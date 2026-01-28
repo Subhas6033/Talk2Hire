@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@ai-sdk/deepseek": "^2.0.11",
+    "@deepgram/sdk": "^4.11.3",
     "@mistralai/mistralai": "^1.13.0",
     "basic-ftp": "^5.1.0",
     "bcrypt": "^6.0.0",
@@ -35,7 +36,9 @@
     "nodemailer": "^7.0.12",
     "nodemon": "^3.1.11",
     "openai": "^6.16.0",
+    "socket.io": "^4.8.3",
     "stream": "^0.0.3",
+    "ws": "^8.19.0",
     "xlsx": "^0.18.5"
   }
 }

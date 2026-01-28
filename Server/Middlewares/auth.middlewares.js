@@ -23,8 +23,9 @@ const authMiddleware = (req, res, next) => {
       id: decoded.id,
       email: decoded.email,
     };
-
     next();
+    console.log(req.user?.id);
+    return req.user?.id;
   } catch (error) {
     if (error.name === "TokenExpiredError") {
       return next(new APIERR(401, "Token expired. Please login again."));
