@@ -17,13 +17,14 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
   const audioQueueRef = useRef([]);
   const isPlayingRef = useRef(false);
   const canListenRef = useRef(false);
-  const hasStartedRef = useRef(false); // NEW: Ref version for immediate access
+  const hasStartedRef = useRef(false);
 
   const socketRef = useRef(null);
   const audioCtxRef = useRef(null);
   const recognitionRef = useRef(null);
   const micStreamRef = useRef(null);
   const micProcessorRef = useRef(null);
+  const isCleaningUpRef = useRef(false); // NEW: Prevent cleanup during normal operation
 
   /* 🔊 AUDIO CONTEXT INIT */
   useEffect(() => {
@@ -110,7 +111,11 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
       console.log("🎤 SpeechRecognition ENDED");
       setIsListening(false);
 
-      // Auto-restart only if conditions are met
+      if (isCleaningUpRef.current) {
+        console.log("🚫 Cleanup in progress, not restarting");
+        return;
+      }
+
       if (
         canListenRef.current &&
         !isPlayingRef.current &&
@@ -131,13 +136,16 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
       console.error("🎤 Recognition error:", e.error);
       setIsListening(false);
 
-      // Don't restart on certain errors
       if (e.error === "aborted" || e.error === "no-speech") {
         console.log("🚫 Not restarting due to:", e.error);
         return;
       }
 
-      // Retry on other errors if allowed
+      if (isCleaningUpRef.current) {
+        console.log("🚫 Cleanup in progress, not retrying");
+        return;
+      }
+
       if (
         canListenRef.current &&
         !isPlayingRef.current &&
@@ -161,7 +169,6 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
 
         setUserText(text);
 
-        // Stop listening after getting answer
         canListenRef.current = false;
         stopRecognition();
 
@@ -176,6 +183,7 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
     console.log("✅ Speech recognition initialized");
 
     return () => {
+      isCleaningUpRef.current = true;
       try {
         recognition.abort();
       } catch (e) {
@@ -183,7 +191,7 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
       }
       console.log("🎤 Recognition cleaned up");
     };
-  }, []); // Empty deps - only initialize once
+  }, []);
 
   /* 📝 HANDLE QUESTIONS */
   function handleQuestion(payload) {
@@ -204,34 +212,25 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
     if (hasStartedRef.current) return;
 
     try {
-      // Set BOTH state and ref
       setHasStarted(true);
       hasStartedRef.current = true;
       console.log("🚀 Starting interview");
 
-      // Resume AudioContext
       if (audioCtxRef.current?.state === "suspended") {
         await audioCtxRef.current.resume();
         console.log("🔊 AudioContext resumed");
       }
 
-      // Start mic access
       await startMicStreaming();
 
-      // Don't start listening yet - wait for first question
       canListenRef.current = false;
       console.log("⏳ Waiting for first question audio");
 
-      // Emit ready signal
       if (socketRef.current?.connected) {
         console.log("📤 Emitting ready_for_question");
         socketRef.current.emit("ready_for_question");
       } else {
-        console.log("⏳ Waiting for socket connection...");
-        socketRef.current?.once("connect", () => {
-          console.log("📤 Socket connected, emitting ready_for_question");
-          socketRef.current.emit("ready_for_question");
-        });
+        console.log("⚠️ Socket not connected!");
       }
     } catch (error) {
       console.error("❌ Error starting interview:", error);
@@ -255,11 +254,9 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
       isPlayingRef.current = false;
       setIsPlaying(false);
 
-      // NOW enable listening and start recognition
       console.log("🎤 Enabling speech recognition after audio");
       canListenRef.current = true;
 
-      // Give a small delay to ensure audio is fully stopped
       setTimeout(() => {
         console.log("🎤 Attempting to start recognition after delay");
         startRecognition();
@@ -278,22 +275,18 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
 
       const buffer = audioQueueRef.current.shift();
 
-      // Ensure proper alignment for 16-bit PCM
       const byteLength = buffer.byteLength - (buffer.byteLength % 2);
       const alignedBuffer = buffer.slice(0, byteLength);
 
-      // Convert PCM16 to Float32
       const pcm16 = new Int16Array(alignedBuffer);
       const pcm32 = new Float32Array(pcm16.length);
       for (let i = 0; i < pcm16.length; i++) {
         pcm32[i] = pcm16[i] / 32768.0;
       }
 
-      // Create audio buffer at 48000 Hz
       const audioBuffer = audioCtx.createBuffer(1, pcm32.length, 48000);
       audioBuffer.copyToChannel(pcm32, 0);
 
-      // Create source and play
       const source = audioCtx.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(audioCtx.destination);
@@ -301,20 +294,16 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
       source.onended = () => {
         console.log("🔊 Chunk finished playing");
 
-        // Continue playing if more chunks exist
         if (audioQueueRef.current.length > 0) {
           playNextChunk();
         } else {
-          // All chunks done
           isPlayingRef.current = false;
           setIsPlaying(false);
           console.log("🔊 All audio chunks played");
 
-          // Enable listening
           console.log("🎤 Enabling speech recognition after all audio");
           canListenRef.current = true;
 
-          // Give a small delay before starting
           setTimeout(() => {
             console.log("🎤 Attempting to start recognition after delay");
             startRecognition();
@@ -329,7 +318,6 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
       isPlayingRef.current = false;
       setIsPlaying(false);
 
-      // Try to recover by enabling listening
       canListenRef.current = true;
       setTimeout(() => startRecognition(), 300);
     }
@@ -392,6 +380,11 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
     });
     socketRef.current = socket;
 
+    // Log all events for debugging
+    socket.onAny((eventName, ...args) => {
+      console.log(`📡 Socket event received: "${eventName}"`, args);
+    });
+
     socket.on("connect", () => {
       console.log("✅ Socket connected:", socket.id);
       setStatus("live");
@@ -405,7 +398,7 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
     socket.on("next_question", (data) => {
       console.log("📨 Received 'next_question' event:", data);
       handleQuestion(data);
-      setUserText(""); // Clear previous answer
+      setUserText("");
     });
 
     socket.on("tts_audio", (chunk) => {
@@ -440,7 +433,6 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
 
       console.log("🔊 Received audio chunk:", arrayBuffer.byteLength, "bytes");
 
-      // IMPORTANT: Disable listening and stop recognition when audio arrives
       canListenRef.current = false;
       stopRecognition();
 
@@ -468,10 +460,16 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
 
     socket.on("error", (error) => {
       console.error("❌ Socket error:", error);
+      // Add user-visible error
+      alert(
+        `Interview error: ${error.message || "Unknown error"}. Please refresh and try again.`
+      );
+      setStatus("error");
     });
 
     return () => {
       console.log("🧹 Cleaning up socket and resources...");
+      isCleaningUpRef.current = true;
 
       canListenRef.current = false;
       hasStartedRef.current = false;
@@ -536,11 +534,6 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
 
         {hasStarted && (
           <div className="px-4 pb-4 space-y-2">
-            {/* {serverText && (
-              <p className="text-sm text-blue-600 dark:text-blue-400">
-                <strong>Question:</strong> {serverText}
-              </p>
-            )} */}
             {userText && (
               <p className="text-sm text-green-600 dark:text-green-400">
                 <strong>Your answer:</strong> {userText}
