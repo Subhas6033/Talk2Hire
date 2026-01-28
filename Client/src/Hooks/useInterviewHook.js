@@ -1,36 +1,47 @@
+import { useEffect } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import {
-  fetchInterviewQuestions,
-  nextQuestion,
-  resetInterview,
+  connectSocket,
+  socketConnected,
+  receivePartialTranscript,
+  receiveFinalAnswer,
+  receiveNextQuestion,
+  receiveAudioChunk,
 } from "../API/interviewApi";
 
-const useInterview = () => {
+export const useInterviewSocket = (userId) => {
   const dispatch = useDispatch();
-  const interview = useSelector((state) => state.interview);
+  const { sessionId, status } = useSelector((state) => state.interview);
 
-  const loadQuestions = (formData) => {
-    // returns the actions
-    return dispatch(fetchInterviewQuestions(formData));
-  };
+  useEffect(() => {
+    if (!sessionId || !userId) return; // exit early if sessionId/userId missing
 
-  const goNext = () => {
-    dispatch(nextQuestion());
-  };
-  console.log(interview.status);
-  return {
-    questions: interview.questions,
-    currentQuestion: interview.questions[interview.currentIndex],
-    currentIndex: interview.currentIndex,
-    isLastQuestion: interview.currentIndex === interview.questions.length - 1,
-    // TODO: Problem with this status
-    status: interview.status || "",
-    duration: interview.duration,
-    error: interview.error,
-    loadQuestions,
-    goNext,
-    resetInterview: () => dispatch(resetInterview()),
-  };
+    const ws = new WebSocket(
+      `ws://localhost:3000?interviewId=${sessionId}&userId=${userId}`
+    );
+
+    ws.onopen = () => dispatch(socketConnected());
+
+    ws.onmessage = (event) => {
+      if (typeof event.data === "string") {
+        const data = JSON.parse(event.data);
+
+        if (data.type === "partial")
+          dispatch(receivePartialTranscript(data.text));
+
+        if (data.type === "next_question") dispatch(receiveNextQuestion(data));
+
+        if (data.type === "final_answer")
+          dispatch(receiveFinalAnswer(data.answer));
+      } else {
+        dispatch(receiveAudioChunk(event.data));
+      }
+    };
+
+    dispatch(connectSocket(ws));
+
+    return () => ws.close();
+  }, [sessionId, userId, dispatch]);
+
+  return { sessionId, status };
 };
-
-export default useInterview;

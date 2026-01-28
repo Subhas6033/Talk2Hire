@@ -9,15 +9,15 @@ const Guidelines = ({ onClick }) => {
 
   const handleStartFullscreen = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      // const stream = await navigator.mediaDevices.getUserMedia({ video: true });
 
-      if (document.documentElement.requestFullscreen) {
-        await document.documentElement.requestFullscreen();
-      }
+      // if (document.documentElement.requestFullscreen) {
+      //   await document.documentElement.requestFullscreen();
+      // }
 
       setPermissionsGranted(true);
       setError("");
-      stream.getTracks().forEach((track) => track.stop());
+      // stream.getTracks().forEach((track) => track.stop());
 
       //Notify parent to close guidelines & open mic check
       onClick?.();

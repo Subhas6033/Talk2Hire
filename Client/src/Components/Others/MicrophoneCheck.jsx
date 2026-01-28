@@ -2,13 +2,12 @@ import { useEffect, useState, useRef } from "react";
 import { Modal, Button } from "../index";
 import { useNavigate } from "react-router-dom";
 
-const REQUIRED_SECONDS = 2; // user must speak 2s
-const MAX_WINDOW_SECONDS = 5; // only first 5s allowed
+const REQUIRED_SECONDS = 2;
+const MAX_WINDOW_SECONDS = 5;
 const THRESHOLD = 0.03;
 
 const MicrophoneCheck = ({ isOpen, onClose, onSuccess }) => {
   const navigate = useNavigate();
-
   const [status, setStatus] = useState("idle"); // idle | checking | success | failed
   const [error, setError] = useState("");
   const [level, setLevel] = useState(0);
@@ -18,7 +17,6 @@ const MicrophoneCheck = ({ isOpen, onClose, onSuccess }) => {
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
   const rafRef = useRef(null);
-
   const startTimeRef = useRef(null);
   const lastFrameTimeRef = useRef(null);
   const stoppedRef = useRef(false);
@@ -58,20 +56,16 @@ const MicrophoneCheck = ({ isOpen, onClose, onSuccess }) => {
 
         const delta = (time - lastFrameTimeRef.current) / 1000;
         lastFrameTimeRef.current = time;
-
         const elapsed = (time - startTimeRef.current) / 1000;
 
-        // ⛔ Stop if 5 seconds window exceeded
         if (elapsed >= MAX_WINDOW_SECONDS) {
           setStatus("failed");
           setError("No sufficient speech detected. Redirecting to home...");
           stopMic();
-
           setTimeout(() => {
             onClose?.();
             navigate("/");
           }, 1500);
-
           return;
         }
 
@@ -89,12 +83,10 @@ const MicrophoneCheck = ({ isOpen, onClose, onSuccess }) => {
         if (rms > THRESHOLD) {
           setSpokenSeconds((prev) => {
             const next = prev + delta;
-
             if (next >= REQUIRED_SECONDS) {
               setStatus("success");
               stopMic();
             }
-
             return next;
           });
         }
@@ -114,10 +106,8 @@ const MicrophoneCheck = ({ isOpen, onClose, onSuccess }) => {
     if (stoppedRef.current) return;
     stoppedRef.current = true;
 
-    if (rafRef.current) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
+    rafRef.current && cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
 
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
@@ -125,10 +115,7 @@ const MicrophoneCheck = ({ isOpen, onClose, onSuccess }) => {
     }
 
     const ctx = audioContextRef.current;
-
-    if (ctx && ctx.state !== "closed") {
-      ctx.close().catch(() => {});
-    }
+    if (ctx && ctx.state !== "closed") ctx.close().catch(() => {});
 
     audioContextRef.current = null;
     analyserRef.current = null;
@@ -167,15 +154,13 @@ const MicrophoneCheck = ({ isOpen, onClose, onSuccess }) => {
               Spoken: {spokenSeconds.toFixed(1)} / {REQUIRED_SECONDS}s
             </p>
 
-            {/* 🎤 Voice bars */}
+            {/* Voice Bars */}
             <div className="flex justify-center items-end gap-1 h-16">
               {Array.from({ length: 12 }).map((_, i) => (
                 <div
                   key={i}
                   className="w-2 rounded-full bg-purple-500 transition-all"
-                  style={{
-                    height: `${Math.min(100, level * 3000)}%`,
-                  }}
+                  style={{ height: `${Math.min(100, level * 3000)}%` }}
                 />
               ))}
             </div>

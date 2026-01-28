@@ -1,32 +1,28 @@
-import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
+import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import axios from "axios";
+
 const baseURL = import.meta.env.VITE_BACKEND_URL;
 
-export const fetchInterviewQuestions = createAsyncThunk(
-  "interview/fetchQuestions",
-  async (formData, { rejectWithValue }) => {
+/**
+ * STEP 1: Start interview (HTTP)
+ * Generates first question + sessionId
+ */
+export const startInterview = createAsyncThunk(
+  "interview/start",
+  async ({ resume }, { rejectWithValue }) => {
     try {
       const fd = new FormData();
-      if (!formData.resume) {
-        throw new Error("Resume file required");
-      }
-      fd.append("file", formData.resume);
-      fd.append("domain", formData.domain);
-      fd.append("role", formData.role);
-      fd.append("experience", formData.experience);
-      fd.append("difficulty", formData.difficulty);
-      console.log(formData);
+      fd.append("file", resume);
+
       const res = await axios.post(
         `${baseURL}/api/v1/questions/generate-questions`,
         fd,
         {
           withCredentials: true,
-          headers: { "Content-Type": "multipart/form-data" },
-          validateStatus: (status) => status >= 200 && status < 300,
         }
       );
-      console.log(res.data.data);
-      return res.data;
+
+      return res.data.data;
     } catch (err) {
       return rejectWithValue(err.response?.data || err.message);
     }
@@ -36,44 +32,126 @@ export const fetchInterviewQuestions = createAsyncThunk(
 const interviewSlice = createSlice({
   name: "interview",
   initialState: {
-    questions: [],
-    currentIndex: 0,
-    duration: 300,
-    status: "idle",
+    sessionId: null,
+    socket: null,
+    status: "idle", // idle | loading | ready | connecting | live | ended | failed
+    currentQuestion: null,
+    questionOrder: 0,
+    liveTranscript: "",
+    finalAnswer: "",
+    history: [],
+    audioQueue: [], // store audio chunks for playback
     error: null,
   },
+
   reducers: {
-    nextQuestion(state) {
-      if (state.currentIndex < state.questions.length - 1) {
-        state.currentIndex += 1;
-      }
+    /**
+     * STEP 2: Connect WebSocket
+     */
+    connectSocket(state, action) {
+      state.socket = action.payload;
+      state.status = "connecting";
     },
+
+    socketConnected(state) {
+      state.status = "live";
+    },
+
+    socketError(state, action) {
+      state.error = action.payload;
+      state.status = "ended";
+    },
+
+    /**
+     * 🎙️ Receive partial speech transcript from Deepgram
+     */
+    receivePartialTranscript(state, action) {
+      state.liveTranscript = action.payload;
+    },
+
+    /**
+     * ✅ Receive final transcript (user finished answering)
+     */
+    receiveFinalAnswer(state, action) {
+      state.finalAnswer = action.payload;
+
+      state.history.push({
+        question: state.currentQuestion,
+        answer: action.payload,
+      });
+
+      state.liveTranscript = "";
+    },
+
+    /**
+     * ❓ Receive next question from server
+     */
+    receiveNextQuestion(state, action) {
+      state.currentQuestion = action.payload.question;
+      state.questionOrder = action.payload.questionOrder;
+      state.finalAnswer = "";
+    },
+
+    /**
+     * 🔊 Receive audio chunk (TTS)
+     */
+    receiveAudioChunk(state, action) {
+      state.audioQueue.push(action.payload);
+    },
+
+    /**
+     * 🏁 Interview finished
+     */
+    interviewEnded(state) {
+      state.status = "ended";
+    },
+
+    /**
+     * Reset entire interview state
+     */
     resetInterview(state) {
-      state.questions = [];
-      state.currentIndex = 0;
-      state.duration = 300;
+      state.sessionId = null;
+      state.socket = null;
       state.status = "idle";
+      state.currentQuestion = null;
+      state.questionOrder = 0;
+      state.liveTranscript = "";
+      state.finalAnswer = "";
+      state.history = [];
+      state.audioQueue = [];
+      state.error = null;
     },
   },
+
   extraReducers: (builder) => {
     builder
-      .addCase(fetchInterviewQuestions.pending, (state) => {
+      /* Start interview */
+      .addCase(startInterview.pending, (state) => {
         state.status = "loading";
       })
-      .addCase(fetchInterviewQuestions.fulfilled, (state, action) => {
-        console.log(action.payload.data);
-        state.status = "succeeded";
-        state.questions = action.payload.data?.questions || [];
-        state.duration = action.payload.data?.duration || 300;
-        state.currentIndex = 0;
+      .addCase(startInterview.fulfilled, (state, action) => {
+        state.status = "ready";
+        state.sessionId = action.payload.sessionId;
+        state.currentQuestion = action.payload.question;
+        state.questionOrder = 1;
       })
-      .addCase(fetchInterviewQuestions.rejected, (state, action) => {
+      .addCase(startInterview.rejected, (state, action) => {
         state.status = "failed";
         state.error = action.payload;
-        console.error("Interview fetch failed:", action.payload);
       });
   },
 });
 
-export const { nextQuestion, resetInterview } = interviewSlice.actions;
+export const {
+  connectSocket,
+  socketConnected,
+  socketError,
+  receivePartialTranscript,
+  receiveFinalAnswer,
+  receiveNextQuestion,
+  receiveAudioChunk,
+  interviewEnded,
+  resetInterview,
+} = interviewSlice.actions;
+
 export default interviewSlice.reducer;

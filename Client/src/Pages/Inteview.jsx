@@ -7,42 +7,16 @@ import {
 } from "../Components/index";
 
 const Interview = () => {
-  const [showInterview, setShowInterview] = useState(false);
-  const [questions, setQuestions] = useState([]);
-  const [duration, setDuration] = useState(300);
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [session, setSession] = useState(null); // { interviewId, userId }
   const [showSubmissionModal, setShowSubmissionModal] = useState(false);
 
-  const FALLBACK_QUESTIONS = [
-    "Tell me about yourself.",
-    "What are your strongest technical skills?",
-    "Describe a challenging problem you solved recently.",
-    "How do you handle tight deadlines?",
-    "Why do you want this role?",
-  ];
-
-  // Called when interview settings are ready
-  const handleInterviewReady = () => {
-    setQuestions(FALLBACK_QUESTIONS);
-    setDuration(300);
-    setCurrentQuestionIndex(0);
-    setShowInterview(true);
+  const handleInterviewReady = (data) => {
+    console.log("Interview session ready:", data);
+    setSession(data);
   };
 
   const handleCancelInterview = () => {
-    setShowInterview(false);
-    setQuestions([]);
-    setCurrentQuestionIndex(0);
-  };
-
-  const handleNextQuestion = () => {
-    if (currentQuestionIndex < questions.length - 1) {
-      setCurrentQuestionIndex((prev) => prev + 1);
-    } else {
-      // Last question submitted
-      setShowInterview(false); // Exit full-screen
-      setShowSubmissionModal(true); // Show submission modal
-    }
+    setSession(null);
   };
 
   return (
@@ -54,24 +28,22 @@ const Interview = () => {
             Interview Preparation
           </h1>
           <p className="text-textMuted max-w-2xl mx-auto">
-            Upload your resume and configure your interview preferences.
+            Upload your resume and start your real-time AI interview.
           </p>
         </div>
 
-        {/* Settings Page */}
-        {!showInterview && !showSubmissionModal && (
+        {/* Settings */}
+        {!session && !showSubmissionModal && (
           <InterviewSettings onInterviewReady={handleInterviewReady} />
         )}
 
-        {/* Fullscreen Interview Questions */}
-        {showInterview && (
+        {/* Interview */}
+        {session && !showSubmissionModal && (
           <InterviewQuestions
-            isOpen={showInterview}
-            question={questions[currentQuestionIndex]}
-            duration={duration}
-            isLastQuestion={currentQuestionIndex === questions.length - 1}
+            interviewId={session.interviewId}
+            userId={session.userId}
             onCancel={handleCancelInterview}
-            onNext={handleNextQuestion}
+            onFinish={() => setShowSubmissionModal(true)}
           />
         )}
 
@@ -90,7 +62,6 @@ const Interview = () => {
             <Button
               onClick={() => {
                 setShowSubmissionModal(false);
-                // navigate to home
                 window.location.href = "/";
               }}
             >
