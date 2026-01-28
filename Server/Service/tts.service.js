@@ -1,119 +1,124 @@
 // Service/tts.service.js
-const https = require("https");
+const { createClient } = require("@deepgram/sdk");
 
-// IMPORTANT: Deepgram supports these sample rates for linear16: 8000, 16000, 24000, 32000, 48000
-// We use 48000 for high quality audio
+function createTTSStream() {
+  const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
-exports.createTTSStream = () => {
-  /**
-   * Stream TTS audio from Deepgram
-   * @param {string} text - Text to convert to speech
-   * @param {function} onChunk - Callback function (chunk: Buffer | null)
-   */
-  const speakStream = (text, onChunk) => {
-    if (!text || text.trim() === "") {
-      console.log("⚠️ Empty text provided to TTS");
-      onChunk(null);
-      return;
-    }
-
-    if (!process.env.DEEPGRAM_API_KEY) {
-      console.error("❌ DEEPGRAM_API_KEY not set in environment variables");
-      onChunk(null);
-      return;
-    }
-
-    console.log(
-      "🔊 Starting TTS for text:",
-      text.substring(0, 100) + (text.length > 100 ? "..." : "")
-    );
-
-    const body = JSON.stringify({ text });
-
-    const options = {
-      hostname: "api.deepgram.com",
-      // CORRECTED: Use 48000 Hz (Deepgram supported rate)
-      path: "/v1/speak?model=aura-orpheus-en&encoding=linear16&sample_rate=48000",
-      method: "POST",
-      headers: {
-        Authorization: `Token ${process.env.DEEPGRAM_API_KEY}`,
-        "Content-Type": "application/json",
-        "Content-Length": Buffer.byteLength(body),
-      },
-    };
-
-    console.log("📡 Making TTS request to Deepgram (48kHz)...");
-
-    const req = https.request(options, (res) => {
-      console.log("✅ TTS response started, status:", res.statusCode);
-
-      if (res.statusCode !== 200) {
-        console.error("❌ TTS error, status:", res.statusCode);
-        console.error("❌ Error header:", res.headers["dg-error"]);
-
-        let errorBody = "";
-        res.on("data", (chunk) => {
-          errorBody += chunk.toString();
-        });
-
-        res.on("end", () => {
-          console.error("❌ Error response body:", errorBody);
-          onChunk(null);
-        });
+  return {
+    /**
+     * Stream TTS audio chunks via callback
+     * @param {string} text - Text to convert to speech
+     * @param {function} onChunk - Callback (chunk) => void, called with null when done
+     */
+    speakStream: async function (text, onChunk) {
+      if (!text || typeof text !== "string") {
+        console.error("❌ Invalid text for TTS");
+        onChunk(null);
         return;
       }
 
-      let totalBytes = 0;
-      let chunkCount = 0;
+      try {
+        console.log("🔊 Requesting TTS from Deepgram...");
+        console.log("📝 Text length:", text.length, "characters");
 
-      res.on("data", (chunk) => {
-        chunkCount++;
-        totalBytes += chunk.length;
-        console.log(
-          `📦 TTS chunk #${chunkCount}: ${chunk.length} bytes (total: ${totalBytes})`
+        const response = await deepgram.speak.request(
+          { text },
+          {
+            model: "aura-asteria-en",
+            encoding: "linear16",
+            sample_rate: 48000,
+            container: "none",
+          }
         );
 
-        const bufferChunk = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        onChunk(bufferChunk);
-      });
+        const stream = await response.getStream();
 
-      res.on("end", () => {
+        if (!stream) {
+          console.error("❌ No audio stream returned from Deepgram");
+          onChunk(null);
+          return;
+        }
+
+        console.log("✅ TTS stream started");
+
+        let chunkCount = 0;
+        let totalBytes = 0;
+
+        // Process stream chunks
+        for await (const chunk of stream) {
+          if (chunk && chunk.length > 0) {
+            chunkCount++;
+            totalBytes += chunk.length;
+
+            // Send chunk to callback
+            onChunk(chunk);
+          }
+        }
+
         console.log(
-          `✅ TTS stream complete. Total: ${totalBytes} bytes in ${chunkCount} chunks`
+          `✅ TTS streaming complete: ${totalBytes} bytes in ${chunkCount} chunks`
         );
+
+        // Signal end of stream
         onChunk(null);
-      });
+      } catch (error) {
+        console.error("❌ TTS streaming error:", error);
+        console.error("Error details:", {
+          message: error.message,
+          stack: error.stack,
+        });
 
-      res.on("error", (error) => {
-        console.error("❌ TTS response stream error:", error);
+        // Signal end even on error
         onChunk(null);
-      });
-    });
+      }
+    },
 
-    req.on("error", (error) => {
-      console.error("❌ TTS request error:", error.message);
-      onChunk(null);
-    });
+    /**
+     * Get complete audio buffer (alternative method)
+     * @param {string} text - Text to convert to speech
+     * @returns {Promise<Buffer>} Complete audio buffer
+     */
+    speakBuffer: async function (text) {
+      if (!text || typeof text !== "string") {
+        throw new Error("Invalid text for TTS");
+      }
 
-    req.on("timeout", () => {
-      console.error("❌ TTS request timeout");
-      req.destroy();
-      onChunk(null);
-    });
+      try {
+        console.log("🔊 Requesting complete TTS buffer from Deepgram...");
 
-    req.setTimeout(30000);
+        const response = await deepgram.speak.request(
+          { text },
+          {
+            model: "aura-asteria-en",
+            encoding: "linear16",
+            sample_rate: 48000,
+            container: "none",
+          }
+        );
 
-    try {
-      req.write(body);
-      req.end();
-      console.log("📤 TTS request sent");
-    } catch (error) {
-      console.error("❌ Error writing/ending request:", error);
-      onChunk(null);
-    }
+        const stream = await response.getStream();
+
+        if (!stream) {
+          throw new Error("No audio stream returned from Deepgram");
+        }
+
+        const chunks = [];
+        for await (const chunk of stream) {
+          if (chunk) {
+            chunks.push(chunk);
+          }
+        }
+
+        const buffer = Buffer.concat(chunks);
+        console.log(`✅ TTS buffer complete: ${buffer.length} bytes`);
+
+        return buffer;
+      } catch (error) {
+        console.error("❌ TTS buffer error:", error);
+        throw error;
+      }
+    },
   };
+}
 
-  return {
-    speakStream,
-  };
-};
+module.exports = { createTTSStream };
