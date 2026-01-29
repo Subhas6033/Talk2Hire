@@ -16,10 +16,17 @@ const CameraCheck = ({ isOpen, onClose, onSuccess }) => {
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user" },
+        video: {
+          facingMode: "user",
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
       });
 
-      if (stoppedRef.current) return;
+      if (stoppedRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
 
       streamRef.current = stream;
 
@@ -31,6 +38,7 @@ const CameraCheck = ({ isOpen, onClose, onSuccess }) => {
       // If stream is active → success
       setStatus("success");
     } catch (err) {
+      console.error("Camera error:", err);
       setStatus("failed");
       setError("Camera access denied or camera not available.");
       stopCamera();
@@ -47,13 +55,25 @@ const CameraCheck = ({ isOpen, onClose, onSuccess }) => {
     }
   };
 
+  const handleStartInterview = () => {
+    if (streamRef.current && onSuccess) {
+      // Pass the stream to parent component
+      onSuccess(streamRef.current);
+      // Don't stop the stream here - parent will manage it
+      streamRef.current = null; // Remove our reference
+    }
+  };
+
   useEffect(() => {
     if (isOpen) {
       startCameraTest();
     }
 
     return () => {
-      stopCamera();
+      // Only stop camera if we still own the stream
+      if (streamRef.current) {
+        stopCamera();
+      }
       setStatus("idle");
       setError("");
     };
@@ -69,37 +89,65 @@ const CameraCheck = ({ isOpen, onClose, onSuccess }) => {
     >
       <div className="space-y-6 text-center">
         {/* Video Preview */}
-        <div className="w-full h-56 bg-black/60 rounded-lg overflow-hidden">
+        <div className="w-full h-64 bg-black/60 rounded-lg overflow-hidden relative">
           <video
             ref={videoRef}
             autoPlay
             muted
             playsInline
-            className="w-full h-full object-cover"
+            className="w-full h-full object-cover mirror"
+            style={{ transform: "scaleX(-1)" }}
           />
+          {status === "checking" && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+              <div className="text-white">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-2"></div>
+                <p className="text-sm">Accessing camera...</p>
+              </div>
+            </div>
+          )}
         </div>
 
         {status === "checking" && (
-          <p className="text-sm text-white/70">Checking camera access…</p>
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            Please allow camera access when prompted
+          </p>
         )}
 
         {status === "success" && (
           <>
-            <p className="text-green-600 font-medium">
-              Camera is working properly ✅
+            <p className="text-green-600 dark:text-green-400 font-medium">
+              ✅ Camera is working properly
+            </p>
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              Your camera will be visible during the interview
             </p>
 
-            <Button onClick={onSuccess}>Start Interview</Button>
+            <Button onClick={handleStartInterview} className="w-full">
+              Start Interview
+            </Button>
           </>
         )}
 
         {status === "failed" && (
           <>
-            <p className="text-red-500 text-center">{error}</p>
+            <p className="text-red-500 text-center font-medium">{error}</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              Make sure you've granted camera permissions in your browser
+            </p>
 
-            <Button variant="secondary" onClick={startCameraTest}>
-              Try Again
-            </Button>
+            <div className="flex gap-3">
+              <Button
+                variant="secondary"
+                onClick={startCameraTest}
+                className="flex-1"
+              >
+                Try Again
+              </Button>
+              <Button variant="secondary" onClick={onClose} className="flex-1">
+                Cancel
+              </Button>
+            </div>
           </>
         )}
       </div>
