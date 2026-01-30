@@ -489,6 +489,16 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
       }
     });
 
+    socket.on("interview_complete", (data) => {
+      console.log("🎉 Interview completed:", data);
+      setCurrentQuestion("Interview completed! Thank you for your time.");
+      disableListening();
+
+      alert(
+        `Interview completed! You answered ${data.totalQuestions} questions.`
+      );
+    });
+
     socket.on("tts_end", () => {
       console.log("🔔 TTS stream ended");
       ttsStreamActiveRef.current = false;
