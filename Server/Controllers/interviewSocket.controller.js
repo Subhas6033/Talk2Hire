@@ -36,6 +36,11 @@ function initInterviewSocket(httpServer) {
     let deepgramConnection = null;
     let isListeningActive = false;
 
+    // ✅ NEW: Idle detection state
+    let awaitingRepeatResponse = false;
+    let currentQuestionText = "";
+    let idleCount = 0;
+
     // Maximum questions limit
     const MAX_QUESTIONS = 10;
 
@@ -92,6 +97,128 @@ function initInterviewSocket(httpServer) {
 
       console.log("✅ ✅ ✅ Initialization complete!");
 
+      // ✅ NEW: Handle idle timeout
+      async function handleIdle() {
+        console.log("⏰ Handling idle timeout");
+
+        // Pause idle detection while we handle this
+        if (deepgramConnection) {
+          deepgramConnection.pauseIdleDetection();
+        }
+
+        if (awaitingRepeatResponse) {
+          // User didn't respond to "repeat?" question, move to next
+          console.log(
+            "⏭️ No response to repeat prompt, moving to next question"
+          );
+          awaitingRepeatResponse = false;
+          idleCount = 0;
+
+          // Disable listening temporarily
+          isListeningActive = false;
+          socket.emit("listening_disabled");
+
+          // Move to next question automatically
+          await moveToNextQuestion();
+        } else {
+          // First idle, ask if they want to repeat
+          console.log("❓ First idle - asking if user wants to repeat");
+          awaitingRepeatResponse = true;
+
+          // Disable listening temporarily
+          isListeningActive = false;
+          socket.emit("listening_disabled");
+
+          // Send prompt via TTS
+          const promptText = "Can I repeat the question?";
+          socket.emit("idle_prompt", { text: promptText });
+
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          await streamTTSToClient(socket, promptText);
+
+          // Wait for TTS to finish
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+
+          // Re-enable listening for yes/no response
+          isListeningActive = true;
+          socket.emit("listening_enabled");
+
+          // Resume idle detection
+          if (deepgramConnection) {
+            deepgramConnection.resumeIdleDetection();
+          }
+        }
+      }
+
+      // ✅ NEW: Move to next question
+      async function moveToNextQuestion() {
+        if (isProcessing) {
+          console.log("⚠️ Already processing, ignoring");
+          return;
+        }
+
+        isProcessing = true;
+        console.log("⏭️ Moving to next question...");
+
+        try {
+          // Check if interview should end
+          if (currentOrder >= MAX_QUESTIONS) {
+            console.log("🎉 Interview complete! Reached maximum questions.");
+            socket.emit("interview_complete", {
+              message: "Interview completed successfully!",
+              totalQuestions: currentOrder,
+            });
+            isProcessing = false;
+            return;
+          }
+
+          const nextOrder = currentOrder + 1;
+
+          // Generate a generic next question (since no answer was provided)
+          const nextQuestionText = await generateNextQuestionWithAI({
+            answer: "No response provided",
+            questionOrder: nextOrder,
+            previousQuestion: currentQuestionText,
+          });
+
+          // Save next question
+          await Interview.saveQuestion({
+            interviewId,
+            question: nextQuestionText,
+            questionOrder: nextOrder,
+            technology: null,
+            difficulty: null,
+          });
+
+          currentOrder = nextOrder;
+          currentQuestionText = nextQuestionText;
+
+          // Send next question
+          socket.emit("next_question", { question: nextQuestionText });
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          await streamTTSToClient(socket, nextQuestionText);
+
+          // Wait for audio playback
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+
+          // Start new Deepgram connection
+          startDeepgramConnection();
+
+          await new Promise((resolve) => setTimeout(resolve, 800));
+
+          // Enable listening
+          isListeningActive = true;
+          socket.emit("listening_enabled");
+
+          isProcessing = false;
+          console.log("✅ Moved to next question successfully");
+        } catch (error) {
+          console.error("❌ Error moving to next question:", error);
+          socket.emit("error", { message: "Error loading next question" });
+          isProcessing = false;
+        }
+      }
+
       // Function to start Deepgram connection
       function startDeepgramConnection() {
         if (deepgramConnection) {
@@ -140,6 +267,11 @@ function initInterviewSocket(httpServer) {
             isListeningActive = false;
             console.log("🛑 Listening disabled after receiving transcript");
 
+            // Pause idle detection while processing
+            if (deepgramConnection) {
+              deepgramConnection.pauseIdleDetection();
+            }
+
             // Notify client that transcript was received
             socket.emit("transcript_received", { text: transcript });
 
@@ -154,8 +286,13 @@ function initInterviewSocket(httpServer) {
               deepgramConnection = null;
             }
 
-            // Process the transcript
-            await processUserTranscript(transcript);
+            // ✅ NEW: Check if awaiting repeat response
+            if (awaitingRepeatResponse) {
+              await handleRepeatResponse(transcript);
+            } else {
+              // Process the transcript normally
+              await processUserTranscript(transcript);
+            }
           },
 
           onInterim: (transcript, data) => {
@@ -168,7 +305,6 @@ function initInterviewSocket(httpServer) {
           onError: (error) => {
             console.error("❌ Deepgram STT error:", error);
 
-            // Check if connection ever opened
             if (error.message?.includes("timeout")) {
               console.error("🚫 Connection never opened - not retrying");
               socket.emit("error", {
@@ -178,7 +314,6 @@ function initInterviewSocket(httpServer) {
               return;
             }
 
-            // Don't auto-retry, let user manually restart if needed
             isListeningActive = false;
           },
 
@@ -186,10 +321,83 @@ function initInterviewSocket(httpServer) {
             console.log("🔌 Deepgram STT connection closed");
             deepgramConnection = null;
           },
+
+          // ✅ NEW: Idle callback
+          onIdle: async () => {
+            if (isListeningActive && !isProcessing) {
+              await handleIdle();
+            }
+          },
         });
 
         console.log("✅ Deepgram connection created");
         return deepgramConnection;
+      }
+
+      // ✅ NEW: Handle repeat response (yes/no)
+      async function handleRepeatResponse(transcript) {
+        console.log("💬 Handling repeat response:", transcript);
+
+        const lowerTranscript = transcript.toLowerCase().trim();
+
+        if (
+          lowerTranscript.includes("yes") ||
+          lowerTranscript.includes("yeah") ||
+          lowerTranscript.includes("sure") ||
+          lowerTranscript.includes("repeat") ||
+          lowerTranscript.includes("again")
+        ) {
+          console.log("🔄 User wants to repeat");
+          awaitingRepeatResponse = false;
+          idleCount = 0;
+
+          // Repeat the current question
+          socket.emit("question", { question: currentQuestionText });
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          await streamTTSToClient(socket, currentQuestionText);
+
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+
+          // Start new Deepgram connection
+          startDeepgramConnection();
+          await new Promise((resolve) => setTimeout(resolve, 800));
+
+          isListeningActive = true;
+          socket.emit("listening_enabled");
+
+          isProcessing = false;
+        } else if (
+          lowerTranscript.includes("no") ||
+          lowerTranscript.includes("nope") ||
+          lowerTranscript.includes("next") ||
+          lowerTranscript.includes("skip")
+        ) {
+          console.log("⏭️ User wants next question");
+          awaitingRepeatResponse = false;
+          idleCount = 0;
+
+          await moveToNextQuestion();
+        } else {
+          // Unclear response, ask again
+          console.log("❓ Unclear response, asking again");
+          const clarificationText =
+            "I didn't understand. Would you like me to repeat the question? Please say yes or no.";
+
+          socket.emit("idle_prompt", { text: clarificationText });
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          await streamTTSToClient(socket, clarificationText);
+
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+
+          // Start new connection and continue waiting
+          startDeepgramConnection();
+          await new Promise((resolve) => setTimeout(resolve, 800));
+
+          isListeningActive = true;
+          socket.emit("listening_enabled");
+
+          isProcessing = false;
+        }
       }
 
       console.log("✅ Deepgram STT ready to start");
@@ -226,6 +434,7 @@ function initInterviewSocket(httpServer) {
         console.log("📨 Processing ready_for_question...");
 
         try {
+          currentQuestionText = firstQuestion.question;
           const questionData = { question: firstQuestion.question };
           console.log("📤 Emitting 'question' event");
 
@@ -316,12 +525,6 @@ function initInterviewSocket(httpServer) {
           });
 
           console.log("🔍 Step 2: Saving answer...");
-          console.log("🔍 Step 2 DEBUG:", {
-            interviewId,
-            questionId: currentQuestion.id,
-            answerLength: text.length,
-          });
-
           try {
             await Interview.saveAnswer({
               interviewId,
@@ -333,9 +536,6 @@ function initInterviewSocket(httpServer) {
             console.error("❌ DATABASE ERROR in Step 2:", {
               error: saveError.message,
               code: saveError.code,
-              errno: saveError.errno,
-              sqlState: saveError.sqlState,
-              sqlMessage: saveError.sqlMessage,
             });
             throw saveError;
           }
@@ -356,7 +556,6 @@ function initInterviewSocket(httpServer) {
           }
           console.log("✅ Step 4 complete - Interview continues");
 
-          // 🔥 CRITICAL FIX: Calculate next order BEFORE using it
           const nextOrder = currentOrder + 1;
           console.log(
             `🔍 Step 5: Preparing for next question (order ${nextOrder})`
@@ -365,7 +564,7 @@ function initInterviewSocket(httpServer) {
           console.log("🔍 Step 6: Generating next question with AI...");
           const nextQuestionText = await generateNextQuestionWithAI({
             answer: text,
-            questionOrder: nextOrder, // Use nextOrder, not currentOrder + 1
+            questionOrder: nextOrder,
             previousQuestion: currentQuestion.question,
           });
           console.log(
@@ -374,18 +573,11 @@ function initInterviewSocket(httpServer) {
           );
 
           console.log("🔍 Step 7: Saving next question to database...");
-          console.log("🔍 Step 7 DEBUG:", {
-            interviewId,
-            questionText: nextQuestionText.substring(0, 50) + "...",
-            questionOrder: nextOrder, // This should be 2, not currentOrder (which is still 1)
-            currentOrderBeforeSave: currentOrder,
-          });
-
           try {
             const nextQuestionId = await Interview.saveQuestion({
               interviewId,
               question: nextQuestionText,
-              questionOrder: nextOrder, // 🔥 USE nextOrder HERE
+              questionOrder: nextOrder,
               technology: null,
               difficulty: null,
             });
@@ -395,9 +587,9 @@ function initInterviewSocket(httpServer) {
               order: nextOrder,
             });
 
-            // 🔥 ONLY INCREMENT AFTER SUCCESSFUL SAVE
             console.log("🔍 Step 8: Incrementing question order...");
             currentOrder = nextOrder;
+            currentQuestionText = nextQuestionText;
             console.log(
               `✅ Step 8 complete - Current order now: ${currentOrder}/${MAX_QUESTIONS}`
             );
@@ -405,9 +597,6 @@ function initInterviewSocket(httpServer) {
             console.error("❌ DATABASE ERROR in Step 7:", {
               error: saveError.message,
               code: saveError.code,
-              errno: saveError.errno,
-              sqlState: saveError.sqlState,
-              sqlMessage: saveError.sqlMessage,
             });
             throw saveError;
           }
@@ -451,15 +640,6 @@ function initInterviewSocket(httpServer) {
           console.log("🎉 FULL CYCLE COMPLETE - Ready for user response");
         } catch (error) {
           console.error("❌ Error in processUserTranscript:", error);
-          console.error("Error details:", {
-            message: error.message,
-            stack: error.stack,
-            name: error.name,
-            code: error.code,
-            errno: error.errno,
-            sqlState: error.sqlState,
-            sqlMessage: error.sqlMessage,
-          });
           socket.emit("error", {
             message: error.message || "Error processing your answer",
           });
@@ -488,6 +668,7 @@ function initInterviewSocket(httpServer) {
 
         isProcessing = false;
         isListeningActive = false;
+        awaitingRepeatResponse = false;
       });
 
       // Handle errors

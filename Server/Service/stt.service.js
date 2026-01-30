@@ -16,12 +16,23 @@ function createSTTSession() {
   const deepgram = createClient(apiKey);
 
   return {
-    startLiveTranscription({ onTranscript, onInterim, onError, onClose }) {
+    startLiveTranscription({
+      onTranscript,
+      onInterim,
+      onError,
+      onClose,
+      onIdle,
+    }) {
       let connection = null;
       let isOpen = false;
       let isConnecting = false;
       let openTimeout = null;
       let keepAliveInterval = null;
+
+      // ✅ NEW: Idle detection
+      let lastSpeechTime = Date.now();
+      let idleCheckInterval = null;
+      const IDLE_TIMEOUT = 10000; // 10 seconds
 
       try {
         isConnecting = true;
@@ -29,7 +40,7 @@ function createSTTSession() {
 
         // Options based on official Deepgram Flux documentation
         const options = {
-          model: "nova-2", // or "flux-general" for flux model
+          model: "nova-2",
           language: "en",
           smart_format: true,
           encoding: "linear16",
@@ -73,6 +84,19 @@ function createSTTSession() {
           }
         }, 5000);
 
+        // ✅ NEW: Start idle detection interval
+        idleCheckInterval = setInterval(() => {
+          if (isOpen) {
+            const timeSinceLastSpeech = Date.now() - lastSpeechTime;
+            if (timeSinceLastSpeech >= IDLE_TIMEOUT) {
+              console.log("⏰ User idle detected (10 seconds of silence)");
+              onIdle?.();
+              // Reset timer after triggering idle
+              lastSpeechTime = Date.now();
+            }
+          }
+        }, 1000); // Check every second
+
         connection.on(LiveTranscriptionEvents.Open, () => {
           console.log(
             "✅✅✅ Deepgram WebSocket OPEN - Connection successful!"
@@ -80,6 +104,8 @@ function createSTTSession() {
           clearTimeout(openTimeout);
           isOpen = true;
           isConnecting = false;
+          // ✅ Reset idle timer when connection opens
+          lastSpeechTime = Date.now();
         });
 
         connection.on(LiveTranscriptionEvents.Transcript, (data) => {
@@ -91,6 +117,9 @@ function createSTTSession() {
 
           const isFinal = data.is_final;
           const speechFinal = data.speech_final;
+
+          // ✅ NEW: Reset idle timer on any speech
+          lastSpeechTime = Date.now();
 
           // Log transcript type
           console.log(
@@ -123,6 +152,11 @@ function createSTTSession() {
             clearInterval(keepAliveInterval);
             keepAliveInterval = null;
           }
+          // ✅ NEW: Clear idle interval on error
+          if (idleCheckInterval) {
+            clearInterval(idleCheckInterval);
+            idleCheckInterval = null;
+          }
           isOpen = false;
           isConnecting = false;
           onError?.(err);
@@ -139,6 +173,11 @@ function createSTTSession() {
           if (keepAliveInterval) {
             clearInterval(keepAliveInterval);
             keepAliveInterval = null;
+          }
+          // ✅ NEW: Clear idle interval on close
+          if (idleCheckInterval) {
+            clearInterval(idleCheckInterval);
+            idleCheckInterval = null;
           }
           isOpen = false;
           isConnecting = false;
@@ -162,6 +201,11 @@ function createSTTSession() {
         if (keepAliveInterval) {
           clearInterval(keepAliveInterval);
           keepAliveInterval = null;
+        }
+        // ✅ NEW: Clear idle interval on exception
+        if (idleCheckInterval) {
+          clearInterval(idleCheckInterval);
+          idleCheckInterval = null;
         }
         isConnecting = false;
         onError?.(error);
@@ -190,6 +234,11 @@ function createSTTSession() {
             clearInterval(keepAliveInterval);
             keepAliveInterval = null;
           }
+          // ✅ NEW: Clear idle interval on finish
+          if (idleCheckInterval) {
+            clearInterval(idleCheckInterval);
+            idleCheckInterval = null;
+          }
 
           if (!connection) {
             return false;
@@ -217,7 +266,6 @@ function createSTTSession() {
           return isOpen ? 1 : 3; // OPEN : CLOSED
         },
 
-        // ✅ ADD THIS: Wait for connection to be ready
         waitForReady(timeout = 5000) {
           return new Promise((resolve, reject) => {
             if (isOpen) {
@@ -236,6 +284,38 @@ function createSTTSession() {
               }
             }, 100);
           });
+        },
+
+        // Method to reset idle timer manually
+        resetIdleTimer() {
+          lastSpeechTime = Date.now();
+          console.log("🔄 Idle timer manually reset");
+        },
+
+        // Method to pause/resume idle detection
+        pauseIdleDetection() {
+          if (idleCheckInterval) {
+            clearInterval(idleCheckInterval);
+            idleCheckInterval = null;
+            console.log("⏸️ Idle detection paused");
+          }
+        },
+
+        resumeIdleDetection() {
+          if (!idleCheckInterval && isOpen) {
+            lastSpeechTime = Date.now();
+            idleCheckInterval = setInterval(() => {
+              if (isOpen) {
+                const timeSinceLastSpeech = Date.now() - lastSpeechTime;
+                if (timeSinceLastSpeech >= IDLE_TIMEOUT) {
+                  console.log("⏰ User idle detected (10 seconds of silence)");
+                  onIdle?.();
+                  lastSpeechTime = Date.now();
+                }
+              }
+            }, 1000);
+            console.log("▶️ Idle detection resumed");
+          }
         },
       };
     },
