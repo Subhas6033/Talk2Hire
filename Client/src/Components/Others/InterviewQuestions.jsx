@@ -25,6 +25,41 @@ const InterviewQuestions = ({
   const [isListening, setIsListening] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isInitializing, setIsInitializing] = useState(true);
+  const [idlePrompt, setIdlePrompt] = useState("");
+  const [recordingDuration, setRecordingDuration] = useState("00:00");
+
+  // Recording timer
+  const recordingStartTimeRef = useRef(null);
+  const recordingTimerRef = useRef(null);
+
+  // Format seconds to MM:SS
+  const formatDuration = useCallback((seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  }, []);
+
+  // Start recording timer when interview starts
+  useEffect(() => {
+    if (!isInitializing && status === "live") {
+      recordingStartTimeRef.current = Date.now();
+
+      recordingTimerRef.current = setInterval(() => {
+        if (recordingStartTimeRef.current) {
+          const elapsed = Math.floor(
+            (Date.now() - recordingStartTimeRef.current) / 1000
+          );
+          setRecordingDuration(formatDuration(elapsed));
+        }
+      }, 1000);
+
+      return () => {
+        if (recordingTimerRef.current) {
+          clearInterval(recordingTimerRef.current);
+        }
+      };
+    }
+  }, [isInitializing, status, formatDuration]);
 
   // Log camera stream on mount
   useEffect(() => {
@@ -148,6 +183,8 @@ const InterviewQuestions = ({
     console.log("❓ Received question:", questionText);
     setCurrentQuestion(questionText);
     setServerText(questionText);
+    // ✅ Clear idle prompt when new question arrives
+    setIdlePrompt("");
   }, []);
 
   /* 🔊 TTS AUDIO PLAYBACK */
@@ -429,17 +466,37 @@ const InterviewQuestions = ({
       setUserText("");
     });
 
+    // ✅ NEW: Handle idle prompt
+    socket.on("idle_prompt", ({ text }) => {
+      console.log("⏰ Received idle prompt:", text);
+
+      ttsStreamActiveRef.current = true;
+      disableListening();
+      clearRecognitionTimeout();
+      audioQueueRef.current = [];
+
+      setIdlePrompt(text);
+    });
+
     // Handle transcript received from server
     socket.on("transcript_received", ({ text }) => {
       console.log("📝 Transcript received from server:", text);
       setUserText(text);
       disableListening();
+      // ✅ Clear idle prompt when user responds
+      setIdlePrompt("");
     });
 
     // Handle listening enabled signal from server
     socket.on("listening_enabled", () => {
       console.log("✅ Server enabled listening");
       enableListening();
+    });
+
+    // ✅ NEW: Handle listening disabled signal from server
+    socket.on("listening_disabled", () => {
+      console.log("🛑 Server disabled listening");
+      disableListening();
     });
 
     socket.on("tts_audio", (chunk) => {
@@ -500,6 +557,7 @@ const InterviewQuestions = ({
       console.log("🎉 Interview completed:", data);
       setCurrentQuestion("Interview completed! Thank you for your time.");
       disableListening();
+      setIdlePrompt("");
 
       alert(
         `Interview completed! You answered ${data.totalQuestions} questions.`
@@ -553,6 +611,11 @@ const InterviewQuestions = ({
 
       clearRecognitionTimeout();
 
+      // Clear recording timer
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+      }
+
       canListenRef.current = false;
       hasStartedRef.current = false;
       serverReadyRef.current = false;
@@ -571,7 +634,6 @@ const InterviewQuestions = ({
           micProcessorRef.current.disconnect();
         } catch (e) {
           // Ignore
-          // console.log("Err", e);
         }
       }
 
@@ -603,7 +665,7 @@ const InterviewQuestions = ({
     <section className=" p-4 md:p-6">
       <div className="max-w-350 mx-auto h-full">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-6 h-full">
-          {/* Main Interview Section - 8 columns */}
+          {/* Main Interview Section */}
           <div className="lg:col-span-8 flex flex-col">
             <Card className="flex-1 flex flex-col overflow-hidden shadow-sm border border-gray-200 dark:border-gray-800">
               {/* Clean Header */}
@@ -744,19 +806,30 @@ const InterviewQuestions = ({
                 {/* Active Interview */}
                 {status === "live" && currentQuestion && (
                   <div className="flex-1 flex flex-col justify-center space-y-6">
-                    {/* Audio Wave Visualization */}
-                    {isPlaying && (
-                      <div className="flex items-center justify-center gap-1 h-16">
-                        {[...Array(7)].map((_, i) => (
-                          <div
-                            key={i}
-                            className="w-1 bg-blue-600 dark:bg-blue-500 rounded-full"
-                            style={{
-                              animation: `wave 1.2s ease-in-out infinite`,
-                              animationDelay: `${i * 0.1}s`,
-                            }}
-                          />
-                        ))}
+                    {/* Idle Prompt Display */}
+                    {idlePrompt && (
+                      <div className="mb-4 p-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg">
+                        <div className="flex items-center gap-2 mb-2">
+                          <svg
+                            className="w-5 h-5 text-amber-600 dark:text-amber-400"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                            />
+                          </svg>
+                          <span className="text-sm font-semibold text-amber-900 dark:text-amber-300">
+                            Waiting for Response
+                          </span>
+                        </div>
+                        <p className="text-sm text-amber-800 dark:text-amber-200">
+                          {idlePrompt}
+                        </p>
                       </div>
                     )}
 
@@ -937,6 +1010,9 @@ const InterviewQuestions = ({
                         <span className="text-xs font-medium text-white">
                           REC
                         </span>
+                        <span className="text-xs font-mono text-white/80">
+                          {recordingDuration}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -968,19 +1044,6 @@ const InterviewQuestions = ({
           )}
         </div>
       </div>
-
-      {/* Minimal CSS */}
-      <style jsx>{`
-        @keyframes wave {
-          0%,
-          100% {
-            height: 12px;
-          }
-          50% {
-            height: 48px;
-          }
-        }
-      `}</style>
     </section>
   );
 };

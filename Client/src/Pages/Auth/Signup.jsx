@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
 import {
   Card,
   CardHeader,
@@ -9,7 +10,6 @@ import { Button } from "../../Components";
 import { FormField } from "../../Components/Common/Input";
 import { Eye, EyeOff } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
-import { useForm } from "react-hook-form";
 import { useAuth } from "../../Hooks/useAuthHook";
 
 /* Loader Component */
