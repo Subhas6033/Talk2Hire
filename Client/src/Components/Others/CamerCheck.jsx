@@ -5,6 +5,7 @@ const CameraCheck = ({ isOpen, onClose, onSuccess }) => {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const stoppedRef = useRef(false);
+  const streamTransferredRef = useRef(false); // Track if stream was transferred
 
   const [status, setStatus] = useState("idle"); // idle | checking | success | failed
   const [error, setError] = useState("");
@@ -13,6 +14,7 @@ const CameraCheck = ({ isOpen, onClose, onSuccess }) => {
     setStatus("checking");
     setError("");
     stoppedRef.current = false;
+    streamTransferredRef.current = false;
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -57,10 +59,15 @@ const CameraCheck = ({ isOpen, onClose, onSuccess }) => {
 
   const handleStartInterview = () => {
     if (streamRef.current && onSuccess) {
+      console.log("📹 Transferring camera stream to parent");
+      // Mark that we've transferred the stream
+      streamTransferredRef.current = true;
+
       // Pass the stream to parent component
       onSuccess(streamRef.current);
-      // Don't stop the stream here - parent will manage it
-      streamRef.current = null; // Remove our reference
+
+      // Remove our reference but DON'T stop the stream
+      streamRef.current = null;
     }
   };
 
@@ -70,10 +77,19 @@ const CameraCheck = ({ isOpen, onClose, onSuccess }) => {
     }
 
     return () => {
-      // Only stop camera if we still own the stream
-      if (streamRef.current) {
+      console.log("🧹 CameraCheck cleanup", {
+        hasStream: !!streamRef.current,
+        transferred: streamTransferredRef.current,
+      });
+
+      // Only stop camera if we still own the stream AND it wasn't transferred
+      if (streamRef.current && !streamTransferredRef.current) {
+        console.log("🛑 Stopping camera stream in cleanup");
         stopCamera();
+      } else if (streamTransferredRef.current) {
+        console.log("✅ Stream transferred - not stopping in cleanup");
       }
+
       setStatus("idle");
       setError("");
     };

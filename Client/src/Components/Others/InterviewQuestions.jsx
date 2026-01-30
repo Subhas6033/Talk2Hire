@@ -1,27 +1,39 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { io } from "socket.io-client";
-import { Button, CameraCheck } from "../index";
+import { Button } from "../index";
 import { Card } from "../Common/Card";
 
 const SOCKET_URL = "http://localhost:3000";
 
 // Audio buffering configuration for smooth playback
 const AUDIO_CONFIG = {
-  MIN_BUFFER_SIZE: 2,
+  MIN_BUFFER_SIZE: 3,
   SAMPLE_RATE: 48000,
   RECOGNITION_DELAY: 1500,
 };
 
-const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
+const InterviewQuestions = ({
+  interviewId,
+  userId,
+  cameraStream,
+  onCancel,
+}) => {
   const [status, setStatus] = useState("connecting");
   const [currentQuestion, setCurrentQuestion] = useState("");
   const [serverText, setServerText] = useState("");
   const [userText, setUserText] = useState("");
   const [isListening, setIsListening] = useState(false);
-  const [hasStarted, setHasStarted] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [showCameraCheck, setShowCameraCheck] = useState(false);
-  const [cameraStream, setCameraStream] = useState(null);
+  const [isInitializing, setIsInitializing] = useState(true);
+
+  // Log camera stream on mount
+  useEffect(() => {
+    console.log("📹 InterviewQuestions mounted with cameraStream:", {
+      hasStream: !!cameraStream,
+      streamActive: cameraStream?.active,
+      tracks: cameraStream?.getTracks().length,
+    });
+  }, []);
 
   // Audio playback refs
   const audioQueueRef = useRef([]);
@@ -284,14 +296,14 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
   }, []);
 
   /* 🔊 START INTERVIEW */
-  const unlockAudio = useCallback(async () => {
+  const autoStartInterview = useCallback(async () => {
     if (hasStartedRef.current) {
       console.log("🚫 Interview already started");
       return;
     }
 
     try {
-      console.log("🚀 Starting interview...");
+      console.log("🚀 Auto-starting interview...");
 
       if (audioCtxRef.current?.state === "suspended") {
         await audioCtxRef.current.resume();
@@ -317,6 +329,7 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
 
         if (!serverReadyRef.current) {
           console.error("❌ Server ready timeout");
+          setIsInitializing(false);
           alert("Server initialization timeout. Please refresh and try again.");
           return;
         }
@@ -326,44 +339,32 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
 
       if (socketRef.current?.connected) {
         hasStartedRef.current = true;
-        setHasStarted(true);
+        setIsInitializing(false);
         console.log("✅ hasStartedRef set to TRUE");
 
         socketRef.current.emit("ready_for_question");
       } else {
         console.error("⚠️ Socket not connected");
+        setIsInitializing(false);
         alert("Connection error. Please refresh and try again.");
       }
     } catch (error) {
       console.error("❌ Error starting interview:", error);
       hasStartedRef.current = false;
-      setHasStarted(false);
+      setIsInitializing(false);
     }
   }, [startMicStreaming]);
 
-  /* 📹 CAMERA HANDLERS */
-  const handleCameraSuccess = useCallback(
-    async (stream) => {
-      setCameraStream(stream);
-      setShowCameraCheck(false);
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-
-      await unlockAudio();
-    },
-    [unlockAudio]
-  );
-
-  const handleStartInterview = useCallback(() => {
-    setShowCameraCheck(true);
-  }, []);
-
-  /* 🎥 UPDATE VIDEO REF WHEN CAMERA STREAM CHANGES */
+  /* 🎥 SET CAMERA STREAM TO VIDEO */
   useEffect(() => {
     if (videoRef.current && cameraStream) {
+      console.log("📹 Setting camera stream to video element");
       videoRef.current.srcObject = cameraStream;
+
+      // Ensure video plays
+      videoRef.current.play().catch((err) => {
+        console.error("❌ Error playing video:", err);
+      });
     }
   }, [cameraStream]);
 
@@ -397,6 +398,12 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
     socket.on("server_ready", () => {
       console.log("✅ Server ready!");
       serverReadyRef.current = true;
+
+      // Auto-start interview immediately when server is ready
+      if (!hasStartedRef.current) {
+        console.log("🚀 Auto-starting interview...");
+        autoStartInterview();
+      }
     });
 
     socket.on("question", (data) => {
@@ -515,6 +522,7 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
     socket.on("connect_error", (err) => {
       console.error("❌ Socket connect error:", err.message);
       setStatus("error");
+      setIsInitializing(false);
     });
 
     socket.on("disconnect", (reason) => {
@@ -563,6 +571,7 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
           micProcessorRef.current.disconnect();
         } catch (e) {
           // Ignore
+          // console.log("Err", e);
         }
       }
 
@@ -586,95 +595,392 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
     handleQuestion,
     playNextChunk,
     enableRecognitionAfterDelay,
+    enableListening,
+    autoStartInterview,
   ]);
 
   return (
-    <section className="space-y-4">
-      <CameraCheck
-        isOpen={showCameraCheck}
-        onClose={() => setShowCameraCheck(false)}
-        onSuccess={handleCameraSuccess}
-      />
+    <section className=" p-4 md:p-6">
+      <div className="max-w-350 mx-auto h-full">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-6 h-full">
+          {/* Main Interview Section - 8 columns */}
+          <div className="lg:col-span-8 flex flex-col">
+            <Card className="flex-1 flex flex-col overflow-hidden shadow-sm border border-gray-200 dark:border-gray-800">
+              {/* Clean Header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+                <div className="flex items-center gap-3">
+                  <div className="relative">
+                    <div
+                      className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
+                        isPlaying
+                          ? "bg-blue-600"
+                          : isListening
+                            ? "bg-emerald-600"
+                            : "bg-gray-700"
+                      }`}
+                    >
+                      {isPlaying ? (
+                        <svg
+                          className="w-5 h-5 text-white"
+                          fill="currentColor"
+                          viewBox="0 0 20 20"
+                        >
+                          <path d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" />
+                        </svg>
+                      ) : isListening ? (
+                        <svg
+                          className="w-5 h-5 text-white"
+                          fill="currentColor"
+                          viewBox="0 0 20 20"
+                        >
+                          <path
+                            fillRule="evenodd"
+                            d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z"
+                            clipRule="evenodd"
+                          />
+                        </svg>
+                      ) : (
+                        <svg
+                          className="w-5 h-5 text-white"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+                          />
+                        </svg>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                      Interview Assistant
+                    </h2>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      {isPlaying
+                        ? "Speaking"
+                        : isListening
+                          ? "Listening"
+                          : "Standby"}
+                    </p>
+                  </div>
+                </div>
 
-      {hasStarted && cameraStream && (
-        <div className="fixed top-20 right-5 z-50 w-48 h-36 bg-black rounded-lg overflow-hidden shadow-2xl border-2 border-gray-700">
-          <video
-            ref={videoRef}
-            autoPlay
-            muted
-            playsInline
-            className="w-full h-full object-cover mirror"
-            style={{ transform: "scaleX(-1)" }}
-          />
-          <div className="absolute bottom-2 left-2 bg-black/50 px-2 py-1 rounded text-xs text-white">
-            You
+                <div className="flex items-center gap-2">
+                  {/* Simple status indicators */}
+                  <div
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                      isPlaying
+                        ? "bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300"
+                        : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400"
+                    }`}
+                  >
+                    <div
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        isPlaying ? "bg-blue-600 animate-pulse" : "bg-gray-400"
+                      }`}
+                    />
+                    Audio
+                  </div>
+                  <div
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                      isListening
+                        ? "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300"
+                        : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400"
+                    }`}
+                  >
+                    <div
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        isListening
+                          ? "bg-emerald-600 animate-pulse"
+                          : "bg-gray-400"
+                      }`}
+                    />
+                    Mic
+                  </div>
+                </div>
+              </div>
+
+              {/* Main Content Area */}
+              <div className="flex-1 flex flex-col p-6 bg-white dark:bg-gray-900">
+                {/* Connection States */}
+                {status === "connecting" && (
+                  <div className="flex-1 flex flex-col items-center justify-center">
+                    <div className="w-12 h-12 border-3 border-gray-200 dark:border-gray-700 border-t-blue-600 rounded-full animate-spin mb-4" />
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      Connecting to server
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Please wait...
+                    </p>
+                  </div>
+                )}
+
+                {status === "live" && isInitializing && (
+                  <div className="flex-1 flex flex-col items-center justify-center">
+                    <div className="w-12 h-12 border-3 border-gray-200 dark:border-gray-700 border-t-indigo-600 rounded-full animate-spin mb-4" />
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      Starting interview
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Setting up your session...
+                    </p>
+                  </div>
+                )}
+
+                {status === "live" && !currentQuestion && !isInitializing && (
+                  <div className="flex-1 flex flex-col items-center justify-center">
+                    <div className="w-12 h-12 border-3 border-gray-200 dark:border-gray-700 border-t-purple-600 rounded-full animate-spin mb-4" />
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      Loading question
+                    </p>
+                  </div>
+                )}
+
+                {/* Active Interview */}
+                {status === "live" && currentQuestion && (
+                  <div className="flex-1 flex flex-col justify-center space-y-6">
+                    {/* Audio Wave Visualization */}
+                    {isPlaying && (
+                      <div className="flex items-center justify-center gap-1 h-16">
+                        {[...Array(7)].map((_, i) => (
+                          <div
+                            key={i}
+                            className="w-1 bg-blue-600 dark:bg-blue-500 rounded-full"
+                            style={{
+                              animation: `wave 1.2s ease-in-out infinite`,
+                              animationDelay: `${i * 0.1}s`,
+                            }}
+                          />
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Question */}
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center shrink-0">
+                          <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">
+                            Q
+                          </span>
+                        </div>
+                        <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                          Question
+                        </span>
+                      </div>
+                      <p className="text-lg md:text-xl text-gray-900 dark:text-gray-100 leading-relaxed">
+                        {currentQuestion}
+                      </p>
+                    </div>
+
+                    {/* Listening Indicator */}
+                    {isListening && (
+                      <div className="flex items-center gap-2 justify-center pt-4">
+                        <div className="flex gap-1">
+                          {[...Array(3)].map((_, i) => (
+                            <div
+                              key={i}
+                              className="w-1.5 h-1.5 bg-emerald-600 dark:bg-emerald-500 rounded-full animate-bounce"
+                              style={{ animationDelay: `${i * 0.1}s` }}
+                            />
+                          ))}
+                        </div>
+                        <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                          Listening to your response
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Error States */}
+                {status === "error" && (
+                  <div className="flex-1 flex flex-col items-center justify-center">
+                    <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-950/50 flex items-center justify-center mb-4">
+                      <svg
+                        className="w-6 h-6 text-red-600 dark:text-red-400"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M6 18L18 6M6 6l12 12"
+                        />
+                      </svg>
+                    </div>
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      Connection error
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Please refresh and try again
+                    </p>
+                  </div>
+                )}
+
+                {status === "disconnected" && (
+                  <div className="flex-1 flex flex-col items-center justify-center">
+                    <div className="w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-950/50 flex items-center justify-center mb-4">
+                      <svg
+                        className="w-6 h-6 text-amber-600 dark:text-amber-400"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                        />
+                      </svg>
+                    </div>
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      Disconnected
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Reconnecting...
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* User Response Section */}
+              {!isInitializing && userText && (
+                <div className="border-t border-gray-200 dark:border-gray-800 p-6 bg-gray-50 dark:bg-gray-900/50">
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center shrink-0">
+                        <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                          A
+                        </span>
+                      </div>
+                      <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                        Your Answer
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed pl-8">
+                      {userText}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Footer */}
+              {!isInitializing && (
+                <div className="border-t border-gray-200 dark:border-gray-800 px-6 py-4 bg-white dark:bg-gray-900">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                      <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                      Interview active
+                    </div>
+                    <Button
+                      variant="secondary"
+                      onClick={onCancel}
+                      className="text-xs px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-800"
+                    >
+                      End Interview
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </Card>
           </div>
-        </div>
-      )}
 
-      {!hasStarted && (
-        <div className="flex justify-center">
-          <Button onClick={handleStartInterview} disabled={status !== "live"}>
-            {status === "connecting" ? "Connecting..." : "Start Interview"}
-          </Button>
-        </div>
-      )}
+          {/* Camera Section - 4 columns */}
+          {cameraStream && (
+            <div className="lg:col-span-4 flex flex-col">
+              <Card className="flex-1 flex flex-col overflow-hidden shadow-sm border border-gray-200 dark:border-gray-800">
+                {/* Header */}
+                <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+                  <div className="flex items-center gap-2">
+                    <svg
+                      className="w-4 h-4 text-gray-400"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+                      />
+                    </svg>
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                      Video Preview
+                    </h3>
+                  </div>
+                </div>
 
-      <Card>
-        <div className="text-lg min-h-20 p-4">
-          {status === "connecting" && (
-            <p className="text-gray-400">Connecting to interview server...</p>
-          )}
-          {status === "live" && !currentQuestion && hasStarted && (
-            <p className="text-gray-400">Loading first question...</p>
-          )}
-          {status === "live" && currentQuestion && (
-            <p className="text-gray-900 dark:text-gray-100">
-              {currentQuestion}
-            </p>
-          )}
-          {status === "error" && (
-            <p className="text-red-500">
-              Connection error. Please refresh the page.
-            </p>
-          )}
-          {status === "disconnected" && (
-            <p className="text-yellow-500">Disconnected from server.</p>
-          )}
-        </div>
+                {/* Video Container */}
+                <div className="flex-1 p-6 bg-white dark:bg-gray-900 flex items-center">
+                  <div className="relative w-full aspect-4/3 bg-gray-900 rounded-lg overflow-hidden">
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      className="w-full h-full object-cover"
+                      style={{ transform: "scaleX(-1)" }}
+                    />
+                    {/* Recording badge */}
+                    <div className="absolute top-3 left-3">
+                      <div className="flex items-center gap-2 px-3 py-1.5 bg-black/80 backdrop-blur-sm rounded-md">
+                        <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                        <span className="text-xs font-medium text-white">
+                          REC
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
-        {hasStarted && (
-          <div className="px-4 pb-4 space-y-2">
-            {userText && (
-              <p className="text-sm text-green-600 dark:text-green-400">
-                <strong>Your answer:</strong> {userText}
-              </p>
-            )}
-
-            <div className="flex items-center gap-2 text-xs text-gray-500 mt-2">
-              <span
-                className={`inline-block w-2 h-2 rounded-full ${isPlaying ? "bg-blue-500 animate-pulse" : "bg-gray-300"}`}
-              ></span>
-              <span>{isPlaying ? "Playing question..." : "Audio ready"}</span>
-
-              <span
-                className={`inline-block w-2 h-2 rounded-full ml-4 ${isListening ? "bg-green-500 animate-pulse" : "bg-gray-300"}`}
-              ></span>
-              <span>{isListening ? "Listening..." : "Mic standby"}</span>
+                {/* Info */}
+                <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
+                  <div className="flex items-start gap-2">
+                    <svg
+                      className="w-4 h-4 text-gray-400 shrink-0 mt-0.5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
+                    </svg>
+                    <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
+                      Recording for analysis and evaluation
+                    </p>
+                  </div>
+                </div>
+              </Card>
             </div>
-          </div>
-        )}
-      </Card>
+          )}
+        </div>
+      </div>
 
-      {hasStarted && (
-        <Card>
-          <div className="flex justify-end gap-3 p-4">
-            <Button variant="secondary" onClick={onCancel}>
-              End Interview
-            </Button>
-          </div>
-        </Card>
-      )}
+      {/* Minimal CSS */}
+      <style jsx>{`
+        @keyframes wave {
+          0%,
+          100% {
+            height: 12px;
+          }
+          50% {
+            height: 48px;
+          }
+        }
+      `}</style>
     </section>
   );
 };

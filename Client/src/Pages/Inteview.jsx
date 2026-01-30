@@ -7,11 +7,12 @@ import {
 } from "../Components/index";
 
 const Interview = () => {
-  const [session, setSession] = useState(null); // { interviewId, userId }
+  const [session, setSession] = useState(null); // { interviewId, userId, cameraStream }
   const [showSubmissionModal, setShowSubmissionModal] = useState(false);
 
   const handleInterviewReady = (data) => {
     console.log("Interview session ready:", data);
+    // data includes: { interviewId, userId, cameraStream }
     setSession(data);
   };
 
@@ -42,6 +43,7 @@ const Interview = () => {
           <InterviewQuestions
             interviewId={session.interviewId}
             userId={session.userId}
+            cameraStream={session.cameraStream}
             onCancel={handleCancelInterview}
             onFinish={() => setShowSubmissionModal(true)}
           />

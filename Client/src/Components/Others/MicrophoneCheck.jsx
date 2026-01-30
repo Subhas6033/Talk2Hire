@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import { Modal, Button } from "../index";
 import { useNavigate } from "react-router-dom";
 
-const REQUIRED_SECONDS = 2;
+const REQUIRED_SECONDS = 1;
 const MAX_WINDOW_SECONDS = 5;
 const THRESHOLD = 0.03;
 

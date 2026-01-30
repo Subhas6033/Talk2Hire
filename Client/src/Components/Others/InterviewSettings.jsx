@@ -57,6 +57,17 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
   };
 
+  const handleCameraSuccess = (stream) => {
+    setIsCameraOpen(false);
+    if (sessionData) {
+      // Pass both session data and camera stream to parent
+      onInterviewReady({
+        ...sessionData,
+        cameraStream: stream,
+      });
+    }
+  };
+
   return (
     <>
       <Card className="p-6 sm:p-8">
@@ -111,16 +122,11 @@ const InterviewSettings = ({ onInterviewReady }) => {
         }}
       />
 
-      {/* Camera */}
+      {/* Camera - directly starts interview on success */}
       <CameraCheck
         isOpen={isCameraOpen}
         onClose={() => setIsCameraOpen(false)}
-        onSuccess={() => {
-          setIsCameraOpen(false);
-          if (sessionData) {
-            onInterviewReady(sessionData);
-          }
-        }}
+        onSuccess={handleCameraSuccess}
       />
     </>
   );
