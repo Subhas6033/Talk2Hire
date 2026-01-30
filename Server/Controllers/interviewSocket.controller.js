@@ -36,7 +36,10 @@ function initInterviewSocket(httpServer) {
     let deepgramConnection = null;
     let isListeningActive = false;
 
-    // ⚡ INITIALIZE IMMEDIATELY (synchronously block until complete)
+    // Maximum questions limit
+    const MAX_QUESTIONS = 10;
+
+    // ⚡ INITIALIZE IMMEDIATELY
     console.log("📥 Starting IMMEDIATE initialization...");
 
     try {
@@ -144,6 +147,7 @@ function initInterviewSocket(httpServer) {
             if (deepgramConnection) {
               try {
                 deepgramConnection.finish();
+                console.log("✅ Deepgram connection closed after transcript");
               } catch (e) {
                 console.error("Error finishing connection:", e);
               }
@@ -237,7 +241,7 @@ function initInterviewSocket(httpServer) {
           console.log("✅ First question fully sent (text + audio)");
 
           // Wait a bit for client to finish playing audio
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          await new Promise((resolve) => setTimeout(resolve, 1000));
 
           // Start fresh Deepgram connection for listening
           console.log("🎤 Starting Deepgram connection for listening...");
@@ -288,8 +292,12 @@ function initInterviewSocket(httpServer) {
 
         isProcessing = true;
         console.log("📝 Processing user transcript:", text);
+        console.log(
+          `📊 Current question order: ${currentOrder}/${MAX_QUESTIONS}`
+        );
 
         try {
+          console.log("🔍 Step 1: Fetching current question...");
           const currentQuestion = await Interview.getQuestionByOrder(
             interviewId,
             currentOrder
@@ -301,73 +309,162 @@ function initInterviewSocket(httpServer) {
             isProcessing = false;
             return;
           }
+          console.log("✅ Step 1 complete - Question found:", {
+            id: currentQuestion.id,
+            order: currentOrder,
+            questionText: currentQuestion.question.substring(0, 50),
+          });
 
-          console.log("💾 Saving answer for question:", currentQuestion.id);
-          await Interview.saveAnswer({
+          console.log("🔍 Step 2: Saving answer...");
+          console.log("🔍 Step 2 DEBUG:", {
             interviewId,
             questionId: currentQuestion.id,
-            answer: text,
+            answerLength: text.length,
           });
 
-          const validation = validateAnswer(text);
-          console.log("✅ Answer validated:", validation);
+          try {
+            await Interview.saveAnswer({
+              interviewId,
+              questionId: currentQuestion.id,
+              answer: text,
+            });
+            console.log("✅ Step 2 complete - Answer saved");
+          } catch (saveError) {
+            console.error("❌ DATABASE ERROR in Step 2:", {
+              error: saveError.message,
+              code: saveError.code,
+              errno: saveError.errno,
+              sqlState: saveError.sqlState,
+              sqlMessage: saveError.sqlMessage,
+            });
+            throw saveError;
+          }
 
-          console.log("🤖 Generating next question with AI...");
+          console.log("🔍 Step 3: Validating answer...");
+          const validation = validateAnswer(text);
+          console.log("✅ Step 3 complete - Validation:", validation);
+
+          console.log("🔍 Step 4: Checking if interview should end...");
+          if (currentOrder >= MAX_QUESTIONS) {
+            console.log("🎉 Interview complete! Reached maximum questions.");
+            socket.emit("interview_complete", {
+              message: "Interview completed successfully!",
+              totalQuestions: currentOrder,
+            });
+            isProcessing = false;
+            return;
+          }
+          console.log("✅ Step 4 complete - Interview continues");
+
+          // 🔥 CRITICAL FIX: Calculate next order BEFORE using it
+          const nextOrder = currentOrder + 1;
+          console.log(
+            `🔍 Step 5: Preparing for next question (order ${nextOrder})`
+          );
+
+          console.log("🔍 Step 6: Generating next question with AI...");
           const nextQuestionText = await generateNextQuestionWithAI({
             answer: text,
-            questionOrder: currentOrder + 1,
+            questionOrder: nextOrder, // Use nextOrder, not currentOrder + 1
             previousQuestion: currentQuestion.question,
           });
-
           console.log(
-            "✅ Next question generated:",
+            "✅ Step 6 complete - Next question generated:",
             nextQuestionText.substring(0, 50) + "..."
           );
 
-          currentOrder++;
-
-          const nextQuestionId = await Interview.saveQuestion({
+          console.log("🔍 Step 7: Saving next question to database...");
+          console.log("🔍 Step 7 DEBUG:", {
             interviewId,
-            question: nextQuestionText,
-            questionOrder: currentOrder,
+            questionText: nextQuestionText.substring(0, 50) + "...",
+            questionOrder: nextOrder, // This should be 2, not currentOrder (which is still 1)
+            currentOrderBeforeSave: currentOrder,
           });
 
-          console.log("💾 Next question saved:", {
-            id: nextQuestionId,
-            order: currentOrder,
-          });
+          try {
+            const nextQuestionId = await Interview.saveQuestion({
+              interviewId,
+              question: nextQuestionText,
+              questionOrder: nextOrder, // 🔥 USE nextOrder HERE
+              technology: null,
+              difficulty: null,
+            });
 
+            console.log("✅ Step 7 complete - Next question saved:", {
+              id: nextQuestionId,
+              order: nextOrder,
+            });
+
+            // 🔥 ONLY INCREMENT AFTER SUCCESSFUL SAVE
+            console.log("🔍 Step 8: Incrementing question order...");
+            currentOrder = nextOrder;
+            console.log(
+              `✅ Step 8 complete - Current order now: ${currentOrder}/${MAX_QUESTIONS}`
+            );
+          } catch (saveError) {
+            console.error("❌ DATABASE ERROR in Step 7:", {
+              error: saveError.message,
+              code: saveError.code,
+              errno: saveError.errno,
+              sqlState: saveError.sqlState,
+              sqlMessage: saveError.sqlMessage,
+            });
+            throw saveError;
+          }
+
+          console.log("🔍 Step 9: Sending next question to client...");
           const nextQuestionData = { question: nextQuestionText };
-          console.log("📤 Emitting 'next_question' event");
           socket.emit("next_question", nextQuestionData);
+          console.log("✅ Step 9 complete - next_question event emitted");
 
-          // Small delay to ensure client receives text before audio
+          console.log("🔍 Step 10: Waiting before TTS...");
           await new Promise((resolve) => setTimeout(resolve, 200));
+          console.log("✅ Step 10 complete");
 
-          console.log("🔊 Starting TTS stream for next question");
+          console.log("🔍 Step 11: Starting TTS stream...");
           await streamTTSToClient(socket, nextQuestionText);
+          console.log("✅ Step 11 complete - TTS finished");
 
-          console.log("✅ Next question fully sent");
+          console.log("🔍 Step 12: Waiting for audio playback...");
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          console.log("✅ Step 12 complete");
 
-          // Wait a bit for client to finish playing audio
-          await new Promise((resolve) => setTimeout(resolve, 500));
-
-          // Start fresh Deepgram connection for next answer
-          console.log("🎤 Starting Deepgram connection for next answer...");
+          console.log("🔍 Step 13: Starting new Deepgram connection...");
           startDeepgramConnection();
+          console.log("✅ Step 13 complete - Deepgram connection initiated");
 
-          // Enable listening for next answer
+          console.log("🔍 Step 14: Waiting for connection to stabilize...");
+          await new Promise((resolve) => setTimeout(resolve, 800));
+          console.log("✅ Step 14 complete");
+
+          console.log("🔍 Step 15: Enabling listening...");
           isListeningActive = true;
           socket.emit("listening_enabled");
-          console.log("✅ Listening enabled for next response");
+          console.log(
+            `✅ Step 15 complete - Listening enabled for question ${currentOrder}/${MAX_QUESTIONS}`
+          );
 
+          console.log("🔍 Step 16: Resetting processing flag...");
           isProcessing = false;
+          console.log("✅ Step 16 complete - Ready for next answer");
+
+          console.log("🎉 FULL CYCLE COMPLETE - Ready for user response");
         } catch (error) {
-          console.error("❌ Error processing transcript:", error);
-          console.error("Error stack:", error.stack);
-          socket.emit("error", { message: "Error processing your answer" });
+          console.error("❌ Error in processUserTranscript:", error);
+          console.error("Error details:", {
+            message: error.message,
+            stack: error.stack,
+            name: error.name,
+            code: error.code,
+            errno: error.errno,
+            sqlState: error.sqlState,
+            sqlMessage: error.sqlMessage,
+          });
+          socket.emit("error", {
+            message: error.message || "Error processing your answer",
+          });
           isProcessing = false;
-          // Don't re-enable listening on error, let user refresh
+          isListeningActive = false;
         }
       }
 

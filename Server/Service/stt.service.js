@@ -170,15 +170,7 @@ function createSTTSession() {
       // Return connection wrapper
       return {
         send(chunk) {
-          if (!connection) {
-            return false;
-          }
-
-          if (isConnecting) {
-            return false;
-          }
-
-          if (!isOpen) {
+          if (!connection || isConnecting || !isOpen) {
             return false;
           }
 
@@ -223,6 +215,27 @@ function createSTTSession() {
         getReadyState() {
           if (isConnecting) return 0; // CONNECTING
           return isOpen ? 1 : 3; // OPEN : CLOSED
+        },
+
+        // ✅ ADD THIS: Wait for connection to be ready
+        waitForReady(timeout = 5000) {
+          return new Promise((resolve, reject) => {
+            if (isOpen) {
+              resolve(true);
+              return;
+            }
+
+            const startTime = Date.now();
+            const checkInterval = setInterval(() => {
+              if (isOpen) {
+                clearInterval(checkInterval);
+                resolve(true);
+              } else if (Date.now() - startTime > timeout) {
+                clearInterval(checkInterval);
+                reject(new Error("Connection timeout"));
+              }
+            }, 100);
+          });
         },
       };
     },

@@ -1,26 +1,39 @@
 const mysql = require("mysql2/promise");
-const dotenv = require("dotenv");
-dotenv.config();
+require("dotenv").config();
 
+// Create a connection pool instead of individual connections
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME || "quantamhash_ai_interview_platform",
-  port: Number(process.env.DB_PORT) || 3306,
+  database: process.env.DB_NAME,
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit: 10, // Maximum number of connections
   queueLimit: 0,
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 0,
 });
 
+// Test the pool on startup
+pool
+  .getConnection()
+  .then((connection) => {
+    console.log("✅ Database pool created successfully");
+    connection.release();
+  })
+  .catch((error) => {
+    console.error("❌ Database pool creation failed:", error);
+  });
+
+// Export function to get connection from pool
 const connectDB = async () => {
   try {
     const connection = await pool.getConnection();
     console.log("Connected to the MySQL database successfully.");
     return connection;
   } catch (error) {
-    console.error("Error connecting to the MySQL database:", error);
-    process.exit(1);
+    console.error("❌ Database connection error:", error);
+    throw error;
   }
 };
 

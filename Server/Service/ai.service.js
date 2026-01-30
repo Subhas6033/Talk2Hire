@@ -1,22 +1,38 @@
+// In ai.service.js
 const { openai } = require("../Config/openai.config.js");
 const { APIERR } = require("../Utils/index.utils.js");
 
-async function generateNextQuestionWithAI({ answer, questionOrder }) {
-  if (!answer || typeof answer !== "string") {
-    throw new APIERR(
-      400,
-      "Previous answer is required for AI question generation"
-    );
-  }
+async function generateNextQuestionWithAI({
+  answer,
+  questionOrder,
+  previousQuestion,
+}) {
+  try {
+    console.log("🤖 AI Service: Starting question generation...");
+    console.log("📝 Answer:", answer?.substring(0, 100));
+    console.log("📊 Question order:", questionOrder);
+    console.log("❓ Previous question:", previousQuestion?.substring(0, 100));
 
-  const depth =
-    questionOrder <= 2
-      ? "basic"
-      : questionOrder <= 4
-        ? "intermediate"
-        : "advanced";
+    console.log("🔑 API Key exists:", !!process.env.DEEPSEEK_API_KEY);
+    console.log("🌐 OpenAI base URL:", openai.baseURL);
 
-  const prompt = `
+    if (!answer || typeof answer !== "string") {
+      throw new APIERR(
+        400,
+        "Previous answer is required for AI question generation"
+      );
+    }
+
+    const depth =
+      questionOrder <= 2
+        ? "basic"
+        : questionOrder <= 4
+          ? "intermediate"
+          : "advanced";
+
+    console.log(`🎯 Difficulty level: ${depth}`);
+
+    const prompt = `
 You are a senior technical interviewer.
 
 The candidate just answered:
@@ -33,37 +49,54 @@ Now ask exactly ONE ${depth}-level technical interview question.
 { "question": "Your question here?" }
 `;
 
-  const response = await openai.chat.completions.create({
-    model: "deepseek-chat",
-    temperature: 0.4,
-    messages: [
-      { role: "system", content: "You are a strict technical interviewer." },
-      { role: "user", content: prompt },
-    ],
-  });
+    console.log("🔄 Calling OpenAI API...");
+    const response = await openai.chat.completions.create({
+      model: "deepseek-chat",
+      temperature: 0.4,
+      messages: [
+        { role: "system", content: "You are a strict technical interviewer." },
+        { role: "user", content: prompt },
+      ],
+    });
 
-  const raw = response?.choices?.[0]?.message?.content;
+    console.log("✅ OpenAI response received");
 
-  if (!raw) {
-    throw new APIERR(500, "AI did not return a response");
+    const raw = response?.choices?.[0]?.message?.content;
+
+    if (!raw) {
+      console.error("❌ AI returned empty response");
+      throw new APIERR(500, "AI did not return a response");
+    }
+
+    console.log("📄 Raw AI response:", raw);
+
+    let parsed;
+    try {
+      parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
+    } catch (err) {
+      console.error("❌ Failed to parse AI response:", raw);
+      throw new APIERR(500, "Failed to parse AI response");
+    }
+
+    if (
+      !parsed.question ||
+      typeof parsed.question !== "string" ||
+      parsed.question.length < 10
+    ) {
+      console.error("❌ AI returned invalid question:", parsed);
+      throw new APIERR(500, "AI returned an invalid question");
+    }
+
+    console.log("✅ Question generated successfully:", parsed.question);
+    return parsed.question.trim();
+  } catch (error) {
+    console.error("❌ Error in generateNextQuestionWithAI:", error);
+    console.error("Error details:", {
+      message: error.message,
+      stack: error.stack,
+    });
+    throw error; // Re-throw to be caught by caller
   }
-
-  let parsed;
-  try {
-    parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
-  } catch (err) {
-    throw new APIERR(500, "Failed to parse AI response");
-  }
-
-  if (
-    !parsed.question ||
-    typeof parsed.question !== "string" ||
-    parsed.question.length < 10
-  ) {
-    throw new APIERR(500, "AI returned an invalid question");
-  }
-
-  return parsed.question.trim();
 }
 
 module.exports = { generateNextQuestionWithAI };

@@ -30,13 +30,24 @@ CREATE TABLE IF NOT EXISTS interview_questions (
     answer TEXT,
     technology VARCHAR(255),
     difficulty VARCHAR(50),
-    question_order INT NOT NULL,
+    question_order INT UNSIGNED NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
+    -- Prevent duplicate question orders within the same interview
+    UNIQUE KEY unique_interview_question_order (interview_id, question_order),
+
+    -- Foreign key constraint
     FOREIGN KEY (interview_id)
       REFERENCES interviews(id)
-      ON DELETE CASCADE
-);
+      ON DELETE CASCADE,
+
+    -- Index for faster lookups by order
+    INDEX idx_interview_order (interview_id, question_order),
+    
+    -- Index for finding answered questions
+    INDEX idx_interview_answered (interview_id, answer(100))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 `;
 
 const createTable = async (pool, tableName, query) => {
