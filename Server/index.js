@@ -2,7 +2,9 @@ const http = require("http");
 const app = require("./app.js");
 const { connectDB, pool } = require("./Config/database.config.js");
 const createAllTables = require("./Utils/db.utils.js");
-const { initInterviewSocket } = require("./Controllers/TTS.controller.js");
+const {
+  initInterviewSocket,
+} = require("./Controllers/interviewSocket.controller.js");
 
 const PORT = process.env.PORT;
 
