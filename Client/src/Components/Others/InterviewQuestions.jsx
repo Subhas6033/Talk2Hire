@@ -7,9 +7,9 @@ const SOCKET_URL = "http://localhost:3000";
 
 // Audio buffering configuration for smooth playback
 const AUDIO_CONFIG = {
-  MIN_BUFFER_SIZE: 3, // Minimum chunks to buffer before starting playback
+  MIN_BUFFER_SIZE: 2,
   SAMPLE_RATE: 48000,
-  RECOGNITION_DELAY: 1500, // Delay before enabling recognition after audio ends
+  RECOGNITION_DELAY: 1500,
 };
 
 const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
@@ -27,12 +27,10 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
   const audioQueueRef = useRef([]);
   const isPlayingRef = useRef(false);
   const currentSourceRef = useRef(null);
-  const audioBufferingRef = useRef(false);
 
-  // Recognition control refs
+  // Listening state refs
   const canListenRef = useRef(false);
   const isListeningRef = useRef(false);
-  const recognitionRef = useRef(null);
 
   // Interview state refs
   const hasStartedRef = useRef(false);
@@ -51,9 +49,6 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
 
   // TTS stream state
   const ttsStreamActiveRef = useRef(false);
-
-  // Prevent multiple simultaneous recognition starts
-  const recognitionStartingRef = useRef(false);
 
   /* 🔊 AUDIO CONTEXT INIT */
   useEffect(() => {
@@ -79,99 +74,20 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
     }
   }, []);
 
-  /* 🎤 STOP SPEECH RECOGNITION */
-  const stopRecognition = useCallback(() => {
-    if (!recognitionRef.current) return;
-
-    try {
-      recognitionRef.current.stop();
-      isListeningRef.current = false;
-      setIsListening(false);
-      console.log("🛑 Speech recognition stopped");
-    } catch (e) {
-      if (!e.message.includes("stop")) {
-        console.log("⚠️ Stop recognition error:", e.message);
-      }
-    }
+  /* 🎤 ENABLE LISTENING */
+  const enableListening = useCallback(() => {
+    console.log("✅ Listening enabled");
+    canListenRef.current = true;
+    isListeningRef.current = true;
+    setIsListening(true);
   }, []);
 
-  /* 🎤 START SPEECH RECOGNITION */
-  const startRecognition = useCallback(() => {
-    if (recognitionStartingRef.current) {
-      console.log("🚫 Recognition start already in progress");
-      return;
-    }
-
-    console.log("🎤 startRecognition() called");
-    console.log("📊 State check:", {
-      hasRecognition: !!recognitionRef.current,
-      hasStarted: hasStartedRef.current,
-      canListen: canListenRef.current,
-      isListening: isListeningRef.current,
-      isPlaying: isPlayingRef.current,
-      ttsStreamActive: ttsStreamActiveRef.current,
-      audioBuffering: audioBufferingRef.current,
-    });
-
-    // Guard conditions
-    if (!recognitionRef.current) {
-      console.log("🚫 No recognition object");
-      return;
-    }
-
-    if (!hasStartedRef.current) {
-      console.log("🚫 Interview not started");
-      return;
-    }
-
-    if (isCleaningUpRef.current) {
-      console.log("🚫 Cleanup in progress");
-      return;
-    }
-
-    if (!canListenRef.current) {
-      console.log("🚫 Not allowed to listen");
-      return;
-    }
-
-    if (isPlayingRef.current || audioBufferingRef.current) {
-      console.log("🚫 Audio is playing or buffering");
-      return;
-    }
-
-    if (ttsStreamActiveRef.current) {
-      console.log("🚫 TTS stream is active");
-      return;
-    }
-
-    if (isListeningRef.current) {
-      console.log("🎤 Already listening");
-      return;
-    }
-
-    // Attempt to start
-    recognitionStartingRef.current = true;
-
-    try {
-      recognitionRef.current.start();
-      isListeningRef.current = true;
-      setIsListening(true);
-      console.log("✅ Speech recognition started successfully");
-    } catch (e) {
-      if (e.message.includes("already started")) {
-        console.log("🎤 Recognition already running");
-        isListeningRef.current = true;
-        setIsListening(true);
-      } else {
-        console.error("❌ Error starting recognition:", e.message);
-        isListeningRef.current = false;
-        setIsListening(false);
-      }
-    } finally {
-      setTimeout(() => {
-        recognitionStartingRef.current = false;
-      }, 100);
-    }
+  /* 🎤 DISABLE LISTENING */
+  const disableListening = useCallback(() => {
+    console.log("🛑 Listening disabled");
+    canListenRef.current = false;
+    isListeningRef.current = false;
+    setIsListening(false);
   }, []);
 
   /* 🎤 ENABLE RECOGNITION AFTER DELAY */
@@ -191,7 +107,6 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
         isPlaying: isPlayingRef.current,
         hasStarted: hasStartedRef.current,
         ttsStreamActive: ttsStreamActiveRef.current,
-        audioBuffering: audioBufferingRef.current,
         queueLength: audioQueueRef.current.length,
       });
 
@@ -199,137 +114,15 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
         hasStartedRef.current &&
         !isPlayingRef.current &&
         !ttsStreamActiveRef.current &&
-        !audioBufferingRef.current &&
         audioQueueRef.current.length === 0
       ) {
-        console.log(
-          "✅ All conditions met - enabling canListen and starting recognition"
-        );
-        canListenRef.current = true;
-
-        // Start recognition after a brief delay
-        setTimeout(() => {
-          startRecognition();
-        }, 200);
+        console.log("✅ All conditions met - enabling listening");
+        enableListening();
       } else {
         console.log("❌ Conditions not met for enabling recognition");
       }
     }, AUDIO_CONFIG.RECOGNITION_DELAY);
-  }, [clearRecognitionTimeout, startRecognition]);
-
-  /* 🎤 SPEECH RECOGNITION INIT */
-  useEffect(() => {
-    const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      console.error("❌ SpeechRecognition not supported");
-      return;
-    }
-
-    const recognition = new SpeechRecognition();
-    recognition.lang = "en-US";
-    recognition.continuous = true;
-    recognition.interimResults = false;
-
-    recognition.onstart = () => {
-      console.log("🎤 ✅ SpeechRecognition STARTED - Listening...");
-      isListeningRef.current = true;
-      setIsListening(true);
-      recognitionStartingRef.current = false;
-    };
-
-    recognition.onend = () => {
-      console.log("🎤 SpeechRecognition ENDED");
-      isListeningRef.current = false;
-      setIsListening(false);
-      recognitionStartingRef.current = false;
-
-      if (isCleaningUpRef.current) {
-        console.log("🚫 Cleanup in progress, not restarting");
-        return;
-      }
-
-      if (
-        canListenRef.current &&
-        !isPlayingRef.current &&
-        hasStartedRef.current &&
-        !ttsStreamActiveRef.current &&
-        !audioBufferingRef.current
-      ) {
-        console.log("🔄 Auto-restarting recognition in 300ms...");
-        setTimeout(() => startRecognition(), 300);
-      }
-    };
-
-    recognition.onerror = (e) => {
-      console.error("🎤 Recognition error:", e.error);
-      isListeningRef.current = false;
-      setIsListening(false);
-      recognitionStartingRef.current = false;
-
-      if (
-        e.error === "aborted" ||
-        e.error === "no-speech" ||
-        e.error === "audio-capture"
-      ) {
-        console.log("🚫 Not restarting due to:", e.error);
-        return;
-      }
-
-      if (isCleaningUpRef.current) return;
-
-      if (
-        canListenRef.current &&
-        !isPlayingRef.current &&
-        hasStartedRef.current &&
-        !ttsStreamActiveRef.current
-      ) {
-        console.log("🔄 Retrying after error in 1000ms...");
-        setTimeout(() => startRecognition(), 1000);
-      }
-    };
-
-    recognition.onresult = (e) => {
-      const lastResult = e.results[e.results.length - 1];
-      if (lastResult.isFinal) {
-        const text = lastResult[0].transcript.trim();
-        console.log("📝 User said:", text);
-
-        if (!text) {
-          console.log("⚠️ Empty transcript, ignoring");
-          return;
-        }
-
-        setUserText(text);
-
-        // Disable listening while processing
-        canListenRef.current = false;
-        stopRecognition();
-        clearRecognitionTimeout();
-
-        if (socketRef.current?.connected) {
-          console.log("📤 Sending transcript to server");
-          socketRef.current.emit("final_transcript", { text });
-        }
-      }
-    };
-
-    recognitionRef.current = recognition;
-    console.log("✅ Speech recognition initialized");
-
-    return () => {
-      isCleaningUpRef.current = true;
-      clearRecognitionTimeout();
-      recognitionStartingRef.current = false;
-      try {
-        recognition.abort();
-      } catch (e) {
-        // Ignore
-      }
-      console.log("🎤 Recognition cleaned up");
-    };
-  }, [clearRecognitionTimeout, stopRecognition, startRecognition]);
+  }, [clearRecognitionTimeout, enableListening]);
 
   /* 📝 HANDLE QUESTIONS */
   const handleQuestion = useCallback((payload) => {
@@ -345,37 +138,26 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
     setServerText(questionText);
   }, []);
 
-  /* 🔊 TTS AUDIO PLAYBACK - PRODUCTION GRADE */
+  /* 🔊 TTS AUDIO PLAYBACK */
   const playNextChunk = useCallback(async () => {
     const audioCtx = audioCtxRef.current;
     if (!audioCtx) {
       console.error("❌ No AudioContext available");
       isPlayingRef.current = false;
       setIsPlaying(false);
-      audioBufferingRef.current = false;
       return;
     }
 
-    // Check if queue is empty
     if (audioQueueRef.current.length === 0) {
       console.log("✅ Audio queue empty");
+      isPlayingRef.current = false;
+      setIsPlaying(false);
 
-      // Check if TTS stream is complete
       if (!ttsStreamActiveRef.current) {
         console.log("✅ TTS stream complete - ALL AUDIO FINISHED");
-        isPlayingRef.current = false;
-        setIsPlaying(false);
-        audioBufferingRef.current = false;
-
-        // Enable recognition after delay
-        console.log("🎤 Enabling recognition after audio completion");
         enableRecognitionAfterDelay();
       } else {
-        // TTS still streaming, wait for more chunks
         console.log("⏳ TTS stream active - waiting for more chunks");
-        isPlayingRef.current = false;
-        setIsPlaying(false);
-        audioBufferingRef.current = true; // Keep buffering flag active
       }
       return;
     }
@@ -383,13 +165,9 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
     try {
       isPlayingRef.current = true;
       setIsPlaying(true);
-      audioBufferingRef.current = false;
 
-      // Ensure recognition is stopped
-      if (isListeningRef.current) {
-        console.log("🛑 Stopping recognition for audio playback");
-        stopRecognition();
-      }
+      // Disable listening during playback
+      disableListening();
 
       if (audioCtx.state === "suspended") {
         await audioCtx.resume();
@@ -428,27 +206,7 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
           "🔊 Chunk finished, remaining:",
           audioQueueRef.current.length
         );
-
-        // Immediately play next chunk if available
-        if (audioQueueRef.current.length > 0) {
-          console.log("▶️ Playing next chunk immediately...");
-          playNextChunk();
-        } else {
-          // Queue empty after playback
-          console.log("🔊 Queue empty after playback");
-          if (!ttsStreamActiveRef.current) {
-            console.log("✅ TTS complete - all audio finished");
-            isPlayingRef.current = false;
-            setIsPlaying(false);
-            audioBufferingRef.current = false;
-            enableRecognitionAfterDelay();
-          } else {
-            console.log("⏳ TTS still streaming - entering buffering state");
-            isPlayingRef.current = false;
-            setIsPlaying(false);
-            audioBufferingRef.current = true;
-          }
-        }
+        playNextChunk();
       };
 
       source.start(0);
@@ -457,36 +215,17 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
       console.error("❌ Error playing audio:", error);
       isPlayingRef.current = false;
       setIsPlaying(false);
-      audioBufferingRef.current = false;
       currentSourceRef.current = null;
-      enableRecognitionAfterDelay();
+
+      if (audioQueueRef.current.length > 0) {
+        setTimeout(() => playNextChunk(), 100);
+      } else if (!ttsStreamActiveRef.current) {
+        enableRecognitionAfterDelay();
+      }
     }
-  }, [stopRecognition, enableRecognitionAfterDelay]);
+  }, [disableListening, enableRecognitionAfterDelay]);
 
-  /* 🔊 START BUFFERED PLAYBACK */
-  const startBufferedPlayback = useCallback(() => {
-    if (isPlayingRef.current || audioBufferingRef.current === false) {
-      return; // Already playing or not in buffering state
-    }
-
-    const queueLength = audioQueueRef.current.length;
-    console.log(
-      `🎵 Checking buffer: ${queueLength} chunks, min required: ${AUDIO_CONFIG.MIN_BUFFER_SIZE}`
-    );
-
-    if (queueLength >= AUDIO_CONFIG.MIN_BUFFER_SIZE) {
-      console.log("✅ Buffer threshold met - starting playback");
-      audioBufferingRef.current = false;
-      playNextChunk();
-    } else if (!ttsStreamActiveRef.current && queueLength > 0) {
-      // TTS ended but we have some chunks - play immediately
-      console.log("✅ TTS ended with remaining chunks - starting playback");
-      audioBufferingRef.current = false;
-      playNextChunk();
-    }
-  }, [playNextChunk]);
-
-  /* 🎤 MIC STREAMING */
+  /* 🎤 MIC STREAMING - Only sends to server, no client-side recognition */
   const startMicStreaming = useCallback(async () => {
     if (micStreamRef.current) {
       console.log("🎤 Mic already streaming");
@@ -500,6 +239,7 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
           echoCancellation: true,
           noiseSuppression: true,
           sampleRate: AUDIO_CONFIG.SAMPLE_RATE,
+          channelCount: 1,
         },
       });
       micStreamRef.current = stream;
@@ -522,7 +262,14 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
           pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
         }
 
-        if (socketRef.current?.connected) {
+        // CRITICAL: Only send to server when BOTH conditions are true:
+        // 1. Socket is connected
+        // 2. Listening is active (server has enabled it)
+        if (
+          socketRef.current?.connected &&
+          isListeningRef.current &&
+          canListenRef.current
+        ) {
           socketRef.current.emit("user_audio_chunk", pcm16.buffer);
         }
       };
@@ -553,7 +300,6 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
 
       await startMicStreaming();
 
-      // Don't allow listening until we receive the first question
       canListenRef.current = false;
       console.log("⏳ Waiting for server to be ready...");
 
@@ -579,7 +325,6 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
       console.log("✅ Server ready, requesting first question");
 
       if (socketRef.current?.connected) {
-        // CRITICAL: Set hasStartedRef BEFORE emitting ready_for_question
         hasStartedRef.current = true;
         setHasStarted(true);
         console.log("✅ hasStartedRef set to TRUE");
@@ -636,10 +381,12 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
     socketRef.current = socket;
 
     socket.onAny((eventName, ...args) => {
-      console.log(
-        `📡 Socket event: "${eventName}"`,
-        args.length > 0 ? args : ""
-      );
+      if (eventName !== "user_audio_chunk") {
+        console.log(
+          `📡 Socket event: "${eventName}"`,
+          args.length > 0 ? args : ""
+        );
+      }
     });
 
     socket.on("connect", () => {
@@ -655,13 +402,10 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
     socket.on("question", (data) => {
       console.log("📨 Received 'question' event:", data);
 
-      // Reset state for new question
       ttsStreamActiveRef.current = true;
-      audioBufferingRef.current = true;
-      canListenRef.current = false;
-
-      stopRecognition();
+      disableListening();
       clearRecognitionTimeout();
+      audioQueueRef.current = [];
 
       handleQuestion(data);
     });
@@ -669,16 +413,26 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
     socket.on("next_question", (data) => {
       console.log("📨 Received 'next_question' event:", data);
 
-      // Reset state for new question
       ttsStreamActiveRef.current = true;
-      audioBufferingRef.current = true;
-      canListenRef.current = false;
-
-      stopRecognition();
+      disableListening();
       clearRecognitionTimeout();
+      audioQueueRef.current = [];
 
       handleQuestion(data);
       setUserText("");
+    });
+
+    // Handle transcript received from server
+    socket.on("transcript_received", ({ text }) => {
+      console.log("📝 Transcript received from server:", text);
+      setUserText(text);
+      disableListening();
+    });
+
+    // Handle listening enabled signal from server
+    socket.on("listening_enabled", () => {
+      console.log("✅ Server enabled listening");
+      enableListening();
     });
 
     socket.on("tts_audio", (chunk) => {
@@ -713,42 +467,38 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
 
       console.log("🔊 Received audio chunk:", arrayBuffer.byteLength, "bytes");
 
-      // Mark TTS stream as active
       ttsStreamActiveRef.current = true;
-
-      // Disable listening
-      canListenRef.current = false;
-      if (isListeningRef.current) {
-        stopRecognition();
-      }
+      disableListening();
       clearRecognitionTimeout();
 
-      // Add to queue
       audioQueueRef.current.push(arrayBuffer);
       console.log(`📦 Queue size: ${audioQueueRef.current.length}`);
 
-      // Start buffered playback if conditions are met
-      startBufferedPlayback();
+      if (!isPlayingRef.current) {
+        if (
+          audioQueueRef.current.length >= AUDIO_CONFIG.MIN_BUFFER_SIZE ||
+          audioQueueRef.current.length === 1
+        ) {
+          console.log("✅ Starting playback - buffer threshold met");
+          playNextChunk();
+        } else {
+          console.log(
+            `⏳ Buffering... (${audioQueueRef.current.length}/${AUDIO_CONFIG.MIN_BUFFER_SIZE})`
+          );
+        }
+      }
     });
 
     socket.on("tts_end", () => {
       console.log("🔔 TTS stream ended");
-
-      // Mark TTS stream as complete
       ttsStreamActiveRef.current = false;
 
-      // If we're buffering and have chunks, start playing
-      if (audioBufferingRef.current && audioQueueRef.current.length > 0) {
-        console.log("✅ TTS ended during buffering - starting playback");
-        audioBufferingRef.current = false;
+      if (!isPlayingRef.current && audioQueueRef.current.length > 0) {
+        console.log("✅ TTS ended - playing remaining chunks");
         playNextChunk();
       } else if (audioQueueRef.current.length === 0 && !isPlayingRef.current) {
-        // No audio in queue and not playing - enable recognition
         console.log("✅ TTS ended with empty queue - enabling recognition");
-        audioBufferingRef.current = false;
         enableRecognitionAfterDelay();
-      } else {
-        console.log("⏳ TTS ended but audio still playing");
       }
     });
 
@@ -764,9 +514,18 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
 
     socket.on("error", (error) => {
       console.error("❌ Socket error:", error);
-      alert(
-        `Interview error: ${error.message || "Unknown error"}. Please refresh and try again.`
-      );
+
+      // Only show critical errors to user
+      if (
+        error.message &&
+        !error.message.includes("Speech recognition") &&
+        !error.message.includes("recognition error")
+      ) {
+        alert(
+          `Interview error: ${error.message}. Please refresh and try again.`
+        );
+      }
+
       setStatus("error");
     });
 
@@ -780,20 +539,10 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
       hasStartedRef.current = false;
       serverReadyRef.current = false;
       ttsStreamActiveRef.current = false;
-      recognitionStartingRef.current = false;
-      audioBufferingRef.current = false;
 
       if (currentSourceRef.current) {
         try {
           currentSourceRef.current.stop();
-        } catch (e) {
-          // Ignore
-        }
-      }
-
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.abort();
         } catch (e) {
           // Ignore
         }
@@ -822,12 +571,11 @@ const InterviewQuestions = ({ interviewId, userId, onCancel }) => {
     interviewId,
     userId,
     cameraStream,
-    stopRecognition,
+    disableListening,
     clearRecognitionTimeout,
     handleQuestion,
     playNextChunk,
     enableRecognitionAfterDelay,
-    startBufferedPlayback,
   ]);
 
   return (
