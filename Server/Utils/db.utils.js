@@ -51,6 +51,84 @@ CREATE TABLE IF NOT EXISTS interview_questions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 `;
 
+const questionEvaluationsTableQuery = `
+CREATE TABLE IF NOT EXISTS question_evaluations (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+
+    interview_id INT UNSIGNED NOT NULL,
+    question_id INT UNSIGNED NOT NULL,
+
+    score DECIMAL(4,2),           -- 0.00 – 10.00
+    correctness DECIMAL(4,2),
+    depth DECIMAL(4,2),
+    clarity DECIMAL(4,2),
+
+    feedback TEXT,
+    detected_level ENUM('BEGINNER','INTERMEDIATE','ADVANCED'),
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE KEY unique_question_eval (question_id),
+
+    FOREIGN KEY (interview_id)
+      REFERENCES interviews(id)
+      ON DELETE CASCADE,
+
+    FOREIGN KEY (question_id)
+      REFERENCES interview_questions(id)
+      ON DELETE CASCADE,
+
+    INDEX idx_interview_eval (interview_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+`;
+
+const interviewEvaluationsTableQuery = `
+CREATE TABLE IF NOT EXISTS interview_evaluations (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+
+    interview_id INT UNSIGNED NOT NULL,
+
+    overall_score DECIMAL(5,2),   -- 0 – 100
+    hire_decision ENUM('YES','NO','MAYBE'),
+    experience_level ENUM('BEGINNER','INTERMEDIATE','ADVANCED'),
+
+    strengths TEXT,
+    weaknesses TEXT,
+    summary TEXT,
+
+    evaluated_by ENUM('AI','HUMAN') DEFAULT 'AI',
+    model_version VARCHAR(50),
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE KEY unique_interview_eval (interview_id),
+
+    FOREIGN KEY (interview_id)
+      REFERENCES interviews(id)
+      ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+`;
+
+const skillEvaluationsTableQuery = `
+CREATE TABLE IF NOT EXISTS skill_evaluations (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+
+    interview_id INT UNSIGNED NOT NULL,
+    technology VARCHAR(255) NOT NULL,
+
+    average_score DECIMAL(4,2),
+    level ENUM('BEGINNER','INTERMEDIATE','ADVANCED'),
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE KEY unique_interview_skill (interview_id, technology),
+
+    FOREIGN KEY (interview_id)
+      REFERENCES interviews(id)
+      ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+`;
+
 const createTable = async (pool, tableName, query) => {
   try {
     await pool.query(query);
@@ -64,11 +142,28 @@ const createTable = async (pool, tableName, query) => {
 const createAllTables = async (pool) => {
   try {
     await createTable(pool, "users", userTableQuery);
-    await createTable(pool, "users", interviewTableQuery);
-    await createTable(pool, "users", interviewQuestionsTableQuery);
-    console.log("All tables created successfully.");
+    await createTable(pool, "interviews", interviewTableQuery);
+    await createTable(
+      pool,
+      "interview_questions",
+      interviewQuestionsTableQuery
+    );
+
+    await createTable(
+      pool,
+      "question_evaluations",
+      questionEvaluationsTableQuery
+    );
+    await createTable(
+      pool,
+      "interview_evaluations",
+      interviewEvaluationsTableQuery
+    );
+    await createTable(pool, "skill_evaluations", skillEvaluationsTableQuery);
+
+    console.log("✅ All tables created successfully.");
   } catch (error) {
-    console.error("Error creating tables:", error);
+    console.error("❌ Error creating tables:", error);
     throw error;
   }
 };

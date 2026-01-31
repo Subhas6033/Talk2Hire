@@ -2,9 +2,6 @@ const { connectDB } = require("../Config/database.config");
 const { APIERR } = require("../Utils/index.utils.js");
 
 const Interview = {
-  /**
-   * Create a new interview session for a user
-   */
   async createSession(userId) {
     if (!userId) throw new APIERR(400, "User ID is required");
 
@@ -20,13 +17,10 @@ const Interview = {
       console.error("❌ Database error in createSession:", error);
       throw error;
     } finally {
-      if (db) db.release(); // ✅ Changed from db.end()
+      if (db) db.release();
     }
   },
 
-  /**
-   * Get interview session by ID
-   */
   async getSessionById(interviewId) {
     let db;
     try {
@@ -48,13 +42,10 @@ const Interview = {
       console.error("❌ Database error in getSessionById:", error);
       throw error;
     } finally {
-      if (db) db.release(); // ✅ Changed from db.end()
+      if (db) db.release();
     }
   },
 
-  /**
-   * Save a question to an interview
-   */
   async saveQuestion({
     interviewId,
     question,
@@ -110,13 +101,10 @@ const Interview = {
 
       throw error;
     } finally {
-      if (db) db.release(); // ✅ Changed from db.end()
+      if (db) db.release();
     }
   },
 
-  /**
-   * Save / update answer for a question
-   */
   async saveAnswer({ interviewId, questionId, answer }) {
     if (!interviewId || !questionId) {
       throw new APIERR(400, "Interview ID and Question ID are required");
@@ -156,13 +144,10 @@ const Interview = {
       });
       throw error;
     } finally {
-      if (db) db.release(); // ✅ Changed from db.end()
+      if (db) db.release();
     }
   },
 
-  /**
-   * Get full interview history (Q&A ordered)
-   */
   async getSessionHistory(interviewId) {
     let db;
     try {
@@ -186,13 +171,10 @@ const Interview = {
       console.error("❌ Database error in getSessionHistory:", error);
       throw error;
     } finally {
-      if (db) db.release(); // ✅ Changed from db.end()
+      if (db) db.release();
     }
   },
 
-  /**
-   * Get question by order (used for navigation / replay)
-   */
   async getQuestionByOrder(interviewId, questionOrder) {
     let db;
     try {
@@ -219,9 +201,6 @@ const Interview = {
     }
   },
 
-  /**
-   * Get the last answered question
-   */
   async getLastAnsweredQuestion(interviewId) {
     let db;
     try {
@@ -246,13 +225,10 @@ const Interview = {
       console.error("❌ Database error in getLastAnsweredQuestion:", error);
       throw error;
     } finally {
-      if (db) db.release(); // ✅ Changed from db.end()
+      if (db) db.release();
     }
   },
 
-  /**
-   * Get next question order number
-   */
   async getNextQuestionOrder(interviewId) {
     let db;
     try {
@@ -269,7 +245,7 @@ const Interview = {
       console.error("❌ Database error in getNextQuestionOrder:", error);
       throw error;
     } finally {
-      if (db) db.release(); // ✅ Changed from db.end()
+      if (db) db.release();
     }
   },
 };
