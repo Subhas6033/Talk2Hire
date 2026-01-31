@@ -12,12 +12,13 @@ const api = axios.create({
 
 export const registerUser = createAsyncThunk(
   "auth/register",
-  async ({ fullName, email, password }, { rejectWithValue }) => {
+  async ({ fullName, email, password, skill }, { rejectWithValue }) => {
     try {
       const response = await api.post("/register", {
         fullName,
         email,
         password,
+        skill,
       });
 
       return response.data;

@@ -16,6 +16,7 @@ import {
   InterviewDashboard,
   Profile,
   VerifyPassword,
+  Hire,
 } from "./Pages/index.pages.js";
 import { Guidlines } from "./Components/index.js";
 import { Provider } from "react-redux";
@@ -86,6 +87,10 @@ const router = createBrowserRouter([
             <Profile />
           </ProtectedRoutes>
         ),
+      },
+      {
+        path: "/hire",
+        element: <Hire />,
       },
       {
         path: "*",

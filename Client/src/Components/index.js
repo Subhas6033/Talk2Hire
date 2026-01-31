@@ -17,6 +17,7 @@ import Select from "./Common/Select";
 import InterviewQuestions from "./Others/InterviewQuestions";
 import MicrophoneCheck from "./Others/MicrophoneCheck";
 import CameraCheck from "./Others/CamerCheck";
+import CandidateFilter from "./Filter/CandidateFilter";
 
 export {
   Nav,
@@ -38,4 +39,5 @@ export {
   InterviewQuestions,
   MicrophoneCheck,
   CameraCheck,
+  CandidateFilter,
 };

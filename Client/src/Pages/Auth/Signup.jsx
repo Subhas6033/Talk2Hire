@@ -32,6 +32,7 @@ const Signup = () => {
       fullName: "",
       email: "",
       password: "",
+      skill: "",
       terms: false,
     },
   });
@@ -41,6 +42,7 @@ const Signup = () => {
       fullName: data.fullName,
       email: data.email,
       password: data.password,
+      skill: data.skill,
     });
   };
 
@@ -95,6 +97,20 @@ const Signup = () => {
                     pattern: {
                       value: /^\S+@\S+\.\S+$/,
                       message: "Invalid email address",
+                    },
+                  })}
+                />
+
+                {/* Skills */}
+                <FormField
+                  label="Your Skill"
+                  placeholder="Fullstack Developer"
+                  error={errors.skill?.message}
+                  {...register("skill", {
+                    required: "Skill is required",
+                    minLength: {
+                      value: 2,
+                      message: "Skill must be at least 2 characters",
                     },
                   })}
                 />
