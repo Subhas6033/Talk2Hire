@@ -17,7 +17,7 @@ export const useInterviewSocket = (userId) => {
     if (!sessionId || !userId) return; // exit early if sessionId/userId missing
 
     const ws = new WebSocket(
-      `ws://localhost:3000?interviewId=${sessionId}&userId=${userId}`
+      `${import.meta.env.VITE_WS_URL}?interviewId=${sessionId}&userId=${userId}`
     );
 
     ws.onopen = () => dispatch(socketConnected());

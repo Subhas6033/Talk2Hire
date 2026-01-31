@@ -3,10 +3,6 @@ import axios from "axios";
 
 const baseURL = import.meta.env.VITE_BACKEND_URL;
 
-/**
- * STEP 1: Start interview (HTTP)
- * Generates first question + sessionId
- */
 export const startInterview = createAsyncThunk(
   "interview/start",
   async ({ resume }, { rejectWithValue }) => {
