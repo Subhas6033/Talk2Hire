@@ -73,10 +73,12 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
 });
 
 const registerUser = asyncHandler(async (req, res) => {
-  const { fullName, email, password } = req.body;
-
+  const { fullName, email, password, skill } = req.body;
+  console.log("Coming from the bdy", fullName, email, password, skill);
   if (
-    [fullName, email, password].some((field) => !field || field.trim() === "")
+    [fullName, email, password, skill].some(
+      (field) => !field || field.trim() === ""
+    )
   ) {
     throw new APIERR(400, "All fields are required");
   }
@@ -96,6 +98,7 @@ const registerUser = asyncHandler(async (req, res) => {
     fullName,
     email,
     hashPassword: passwordHash,
+    skill,
   });
 
   const { refreshToken, accessToken } = await generateRefreshAndAccessTokens({
@@ -128,6 +131,7 @@ const registerUser = asyncHandler(async (req, res) => {
         id: userId,
         fullName,
         email,
+        skill,
       },
       "User registered successfully"
     )

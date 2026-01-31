@@ -25,14 +25,14 @@ const User = {
     return rows[0];
   },
 
-  async create({ fullName, email, hashPassword, refreshToken = "" }) {
+  async create({ fullName, email, hashPassword, skill, refreshToken = "" }) {
     if (!isValidEmail(email)) {
       throw new APIERR(400, "Please enter a valid mail");
     }
     const db = await connectDB();
     const [result] = await db.execute(
-      "INSERT INTO users (fullName, email, hashPassword, refreshToken) VALUES (?, ?, ?, ?)",
-      [fullName, email, hashPassword, refreshToken]
+      "INSERT INTO users (fullName, email, hashPassword, skill, refreshToken) VALUES (?, ?, ?, ?, ?)",
+      [fullName, email, hashPassword, skill, refreshToken]
     );
     return result.insertId;
   },
