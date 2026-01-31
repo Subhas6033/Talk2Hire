@@ -3,7 +3,7 @@ import { io } from "socket.io-client";
 import { Button } from "../index";
 import { Card } from "../Common/Card";
 
-const SOCKET_URL = "http://localhost:3000";
+const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
 // Audio buffering configuration for smooth playback
 const AUDIO_CONFIG = {
