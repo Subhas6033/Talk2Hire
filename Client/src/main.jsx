@@ -18,7 +18,7 @@ import {
   VerifyPassword,
   Hire,
 } from "./Pages/index.pages.js";
-import { Guidlines } from "./Components/index.js";
+import { Guidlines, MobileSecurityCamera } from "./Components/index.js";
 import { Provider } from "react-redux";
 import { store } from "./Store/store.js";
 import ProtectedRoutes from "./Security/ProtectedRoutes.jsx";
@@ -93,9 +93,13 @@ const router = createBrowserRouter([
         element: <Hire />,
       },
       {
-        path: "*",
-        element: <NotFound />,
+        path: "/mobile-security",
+        element: <MobileSecurityCamera />,
       },
+      // {
+      //   path: "*",
+      //   element: <NotFound />,
+      // },
     ],
   },
 ]);

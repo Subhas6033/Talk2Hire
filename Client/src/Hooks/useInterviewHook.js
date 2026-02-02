@@ -12,7 +12,6 @@ import {
   incrementAudioQueue,
   decrementAudioQueue,
   clearAudioQueue,
-  setAudioQueueLength,
   setMicStreamingActive,
   setMicPermissionGranted,
   setCurrentQuestion,
@@ -30,16 +29,15 @@ import {
 const AUDIO_CONFIG = {
   MIN_BUFFER_SIZE: 3,
   SAMPLE_RATE: 48000,
-  RECOGNITION_DELAY: 2000, // Increased to 2 seconds for safer timing
+  RECOGNITION_DELAY: 2000,
+  MAX_RECOGNITION_WAIT: 5000, // ✅ NEW: Max time to wait for recognition
 };
 
 export const useInterview = (interviewId, userId, cameraStream) => {
   const dispatch = useDispatch();
-
-  // Select state from Redux
   const interview = useSelector((state) => state.interview);
 
-  // Refs for non-Redux state
+  // Refs
   const socketRef = useRef(null);
   const audioCtxRef = useRef(null);
   const micStreamRef = useRef(null);
@@ -49,10 +47,14 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const recordingTimerRef = useRef(null);
   const isCleaningUpRef = useRef(false);
 
-  // Store audio buffers ONLY in ref (not Redux)
+  // Audio queue stored ONLY in ref
   const audioQueueRef = useRef([]);
 
-  // Internal refs to track state for audio processing
+  // ✅ NEW: Track if we're waiting for more audio chunks
+  const waitingForMoreChunksRef = useRef(false);
+  const lastChunkReceivedTimeRef = useRef(null);
+
+  // State sync refs
   const isPlayingRef = useRef(false);
   const isListeningRef = useRef(false);
   const canListenRef = useRef(false);
@@ -61,7 +63,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const ttsStreamActiveRef = useRef(false);
   const micStreamingActiveRef = useRef(false);
 
-  // Sync Redux state to refs (needed for audio processing callbacks)
+  // Sync Redux to refs
   useEffect(() => {
     isPlayingRef.current = interview.isPlaying;
     isListeningRef.current = interview.isListening;
@@ -72,10 +74,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     micStreamingActiveRef.current = interview.micStreamingActive;
   }, [interview]);
 
-  // ============================================================================
-  // AUDIO CONTEXT INITIALIZATION
-  // ============================================================================
-
+  // Initialize AudioContext
   useEffect(() => {
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)({
       sampleRate: AUDIO_CONFIG.SAMPLE_RATE,
@@ -90,10 +89,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     };
   }, []);
 
-  // ============================================================================
-  // RECORDING TIMER
-  // ============================================================================
-
+  // Recording timer
   useEffect(() => {
     if (!interview.isInitializing && interview.status === "live") {
       dispatch(startRecording());
@@ -111,10 +107,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }
   }, [interview.isInitializing, interview.status, dispatch]);
 
-  // ============================================================================
-  // HELPER FUNCTIONS
-  // ============================================================================
-
+  // ✅ IMPROVED: Clear recognition timeout
   const clearRecognitionTimeout = useCallback(() => {
     if (recognitionTimeoutRef.current) {
       clearTimeout(recognitionTimeoutRef.current);
@@ -123,77 +116,112 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }
   }, []);
 
+  // ✅ IMPROVED: Check if we should enable recognition
   const shouldEnableRecognition = useCallback(() => {
     const shouldEnable =
       hasStartedRef.current &&
       !isPlayingRef.current &&
       !ttsStreamActiveRef.current &&
-      audioQueueRef.current.length === 0;
+      audioQueueRef.current.length === 0 &&
+      !waitingForMoreChunksRef.current;
 
-    console.log("🎤 Check shouldEnableRecognition:", {
+    console.log("🎤 shouldEnableRecognition:", {
       hasStarted: hasStartedRef.current,
       isPlaying: isPlayingRef.current,
-      ttsStreamActive: ttsStreamActiveRef.current,
-      queueLength: audioQueueRef.current.length,
-      shouldEnable,
+      ttsActive: ttsStreamActiveRef.current,
+      queueLen: audioQueueRef.current.length,
+      waitingForChunks: waitingForMoreChunksRef.current,
+      result: shouldEnable,
     });
 
     return shouldEnable;
   }, []);
 
+  // ✅ IMPROVED: Enable recognition with safety checks
   const enableRecognitionAfterDelay = useCallback(() => {
     console.log("⏰ enableRecognitionAfterDelay called");
     clearRecognitionTimeout();
 
+    // ✅ NEW: Check if we recently received a chunk (might get more soon)
+    const timeSinceLastChunk =
+      Date.now() - (lastChunkReceivedTimeRef.current || 0);
+
+    if (timeSinceLastChunk < 1000 && ttsStreamActiveRef.current) {
+      console.log("⏳ Recently received chunk, waiting a bit more...");
+      waitingForMoreChunksRef.current = true;
+
+      setTimeout(() => {
+        waitingForMoreChunksRef.current = false;
+        enableRecognitionAfterDelay();
+      }, 1000);
+      return;
+    }
+
     console.log(`⏰ Setting ${AUDIO_CONFIG.RECOGNITION_DELAY}ms timeout`);
     recognitionTimeoutRef.current = setTimeout(() => {
-      console.log("🎤 ⏰ Timeout fired - checking conditions");
+      console.log("🎤 Timeout fired - checking conditions");
 
       if (shouldEnableRecognition()) {
-        console.log("✅ All conditions met - enabling listening");
+        console.log("✅ Enabling listening");
         dispatch(enableListening());
       } else {
-        console.log("❌ Conditions not met for enabling recognition:", {
-          hasStarted: hasStartedRef.current,
-          isPlaying: isPlayingRef.current,
-          ttsStreamActive: ttsStreamActiveRef.current,
-          queueLength: audioQueueRef.current.length,
-        });
+        console.log("❌ Conditions not met, checking again in 1s");
+
+        // ✅ NEW: Retry after a short delay (max 5 seconds total)
+        if (timeSinceLastChunk < AUDIO_CONFIG.MAX_RECOGNITION_WAIT) {
+          setTimeout(() => enableRecognitionAfterDelay(), 1000);
+        } else {
+          console.warn("⚠️ Recognition wait timeout - forcing enable");
+          dispatch(enableListening());
+        }
       }
     }, AUDIO_CONFIG.RECOGNITION_DELAY);
   }, [clearRecognitionTimeout, shouldEnableRecognition, dispatch]);
 
-  // ============================================================================
-  // AUDIO PLAYBACK
-  // ============================================================================
-
+  // ✅ IMPROVED: Play next chunk with better state management
   const playNextChunk = useCallback(async () => {
     const audioCtx = audioCtxRef.current;
     if (!audioCtx) {
-      console.error("❌ No AudioContext available");
+      console.error("❌ No AudioContext");
       dispatch(setIsPlaying(false));
       return;
     }
 
+    // ✅ NEW: If queue is empty but TTS is active, wait a bit
     if (audioQueueRef.current.length === 0) {
-      console.log("✅ Audio queue empty");
-      dispatch(setIsPlaying(false));
+      if (ttsStreamActiveRef.current) {
+        console.log("⏳ Queue empty but TTS active - waiting for more chunks");
+        waitingForMoreChunksRef.current = true;
 
-      // CRITICAL FIX: Only enable recognition if TTS stream is also complete
-      if (!ttsStreamActiveRef.current) {
-        console.log(
-          "✅ TTS stream complete - ALL AUDIO FINISHED - enabling recognition after delay"
-        );
-        enableRecognitionAfterDelay();
-      } else {
-        console.log("⏳ TTS stream still active - waiting for more chunks");
+        // Wait up to 2 seconds for more chunks
+        setTimeout(() => {
+          if (audioQueueRef.current.length > 0) {
+            console.log("✅ Received more chunks - continuing playback");
+            playNextChunk();
+          } else {
+            console.log("⏳ No more chunks received - ending playback");
+            waitingForMoreChunksRef.current = false;
+            dispatch(setIsPlaying(false));
+
+            if (!ttsStreamActiveRef.current) {
+              enableRecognitionAfterDelay();
+            }
+          }
+        }, 2000);
+        return;
       }
+
+      console.log("✅ Audio queue empty and TTS complete");
+      dispatch(setIsPlaying(false));
+      waitingForMoreChunksRef.current = false;
+      enableRecognitionAfterDelay();
       return;
     }
 
     try {
       dispatch(setIsPlaying(true));
       dispatch(disableListening());
+      waitingForMoreChunksRef.current = false;
 
       if (audioCtx.state === "suspended") {
         await audioCtx.resume();
@@ -202,10 +230,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       const buffer = audioQueueRef.current.shift();
       dispatch(decrementAudioQueue());
 
-      console.log(
-        "🔊 Playing chunk, queue remaining:",
-        audioQueueRef.current.length
-      );
+      console.log("🔊 Playing chunk, queue:", audioQueueRef.current.length);
 
       const byteLength = buffer.byteLength - (buffer.byteLength % 2);
       const alignedBuffer = buffer.slice(0, byteLength);
@@ -238,11 +263,12 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       };
 
       source.start(0);
-      console.log("▶️ Audio chunk started");
+      console.log("▶️ Chunk started");
     } catch (error) {
-      console.error("❌ Error playing audio:", error);
+      console.error("❌ Audio playback error:", error);
       dispatch(setIsPlaying(false));
       currentSourceRef.current = null;
+      waitingForMoreChunksRef.current = false;
 
       if (audioQueueRef.current.length > 0) {
         setTimeout(() => playNextChunk(), 100);
@@ -252,10 +278,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }
   }, [dispatch, enableRecognitionAfterDelay]);
 
-  // ============================================================================
-  // MICROPHONE STREAMING
-  // ============================================================================
-
+  // Microphone streaming
   const startMicStreaming = useCallback(async () => {
     if (micStreamRef.current) {
       console.log("🎤 Mic already streaming");
@@ -263,7 +286,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }
 
     try {
-      console.log("🎤 Requesting microphone access...");
+      console.log("🎤 Requesting microphone...");
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -275,7 +298,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
       micStreamRef.current = stream;
       dispatch(setMicPermissionGranted(true));
-      console.log("✅ Microphone access granted");
+      console.log("✅ Microphone granted");
 
       const audioCtx = audioCtxRef.current;
       const source = audioCtx.createMediaStreamSource(stream);
@@ -288,9 +311,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       dispatch(setMicStreamingActive(true));
 
       processor.onaudioprocess = (e) => {
-        if (!micStreamingActiveRef.current) {
-          return;
-        }
+        if (!micStreamingActiveRef.current) return;
 
         const input = e.inputBuffer.getChannelData(0);
         const pcm16 = new Int16Array(input.length);
@@ -309,35 +330,27 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         }
       };
 
-      console.log("🎤 Mic streaming started");
+      console.log("🎤 Streaming started");
     } catch (error) {
-      console.error("❌ Microphone access error:", error);
-      alert(
-        "Microphone access denied. Please allow microphone access and try again."
-      );
+      console.error("❌ Microphone error:", error);
+      alert("Microphone access denied. Please allow and try again.");
     }
   }, [dispatch]);
 
-  // ============================================================================
-  // EVENT HANDLERS
-  // ============================================================================
-
+  // Event Handlers
   const handleQuestion = useCallback(
     (payload) => {
-      let questionText = "";
-      if (typeof payload === "string") {
-        questionText = payload;
-      } else if (payload?.question) {
-        questionText = payload.question;
-      }
+      const questionText =
+        typeof payload === "string" ? payload : payload?.question || "";
 
-      console.log("❓ Received question:", questionText);
+      console.log("❓ Question:", questionText);
       dispatch(setCurrentQuestion(questionText));
       dispatch(setTtsStreamActive(true));
       dispatch(disableListening());
       dispatch(clearAudioQueue());
       clearRecognitionTimeout();
       audioQueueRef.current = [];
+      waitingForMoreChunksRef.current = false;
     },
     [dispatch, clearRecognitionTimeout]
   );
@@ -351,26 +364,28 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       dispatch(clearAudioQueue());
       clearRecognitionTimeout();
       audioQueueRef.current = [];
+      waitingForMoreChunksRef.current = false;
     },
     [dispatch, clearRecognitionTimeout]
   );
 
   const handleIdlePrompt = useCallback(
     ({ text }) => {
-      console.log("⏰ Received idle prompt:", text);
+      console.log("⏰ Idle prompt:", text);
       dispatch(setIdlePrompt(text));
       dispatch(setTtsStreamActive(true));
       dispatch(disableListening());
       dispatch(clearAudioQueue());
       clearRecognitionTimeout();
       audioQueueRef.current = [];
+      waitingForMoreChunksRef.current = false;
     },
     [dispatch, clearRecognitionTimeout]
   );
 
   const handleTranscriptReceived = useCallback(
     ({ text }) => {
-      console.log("📝 Transcript received from server:", text);
+      console.log("📝 Transcript:", text);
       dispatch(setUserText(text));
       dispatch(disableListening());
     },
@@ -385,10 +400,11 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch]
   );
 
+  // ✅ IMPROVED: Handle TTS audio with chunk timing
   const handleTtsAudio = useCallback(
     (chunk) => {
       if (!chunk) {
-        console.log("⚠️ Received empty audio chunk");
+        console.log("⚠️ Empty chunk");
         return;
       }
 
@@ -406,37 +422,39 @@ export const useInterview = (interviewId, userId, cameraStream) => {
           chunk.byteOffset + chunk.byteLength
         );
       } else {
-        console.error("❌ Unknown audio chunk format:", typeof chunk);
+        console.error("❌ Unknown chunk format:", typeof chunk);
         return;
       }
 
       if (arrayBuffer.byteLength === 0) {
-        console.log("⚠️ Received empty audio buffer");
+        console.log("⚠️ Empty buffer");
         return;
       }
 
-      console.log("🔊 Received audio chunk:", arrayBuffer.byteLength, "bytes");
+      console.log("🔊 Audio chunk:", arrayBuffer.byteLength, "bytes");
+
+      // ✅ NEW: Track when we received this chunk
+      lastChunkReceivedTimeRef.current = Date.now();
 
       dispatch(setTtsStreamActive(true));
       dispatch(disableListening());
       clearRecognitionTimeout();
 
-      // Store buffer in ref, only update Redux count
       audioQueueRef.current.push(arrayBuffer);
       dispatch(incrementAudioQueue());
 
-      console.log(`📦 Queue size: ${audioQueueRef.current.length}`);
+      console.log(`📦 Queue: ${audioQueueRef.current.length}`);
 
       if (!isPlayingRef.current) {
         if (
           audioQueueRef.current.length >= AUDIO_CONFIG.MIN_BUFFER_SIZE ||
           audioQueueRef.current.length === 1
         ) {
-          console.log("✅ Starting playback - buffer threshold met");
+          console.log("✅ Starting playback");
           playNextChunk();
         } else {
           console.log(
-            `⏳ Buffering... (${audioQueueRef.current.length}/${AUDIO_CONFIG.MIN_BUFFER_SIZE})`
+            `⏳ Buffering (${audioQueueRef.current.length}/${AUDIO_CONFIG.MIN_BUFFER_SIZE})`
           );
         }
       }
@@ -444,55 +462,49 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch, clearRecognitionTimeout, playNextChunk]
   );
 
+  // ✅ IMPROVED: Handle TTS end with better synchronization
   const handleTtsEnd = useCallback(() => {
     console.log("🔔 TTS stream ended");
     dispatch(setTtsStreamActive(false));
+    waitingForMoreChunksRef.current = false;
 
-    // CRITICAL FIX: Check both playing state AND queue
-    const hasRemainingAudio = audioQueueRef.current.length > 0;
+    const hasAudio = audioQueueRef.current.length > 0;
 
-    console.log("🔔 TTS end status:", {
+    console.log("🔔 TTS end:", {
       isPlaying: isPlayingRef.current,
-      queueLength: audioQueueRef.current.length,
-      hasRemainingAudio,
+      queueLen: audioQueueRef.current.length,
+      hasAudio,
     });
 
-    if (hasRemainingAudio && !isPlayingRef.current) {
-      console.log("✅ TTS ended - playing remaining chunks");
+    if (hasAudio && !isPlayingRef.current) {
+      console.log("✅ Playing remaining chunks");
       playNextChunk();
-    } else if (!hasRemainingAudio && !isPlayingRef.current) {
-      console.log(
-        "✅ TTS ended with empty queue and no playback - enabling recognition after delay"
-      );
+    } else if (!hasAudio && !isPlayingRef.current) {
+      console.log("✅ No audio, enabling recognition");
       enableRecognitionAfterDelay();
     } else {
-      console.log(
-        "⏳ TTS ended but audio still playing - will enable recognition when playback finishes"
-      );
+      console.log("⏳ Audio playing, will enable when done");
     }
   }, [dispatch, playNextChunk, enableRecognitionAfterDelay]);
 
   const handleInterviewComplete = useCallback(
     (data) => {
-      console.log("🎉 Interview completed:", data);
+      console.log("🎉 Complete:", data);
       dispatch(completeInterview({ totalQuestions: data.totalQuestions }));
       dispatch(setMicStreamingActive(false));
     },
     [dispatch]
   );
 
-  // ============================================================================
-  // AUTO START INTERVIEW
-  // ============================================================================
-
+  // Auto-start interview
   const autoStartInterview = useCallback(async () => {
     if (hasStartedRef.current) {
-      console.log("🚫 Interview already started");
+      console.log("🚫 Already started");
       return;
     }
 
     try {
-      console.log("🚀 Auto-starting interview...");
+      console.log("🚀 Auto-starting...");
 
       if (audioCtxRef.current?.state === "suspended") {
         await audioCtxRef.current.resume();
@@ -501,11 +513,9 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
       await startMicStreaming();
 
-      console.log("⏳ Waiting for server to be ready...");
+      console.log("⏳ Waiting for server...");
 
       if (!serverReadyRef.current) {
-        console.log("⏳ Server not ready, waiting for signal...");
-
         let waitTime = 0;
         const maxWait = 10000;
         const checkInterval = 100;
@@ -516,46 +526,36 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         }
 
         if (!serverReadyRef.current) {
-          console.error("❌ Server ready timeout");
+          console.error("❌ Server timeout");
           dispatch(setIsInitializing(false));
-          alert("Server initialization timeout. Please refresh and try again.");
+          alert("Server timeout. Please refresh.");
           return;
         }
       }
 
-      console.log("✅ Server ready, requesting first question");
+      console.log("✅ Server ready");
 
       if (socketRef.current?.connected) {
         dispatch(setHasStarted(true));
         console.log("✅ Interview started");
-
         socketRef.current.emit("ready_for_question");
       } else {
-        console.error("⚠️ Socket not connected");
+        console.error("⚠️ Not connected");
         dispatch(setIsInitializing(false));
-        alert("Connection error. Please refresh and try again.");
+        alert("Connection error. Please refresh.");
       }
     } catch (error) {
-      console.error("❌ Error starting interview:", error);
+      console.error("❌ Start error:", error);
       dispatch(setHasStarted(false));
       dispatch(setIsInitializing(false));
     }
   }, [dispatch, startMicStreaming]);
 
-  // ============================================================================
-  // RETURN INTERFACE
-  // ============================================================================
-
   return {
-    // State
     ...interview,
-
-    // Refs
     socketRef,
     audioCtxRef,
     micStreamRef,
-
-    // Actions
     handleQuestion,
     handleNextQuestion,
     handleIdlePrompt,
@@ -568,8 +568,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     startMicStreaming,
     autoStartInterview,
     enableRecognitionAfterDelay,
-
-    // Dispatch helpers
     setStatus: (status) => dispatch(setStatus(status)),
     setServerReady: (ready) => dispatch(setServerReady(ready)),
     setHasStarted: (started) => dispatch(setHasStarted(started)),

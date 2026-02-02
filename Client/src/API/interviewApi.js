@@ -73,10 +73,7 @@ const interviewSlice = createSlice({
   name: "interview",
   initialState,
   reducers: {
-    // ============================================================================
-    // CONNECTION & STATUS ACTIONS
-    // ============================================================================
-
+    // Status for the server
     setStatus: (state, action) => {
       state.status = action.payload;
     },
@@ -110,10 +107,7 @@ const interviewSlice = createSlice({
       state.status = "error";
     },
 
-    // ============================================================================
-    // AUDIO PLAYBACK ACTIONS
-    // ============================================================================
-
+    // Audio Streaming
     setIsPlaying: (state, action) => {
       state.isPlaying = action.payload;
     },
@@ -156,10 +150,7 @@ const interviewSlice = createSlice({
       state.audioQueueLength = action.payload;
     },
 
-    // ============================================================================
-    // MICROPHONE ACTIONS
-    // ============================================================================
-
+    // Microphone
     setMicStreamingActive: (state, action) => {
       state.micStreamingActive = action.payload;
     },
@@ -168,10 +159,7 @@ const interviewSlice = createSlice({
       state.micPermissionGranted = action.payload;
     },
 
-    // ============================================================================
-    // QUESTION & TRANSCRIPT ACTIONS
-    // ============================================================================
-
+    // Questions and transcript actions
     setCurrentQuestion: (state, action) => {
       state.currentQuestion = action.payload;
       state.serverText = action.payload;
@@ -219,10 +207,7 @@ const interviewSlice = createSlice({
       state.idlePrompt = action.payload;
     },
 
-    // ============================================================================
-    // RECORDING ACTIONS
-    // ============================================================================
-
+    // Actions for recording
     setRecordingDuration: (state, action) => {
       state.recordingDuration = action.payload;
     },
@@ -247,10 +232,7 @@ const interviewSlice = createSlice({
       state.recordingStartTime = null;
     },
 
-    // ============================================================================
-    // INTERVIEW LIFECYCLE
-    // ============================================================================
-
+    // Interview lifecycle
     initializeInterview: (state, action) => {
       state.interviewId = action.payload.interviewId;
       state.userId = action.payload.userId;

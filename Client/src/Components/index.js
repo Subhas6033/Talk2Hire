@@ -18,6 +18,8 @@ import InterviewQuestions from "./Others/InterviewQuestions";
 import MicrophoneCheck from "./Others/MicrophoneCheck";
 import CameraCheck from "./Others/CamerCheck";
 import CandidateFilter from "./Filter/CandidateFilter";
+import MobileSecurityCamera from "./Others/MobileSecurityCamera";
+import SecurityMonitor from "./Others/SecurityMonitor";
 
 export {
   Nav,
@@ -40,4 +42,6 @@ export {
   MicrophoneCheck,
   CameraCheck,
   CandidateFilter,
+  MobileSecurityCamera,
+  SecurityMonitor,
 };

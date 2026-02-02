@@ -1,8 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { Button } from "../index";
 import { Card } from "../Common/Card";
 import { useInterview } from "../../Hooks/useInterviewHook";
+import useVideoRecording from "../../Hooks/useVideoRecordingHook";
+import SecurityMonitor from "./SecurityMonitor";
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
@@ -16,8 +18,44 @@ const InterviewQuestions = ({
   // Use the comprehensive interview hook
   const interview = useInterview(interviewId, userId, cameraStream);
 
+  // ✅ NEW: Video recording hook
+  const {
+    isRecording: isVideoRecording,
+    startRecording: startVideoRecording,
+    stopRecording: stopVideoRecording,
+    recordedChunks,
+  } = useVideoRecording(interviewId, userId, cameraStream);
+
   const videoRef = useRef(null);
   const isCleaningUpRef = useRef(false);
+
+  // Security camera state
+  const [securityStream, setSecurityStream] = useState(null);
+  const [securityWarnings, setSecurityWarnings] = useState([]);
+  const [showSecurityPanel, setShowSecurityPanel] = useState(true);
+
+  // ✅ NEW: Check for existing security camera connection on mount
+  useEffect(() => {
+    const checkSecurityConnection = () => {
+      const mobileConnected = localStorage.getItem(`security_${interviewId}`);
+      const angleVerified = localStorage.getItem(
+        `security_angle_verified_${interviewId}`
+      );
+
+      if (mobileConnected === "connected" && angleVerified === "true") {
+        console.log("✅ Security camera already connected from setup");
+        // Security is already set up via QR code
+      } else {
+        console.warn(
+          "⚠️ Security camera not connected - interview may be terminated"
+        );
+      }
+    };
+
+    if (interviewId) {
+      checkSecurityConnection();
+    }
+  }, [interviewId]);
 
   // Log camera stream on mount
   useEffect(() => {
@@ -40,7 +78,7 @@ const InterviewQuestions = ({
     }
   }, [cameraStream]);
 
-  /* 🔌 SOCKET.IO CONNECTION */
+  /* 🔌 SOCKET.IO CONNECTION - ✅ FIXED WITH TIMEOUT */
   useEffect(() => {
     console.log("🔌 Initializing socket connection...");
     const socket = io(SOCKET_URL, {
@@ -50,6 +88,7 @@ const InterviewQuestions = ({
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
+      timeout: 20000, // ✅ FIXED: 20 second timeout
     });
     interview.socketRef.current = socket;
 
@@ -74,6 +113,12 @@ const InterviewQuestions = ({
       if (!interview.hasStarted) {
         console.log("🚀 Auto-starting interview...");
         interview.autoStartInterview();
+
+        // ✅ NEW: Start video recording when interview starts
+        if (cameraStream) {
+          console.log("🎥 Starting video recording...");
+          startVideoRecording();
+        }
       }
     });
 
@@ -121,9 +166,20 @@ const InterviewQuestions = ({
       interview.handleTtsAudio(chunk);
     });
 
-    socket.on("interview_complete", (data) => {
+    socket.on("interview_complete", async (data) => {
       console.log("🎉 Interview completed:", data);
       interview.handleInterviewComplete(data);
+
+      // ✅ NEW: Stop video recording and upload
+      if (isVideoRecording) {
+        console.log("🎥 Stopping video recording...");
+        const blob = await stopVideoRecording();
+
+        if (blob) {
+          console.log("📤 Uploading interview video...");
+          // Video will be auto-uploaded by the hook
+        }
+      }
 
       alert(
         `Interview completed! You answered ${data.totalQuestions} questions.`
@@ -144,6 +200,14 @@ const InterviewQuestions = ({
       console.error("❌ Socket connect error:", err.message);
       interview.setStatus("error");
       interview.setIsInitializing(false);
+    });
+
+    // ✅ NEW: Handle timeout specifically
+    socket.on("connect_timeout", () => {
+      console.error("❌ Socket connection timeout after 20s");
+      interview.setStatus("error");
+      interview.setIsInitializing(false);
+      alert("Connection timeout. Please check your internet and refresh.");
     });
 
     socket.on("disconnect", (reason) => {
@@ -179,6 +243,11 @@ const InterviewQuestions = ({
       console.log("🧹 Cleaning up socket and resources...");
       isCleaningUpRef.current = true;
 
+      // Stop video recording if active
+      if (isVideoRecording) {
+        stopVideoRecording();
+      }
+
       if (interview.micStreamRef.current) {
         interview.micStreamRef.current
           .getTracks()
@@ -189,17 +258,52 @@ const InterviewQuestions = ({
         cameraStream.getTracks().forEach((track) => track.stop());
       }
 
+      if (securityStream) {
+        securityStream.getTracks().forEach((track) => track.stop());
+      }
+
       socket.disconnect();
       console.log("🔌 Cleanup complete");
     };
-  }, [interviewId, userId, cameraStream, onFinish]);
+  }, [
+    interviewId,
+    userId,
+    cameraStream,
+    securityStream,
+    onFinish,
+    isVideoRecording,
+    startVideoRecording,
+    stopVideoRecording,
+  ]);
+
+  // Handle security warnings
+  const handleSecurityWarning = (warning) => {
+    const newWarning = {
+      id: Date.now(),
+      timestamp: new Date().toISOString(),
+      ...warning,
+    };
+
+    setSecurityWarnings((prev) => [...prev, newWarning]);
+
+    // Send to server via socket
+    if (interview.socketRef.current?.connected) {
+      interview.socketRef.current.emit("security_alert", {
+        interviewId,
+        userId,
+        warning: newWarning,
+      });
+    }
+
+    console.warn("🚨 Security Warning:", newWarning);
+  };
 
   return (
     <section className="p-4 md:p-6">
       <div className="max-w-350 mx-auto h-full">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-6 h-full">
           {/* Main Interview Section */}
-          <div className="lg:col-span-8 flex flex-col">
+          <div className="lg:col-span-8 flex flex-col gap-4">
             <Card className="flex-1 flex flex-col overflow-hidden shadow-sm border border-gray-200 dark:border-gray-800">
               {/* Clean Header */}
               <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
@@ -298,11 +402,80 @@ const InterviewQuestions = ({
                     />
                     Mic
                   </div>
+                  {/* Security Status Indicator */}
+                  <div
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                      securityWarnings.length > 0
+                        ? "bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300"
+                        : localStorage.getItem(`security_${interviewId}`) ===
+                            "connected"
+                          ? "bg-green-50 dark:bg-green-950/50 text-green-700 dark:text-green-300"
+                          : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400"
+                    }`}
+                  >
+                    <div
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        securityWarnings.length > 0
+                          ? "bg-red-600 animate-pulse"
+                          : localStorage.getItem(`security_${interviewId}`) ===
+                              "connected"
+                            ? "bg-green-600"
+                            : "bg-gray-400"
+                      }`}
+                    />
+                    Security
+                  </div>
+                  {/* ✅ NEW: Video Recording Indicator */}
+                  <div
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                      isVideoRecording
+                        ? "bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300"
+                        : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400"
+                    }`}
+                  >
+                    <div
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        isVideoRecording
+                          ? "bg-red-600 animate-pulse"
+                          : "bg-gray-400"
+                      }`}
+                    />
+                    {isVideoRecording ? "Recording" : "Video"}
+                  </div>
                 </div>
               </div>
 
               {/* Main Content Area */}
               <div className="flex-1 flex flex-col p-6 bg-white dark:bg-gray-900">
+                {/* Security Warnings Banner */}
+                {securityWarnings.length > 0 && (
+                  <div className="mb-4 p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg">
+                    <div className="flex items-center gap-2">
+                      <svg
+                        className="w-5 h-5 text-red-600 dark:text-red-400"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                        />
+                      </svg>
+                      <span className="text-sm font-semibold text-red-900 dark:text-red-300">
+                        {securityWarnings.length} Security Alert
+                        {securityWarnings.length > 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    <p className="text-xs text-red-800 dark:text-red-200 mt-1">
+                      {securityWarnings[securityWarnings.length - 1]?.type}:{" "}
+                      {securityWarnings[securityWarnings.length - 1]?.message}
+                    </p>
+                  </div>
+                )}
+
                 {/* Connection States */}
                 {interview.status === "connecting" && (
                   <div className="flex-1 flex flex-col items-center justify-center">
@@ -496,7 +669,7 @@ const InterviewQuestions = ({
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
                       <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-                      Interview active
+                      Interview active • {interview.recordingDuration}
                     </div>
                     <Button
                       variant="secondary"
@@ -511,10 +684,11 @@ const InterviewQuestions = ({
             </Card>
           </div>
 
-          {/* Camera Section */}
-          {cameraStream && (
-            <div className="lg:col-span-4 flex flex-col">
-              <Card className="flex-1 flex flex-col overflow-hidden shadow-sm border border-gray-200 dark:border-gray-800">
+          {/* Right Column: Camera & Security */}
+          <div className="lg:col-span-4 flex flex-col gap-4">
+            {/* Primary Camera */}
+            {cameraStream && (
+              <Card className="flex flex-col overflow-hidden shadow-sm border border-gray-200 dark:border-gray-800">
                 <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
                   <div className="flex items-center gap-2">
                     <svg
@@ -531,12 +705,12 @@ const InterviewQuestions = ({
                       />
                     </svg>
                     <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                      Video Preview
+                      Primary Camera
                     </h3>
                   </div>
                 </div>
 
-                <div className="flex-1 p-6 bg-white dark:bg-gray-900 flex items-center">
+                <div className="p-4 bg-white dark:bg-gray-900">
                   <div className="relative w-full aspect-4/3 bg-gray-900 rounded-lg overflow-hidden">
                     <video
                       ref={videoRef}
@@ -559,30 +733,23 @@ const InterviewQuestions = ({
                     </div>
                   </div>
                 </div>
-
-                <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
-                  <div className="flex items-start gap-2">
-                    <svg
-                      className="w-4 h-4 text-gray-400 shrink-0 mt-0.5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                    <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
-                      Recording for analysis and evaluation
-                    </p>
-                  </div>
-                </div>
               </Card>
-            </div>
-          )}
+            )}
+
+            {/* Security Monitor - Read Only */}
+            <SecurityMonitor
+              interviewId={interviewId}
+              userId={userId}
+              onWarning={handleSecurityWarning}
+              securityStream={securityStream}
+              setSecurityStream={setSecurityStream}
+              isVisible={showSecurityPanel}
+              onToggleVisibility={() =>
+                setShowSecurityPanel(!showSecurityPanel)
+              }
+              readOnly={true}
+            />
+          </div>
         </div>
       </div>
     </section>
