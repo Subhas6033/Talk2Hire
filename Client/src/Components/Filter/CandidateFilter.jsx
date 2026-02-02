@@ -17,15 +17,15 @@ const CandidateFilter = ({
       initial={{ opacity: 0, x: -20 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ duration: 0.6, delay: 0.2 }}
-      className="w-[300px] flex-shrink-0"
+      className="w-75 shrink-0"
     >
       <div className="sticky top-8 space-y-5">
         {/* Header */}
-        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#1A0B2E] to-[#0F051D] p-6 border border-white/10">
-          <div className="absolute inset-0 bg-gradient-to-br from-purpleGlow/5 to-transparent"></div>
+        <div className="relative overflow-hidden rounded-2xl bg-linear-to-br from-[#1A0B2E] to-[#0F051D] p-6 border border-white/10">
+          <div className="absolute inset-0 bg-linear-to-br from-purpleGlow/5 to-transparent"></div>
           <div className="relative">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purpleGlow to-purpleSoft flex items-center justify-center">
+              <div className="w-10 h-10 rounded-xl bg-linear-to-br from-purpleGlow to-purpleSoft flex items-center justify-center">
                 <svg
                   className="w-5 h-5 text-white"
                   fill="none"
@@ -144,7 +144,7 @@ const CandidateFilter = ({
               Interview Score
             </label>
             <div className="flex items-center gap-2">
-              <span className="text-2xl font-bold bg-gradient-to-r from-purpleGlow to-purpleSoft bg-clip-text text-transparent">
+              <span className="text-2xl font-bold bg-linear-to-r from-purpleGlow to-purpleSoft bg-clip-text text-transparent">
                 {filters.minScore}
               </span>
               <span className="text-xs text-white/50">min</span>
@@ -159,7 +159,7 @@ const CandidateFilter = ({
             onChange={(e) =>
               setFilters({ ...filters, minScore: parseInt(e.target.value) })
             }
-            className="w-full h-2 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gradient-to-r [&::-webkit-slider-thumb]:from-purpleGlow [&::-webkit-slider-thumb]:to-purpleSoft [&::-webkit-slider-thumb]:shadow-[0_0_25px_rgba(155,92,255,0.7)] [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:transition-all hover:[&::-webkit-slider-thumb]:shadow-[0_0_35px_rgba(155,92,255,0.9)] hover:[&::-webkit-slider-thumb]:scale-110"
+            className="w-full h-2 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-linear-to-r [&::-webkit-slider-thumb]:from-purpleGlow [&::-webkit-slider-thumb]:to-purpleSoft [&::-webkit-slider-thumb]:shadow-[0_0_25px_rgba(155,92,255,0.7)] [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:transition-all hover:[&::-webkit-slider-thumb]:shadow-[0_0_35px_rgba(155,92,255,0.9)] hover:[&::-webkit-slider-thumb]:scale-110"
           />
           <div className="flex justify-between text-xs text-white/40 mt-3 px-1">
             <span>0</span>
@@ -169,14 +169,14 @@ const CandidateFilter = ({
         </div>
 
         {/* Stats Display */}
-        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-purpleGlow/20 via-purpleSoft/10 to-transparent p-6 border border-purpleGlow/30">
+        <div className="relative overflow-hidden rounded-2xl bg-linear-to-br from-purpleGlow/20 via-purpleSoft/10 to-transparent p-6 border border-purpleGlow/30">
           <div className="absolute top-0 right-0 w-32 h-32 bg-purpleGlow/10 rounded-full blur-3xl"></div>
           <div className="relative">
             <div className="text-xs text-white/60 mb-2 uppercase tracking-widest font-semibold">
               Matching Candidates
             </div>
             <div className="flex items-baseline gap-2">
-              <div className="text-4xl font-bold bg-gradient-to-r from-white to-purpleSoft bg-clip-text text-transparent">
+              <div className="text-4xl font-bold bg-linear-to-r from-white to-purpleSoft bg-clip-text text-transparent">
                 {filteredCount}
               </div>
               <div className="text-sm text-white/50">/ {totalCandidates}</div>

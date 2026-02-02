@@ -216,23 +216,23 @@ export default function HiringLandingPage() {
   });
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#0A0118] via-[#1A0B2E] to-[#0F051D] text-white overflow-hidden">
+    <div className="min-h-screen bg-linear-to-br from-[#0A0118] via-[#1A0B2E] to-[#0F051D] text-white overflow-hidden">
       {/* Ambient background effects */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-purpleGlow/15 rounded-full blur-[140px] animate-pulse"></div>
+        <div className="absolute top-0 left-1/4 w-150 h-150 bg-purpleGlow/15 rounded-full blur-[140px] animate-pulse"></div>
         <div
-          className="absolute bottom-0 right-1/4 w-[700px] h-[700px] bg-purpleSoft/10 rounded-full blur-[160px] animate-pulse"
+          className="absolute bottom-0 right-1/4 w-175 h-175 bg-purpleSoft/10 rounded-full blur-[160px] animate-pulse"
           style={{ animationDelay: "2s" }}
         ></div>
         <div
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-blue-500/5 rounded-full blur-[120px] animate-pulse"
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-125 h-125 bg-blue-500/5 rounded-full blur-[120px] animate-pulse"
           style={{ animationDelay: "4s" }}
         ></div>
       </div>
 
       <div className="relative">
         {/* Main Content */}
-        <div className="max-w-[1700px] mx-auto px-8 py-12">
+        <div className="max-w-425 mx-auto px-8 py-12">
           <div className="flex gap-8">
             {/* Filters Sidebar */}
             <CandidateFilter
@@ -252,7 +252,7 @@ export default function HiringLandingPage() {
                 className="mb-8"
               >
                 <h1
-                  className="text-5xl font-bold mb-3 bg-gradient-to-r from-white via-purpleSoft to-white bg-clip-text text-transparent"
+                  className="text-5xl font-bold mb-3 bg-linear-to-r from-white via-purpleSoft to-white bg-clip-text text-transparent"
                   style={{ fontFamily: "'Cormorant Garamond', serif" }}
                 >
                   Discover Talent
@@ -286,7 +286,7 @@ export default function HiringLandingPage() {
                     >
                       <div className="flex gap-6">
                         {/* Avatar */}
-                        <div className="relative flex-shrink-0">
+                        <div className="relative shrink-0">
                           <div className="w-28 h-28 rounded-2xl overflow-hidden border-2 border-purpleGlow/30 shadow-[0_0_20px_rgba(155,92,255,0.3)] group-hover:border-purpleGlow/60 transition-all duration-300">
                             <img
                               src={candidate.avatar}
@@ -294,7 +294,7 @@ export default function HiringLandingPage() {
                               className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
                             />
                           </div>
-                          <div className="absolute -bottom-2 -right-2 bg-gradient-to-r from-purpleGlow to-purpleSoft text-white text-sm font-bold px-4 py-1.5 rounded-full shadow-[0_4px_20px_rgba(155,92,255,0.5)]">
+                          <div className="absolute -bottom-2 -right-2 bg-linear-to-r from-purpleGlow to-purpleSoft text-white text-sm font-bold px-4 py-1.5 rounded-full shadow-[0_4px_20px_rgba(155,92,255,0.5)]">
                             {candidate.interviewScore}
                           </div>
                         </div>
@@ -367,7 +367,7 @@ export default function HiringLandingPage() {
 
                           {/* Interview Scores */}
                           <div className="grid grid-cols-3 gap-4 mb-4">
-                            <div className="bg-gradient-to-br from-purpleGlow/10 to-purpleSoft/5 rounded-xl p-3 border border-purpleGlow/20">
+                            <div className="bg-linear-to-br from-purpleGlow/10 to-purpleSoft/5 rounded-xl p-3 border border-purpleGlow/20">
                               <div className="text-xs text-white/60 mb-1.5 font-medium">
                                 Interview
                               </div>
@@ -382,7 +382,7 @@ export default function HiringLandingPage() {
                                       duration: 1,
                                       delay: 0.5 + index * 0.1,
                                     }}
-                                    className="h-full bg-gradient-to-r from-purpleGlow to-purpleSoft rounded-full"
+                                    className="h-full bg-linear-to-r from-purpleGlow to-purpleSoft rounded-full"
                                   ></motion.div>
                                 </div>
                                 <span className="text-sm font-bold text-purpleGlow">
@@ -390,7 +390,7 @@ export default function HiringLandingPage() {
                                 </span>
                               </div>
                             </div>
-                            <div className="bg-gradient-to-br from-blue-500/10 to-blue-600/5 rounded-xl p-3 border border-blue-400/20">
+                            <div className="bg-linear-to-br from-blue-500/10 to-blue-600/5 rounded-xl p-3 border border-blue-400/20">
                               <div className="text-xs text-white/60 mb-1.5 font-medium">
                                 Technical
                               </div>
@@ -405,7 +405,7 @@ export default function HiringLandingPage() {
                                       duration: 1,
                                       delay: 0.6 + index * 0.1,
                                     }}
-                                    className="h-full bg-gradient-to-r from-blue-400 to-blue-600 rounded-full"
+                                    className="h-full bg-linear-to-r from-blue-400 to-blue-600 rounded-full"
                                   ></motion.div>
                                 </div>
                                 <span className="text-sm font-bold text-blue-400">
@@ -413,7 +413,7 @@ export default function HiringLandingPage() {
                                 </span>
                               </div>
                             </div>
-                            <div className="bg-gradient-to-br from-green-400/10 to-emerald-600/5 rounded-xl p-3 border border-green-400/20">
+                            <div className="bg-linear-to-br from-green-400/10 to-emerald-600/5 rounded-xl p-3 border border-green-400/20">
                               <div className="text-xs text-white/60 mb-1.5 font-medium">
                                 Cultural Fit
                               </div>
@@ -428,7 +428,7 @@ export default function HiringLandingPage() {
                                       duration: 1,
                                       delay: 0.7 + index * 0.1,
                                     }}
-                                    className="h-full bg-gradient-to-r from-green-400 to-emerald-600 rounded-full"
+                                    className="h-full bg-linear-to-r from-green-400 to-emerald-600 rounded-full"
                                   ></motion.div>
                                 </div>
                                 <span className="text-sm font-bold text-green-400">
@@ -470,7 +470,7 @@ export default function HiringLandingPage() {
                 >
                   <Card variant="default" className="text-center py-20">
                     <div className="max-w-md mx-auto">
-                      <div className="w-20 h-20 bg-gradient-to-br from-purpleGlow/20 to-purpleSoft/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                      <div className="w-20 h-20 bg-linear-to-br from-purpleGlow/20 to-purpleSoft/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
                         <svg
                           className="w-10 h-10 text-purpleSoft"
                           fill="none"
@@ -546,7 +546,7 @@ export default function HiringLandingPage() {
                   alt="Banner"
                   className="w-full h-full object-cover"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-[#12091F] via-[#12091F]/70 to-transparent"></div>
+                <div className="absolute inset-0 bg-linear-to-t from-[#12091F] via-[#12091F]/70 to-transparent"></div>
 
                 {/* Close Button */}
                 <button
@@ -573,7 +573,7 @@ export default function HiringLandingPage() {
               <div className="p-8 overflow-y-auto max-h-[calc(90vh-13rem)]">
                 {/* Header with Avatar */}
                 <div className="flex items-start gap-8 mb-8 -mt-24">
-                  <div className="relative flex-shrink-0">
+                  <div className="relative shrink-0">
                     <div className="w-36 h-36 rounded-3xl overflow-hidden border-4 border-[#12091F] shadow-[0_0_40px_rgba(155,92,255,0.5)]">
                       <img
                         src={selectedCandidate.avatar}
@@ -581,7 +581,7 @@ export default function HiringLandingPage() {
                         className="w-full h-full object-cover"
                       />
                     </div>
-                    <div className="absolute -bottom-3 -right-3 bg-gradient-to-r from-purpleGlow to-purpleSoft text-white text-base font-bold px-5 py-2 rounded-2xl shadow-lg">
+                    <div className="absolute -bottom-3 -right-3 bg-linear-to-r from-purpleGlow to-purpleSoft text-white text-base font-bold px-5 py-2 rounded-2xl shadow-lg">
                       Score: {selectedCandidate.interviewScore}
                     </div>
                   </div>
@@ -654,11 +654,11 @@ export default function HiringLandingPage() {
 
                 {/* Assessment Scores */}
                 <div className="grid grid-cols-3 gap-5 mb-10">
-                  <div className="bg-gradient-to-br from-purpleGlow/15 to-purpleSoft/10 border border-purpleGlow/30 rounded-2xl p-6">
+                  <div className="bg-linear-to-br from-purpleGlow/15 to-purpleSoft/10 border border-purpleGlow/30 rounded-2xl p-6">
                     <div className="text-sm text-white/60 mb-3 font-medium">
                       Interview Performance
                     </div>
-                    <div className="text-5xl font-bold bg-gradient-to-r from-purpleGlow to-purpleSoft bg-clip-text text-transparent mb-3">
+                    <div className="text-5xl font-bold bg-linear-to-r from-purpleGlow to-purpleSoft bg-clip-text text-transparent mb-3">
                       {selectedCandidate.interviewScore}
                     </div>
                     <div className="h-2.5 bg-white/10 rounded-full overflow-hidden">
@@ -668,11 +668,11 @@ export default function HiringLandingPage() {
                           width: `${selectedCandidate.interviewScore}%`,
                         }}
                         transition={{ duration: 1.2, delay: 0.2 }}
-                        className="h-full bg-gradient-to-r from-purpleGlow to-purpleSoft rounded-full"
+                        className="h-full bg-linear-to-r from-purpleGlow to-purpleSoft rounded-full"
                       ></motion.div>
                     </div>
                   </div>
-                  <div className="bg-gradient-to-br from-blue-500/15 to-blue-600/10 border border-blue-400/30 rounded-2xl p-6">
+                  <div className="bg-linear-to-br from-blue-500/15 to-blue-600/10 border border-blue-400/30 rounded-2xl p-6">
                     <div className="text-sm text-white/60 mb-3 font-medium">
                       Technical Skills
                     </div>
@@ -686,11 +686,11 @@ export default function HiringLandingPage() {
                           width: `${selectedCandidate.technicalScore}%`,
                         }}
                         transition={{ duration: 1.2, delay: 0.3 }}
-                        className="h-full bg-gradient-to-r from-blue-400 to-blue-600 rounded-full"
+                        className="h-full bg-linear-to-r from-blue-400 to-blue-600 rounded-full"
                       ></motion.div>
                     </div>
                   </div>
-                  <div className="bg-gradient-to-br from-green-400/15 to-emerald-600/10 border border-green-400/30 rounded-2xl p-6">
+                  <div className="bg-linear-to-br from-green-400/15 to-emerald-600/10 border border-green-400/30 rounded-2xl p-6">
                     <div className="text-sm text-white/60 mb-3 font-medium">
                       Culture Alignment
                     </div>
@@ -702,7 +702,7 @@ export default function HiringLandingPage() {
                         initial={{ width: 0 }}
                         animate={{ width: `${selectedCandidate.culturalFit}%` }}
                         transition={{ duration: 1.2, delay: 0.4 }}
-                        className="h-full bg-gradient-to-r from-green-400 to-emerald-600 rounded-full"
+                        className="h-full bg-linear-to-r from-green-400 to-emerald-600 rounded-full"
                       ></motion.div>
                     </div>
                   </div>
@@ -714,7 +714,7 @@ export default function HiringLandingPage() {
                     className="text-2xl font-semibold text-white mb-5 flex items-center gap-3"
                     style={{ fontFamily: "'Cormorant Garamond', serif" }}
                   >
-                    <div className="w-8 h-8 bg-gradient-to-br from-purpleGlow to-purpleSoft rounded-lg flex items-center justify-center">
+                    <div className="w-8 h-8 bg-linear-to-br from-purpleGlow to-purpleSoft rounded-lg flex items-center justify-center">
                       <svg
                         className="w-4 h-4 text-white"
                         fill="none"
@@ -738,7 +738,7 @@ export default function HiringLandingPage() {
                         initial={{ opacity: 0, scale: 0.8 }}
                         animate={{ opacity: 1, scale: 1 }}
                         transition={{ delay: idx * 0.05 }}
-                        className="px-5 py-2.5 bg-gradient-to-r from-purpleGlow/10 to-purpleSoft/10 border border-purpleGlow/30 text-white/90 rounded-xl text-sm font-medium hover:border-purpleGlow/60 hover:bg-purpleGlow/20 transition-all cursor-default"
+                        className="px-5 py-2.5 bg-linear-to-r from-purpleGlow/10 to-purpleSoft/10 border border-purpleGlow/30 text-white/90 rounded-xl text-sm font-medium hover:border-purpleGlow/60 hover:bg-purpleGlow/20 transition-all cursor-default"
                       >
                         {skill}
                       </motion.span>
