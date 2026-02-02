@@ -26,19 +26,28 @@ function createSTTSession() {
       let connection = null;
       let isOpen = false;
       let isConnecting = false;
+      let hasBeenOpened = false; // ✅ Track if connection ever successfully opened
+      let connectionError = null; // ✅ Store any error that occurs
       let openTimeout = null;
       let keepAliveInterval = null;
 
-      // ✅ NEW: Idle detection
+      // Idle detection
       let lastSpeechTime = Date.now();
       let idleCheckInterval = null;
       const IDLE_TIMEOUT = 10000; // 10 seconds
+
+      // ✅ Promise resolvers for waitForReady
+      let openResolve = null;
+      let openReject = null;
+      const openPromise = new Promise((resolve, reject) => {
+        openResolve = resolve;
+        openReject = reject;
+      });
 
       try {
         isConnecting = true;
         console.log("🎤 Initiating Deepgram WebSocket connection...");
 
-        // Options based on official Deepgram Flux documentation
         const options = {
           model: "nova-2",
           language: "en",
@@ -52,50 +61,87 @@ function createSTTSession() {
 
         connection = deepgram.listen.live(options);
 
-        // Set a timeout to detect if connection never opens
+        // ✅ IMPROVED: Timeout that rejects the open promise
         openTimeout = setTimeout(() => {
           if (!isOpen && isConnecting) {
             console.error(
               "❌ Connection timeout - WebSocket never opened after 10 seconds"
             );
             isConnecting = false;
+            const timeoutError = new Error(
+              "WebSocket connection timeout - never opened"
+            );
+            connectionError = timeoutError;
 
             if (connection) {
               try {
                 connection.finish();
               } catch (e) {
-                // ignore
+                console.error(
+                  "Error finishing connection on timeout:",
+                  e.message
+                );
               }
+              connection = null;
             }
 
-            onError?.(new Error("WebSocket connection timeout"));
+            // ✅ Reject the open promise
+            if (openReject) {
+              openReject(timeoutError);
+            }
+
+            onError?.(timeoutError);
           }
         }, 10000);
 
-        // Set up keep-alive interval (every 5 seconds)
-        keepAliveInterval = setInterval(() => {
-          if (isOpen && connection) {
-            try {
-              console.log("💓 Sending keep-alive");
-              connection.keepAlive();
-            } catch (e) {
-              console.error("❌ Keep-alive error:", e);
-            }
+        // ✅ IMPROVED: Set up keep-alive ONLY after connection opens
+        const startKeepAlive = () => {
+          if (keepAliveInterval) {
+            clearInterval(keepAliveInterval);
           }
-        }, 5000);
 
-        // ✅ NEW: Start idle detection interval
-        idleCheckInterval = setInterval(() => {
-          if (isOpen) {
-            const timeSinceLastSpeech = Date.now() - lastSpeechTime;
-            if (timeSinceLastSpeech >= IDLE_TIMEOUT) {
-              console.log("⏰ User idle detected (10 seconds of silence)");
-              onIdle?.();
-              // Reset timer after triggering idle
-              lastSpeechTime = Date.now();
+          keepAliveInterval = setInterval(() => {
+            if (isOpen && connection) {
+              try {
+                console.log("💓 Sending keep-alive");
+                connection.keepAlive();
+              } catch (e) {
+                console.error("❌ Keep-alive error:", e.message);
+                // Stop keep-alive on error
+                if (keepAliveInterval) {
+                  clearInterval(keepAliveInterval);
+                  keepAliveInterval = null;
+                }
+              }
+            } else {
+              // Stop keep-alive if connection is no longer open
+              if (keepAliveInterval) {
+                clearInterval(keepAliveInterval);
+                keepAliveInterval = null;
+              }
             }
+          }, 5000);
+        };
+
+        // ✅ IMPROVED: Start idle detection ONLY after connection opens
+        const startIdleDetection = () => {
+          if (idleCheckInterval) {
+            clearInterval(idleCheckInterval);
           }
-        }, 1000); // Check every second
+
+          lastSpeechTime = Date.now();
+
+          idleCheckInterval = setInterval(() => {
+            if (isOpen) {
+              const timeSinceLastSpeech = Date.now() - lastSpeechTime;
+              if (timeSinceLastSpeech >= IDLE_TIMEOUT) {
+                console.log("⏰ User idle detected (10 seconds of silence)");
+                onIdle?.();
+                lastSpeechTime = Date.now();
+              }
+            }
+          }, 1000);
+        };
 
         connection.on(LiveTranscriptionEvents.Open, () => {
           console.log(
@@ -104,8 +150,16 @@ function createSTTSession() {
           clearTimeout(openTimeout);
           isOpen = true;
           isConnecting = false;
-          // ✅ Reset idle timer when connection opens
-          lastSpeechTime = Date.now();
+          hasBeenOpened = true;
+
+          // ✅ Resolve the open promise
+          if (openResolve) {
+            openResolve(true);
+          }
+
+          // ✅ Start keep-alive and idle detection NOW
+          startKeepAlive();
+          startIdleDetection();
         });
 
         connection.on(LiveTranscriptionEvents.Transcript, (data) => {
@@ -118,7 +172,7 @@ function createSTTSession() {
           const isFinal = data.is_final;
           const speechFinal = data.speech_final;
 
-          // ✅ NEW: Reset idle timer on any speech
+          // Reset idle timer on any speech
           lastSpeechTime = Date.now();
 
           // Log transcript type
@@ -133,7 +187,6 @@ function createSTTSession() {
           }
 
           // Handle final transcript
-          // speech_final indicates the end of a speech segment
           if (isFinal && speechFinal) {
             console.log("✅ Complete utterance received:", transcript);
             onTranscript?.(transcript, data);
@@ -148,17 +201,26 @@ function createSTTSession() {
           });
 
           clearTimeout(openTimeout);
+          connectionError = err;
+
+          // Clean up intervals
           if (keepAliveInterval) {
             clearInterval(keepAliveInterval);
             keepAliveInterval = null;
           }
-          // ✅ NEW: Clear idle interval on error
           if (idleCheckInterval) {
             clearInterval(idleCheckInterval);
             idleCheckInterval = null;
           }
+
           isOpen = false;
           isConnecting = false;
+
+          // ✅ Reject the open promise if connection never opened
+          if (!hasBeenOpened && openReject) {
+            openReject(err);
+          }
+
           onError?.(err);
         });
 
@@ -170,17 +232,29 @@ function createSTTSession() {
           });
 
           clearTimeout(openTimeout);
+
+          // Clean up intervals
           if (keepAliveInterval) {
             clearInterval(keepAliveInterval);
             keepAliveInterval = null;
           }
-          // ✅ NEW: Clear idle interval on close
           if (idleCheckInterval) {
             clearInterval(idleCheckInterval);
             idleCheckInterval = null;
           }
+
           isOpen = false;
           isConnecting = false;
+
+          // ✅ If connection never opened, reject the promise
+          if (!hasBeenOpened && openReject) {
+            const closeError = new Error(
+              `WebSocket closed before opening (code: ${closeEvent?.code || "unknown"})`
+            );
+            connectionError = closeError;
+            openReject(closeError);
+          }
+
           onClose?.();
         });
 
@@ -198,16 +272,24 @@ function createSTTSession() {
       } catch (error) {
         console.error("❌ Exception creating Deepgram connection:", error);
         clearTimeout(openTimeout);
+        connectionError = error;
+
         if (keepAliveInterval) {
           clearInterval(keepAliveInterval);
           keepAliveInterval = null;
         }
-        // ✅ NEW: Clear idle interval on exception
         if (idleCheckInterval) {
           clearInterval(idleCheckInterval);
           idleCheckInterval = null;
         }
+
         isConnecting = false;
+
+        // ✅ Reject the open promise
+        if (openReject) {
+          openReject(error);
+        }
+
         onError?.(error);
       }
 
@@ -234,7 +316,6 @@ function createSTTSession() {
             clearInterval(keepAliveInterval);
             keepAliveInterval = null;
           }
-          // ✅ NEW: Clear idle interval on finish
           if (idleCheckInterval) {
             clearInterval(idleCheckInterval);
             idleCheckInterval = null;
@@ -266,24 +347,27 @@ function createSTTSession() {
           return isOpen ? 1 : 3; // OPEN : CLOSED
         },
 
-        waitForReady(timeout = 5000) {
-          return new Promise((resolve, reject) => {
-            if (isOpen) {
-              resolve(true);
-              return;
-            }
+        // ✅ IMPROVED: Use the promise-based approach
+        async waitForReady(timeout = 5000) {
+          // If already open, resolve immediately
+          if (isOpen) {
+            return true;
+          }
 
-            const startTime = Date.now();
-            const checkInterval = setInterval(() => {
-              if (isOpen) {
-                clearInterval(checkInterval);
-                resolve(true);
-              } else if (Date.now() - startTime > timeout) {
-                clearInterval(checkInterval);
-                reject(new Error("Connection timeout"));
-              }
-            }, 100);
-          });
+          // If there was already an error, reject immediately
+          if (connectionError) {
+            throw connectionError;
+          }
+
+          // Race between the open promise and a timeout
+          return Promise.race([
+            openPromise,
+            new Promise((_, reject) => {
+              setTimeout(() => {
+                reject(new Error(`waitForReady timeout after ${timeout}ms`));
+              }, timeout);
+            }),
+          ]);
         },
 
         // Method to reset idle timer manually

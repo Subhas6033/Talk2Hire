@@ -4,11 +4,12 @@ const { validateAnswer } = require("../Service/answervalidations.service.js");
 const { generateNextQuestionWithAI } = require("../Service/ai.service.js");
 const { createTTSStream } = require("../Service/tts.service.js");
 const { createSTTSession } = require("../Service/stt.service.js");
+const { evaluateInterview } = require("../Service/evaluation.service.js");
 
 function initInterviewSocket(httpServer) {
   const io = new Server(httpServer, {
     cors: {
-      origin: "http://localhost:5173",
+      origin: process.env.CORS_ORIGIN,
       methods: ["GET", "POST"],
     },
     transports: ["websocket", "polling"],
@@ -36,7 +37,7 @@ function initInterviewSocket(httpServer) {
     let deepgramConnection = null;
     let isListeningActive = false;
 
-    // ✅ NEW: Idle detection state
+    // //Idle detection state
     let awaitingRepeatResponse = false;
     let currentQuestionText = "";
     let idleCount = 0;
@@ -97,7 +98,7 @@ function initInterviewSocket(httpServer) {
 
       console.log("✅ ✅ ✅ Initialization complete!");
 
-      // ✅ NEW: Handle idle timeout
+      // //Handle idle timeout
       async function handleIdle() {
         console.log("⏰ Handling idle timeout");
 
@@ -150,7 +151,7 @@ function initInterviewSocket(httpServer) {
         }
       }
 
-      // ✅ NEW: Move to next question
+      // //Move to next question
       async function moveToNextQuestion() {
         if (isProcessing) {
           console.log("⚠️ Already processing, ignoring");
@@ -164,11 +165,7 @@ function initInterviewSocket(httpServer) {
           // Check if interview should end
           if (currentOrder >= MAX_QUESTIONS) {
             console.log("🎉 Interview complete! Reached maximum questions.");
-            socket.emit("interview_complete", {
-              message: "Interview completed successfully!",
-              totalQuestions: currentOrder,
-            });
-            isProcessing = false;
+            await endInterview();
             return;
           }
 
@@ -201,20 +198,100 @@ function initInterviewSocket(httpServer) {
           // Wait for audio playback
           await new Promise((resolve) => setTimeout(resolve, 1500));
 
-          // Start new Deepgram connection
-          startDeepgramConnection();
+          // //Add small delay to avoid rate limiting
+          console.log(
+            "⏳ Waiting 500ms before creating connection (rate limit prevention)..."
+          );
+          await new Promise((resolve) => setTimeout(resolve, 500));
 
-          await new Promise((resolve) => setTimeout(resolve, 800));
+          // Start new Deepgram connection and wait for it to be ready
+          const connection = startDeepgramConnection();
 
-          // Enable listening
-          isListeningActive = true;
-          socket.emit("listening_enabled");
+          try {
+            console.log("⏳ Waiting for Deepgram connection to open...");
+            await connection.waitForReady(10000);
+            console.log("✅ Deepgram connection is ready");
+
+            // Enable listening only after connection is confirmed open
+            isListeningActive = true;
+            socket.emit("listening_enabled");
+            console.log("✅ Listening enabled for user response");
+          } catch (error) {
+            console.error("❌ Deepgram connection failed to open:", error);
+            socket.emit("error", {
+              message: "Failed to start speech recognition",
+            });
+          }
 
           isProcessing = false;
           console.log("✅ Moved to next question successfully");
         } catch (error) {
           console.error("❌ Error moving to next question:", error);
           socket.emit("error", { message: "Error loading next question" });
+          isProcessing = false;
+        }
+      }
+
+      // //End interview and trigger evaluation
+      async function endInterview() {
+        console.log("🏁 Ending interview and starting evaluation...");
+
+        try {
+          // Emit completion event first
+          socket.emit("interview_complete", {
+            message: "Interview completed successfully!",
+            totalQuestions: currentOrder,
+          });
+
+          // Disable listening
+          isListeningActive = false;
+          socket.emit("listening_disabled");
+
+          // Close Deepgram connection
+          if (deepgramConnection) {
+            try {
+              deepgramConnection.finish();
+            } catch (e) {
+              console.error("Error closing Deepgram:", e);
+            }
+            deepgramConnection = null;
+          }
+
+          // Notify client that evaluation is starting
+          socket.emit("evaluation_started", {
+            message: "Evaluating your interview responses...",
+          });
+
+          console.log("🔄 Starting automatic evaluation...");
+
+          // Trigger evaluation in background
+          evaluateInterview(interviewId)
+            .then((results) => {
+              console.log("✅ Evaluation completed successfully:", {
+                overallScore: results.overallEvaluation.overallScore,
+                hireDecision: results.overallEvaluation.hireDecision,
+              });
+
+              // Notify client that evaluation is complete
+              socket.emit("evaluation_complete", {
+                message: "Evaluation completed!",
+                results: {
+                  overallScore: results.overallEvaluation.overallScore,
+                  hireDecision: results.overallEvaluation.hireDecision,
+                  experienceLevel: results.overallEvaluation.experienceLevel,
+                },
+              });
+            })
+            .catch((error) => {
+              console.error("❌ Evaluation failed:", error);
+              socket.emit("evaluation_error", {
+                message: "Evaluation failed. Please try again later.",
+              });
+            });
+
+          isProcessing = false;
+        } catch (error) {
+          console.error("❌ Error ending interview:", error);
           isProcessing = false;
         }
       }
@@ -286,7 +363,7 @@ function initInterviewSocket(httpServer) {
               deepgramConnection = null;
             }
 
-            // ✅ NEW: Check if awaiting repeat response
+            // //Check if awaiting repeat response
             if (awaitingRepeatResponse) {
               await handleRepeatResponse(transcript);
             } else {
@@ -322,7 +399,7 @@ function initInterviewSocket(httpServer) {
             deepgramConnection = null;
           },
 
-          // ✅ NEW: Idle callback
+          // //Idle callback
           onIdle: async () => {
             if (isListeningActive && !isProcessing) {
               await handleIdle();
@@ -334,7 +411,7 @@ function initInterviewSocket(httpServer) {
         return deepgramConnection;
       }
 
-      // ✅ NEW: Handle repeat response (yes/no)
+      // //Handle repeat response (yes/no)
       async function handleRepeatResponse(transcript) {
         console.log("💬 Handling repeat response:", transcript);
 
@@ -358,12 +435,28 @@ function initInterviewSocket(httpServer) {
 
           await new Promise((resolve) => setTimeout(resolve, 1500));
 
-          // Start new Deepgram connection
-          startDeepgramConnection();
-          await new Promise((resolve) => setTimeout(resolve, 800));
+          // //Add small delay to avoid rate limiting
+          console.log(
+            "⏳ Waiting 500ms before creating connection (rate limit prevention)..."
+          );
+          await new Promise((resolve) => setTimeout(resolve, 500));
 
-          isListeningActive = true;
-          socket.emit("listening_enabled");
+          // Start new Deepgram connection and wait for it to be ready
+          const connection = startDeepgramConnection();
+
+          try {
+            console.log("⏳ Waiting for Deepgram connection to open...");
+            await connection.waitForReady(10000);
+            console.log("✅ Deepgram connection is ready");
+
+            isListeningActive = true;
+            socket.emit("listening_enabled");
+          } catch (error) {
+            console.error("❌ Deepgram connection failed to open:", error);
+            socket.emit("error", {
+              message: "Failed to start speech recognition",
+            });
+          }
 
           isProcessing = false;
         } else if (
@@ -389,12 +482,28 @@ function initInterviewSocket(httpServer) {
 
           await new Promise((resolve) => setTimeout(resolve, 1500));
 
-          // Start new connection and continue waiting
-          startDeepgramConnection();
-          await new Promise((resolve) => setTimeout(resolve, 800));
+          // //Add small delay to avoid rate limiting
+          console.log(
+            "⏳ Waiting 500ms before creating connection (rate limit prevention)..."
+          );
+          await new Promise((resolve) => setTimeout(resolve, 500));
 
-          isListeningActive = true;
-          socket.emit("listening_enabled");
+          // Start new connection and continue waiting
+          const connection = startDeepgramConnection();
+
+          try {
+            console.log("⏳ Waiting for Deepgram connection to open...");
+            await connection.waitForReady(10000);
+            console.log("✅ Deepgram connection is ready");
+
+            isListeningActive = true;
+            socket.emit("listening_enabled");
+          } catch (error) {
+            console.error("❌ Deepgram connection failed to open:", error);
+            socket.emit("error", {
+              message: "Failed to start speech recognition",
+            });
+          }
 
           isProcessing = false;
         }
@@ -452,14 +561,32 @@ function initInterviewSocket(httpServer) {
           // Wait a bit for client to finish playing audio
           await new Promise((resolve) => setTimeout(resolve, 1000));
 
+          // //Add small delay to avoid rate limiting
+          console.log(
+            "⏳ Waiting 500ms before creating connection (rate limit prevention)..."
+          );
+          await new Promise((resolve) => setTimeout(resolve, 500));
+
           // Start fresh Deepgram connection for listening
           console.log("🎤 Starting Deepgram connection for listening...");
-          startDeepgramConnection();
+          const connection = startDeepgramConnection();
 
-          // Enable listening after question is complete
-          isListeningActive = true;
-          socket.emit("listening_enabled");
-          console.log("✅ Listening enabled for user response");
+          // ✅ FIX: Wait for connection to actually open before enabling listening
+          try {
+            console.log("⏳ Waiting for Deepgram connection to open...");
+            await connection.waitForReady(10000);
+            console.log("✅ Deepgram connection is ready");
+
+            // Enable listening after connection is confirmed open
+            isListeningActive = true;
+            socket.emit("listening_enabled");
+            console.log("✅ Listening enabled for user response");
+          } catch (error) {
+            console.error("❌ Deepgram connection failed to open:", error);
+            socket.emit("error", {
+              message: "Failed to start speech recognition",
+            });
+          }
 
           isProcessing = false;
         } catch (error) {
@@ -547,11 +674,7 @@ function initInterviewSocket(httpServer) {
           console.log("🔍 Step 4: Checking if interview should end...");
           if (currentOrder >= MAX_QUESTIONS) {
             console.log("🎉 Interview complete! Reached maximum questions.");
-            socket.emit("interview_complete", {
-              message: "Interview completed successfully!",
-              totalQuestions: currentOrder,
-            });
-            isProcessing = false;
+            await endInterview();
             return;
           }
           console.log("✅ Step 4 complete - Interview continues");
@@ -619,19 +742,33 @@ function initInterviewSocket(httpServer) {
           console.log("✅ Step 12 complete");
 
           console.log("🔍 Step 13: Starting new Deepgram connection...");
-          startDeepgramConnection();
+
+          // //Add small delay to avoid rate limiting
+          console.log(
+            "⏳ Waiting 500ms before creating connection (rate limit prevention)..."
+          );
+          await new Promise((resolve) => setTimeout(resolve, 500));
+
+          const connection = startDeepgramConnection();
           console.log("✅ Step 13 complete - Deepgram connection initiated");
 
-          console.log("🔍 Step 14: Waiting for connection to stabilize...");
-          await new Promise((resolve) => setTimeout(resolve, 800));
-          console.log("✅ Step 14 complete");
+          console.log("🔍 Step 14: Waiting for connection to be ready...");
+          try {
+            await connection.waitForReady(10000);
+            console.log("✅ Step 14 complete - Connection is ready");
 
-          console.log("🔍 Step 15: Enabling listening...");
-          isListeningActive = true;
-          socket.emit("listening_enabled");
-          console.log(
-            `✅ Step 15 complete - Listening enabled for question ${currentOrder}/${MAX_QUESTIONS}`
-          );
+            console.log("🔍 Step 15: Enabling listening...");
+            isListeningActive = true;
+            socket.emit("listening_enabled");
+            console.log(
+              `✅ Step 15 complete - Listening enabled for question ${currentOrder}/${MAX_QUESTIONS}`
+            );
+          } catch (error) {
+            console.error("❌ Deepgram connection failed to open:", error);
+            socket.emit("error", {
+              message: "Failed to start speech recognition",
+            });
+          }
 
           console.log("🔍 Step 16: Resetting processing flag...");
           isProcessing = false;

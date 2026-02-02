@@ -5,6 +5,7 @@ const cookieParser = require("cookie-parser");
 const authRoutes = require("./Routes/auth.routes.js");
 const questionRoutes = require("./Middlewares/multer.middlewares.js");
 const speechRoutes = require("./Middlewares/multer.middlewares.js");
+const resultRouter = require("./Routes/result.routes.js");
 
 const app = express();
 dotenv.config();
@@ -34,5 +35,6 @@ app.use(cookieParser());
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/questions", questionRoutes);
 app.use("/api/v1/speech", speechRoutes);
+app.use("/api/v1/result", resultRouter);
 
 module.exports = app;
