@@ -5,11 +5,6 @@ function createTTSStream() {
   const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
   return {
-    /**
-     * Stream TTS audio chunks via callback
-     * @param {string} text - Text to convert to speech
-     * @param {function} onChunk - Callback (chunk) => void, called with null when done
-     */
     speakStream: async function (text, onChunk) {
       if (!text || typeof text !== "string") {
         console.error("❌ Invalid text for TTS");
