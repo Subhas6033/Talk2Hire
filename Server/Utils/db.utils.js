@@ -129,6 +129,80 @@ CREATE TABLE IF NOT EXISTS skill_evaluations (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 `;
 
+const interviewVideosTableQuery = `
+CREATE TABLE IF NOT EXISTS interview_videos (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    
+    interview_id INT UNSIGNED NOT NULL,
+    user_id INT UNSIGNED NOT NULL,
+    
+    video_type ENUM('primary_camera', 'security_camera', 'screen_recording') NOT NULL,
+    
+    original_filename VARCHAR(255) NOT NULL,
+    file_size BIGINT UNSIGNED NOT NULL,
+    duration INT UNSIGNED,
+    
+    ftp_path VARCHAR(500) NOT NULL,
+    ftp_url VARCHAR(500) NOT NULL,
+    
+    upload_status ENUM('pending', 'uploading', 'merging', 'completed', 'failed') DEFAULT 'pending',
+    upload_progress TINYINT UNSIGNED DEFAULT 0,
+    
+    total_chunks INT UNSIGNED DEFAULT 1,
+    uploaded_chunks INT UNSIGNED DEFAULT 0,
+    
+    started_at TIMESTAMP NULL,
+    completed_at TIMESTAMP NULL,
+    
+    video_codec VARCHAR(50),
+    video_bitrate INT UNSIGNED,
+    resolution VARCHAR(20),
+    frame_rate DECIMAL(5,2),
+    
+    error_message TEXT NULL,
+    retry_count TINYINT UNSIGNED DEFAULT 0,
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    INDEX idx_interview_id (interview_id),
+    INDEX idx_user_id (user_id),
+    INDEX idx_video_type (video_type),
+    INDEX idx_upload_status (upload_status),
+    INDEX idx_interview_video_type (interview_id, video_type),
+    
+    FOREIGN KEY (interview_id) REFERENCES interviews(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    
+    UNIQUE KEY unique_interview_video_type (interview_id, video_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+`;
+
+const interviewVideoChunksTableQuery = `
+CREATE TABLE IF NOT EXISTS interview_video_chunks (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    
+    video_id INT UNSIGNED NOT NULL,
+    chunk_number INT UNSIGNED NOT NULL,
+    chunk_size BIGINT UNSIGNED NOT NULL,
+    
+    temp_ftp_path VARCHAR(500),
+    
+    upload_status ENUM('pending', 'uploaded', 'failed') DEFAULT 'pending',
+    uploaded_at TIMESTAMP NULL,
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    INDEX idx_video_id (video_id),
+    INDEX idx_chunk_number (chunk_number),
+    INDEX idx_upload_status (upload_status),
+    
+    FOREIGN KEY (video_id) REFERENCES interview_videos(id) ON DELETE CASCADE,
+    
+    UNIQUE KEY unique_video_chunk (video_id, chunk_number)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+`;
+
 const createTable = async (pool, tableName, query) => {
   try {
     await pool.query(query);
@@ -160,6 +234,12 @@ const createAllTables = async (pool) => {
       interviewEvaluationsTableQuery
     );
     await createTable(pool, "skill_evaluations", skillEvaluationsTableQuery);
+    await createTable(pool, "interview_videos", interviewVideosTableQuery);
+    await createTable(
+      pool,
+      "interview_video_chunks",
+      interviewVideoChunksTableQuery
+    );
 
     console.log("✅ All tables created successfully.");
   } catch (error) {

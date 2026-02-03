@@ -5,6 +5,11 @@ const { generateNextQuestionWithAI } = require("../Service/ai.service.js");
 const { createTTSStream } = require("../Service/tts.service.js");
 const { createSTTSession } = require("../Service/stt.service.js");
 const { evaluateInterview } = require("../Service/evaluation.service.js");
+const {
+  uploadVideoChunk,
+  finalizeVideoUpload,
+} = require("../Upload/uploadVideoOnFTP.js");
+const { InterviewVideo } = require("../Models/interviewVideo.models.js");
 
 function initInterviewSocket(httpServer) {
   const io = new Server(httpServer, {
@@ -13,6 +18,7 @@ function initInterviewSocket(httpServer) {
       methods: ["GET", "POST"],
     },
     transports: ["websocket", "polling"],
+    maxHttpBufferSize: 10 * 1024 * 1024, // 10MB for video chunks
   });
 
   io.on("connection", async (socket) => {
@@ -30,6 +36,7 @@ function initInterviewSocket(httpServer) {
       return socket.disconnect();
     }
 
+    // Interview state
     let currentOrder = 1;
     let isProcessing = false;
     let firstQuestionSent = false;
@@ -37,10 +44,17 @@ function initInterviewSocket(httpServer) {
     let deepgramConnection = null;
     let isListeningActive = false;
 
-    // //Idle detection state
+    // Idle detection state
     let awaitingRepeatResponse = false;
     let currentQuestionText = "";
     let idleCount = 0;
+
+    // Video upload state
+    const videoUploads = {
+      primary_camera: { videoId: null, chunks: 0, totalChunks: 0 },
+      security_camera: { videoId: null, chunks: 0, totalChunks: 0 },
+      screen_recording: { videoId: null, chunks: 0, totalChunks: 0 },
+    };
 
     // Maximum questions limit
     const MAX_QUESTIONS = 10;
@@ -98,60 +112,248 @@ function initInterviewSocket(httpServer) {
 
       console.log("✅ ✅ ✅ Initialization complete!");
 
-      // //Handle idle timeout
+      // ============================================================================
+      // VIDEO UPLOAD HANDLERS - Real-time chunk upload during interview
+      // ============================================================================
+
+      /**
+       * Initialize video recording session
+       * Client calls this when starting to record a video stream
+       */
+      socket.on("video_recording_start", async (data) => {
+        const { videoType, totalChunks, metadata } = data;
+
+        console.log("🎥 Video recording started:", {
+          videoType,
+          totalChunks,
+          metadata,
+        });
+
+        try {
+          // Create video record in database
+          const videoId = await InterviewVideo.create({
+            interviewId,
+            userId,
+            videoType,
+            originalFilename: `${videoType}_${Date.now()}.webm`,
+            fileSize: 0,
+            totalChunks: totalChunks || 0,
+            duration: null,
+          });
+
+          videoUploads[videoType] = {
+            videoId,
+            chunks: 0,
+            totalChunks: totalChunks || 0,
+          };
+
+          console.log(`✅ Video recording session created: ${videoId}`);
+
+          socket.emit("video_recording_ready", {
+            videoType,
+            videoId,
+            message: "Ready to receive video chunks",
+          });
+        } catch (error) {
+          console.error("❌ Error starting video recording:", error);
+          socket.emit("video_recording_error", {
+            videoType,
+            error: error.message,
+          });
+        }
+      });
+
+      /**
+       * Receive video chunk during interview
+       * Client sends chunks as they're recorded in real-time
+       */
+      socket.on("video_chunk", async (data) => {
+        const { videoType, chunkNumber, chunkData, isLastChunk } = data;
+
+        // Don't log every chunk to reduce console spam
+        if (chunkNumber === 1 || chunkNumber % 10 === 0 || isLastChunk) {
+          console.log(`📦 Received video chunk:`, {
+            videoType,
+            chunkNumber,
+            size: chunkData.length,
+            isLastChunk,
+          });
+        }
+
+        try {
+          const videoInfo = videoUploads[videoType];
+
+          if (!videoInfo || !videoInfo.videoId) {
+            throw new Error(`No video session for ${videoType}`);
+          }
+
+          // Convert base64 to buffer if needed
+          let chunkBuffer;
+          if (typeof chunkData === "string") {
+            chunkBuffer = Buffer.from(chunkData, "base64");
+          } else if (Buffer.isBuffer(chunkData)) {
+            chunkBuffer = chunkData;
+          } else if (chunkData instanceof ArrayBuffer) {
+            chunkBuffer = Buffer.from(chunkData);
+          } else {
+            chunkBuffer = Buffer.from(chunkData);
+          }
+
+          // Upload chunk to FTP asynchronously (don't block the socket)
+          uploadVideoChunk({
+            chunkBuffer,
+            videoId: videoInfo.videoId,
+            chunkNumber,
+            totalChunks: videoInfo.totalChunks,
+            interviewId,
+          })
+            .then((result) => {
+              videoInfo.chunks++;
+
+              // Send progress update to client
+              socket.emit("video_chunk_uploaded", {
+                videoType,
+                chunkNumber,
+                progress: result.progress,
+                checksum: result.checksum,
+              });
+
+              // Log milestone chunks
+              if (chunkNumber % 10 === 0 || isLastChunk) {
+                console.log(
+                  `✅ Chunk ${chunkNumber} uploaded for ${videoType} (${result.progress}%)`
+                );
+              }
+
+              // If this was the last chunk, update total chunks
+              if (isLastChunk && videoInfo.totalChunks === 0) {
+                videoInfo.totalChunks = chunkNumber;
+              }
+            })
+            .catch((error) => {
+              console.error(`❌ Chunk upload failed for ${videoType}:`, error);
+              socket.emit("video_chunk_error", {
+                videoType,
+                chunkNumber,
+                error: error.message,
+              });
+            });
+        } catch (error) {
+          console.error(`❌ Error processing video chunk:`, error);
+          socket.emit("video_chunk_error", {
+            videoType,
+            chunkNumber,
+            error: error.message,
+          });
+        }
+      });
+
+      /**
+       * Client signals recording stopped for a video type
+       */
+      socket.on("video_recording_stop", async (data) => {
+        const { videoType } = data;
+
+        console.log(`🎬 Video recording stopped: ${videoType}`);
+
+        try {
+          const videoInfo = videoUploads[videoType];
+
+          if (!videoInfo || !videoInfo.videoId) {
+            console.warn(`⚠️ No video session found for ${videoType}`);
+            return;
+          }
+
+          // Update video status to indicate all chunks received
+          await InterviewVideo.updateUploadStatus(
+            videoInfo.videoId,
+            "uploading"
+          );
+
+          socket.emit("video_recording_stopped", {
+            videoType,
+            videoId: videoInfo.videoId,
+            chunksReceived: videoInfo.chunks,
+            message: "Video recording stopped, chunks being processed",
+          });
+
+          console.log(`✅ Video ${videoType} marked as uploading`);
+        } catch (error) {
+          console.error(`❌ Error stopping video recording:`, error);
+          socket.emit("video_recording_error", {
+            videoType,
+            error: error.message,
+          });
+        }
+      });
+
+      /**
+       * Get current video upload progress
+       */
+      socket.on("video_upload_status_request", async () => {
+        try {
+          const videos = await InterviewVideo.getByInterviewId(interviewId);
+
+          const status = videos.map((v) => ({
+            videoType: v.video_type,
+            uploadStatus: v.upload_status,
+            progress: v.upload_progress,
+            chunksUploaded: v.uploaded_chunks,
+            totalChunks: v.total_chunks,
+          }));
+
+          socket.emit("video_upload_status", { videos: status });
+        } catch (error) {
+          console.error("❌ Error getting video status:", error);
+        }
+      });
+
+      // ============================================================================
+      // EXISTING INTERVIEW HANDLERS
+      // ============================================================================
+
       async function handleIdle() {
         console.log("⏰ Handling idle timeout");
 
-        // Pause idle detection while we handle this
         if (deepgramConnection) {
           deepgramConnection.pauseIdleDetection();
         }
 
         if (awaitingRepeatResponse) {
-          // User didn't respond to "repeat?" question, move to next
           console.log(
             "⏭️ No response to repeat prompt, moving to next question"
           );
           awaitingRepeatResponse = false;
           idleCount = 0;
 
-          // Disable listening temporarily
           isListeningActive = false;
           socket.emit("listening_disabled");
 
-          // Move to next question automatically
           await moveToNextQuestion();
         } else {
-          // First idle, ask if they want to repeat
           console.log("❓ First idle - asking if user wants to repeat");
           awaitingRepeatResponse = true;
 
-          // Disable listening temporarily
           isListeningActive = false;
           socket.emit("listening_disabled");
 
-          // Send prompt via TTS
           const promptText = "Can I repeat the question?";
           socket.emit("idle_prompt", { text: promptText });
 
           await new Promise((resolve) => setTimeout(resolve, 200));
           await streamTTSToClient(socket, promptText);
 
-          // Wait for TTS to finish
           await new Promise((resolve) => setTimeout(resolve, 1500));
 
-          // Re-enable listening for yes/no response
           isListeningActive = true;
           socket.emit("listening_enabled");
 
-          // Resume idle detection
           if (deepgramConnection) {
             deepgramConnection.resumeIdleDetection();
           }
         }
       }
 
-      // //Move to next question
       async function moveToNextQuestion() {
         if (isProcessing) {
           console.log("⚠️ Already processing, ignoring");
@@ -162,7 +364,6 @@ function initInterviewSocket(httpServer) {
         console.log("⏭️ Moving to next question...");
 
         try {
-          // Check if interview should end
           if (currentOrder >= MAX_QUESTIONS) {
             console.log("🎉 Interview complete! Reached maximum questions.");
             await endInterview();
@@ -171,14 +372,12 @@ function initInterviewSocket(httpServer) {
 
           const nextOrder = currentOrder + 1;
 
-          // Generate a generic next question (since no answer was provided)
           const nextQuestionText = await generateNextQuestionWithAI({
             answer: "No response provided",
             questionOrder: nextOrder,
             previousQuestion: currentQuestionText,
           });
 
-          // Save next question
           await Interview.saveQuestion({
             interviewId,
             question: nextQuestionText,
@@ -190,21 +389,17 @@ function initInterviewSocket(httpServer) {
           currentOrder = nextOrder;
           currentQuestionText = nextQuestionText;
 
-          // Send next question
           socket.emit("next_question", { question: nextQuestionText });
           await new Promise((resolve) => setTimeout(resolve, 200));
           await streamTTSToClient(socket, nextQuestionText);
 
-          // Wait for audio playback
           await new Promise((resolve) => setTimeout(resolve, 1500));
 
-          // //Add small delay to avoid rate limiting
           console.log(
             "⏳ Waiting 500ms before creating connection (rate limit prevention)..."
           );
           await new Promise((resolve) => setTimeout(resolve, 500));
 
-          // Start new Deepgram connection and wait for it to be ready
           const connection = startDeepgramConnection();
 
           try {
@@ -212,7 +407,6 @@ function initInterviewSocket(httpServer) {
             await connection.waitForReady(10000);
             console.log("✅ Deepgram connection is ready");
 
-            // Enable listening only after connection is confirmed open
             isListeningActive = true;
             socket.emit("listening_enabled");
             console.log("✅ Listening enabled for user response");
@@ -232,22 +426,18 @@ function initInterviewSocket(httpServer) {
         }
       }
 
-      // //End interview and trigger evaluation
       async function endInterview() {
         console.log("🏁 Ending interview and starting evaluation...");
 
         try {
-          // Emit completion event first
           socket.emit("interview_complete", {
             message: "Interview completed successfully!",
             totalQuestions: currentOrder,
           });
 
-          // Disable listening
           isListeningActive = false;
           socket.emit("listening_disabled");
 
-          // Close Deepgram connection
           if (deepgramConnection) {
             try {
               deepgramConnection.finish();
@@ -257,14 +447,31 @@ function initInterviewSocket(httpServer) {
             deepgramConnection = null;
           }
 
-          // Notify client that evaluation is starting
+          // ✅ STOP ALL VIDEO RECORDINGS
+          console.log("🎬 Stopping all video recordings...");
+          socket.emit("stop_all_recordings", {
+            message: "Interview ended, stopping recordings",
+          });
+
+          // Small delay to let client stop recordings
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+
+          // ✅ TRIGGER AUTOMATIC VIDEO UPLOAD AND MERGE
+          console.log("📹 Triggering automatic video upload and merge...");
+          socket.emit("video_upload_starting", {
+            message: "Processing and uploading your interview videos...",
+          });
+
+          // Process videos in background (don't block evaluation)
+          processInterviewVideos(interviewId, socket);
+
+          // ✅ START EVALUATION IMMEDIATELY (parallel to video processing)
           socket.emit("evaluation_started", {
             message: "Evaluating your interview responses...",
           });
 
           console.log("🔄 Starting automatic evaluation...");
 
-          // Trigger evaluation in background
           evaluateInterview(interviewId)
             .then((results) => {
               console.log("✅ Evaluation completed successfully:", {
@@ -272,7 +479,6 @@ function initInterviewSocket(httpServer) {
                 hireDecision: results.overallEvaluation.hireDecision,
               });
 
-              // Notify client that evaluation is complete
               socket.emit("evaluation_complete", {
                 message: "Evaluation completed!",
                 results: {
@@ -296,7 +502,85 @@ function initInterviewSocket(httpServer) {
         }
       }
 
-      // Function to start Deepgram connection
+      /**
+       * Process all interview videos (finalize chunks and merge)
+       */
+      async function processInterviewVideos(interviewId, socket) {
+        try {
+          console.log(`🎬 Processing videos for interview ${interviewId}...`);
+
+          const videos = await InterviewVideo.getByInterviewId(interviewId);
+          const pendingVideos = videos.filter(
+            (v) =>
+              v.upload_status === "pending" || v.upload_status === "uploading"
+          );
+
+          console.log(`📹 Found ${pendingVideos.length} videos to process`);
+
+          for (const video of pendingVideos) {
+            try {
+              console.log(
+                `🔄 Processing video ${video.id} (${video.video_type})...`
+              );
+
+              socket.emit("video_processing_update", {
+                videoType: video.video_type,
+                status: "merging",
+                message: "Merging video chunks...",
+              });
+
+              // Check if video has chunks
+              const chunks = await InterviewVideo.getChunks(video.id);
+
+              if (chunks && chunks.length > 0) {
+                // Finalize (merge chunks)
+                const result = await finalizeVideoUpload({
+                  videoId: video.id,
+                  interviewId,
+                });
+
+                console.log(
+                  `✅ Video ${video.video_type} finalized:`,
+                  result.ftpUrl
+                );
+
+                socket.emit("video_processing_complete", {
+                  videoType: video.video_type,
+                  videoId: video.id,
+                  ftpUrl: result.ftpUrl,
+                  fileSize: result.fileSize,
+                  duration: result.duration,
+                });
+              } else {
+                console.warn(`⚠️ Video ${video.id} has no chunks to merge`);
+                await InterviewVideo.updateUploadStatus(video.id, "completed");
+              }
+            } catch (error) {
+              console.error(`❌ Failed to process video ${video.id}:`, error);
+              await InterviewVideo.markAsFailed(video.id, error.message);
+
+              socket.emit("video_processing_error", {
+                videoType: video.video_type,
+                error: error.message,
+              });
+            }
+          }
+
+          // All videos processed
+          socket.emit("all_videos_processed", {
+            message: "All videos processed successfully",
+            totalVideos: pendingVideos.length,
+          });
+
+          console.log("✅ All interview videos processed");
+        } catch (error) {
+          console.error("❌ Error processing interview videos:", error);
+          socket.emit("video_processing_error", {
+            error: error.message,
+          });
+        }
+      }
+
       function startDeepgramConnection() {
         if (deepgramConnection) {
           console.log("⚠️ Deepgram connection already exists, closing old one");
@@ -332,7 +616,6 @@ function initInterviewSocket(httpServer) {
               return;
             }
 
-            // Prevent duplicate processing
             if (hasReceivedTranscript) {
               console.log("⚠️ Already received transcript, ignoring duplicate");
               return;
@@ -340,19 +623,15 @@ function initInterviewSocket(httpServer) {
 
             hasReceivedTranscript = true;
 
-            // Stop listening while processing
             isListeningActive = false;
             console.log("🛑 Listening disabled after receiving transcript");
 
-            // Pause idle detection while processing
             if (deepgramConnection) {
               deepgramConnection.pauseIdleDetection();
             }
 
-            // Notify client that transcript was received
             socket.emit("transcript_received", { text: transcript });
 
-            // Close the current Deepgram connection
             if (deepgramConnection) {
               try {
                 deepgramConnection.finish();
@@ -363,17 +642,14 @@ function initInterviewSocket(httpServer) {
               deepgramConnection = null;
             }
 
-            // //Check if awaiting repeat response
             if (awaitingRepeatResponse) {
               await handleRepeatResponse(transcript);
             } else {
-              // Process the transcript normally
               await processUserTranscript(transcript);
             }
           },
 
           onInterim: (transcript, data) => {
-            // Send interim results to client for real-time feedback
             if (transcript && transcript.trim()) {
               socket.emit("interim_transcript", { text: transcript });
             }
@@ -399,7 +675,6 @@ function initInterviewSocket(httpServer) {
             deepgramConnection = null;
           },
 
-          // //Idle callback
           onIdle: async () => {
             if (isListeningActive && !isProcessing) {
               await handleIdle();
@@ -411,7 +686,6 @@ function initInterviewSocket(httpServer) {
         return deepgramConnection;
       }
 
-      // //Handle repeat response (yes/no)
       async function handleRepeatResponse(transcript) {
         console.log("💬 Handling repeat response:", transcript);
 
@@ -428,20 +702,17 @@ function initInterviewSocket(httpServer) {
           awaitingRepeatResponse = false;
           idleCount = 0;
 
-          // Repeat the current question
           socket.emit("question", { question: currentQuestionText });
           await new Promise((resolve) => setTimeout(resolve, 200));
           await streamTTSToClient(socket, currentQuestionText);
 
           await new Promise((resolve) => setTimeout(resolve, 1500));
 
-          // //Add small delay to avoid rate limiting
           console.log(
             "⏳ Waiting 500ms before creating connection (rate limit prevention)..."
           );
           await new Promise((resolve) => setTimeout(resolve, 500));
 
-          // Start new Deepgram connection and wait for it to be ready
           const connection = startDeepgramConnection();
 
           try {
@@ -471,7 +742,6 @@ function initInterviewSocket(httpServer) {
 
           await moveToNextQuestion();
         } else {
-          // Unclear response, ask again
           console.log("❓ Unclear response, asking again");
           const clarificationText =
             "I didn't understand. Would you like me to repeat the question? Please say yes or no.";
@@ -482,13 +752,11 @@ function initInterviewSocket(httpServer) {
 
           await new Promise((resolve) => setTimeout(resolve, 1500));
 
-          // //Add small delay to avoid rate limiting
           console.log(
             "⏳ Waiting 500ms before creating connection (rate limit prevention)..."
           );
           await new Promise((resolve) => setTimeout(resolve, 500));
 
-          // Start new connection and continue waiting
           const connection = startDeepgramConnection();
 
           try {
@@ -511,14 +779,12 @@ function initInterviewSocket(httpServer) {
 
       console.log("✅ Deepgram STT ready to start");
 
-      // NOW register event listeners AFTER initialization is complete
       socket.onAny((eventName, ...args) => {
-        if (eventName !== "user_audio_chunk") {
+        if (eventName !== "user_audio_chunk" && eventName !== "video_chunk") {
           console.log(`📡 Server received event: "${eventName}"`, args);
         }
       });
 
-      // Handle ready_for_question event
       socket.on("ready_for_question", async () => {
         console.log("🎯 'ready_for_question' event received!");
 
@@ -550,7 +816,6 @@ function initInterviewSocket(httpServer) {
           socket.emit("question", questionData);
           console.log("✅ 'question' event emitted successfully");
 
-          // Small delay to ensure client receives text before audio
           await new Promise((resolve) => setTimeout(resolve, 200));
 
           console.log("🔊 Starting TTS stream for first question");
@@ -558,26 +823,21 @@ function initInterviewSocket(httpServer) {
 
           console.log("✅ First question fully sent (text + audio)");
 
-          // Wait a bit for client to finish playing audio
           await new Promise((resolve) => setTimeout(resolve, 1000));
 
-          // //Add small delay to avoid rate limiting
           console.log(
             "⏳ Waiting 500ms before creating connection (rate limit prevention)..."
           );
           await new Promise((resolve) => setTimeout(resolve, 500));
 
-          // Start fresh Deepgram connection for listening
           console.log("🎤 Starting Deepgram connection for listening...");
           const connection = startDeepgramConnection();
 
-          // ✅ FIX: Wait for connection to actually open before enabling listening
           try {
             console.log("⏳ Waiting for Deepgram connection to open...");
             await connection.waitForReady(10000);
             console.log("✅ Deepgram connection is ready");
 
-            // Enable listening after connection is confirmed open
             isListeningActive = true;
             socket.emit("listening_enabled");
             console.log("✅ Listening enabled for user response");
@@ -598,9 +858,7 @@ function initInterviewSocket(httpServer) {
         }
       });
 
-      // Handle user audio chunks - send to Deepgram
       socket.on("user_audio_chunk", (audioData) => {
-        // Only process if listening is active
         if (!isListeningActive) {
           return;
         }
@@ -610,7 +868,6 @@ function initInterviewSocket(httpServer) {
           return;
         }
 
-        // Send audio to Deepgram
         const sent = deepgramConnection.send(audioData);
 
         if (!sent) {
@@ -619,7 +876,6 @@ function initInterviewSocket(httpServer) {
         }
       });
 
-      // Process user transcript function
       async function processUserTranscript(text) {
         if (isProcessing) {
           console.log("⚠️ Already processing, ignoring transcript");
@@ -743,7 +999,6 @@ function initInterviewSocket(httpServer) {
 
           console.log("🔍 Step 13: Starting new Deepgram connection...");
 
-          // //Add small delay to avoid rate limiting
           console.log(
             "⏳ Waiting 500ms before creating connection (rate limit prevention)..."
           );
@@ -785,7 +1040,6 @@ function initInterviewSocket(httpServer) {
         }
       }
 
-      // Handle disconnect
       socket.on("disconnect", (reason) => {
         console.log("⚠️ Interview socket disconnected:", {
           socketId: socket.id,
@@ -793,7 +1047,6 @@ function initInterviewSocket(httpServer) {
           reason,
         });
 
-        // Clean up Deepgram connection
         if (deepgramConnection) {
           try {
             deepgramConnection.finish();
@@ -803,19 +1056,30 @@ function initInterviewSocket(httpServer) {
           deepgramConnection = null;
         }
 
+        // ✅ Trigger video processing on disconnect if interview was in progress
+        if (interviewId && currentOrder > 0) {
+          console.log("📹 Triggering video processing on disconnect...");
+
+          processInterviewVideos(interviewId, socket)
+            .then(() => {
+              console.log("✅ Video processing on disconnect completed");
+            })
+            .catch((error) => {
+              console.error("❌ Video processing on disconnect failed:", error);
+            });
+        }
+
         isProcessing = false;
         isListeningActive = false;
         awaitingRepeatResponse = false;
       });
 
-      // Handle errors
       socket.on("error", (error) => {
         console.error("❌ Socket error:", error);
       });
 
       console.log("✅ All event listeners registered and ready");
 
-      // Emit ready signal to client
       socket.emit("server_ready");
       console.log("📤 Emitted 'server_ready' signal to client");
     } catch (error) {

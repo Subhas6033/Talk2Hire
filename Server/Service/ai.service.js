@@ -1,4 +1,3 @@
-// In ai.service.js
 const { openai } = require("../Config/openai.config.js");
 const { APIERR } = require("../Utils/index.utils.js");
 
