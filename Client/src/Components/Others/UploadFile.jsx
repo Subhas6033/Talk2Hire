@@ -1,105 +1,101 @@
-import { useEffect, useState } from "react";
-import { Card, CardHeader, CardBody } from "../Common/Card";
+import { useState, useEffect } from "react";
+import { useAuth } from "../../Hooks/useAuthHook";
+import { Button, SkillsSelector } from "../../Components/index";
 
-const ResumeUploadCard = ({ resume, onFileChange }) => {
-  const [fileUrl, setFileUrl] = useState(null);
-  const [status, setStatus] = useState("idle"); // idle | success | error
-  const [message, setMessage] = useState("");
+const ResumeUploadCard = () => {
+  const { user, updateUser } = useAuth();
+  const [selectedSkills, setSelectedSkills] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState({ type: "", text: "" });
 
-  const handleFileUpload = (e) => {
-    const file = e.target.files?.[0];
+  // Load user's current skills on mount
+  useEffect(() => {
+    if (user?.skill) {
+      // Convert comma-separated string back to array
+      const skillsArray = user.skill
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      setSelectedSkills(skillsArray);
+    }
+  }, [user]);
 
-    if (!file) {
-      setStatus("error");
-      setMessage("No file selected.");
+  const handleUpdateSkills = async () => {
+    if (selectedSkills.length === 0) {
+      setMessage({ type: "error", text: "Please select at least one skill" });
       return;
     }
 
-    const allowedTypes = [
-      "application/pdf",
-      "application/msword",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ];
-
-    if (!allowedTypes.includes(file.type)) {
-      setStatus("error");
-      setMessage("Only PDF, DOC, or DOCX files are allowed.");
-      return;
-    }
+    setLoading(true);
+    setMessage({ type: "", text: "" });
 
     try {
-      onFileChange(file);
-      setStatus("success");
-      setMessage("Resume uploaded successfully.");
-    } catch {
-      setStatus("error");
-      setMessage("Failed to upload resume.");
+      // Convert array back to comma-separated string
+      const skillsString = selectedSkills.join(", ");
+
+      // Call your API to update skills
+      await updateUser({ skill: skillsString });
+
+      setMessage({ type: "success", text: "Skills updated successfully!" });
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: error.message || "Failed to update skills",
+      });
+    } finally {
+      setLoading(false);
     }
   };
 
-  useEffect(() => {
-    if (!resume) return;
-
-    const url = URL.createObjectURL(resume);
-    setFileUrl(url);
-
-    return () => URL.revokeObjectURL(url);
-  }, [resume]);
-
   return (
-    <Card variant="default" padding="lg" className="w-full mb-5">
-      <CardHeader headerClass="text-center">Resume Upload</CardHeader>
+    <div className="max-w-4xl mx-auto p-6">
+      <h1 className="text-2xl font-bold text-white mb-6">Profile Settings</h1>
 
-      <CardBody>
-        <label className="block border-2 border-dashed border-blue-600 rounded-xl p-6 text-center cursor-pointer hover:border-purpleGlow transition">
-          <input
-            type="file"
-            accept=".pdf,.doc,.docx"
-            className="hidden"
-            onChange={handleFileUpload}
+      <div className="space-y-6">
+        {/* User Info */}
+        <div className="bg-white/5 rounded-lg p-6 border border-white/10">
+          <h2 className="text-lg font-semibold text-white mb-4">
+            Your Information
+          </h2>
+          <div className="space-y-2 text-sm">
+            <p className="text-white/60">
+              <span className="font-medium text-white">Name:</span>{" "}
+              {user?.fullName}
+            </p>
+            <p className="text-white/60">
+              <span className="font-medium text-white">Email:</span>{" "}
+              {user?.email}
+            </p>
+          </div>
+        </div>
+
+        {/* Skills Section */}
+        <div>
+          <SkillsSelector
+            selectedSkills={selectedSkills}
+            onSkillsChange={setSelectedSkills}
           />
 
-          {!resume && (
-            <div className="flex flex-col items-center gap-2 text-white/70">
-              <span className="font-semibold text-white">
-                Upload Your Resume
-              </span>
-              <span className="text-xs text-white/40">PDF, DOC, DOCX</span>
-            </div>
+          {message.text && (
+            <p
+              className={`mt-3 text-sm text-center ${
+                message.type === "success" ? "text-green-400" : "text-red-400"
+              }`}
+            >
+              {message.text}
+            </p>
           )}
 
-          {resume && (
-            <div className="flex flex-col gap-2 items-center">
-              <p className="text-xs text-purpleGlow truncate max-w-xs">
-                {resume.name}
-              </p>
-
-              {fileUrl && (
-                <a
-                  href={fileUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs underline text-blue-400 hover:text-blue-300"
-                >
-                  View Resume
-                </a>
-              )}
-            </div>
-          )}
-        </label>
-
-        {/* Status Message */}
-        {status !== "idle" && (
-          <p
-            className={`mt-3 text-xs text-center ${
-              status === "success" ? "text-green-400" : "text-red-400"
-            }`}
+          <Button
+            onClick={handleUpdateSkills}
+            disabled={loading || selectedSkills.length === 0}
+            className="w-full mt-4"
           >
-            {message}
-          </p>
-        )}
-      </CardBody>
-    </Card>
+            {loading ? "Updating..." : "Update Skills"}
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 };
 

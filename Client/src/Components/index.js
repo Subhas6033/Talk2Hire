@@ -20,6 +20,8 @@ import CameraCheck from "./Others/CamerCheck";
 import CandidateFilter from "./Filter/CandidateFilter";
 import MobileSecurityCamera from "./Others/MobileSecurityCamera";
 import SecurityMonitor from "./Others/SecurityMonitor";
+import AuthProvider from "./Loader/AuthProviders";
+import SkillsSelector from "./Others/SkillsSelector";
 
 export {
   Nav,
@@ -44,4 +46,6 @@ export {
   CandidateFilter,
   MobileSecurityCamera,
   SecurityMonitor,
+  AuthProvider,
+  SkillsSelector,
 };

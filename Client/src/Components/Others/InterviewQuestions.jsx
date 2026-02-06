@@ -33,13 +33,14 @@ const InterviewQuestions = ({
   const [securityStream, setSecurityStream] = useState(null);
   const [securityWarnings, setSecurityWarnings] = useState([]);
   const [showSecurityPanel, setShowSecurityPanel] = useState(true);
+  const [waitingForQuestions, setWaitingForQuestions] = useState(false);
 
   // ✅ NEW: Check for existing security camera connection on mount
   useEffect(() => {
     const checkSecurityConnection = () => {
       const mobileConnected = localStorage.getItem(`security_${interviewId}`);
       const angleVerified = localStorage.getItem(
-        `security_angle_verified_${interviewId}`
+        `security_angle_verified_${interviewId}`,
       );
 
       if (mobileConnected === "connected" && angleVerified === "true") {
@@ -47,7 +48,7 @@ const InterviewQuestions = ({
         // Security is already set up via QR code
       } else {
         console.warn(
-          "⚠️ Security camera not connected - interview may be terminated"
+          "⚠️ Security camera not connected - interview may be terminated",
         );
       }
     };
@@ -96,7 +97,7 @@ const InterviewQuestions = ({
       if (eventName !== "user_audio_chunk") {
         console.log(
           `📡 Socket event: "${eventName}"`,
-          args.length > 0 ? args : ""
+          args.length > 0 ? args : "",
         );
       }
     });
@@ -124,6 +125,7 @@ const InterviewQuestions = ({
 
     socket.on("question", (data) => {
       console.log("📨 Received 'question' event:", data);
+      setWaitingForQuestions(false);
       interview.handleQuestion(data);
     });
 
@@ -182,7 +184,7 @@ const InterviewQuestions = ({
       }
 
       alert(
-        `Interview completed! You answered ${data.totalQuestions} questions.`
+        `Interview completed! You answered ${data.totalQuestions} questions.`,
       );
 
       // Call onFinish if provided
@@ -225,7 +227,7 @@ const InterviewQuestions = ({
         !error.message.includes("recognition error")
       ) {
         alert(
-          `Interview error: ${error.message}. Please refresh and try again.`
+          `Interview error: ${error.message}. Please refresh and try again.`,
         );
       }
 

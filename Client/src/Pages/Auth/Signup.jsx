@@ -8,7 +8,7 @@ import {
 } from "../../Components/Common/Card";
 import { Button } from "../../Components";
 import { FormField } from "../../Components/Common/Input";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Upload, X } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../../Hooks/useAuthHook";
 
@@ -19,6 +19,8 @@ const Loader = () => (
 
 const Signup = () => {
   const [showPassword, setShowPassword] = useState(false);
+  const [resumeFile, setResumeFile] = useState(null);
+  const [resumeError, setResumeError] = useState("");
   const { registerUser, loading, error, isAuthenticated } = useAuth();
   const navigate = useNavigate();
 
@@ -32,26 +34,66 @@ const Signup = () => {
       fullName: "",
       email: "",
       password: "",
-      skill: "",
       terms: false,
     },
   });
 
+  const handleResumeChange = (e) => {
+    const file = e.target.files[0];
+    setResumeError("");
+
+    if (!file) {
+      setResumeFile(null);
+      return;
+    }
+
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      setResumeError("File size must be less than 5MB");
+      setResumeFile(null);
+      return;
+    }
+
+    // Validate file type
+    const allowedTypes = ["application/pdf"];
+    if (!allowedTypes.includes(file.type)) {
+      setResumeError("Only PDF files are allowed");
+      setResumeFile(null);
+      return;
+    }
+
+    setResumeFile(file);
+  };
+
+  const removeResume = () => {
+    setResumeFile(null);
+    setResumeError("");
+    // Reset file input
+    const fileInput = document.getElementById("resume-upload");
+    if (fileInput) fileInput.value = "";
+  };
+
   const onSubmit = async (data) => {
-    await registerUser({
-      fullName: data.fullName,
-      email: data.email,
-      password: data.password,
-      skill: data.skill,
-    });
+    if (!resumeFile) {
+      setResumeError("Please upload your resume");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("fullName", data.fullName);
+    formData.append("email", data.email);
+    formData.append("password", data.password);
+    formData.append("resume", resumeFile);
+
+    await registerUser(formData);
   };
 
   useEffect(() => {
     if (isAuthenticated) {
       navigate("/", { replace: true });
-      console.log("Successfully signned up");
+      console.log("Successfully signed up");
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, navigate]);
 
   return (
     <>
@@ -101,20 +143,6 @@ const Signup = () => {
                   })}
                 />
 
-                {/* Skills */}
-                <FormField
-                  label="Your Skill"
-                  placeholder="Fullstack Developer"
-                  error={errors.skill?.message}
-                  {...register("skill", {
-                    required: "Skill is required",
-                    minLength: {
-                      value: 2,
-                      message: "Skill must be at least 2 characters",
-                    },
-                  })}
-                />
-
                 {/* Password */}
                 <div className="space-y-1">
                   <label className="text-sm font-medium text-white/80">
@@ -144,6 +172,58 @@ const Signup = () => {
                   </div>
                 </div>
 
+                {/* Resume Upload */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-white/80">
+                    Resume (PDF - Max 5MB)
+                  </label>
+
+                  {!resumeFile ? (
+                    <label
+                      htmlFor="resume-upload"
+                      className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-white/20 rounded-lg cursor-pointer hover:border-purpleGlow transition-colors"
+                    >
+                      <Upload className="w-8 h-8 text-white/40 mb-2" />
+                      <span className="text-sm text-white/60">
+                        Click to upload resume
+                      </span>
+                      <span className="text-xs text-white/40 mt-1">
+                        PDF, PNG, or JPEG (max 5MB)
+                      </span>
+                      <input
+                        id="resume-upload"
+                        type="file"
+                        accept=".pdf,.png,.jpeg,.jpg"
+                        onChange={handleResumeChange}
+                        className="hidden"
+                      />
+                    </label>
+                  ) : (
+                    <div className="flex items-center justify-between p-3 bg-white/5 border border-white/10 rounded-lg">
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <Upload className="w-4 h-4 text-purpleGlow shrink-0" />
+                        <span className="text-sm text-white truncate">
+                          {resumeFile.name}
+                        </span>
+                        <span className="text-xs text-white/40 shrink-0">
+                          ({(resumeFile.size / 1024).toFixed(1)} KB)
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={removeResume}
+                        className="ml-2 p-1 hover:bg-white/10 rounded transition-colors shrink-0"
+                      >
+                        <X className="w-4 h-4 text-white/60" />
+                      </button>
+                    </div>
+                  )}
+
+                  {resumeError && (
+                    <p className="text-xs text-red-400">{resumeError}</p>
+                  )}
+                </div>
+
                 {/* Terms */}
                 <label className="flex items-start gap-2 text-sm text-white/60">
                   <input
@@ -170,7 +250,7 @@ const Signup = () => {
                   type="submit"
                   size="lg"
                   className="w-full flex justify-center items-center gap-2"
-                  disabled={!isValid || loading}
+                  disabled={!isValid || loading || !resumeFile}
                 >
                   {loading ? (
                     <>

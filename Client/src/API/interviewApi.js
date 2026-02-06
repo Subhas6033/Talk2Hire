@@ -3,25 +3,34 @@ import axios from "axios";
 
 const baseURL = import.meta.env.VITE_BACKEND_URL;
 
-// Async thunk for starting interview (your existing logic)
 export const startInterview = createAsyncThunk(
   "interview/start",
-  async ({ resume }, { rejectWithValue }) => {
+  async ({ resume, skills }, { rejectWithValue }) => {
     try {
       const fd = new FormData();
-      fd.append("file", resume);
+
+      // Append the resume if user has no resume
+      if (resume) {
+        fd.append("file", resume);
+      }
+
+      // ✅ Add skills to form data if provided
+      if (skills && skills.length > 0) {
+        fd.append("skills", JSON.stringify(skills));
+      }
+
       const res = await axios.post(
         `${baseURL}/api/v1/questions/generate-questions`,
         fd,
         {
           withCredentials: true,
-        }
+        },
       );
       return res.data.data;
     } catch (err) {
       return rejectWithValue(err.response?.data || err.message);
     }
-  }
+  },
 );
 
 const initialState = {
@@ -220,7 +229,7 @@ const interviewSlice = createSlice({
     updateRecordingDuration: (state) => {
       if (state.recordingStartTime) {
         const elapsed = Math.floor(
-          (Date.now() - state.recordingStartTime) / 1000
+          (Date.now() - state.recordingStartTime) / 1000,
         );
         const mins = Math.floor(elapsed / 60);
         const secs = elapsed % 60;

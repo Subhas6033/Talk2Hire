@@ -18,10 +18,14 @@ import {
   VerifyPassword,
   Hire,
 } from "./Pages/index.pages.js";
-import { Guidlines, MobileSecurityCamera } from "./Components/index.js";
+import {
+  Guidlines,
+  MobileSecurityCamera,
+  AuthProvider,
+} from "./Components/index.js";
 import { Provider } from "react-redux";
 import { store } from "./Store/store.js";
-import ProtectedRoutes from "./Security/ProtectedRoutes.jsx";
+import { ProtectedRoute } from "./Security/ProtectedRoutes.jsx";
 
 const router = createBrowserRouter([
   {
@@ -39,9 +43,9 @@ const router = createBrowserRouter([
       {
         path: "/interview",
         element: (
-          <ProtectedRoutes>
+          <ProtectedRoute>
             <Interview />
-          </ProtectedRoutes>
+          </ProtectedRoute>
         ),
       },
       {
@@ -75,17 +79,17 @@ const router = createBrowserRouter([
       {
         path: "/dashboard",
         element: (
-          <ProtectedRoutes>
+          <ProtectedRoute>
             <InterviewDashboard />
-          </ProtectedRoutes>
+          </ProtectedRoute>
         ),
       },
       {
         path: "/profile/:id",
         element: (
-          <ProtectedRoutes>
+          <ProtectedRoute>
             <Profile />
-          </ProtectedRoutes>
+          </ProtectedRoute>
         ),
       },
       {
@@ -107,9 +111,11 @@ const router = createBrowserRouter([
 createRoot(document.getElementById("root")).render(
   // <StrictMode>
   <Provider store={store}>
-    <RouterProvider router={router}>
-      <App />
-    </RouterProvider>
-  </Provider>
+    <AuthProvider>
+      <RouterProvider router={router}>
+        <App />
+      </RouterProvider>
+    </AuthProvider>
+  </Provider>,
   // </StrictMode>
 );

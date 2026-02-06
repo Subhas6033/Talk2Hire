@@ -5,24 +5,28 @@ import Loader from "./Components/Loader/Loader";
 import { AnimatePresence, motion } from "motion/react";
 import { pageTransition } from "./Animations/CommonAnimation";
 import { ScrollToTop } from "./Components/index";
-import { useDispatch } from "react-redux";
-import { getCurrentUser } from "./API/authApi";
+import { useSelector } from "react-redux";
 
 const App = () => {
   const [isLoading, setIsLoading] = useState(true);
   const location = useLocation();
-  const dispatch = useDispatch();
+
+  // ✅ Just read from Redux store - NO API call
+  const { hydrated } = useSelector((state) => state.auth);
 
   useEffect(() => {
-    // Restore auth session on app load
-    dispatch(getCurrentUser());
+    // ✅ REMOVED: dispatch(getCurrentUser());
+    // Auth is already loaded from localStorage via AuthProvider
 
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-    }, 2000);
+    // Wait for auth hydration and artificial delay
+    if (hydrated) {
+      const timer = setTimeout(() => {
+        setIsLoading(false);
+      }, 2000);
 
-    return () => clearTimeout(timer);
-  }, [dispatch]);
+      return () => clearTimeout(timer);
+    }
+  }, [hydrated]);
 
   return (
     <Layout>

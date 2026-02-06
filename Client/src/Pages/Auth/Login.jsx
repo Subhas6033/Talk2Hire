@@ -52,14 +52,6 @@ const Login = () => {
 
   useEffect(() => {
     if (isAuthenticated) {
-      localStorage.setItem(
-        "qh_auth",
-        JSON.stringify({
-          loggedIn: true,
-          timestamp: Date.now(),
-        })
-      );
-
       navigate("/", { replace: true });
     }
   }, [isAuthenticated, navigate]);

@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import axios from "axios";
 
 const CHUNK_DURATION = 10000; // Send video chunks every 10 seconds
@@ -11,6 +11,7 @@ const useVideoRecording = (interviewId, userId, cameraStream) => {
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
   const uploadIntervalRef = useRef(null);
+  const isUploadingRef = useRef(false);
 
   // Start recording
   const startRecording = useCallback(() => {
@@ -25,16 +26,14 @@ const useVideoRecording = (interviewId, userId, cameraStream) => {
     try {
       console.log("🎥 Starting video recording...");
 
-      // Create MediaRecorder with the camera stream
       const mediaRecorder = new MediaRecorder(cameraStream, {
-        mimeType: "video/webm;codecs=vp9", // High quality codec
-        videoBitsPerSecond: 2500000, // 2.5 Mbps
+        mimeType: "video/webm;codecs=vp9",
+        videoBitsPerSecond: 2500000,
       });
 
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
 
-      // Handle data available event
       mediaRecorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) {
           console.log("📦 Video chunk available:", event.data.size, "bytes");
@@ -42,23 +41,24 @@ const useVideoRecording = (interviewId, userId, cameraStream) => {
         }
       };
 
-      // Handle recording stop
       mediaRecorder.onstop = () => {
         console.log("🛑 MediaRecorder stopped");
       };
 
-      // Handle errors
       mediaRecorder.onerror = (event) => {
         console.error("❌ MediaRecorder error:", event.error);
       };
 
-      // Start recording
-      mediaRecorder.start(CHUNK_DURATION); // Collect data every 10 seconds
+      mediaRecorder.start(CHUNK_DURATION);
       setIsRecording(true);
 
-      // Set up periodic upload
+      // ✅ FIX: Set up periodic upload with better error handling
       uploadIntervalRef.current = setInterval(() => {
-        uploadChunks();
+        if (!isUploadingRef.current) {
+          uploadChunks();
+        } else {
+          console.log("⏳ Previous upload still in progress, skipping...");
+        }
       }, CHUNK_DURATION);
 
       console.log("✅ Video recording started");
@@ -67,31 +67,37 @@ const useVideoRecording = (interviewId, userId, cameraStream) => {
     }
   }, [cameraStream, isRecording, interviewId, userId]);
 
-  // Upload chunks to server
+  // ✅ FIX: Upload chunks with better error handling and retry
   const uploadChunks = useCallback(async () => {
     if (chunksRef.current.length === 0) {
       console.log("⏭️ No chunks to upload");
       return;
     }
 
+    if (isUploadingRef.current) {
+      console.log("⏳ Upload already in progress");
+      return;
+    }
+
+    isUploadingRef.current = true;
+
     try {
-      // Create a blob from accumulated chunks
       const blob = new Blob(chunksRef.current, { type: "video/webm" });
       console.log("📤 Uploading video chunk:", blob.size, "bytes");
 
-      // Create FormData
       const formData = new FormData();
       formData.append(
         "video",
         blob,
-        `interview_${interviewId}_${Date.now()}.webm`
+        `interview_${interviewId}_${Date.now()}.webm`,
       );
       formData.append("interviewId", interviewId);
       formData.append("userId", userId);
       formData.append("timestamp", new Date().toISOString());
       formData.append("chunkNumber", Math.floor(Date.now() / CHUNK_DURATION));
+      formData.append("videoType", "primary_camera");
 
-      // Upload to server
+      // ✅ FIX: Add timeout and retry logic
       const response = await axios.post(
         `${baseURL}/api/v1/interview/upload-video-chunk`,
         formData,
@@ -100,7 +106,8 @@ const useVideoRecording = (interviewId, userId, cameraStream) => {
             "Content-Type": "multipart/form-data",
           },
           withCredentials: true,
-        }
+          timeout: 60000, // 60 second timeout
+        },
       );
 
       console.log("✅ Video chunk uploaded successfully:", response.data);
@@ -115,17 +122,32 @@ const useVideoRecording = (interviewId, userId, cameraStream) => {
         }
         setTimeout(() => {
           if (mediaRecorderRef.current && isRecording) {
-            mediaRecorderRef.current.start(CHUNK_DURATION);
+            try {
+              mediaRecorderRef.current.start(CHUNK_DURATION);
+              console.log("🔄 Recording restarted for next chunk");
+            } catch (error) {
+              console.error("❌ Failed to restart recording:", error);
+            }
           }
         }, 100);
       }
     } catch (error) {
       console.error("❌ Failed to upload video chunk:", error);
-      // Keep chunks for retry
+
+      // ✅ FIX: Retry logic for failed uploads
+      if (error.code === "ECONNABORTED" || error.code === "ETIMEDOUT") {
+        console.log("⏳ Upload timeout, will retry on next interval");
+        // Keep chunks for retry
+      } else {
+        console.error("❌ Upload failed permanently:", error.message);
+        // Keep chunks for retry
+      }
+    } finally {
+      isUploadingRef.current = false;
     }
   }, [interviewId, userId, isRecording]);
 
-  // Stop recording and upload final chunk
+  // ✅ FIX: Stop recording and upload final chunk
   const stopRecording = useCallback(async () => {
     if (!isRecording || !mediaRecorderRef.current) {
       console.log("⚠️ No active recording to stop");
@@ -143,30 +165,30 @@ const useVideoRecording = (interviewId, userId, cameraStream) => {
         uploadIntervalRef.current = null;
       }
 
-      // Handle final stop
       mediaRecorder.onstop = async () => {
         console.log("📦 Creating final video blob...");
 
         // Upload any remaining chunks
         if (chunksRef.current.length > 0) {
+          console.log("📤 Uploading final chunks...");
           await uploadChunks();
         }
 
-        // Create final blob
         const finalBlob = new Blob(chunksRef.current, { type: "video/webm" });
 
-        // Upload final video
+        // ✅ FIX: Upload final video with proper error handling
         try {
           const formData = new FormData();
           formData.append(
             "video",
             finalBlob,
-            `interview_${interviewId}_final.webm`
+            `interview_${interviewId}_final.webm`,
           );
           formData.append("interviewId", interviewId);
           formData.append("userId", userId);
           formData.append("timestamp", new Date().toISOString());
           formData.append("isFinal", "true");
+          formData.append("videoType", "primary_camera");
 
           const response = await axios.post(
             `${baseURL}/api/v1/interview/upload-video-final`,
@@ -176,12 +198,14 @@ const useVideoRecording = (interviewId, userId, cameraStream) => {
                 "Content-Type": "multipart/form-data",
               },
               withCredentials: true,
-            }
+              timeout: 120000, // 2 minute timeout for final upload
+            },
           );
 
           console.log("✅ Final video uploaded successfully:", response.data);
         } catch (error) {
           console.error("❌ Failed to upload final video:", error);
+          // Don't throw - let interview continue even if final upload fails
         }
 
         setIsRecording(false);
@@ -192,22 +216,37 @@ const useVideoRecording = (interviewId, userId, cameraStream) => {
       // Stop recording
       if (mediaRecorder.state !== "inactive") {
         mediaRecorder.stop();
+      } else {
+        // Already stopped
+        mediaRecorder.onstop();
       }
     });
   }, [isRecording, interviewId, userId, uploadChunks]);
 
-  // Cleanup on unmount
+  // ✅ FIX: Cleanup on unmount
   const cleanup = useCallback(() => {
+    console.log("🧹 Cleaning up video recording...");
+
     if (uploadIntervalRef.current) {
       clearInterval(uploadIntervalRef.current);
     }
+
     if (
       mediaRecorderRef.current &&
       mediaRecorderRef.current.state !== "inactive"
     ) {
       mediaRecorderRef.current.stop();
     }
+
+    isUploadingRef.current = false;
   }, []);
+
+  // Auto-cleanup on unmount
+  useEffect(() => {
+    return () => {
+      cleanup();
+    };
+  }, [cleanup]);
 
   return {
     isRecording,

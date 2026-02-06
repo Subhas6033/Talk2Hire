@@ -12,7 +12,6 @@ const Interview = () => {
 
   const handleInterviewReady = (data) => {
     console.log("Interview session ready:", data);
-    // data includes: { interviewId, userId, cameraStream }
     setSession(data);
   };
 
@@ -29,7 +28,7 @@ const Interview = () => {
             Interview Preparation
           </h1>
           <p className="text-textMuted max-w-2xl mx-auto">
-            Upload your resume and start your real-time AI interview.
+            Select your Skills and start your real-time AI interview.
           </p>
         </div>
 

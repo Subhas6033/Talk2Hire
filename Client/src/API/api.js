@@ -1,31 +1,23 @@
 import axios from "axios";
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_BACKEND_URL,
+  baseURL: `${import.meta.env.VITE_BACKEND_URL}/api/v1`,
   withCredentials: true,
   headers: {
     "Content-Type": "application/json",
   },
 });
 
-api.interceptors.response.use(
-  (response) => response,
-  async (error) => {
-    const originalRequest = error.config;
-
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true;
-
-      try {
-        await api.post("/refresh-access-token");
-        return api(originalRequest);
-      } catch (err) {
-        return Promise.reject(err);
-      }
-    }
-
+// ✅ Log all API requests for debugging
+api.interceptors.request.use(
+  (config) => {
+    console.log(`🌐 API Call: ${config.method.toUpperCase()} ${config.url}`);
+    console.trace("📍 Called from:");
+    return config;
+  },
+  (error) => {
     return Promise.reject(error);
-  }
+  },
 );
 
 export default api;

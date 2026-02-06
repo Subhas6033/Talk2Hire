@@ -1,6 +1,7 @@
 import { configureStore } from "@reduxjs/toolkit";
 import authReducer from "../API/authApi";
 import passwordReducer from "../API/passwordApi";
+import { setupInterceptors } from "../API/Setupinterceptor";
 import interviewReducer from "../API/interviewApi";
 
 export const store = configureStore({
@@ -10,5 +11,7 @@ export const store = configureStore({
     interview: interviewReducer,
   },
 });
+
+setupInterceptors(store);
 
 export default store;
