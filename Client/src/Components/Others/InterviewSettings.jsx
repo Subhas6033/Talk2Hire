@@ -120,11 +120,12 @@ const InterviewSettings = ({ onInterviewReady }) => {
   };
 
   const handleSecuritySetupComplete = () => {
-    console.log("🔍 Security setup complete - checking questions...");
+    console.log("🔍 Security setup complete - checking conditions...");
 
+    // ✅ FIXED: Check BOTH security camera connection AND questions ready
     if (!questionsReady) {
-      console.log("⏳ Questions not ready yet - showing wait message");
-      setError("Questions are still being generated. Please wait a moment...");
+      console.log("⏳ Questions not ready yet - cannot start interview");
+      setError("Questions are still being generated. Please wait...");
       return;
     }
 
@@ -134,22 +135,20 @@ const InterviewSettings = ({ onInterviewReady }) => {
       return;
     }
 
+    if (!primaryCameraStream) {
+      console.error("❌ No camera stream available");
+      setError("Camera stream not available. Please try again.");
+      return;
+    }
+
     console.log("✅ All checks passed - starting interview");
     setShowSecuritySetup(false);
 
-    if (sessionData && primaryCameraStream && onInterviewReady) {
-      onInterviewReady({
-        ...sessionData,
-        cameraStream: primaryCameraStream,
-      });
-    } else {
-      console.error("❌ Missing required data:", {
-        sessionData: !!sessionData,
-        primaryCameraStream: !!primaryCameraStream,
-        onInterviewReady: !!onInterviewReady,
-      });
-      setError("Failed to initialize interview. Please try again.");
-    }
+    // Start the interview
+    onInterviewReady({
+      ...sessionData,
+      cameraStream: primaryCameraStream,
+    });
   };
 
   useEffect(() => {
@@ -307,7 +306,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
   );
 };
 
-// ✅ COMPLETELY FIXED: Event-driven security detection with no timeout
+// ✅ FIXED: Only allow interview to start when BOTH security camera is connected AND questions are ready
 const SecurityCameraSetup = ({
   isOpen,
   onClose,
@@ -345,20 +344,29 @@ const SecurityCameraSetup = ({
     }
   };
 
-  // ✅ Auto-continue when ready
+  // ✅ CRITICAL FIX: Auto-continue ONLY when ALL THREE conditions are met:
+  // 1. Security camera connected
+  // 2. Angle verified (auto-true for now since we commented angle verification)
+  // 3. Questions ready
   useEffect(() => {
     if (isSecurityConnected && angleVerified && questionsReady) {
       console.log("🎯 ALL CONDITIONS MET - AUTO-CONTINUING!");
       const timer = setTimeout(() => onSecurityConnected?.(), 1000);
       return () => clearTimeout(timer);
+    } else {
+      console.log("⏳ Waiting for conditions:", {
+        isSecurityConnected,
+        angleVerified,
+        questionsReady,
+      });
     }
   }, [isSecurityConnected, angleVerified, questionsReady, onSecurityConnected]);
 
-  // ✅ FIXED: Poll localStorage every 500ms with NO timeout
+  // ✅ Poll localStorage every 500ms
   useEffect(() => {
     if (!isOpen || !sessionData) return;
 
-    console.log("👀 Starting security detection (NO TIMEOUT)...");
+    console.log("👀 Starting security detection...");
 
     const pollInterval = setInterval(() => {
       const mobileStatus = localStorage.getItem(
@@ -377,7 +385,7 @@ const SecurityCameraSetup = ({
         console.log("✅ Angle VERIFIED!");
         setAngleVerified(true);
       }
-    }, 500); // Check every 500ms
+    }, 500);
 
     return () => clearInterval(pollInterval);
   }, [isOpen, sessionData, isSecurityConnected, angleVerified]);
@@ -391,6 +399,7 @@ const SecurityCameraSetup = ({
 
   if (!isOpen) return null;
 
+  // ✅ CRITICAL: Can only continue when ALL THREE are true
   const canContinue = isSecurityConnected && angleVerified && questionsReady;
 
   return (
@@ -467,13 +476,13 @@ const SecurityCameraSetup = ({
               {isSecurityConnected && angleVerified
                 ? "✓ Connected & Verified"
                 : isSecurityConnected
-                  ? "Verifying angle..."
+                  ? "Verifying..."
                   : "Waiting..."}
             </span>
           </div>
 
           <div className="flex items-center justify-between p-2 bg-white dark:bg-gray-900 rounded">
-            <span className="text-xs text-gray-600">90° Angle:</span>
+            <span className="text-xs text-gray-600">Connection Status:</span>
             <span
               className={`text-xs font-semibold ${angleVerified ? "text-green-600" : "text-gray-500"}`}
             >
@@ -512,9 +521,9 @@ const SecurityCameraSetup = ({
               <ol className="text-sm text-blue-800 space-y-2 ml-4">
                 <li>1. Scan QR with mobile camera</li>
                 <li>2. Grant camera permissions</li>
-                <li>3. Position device at 90° angle</li>
-                <li>4. Follow calibration</li>
-                <li>5. Interview auto-starts!</li>
+                <li>3. Wait for camera to start</li>
+                <li>4. Keep device steady</li>
+                <li>5. Interview auto-starts when questions ready!</li>
               </ol>
             </div>
           </div>
@@ -538,10 +547,14 @@ const SecurityCameraSetup = ({
             </svg>
             <div>
               <h4 className="text-sm font-semibold text-amber-900 mb-1">
-                ⚠️ No time limit - connect when ready
+                ⚠️ Interview starts only when both ready:
               </h4>
               <p className="text-xs text-amber-800">
-                Auto-starts when camera at 90° and questions ready
+                • Security camera must be connected
+                <br />
+                • Interview questions must be generated
+                <br />
+                Both conditions must be met before starting
               </p>
             </div>
           </div>
@@ -559,7 +572,9 @@ const SecurityCameraSetup = ({
             ? "✓ Start Interview (Auto-starting...)"
             : !questionsReady
               ? "⏳ Generating Questions..."
-              : "⏳ Waiting for Security Camera..."}
+              : !isSecurityConnected
+                ? "⏳ Waiting for Security Camera..."
+                : "⏳ Verifying Connection..."}
         </Button>
         {!canContinue && (
           <p className="text-xs text-center text-gray-500 mt-2">
@@ -567,7 +582,7 @@ const SecurityCameraSetup = ({
               ? "Questions generating..."
               : !isSecurityConnected
                 ? "Scan QR code to connect..."
-                : "Verify 90° angle on mobile..."}
+                : "Verifying connection..."}
           </p>
         )}
       </div>
