@@ -167,7 +167,7 @@ BAD EXAMPLES (DO NOT DO THIS):
   // Step 5: Parse and validate AI response
   let parsed;
   try {
-    // ✅ FIX: Use helper function to extract JSON
+    //  Use helper function to extract JSON
     parsed = extractJSON(raw);
     console.log("✅ Parsed JSON:", parsed);
   } catch (parseError) {
@@ -228,7 +228,7 @@ BAD EXAMPLES (DO NOT DO THIS):
   );
 });
 
-// ✅ FIX: Generate the next question based on the user answer
+//  Generate the next question based on the user answer
 const generateNextQuestion = asyncHandler(async (req, res) => {
   const { sessionId, resumeText, history } = req.body;
 
@@ -316,7 +316,7 @@ FORMAT:
 
   let parsed;
   try {
-    // ✅ FIX: Use helper function to extract JSON
+    //  Use helper function to extract JSON
     parsed = extractJSON(raw);
     console.log("✅ Parsed JSON:", parsed);
   } catch (err) {
