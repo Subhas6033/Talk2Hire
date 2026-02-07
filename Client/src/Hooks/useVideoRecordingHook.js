@@ -60,7 +60,7 @@ const useVideoRecording = (interviewId, userId, cameraStream) => {
     }
   }, [cameraStream, isRecording, interviewId, userId]);
 
-  // ✅ FIX: Upload chunks with better error handling and retry
+  //  Upload chunks with better error handling and retry
   const uploadChunks = useCallback(async () => {
     if (chunksRef.current.length === 0) {
       console.log("⏭️ No chunks to upload");
@@ -90,7 +90,7 @@ const useVideoRecording = (interviewId, userId, cameraStream) => {
       formData.append("chunkNumber", Math.floor(Date.now() / CHUNK_DURATION));
       formData.append("videoType", "primary_camera");
 
-      // ✅ FIX: Add timeout and retry logic
+      //  Add timeout and retry logic
       const response = await axios.post(
         `${baseURL}/api/v1/interview/upload-video-chunk`,
         formData,
@@ -127,7 +127,7 @@ const useVideoRecording = (interviewId, userId, cameraStream) => {
     } catch (error) {
       console.error("❌ Failed to upload video chunk:", error);
 
-      // ✅ FIX: Retry logic for failed uploads
+      //  Retry logic for failed uploads
       if (error.code === "ECONNABORTED" || error.code === "ETIMEDOUT") {
         console.log("⏳ Upload timeout, will retry on next interval");
         // Keep chunks for retry
@@ -140,7 +140,7 @@ const useVideoRecording = (interviewId, userId, cameraStream) => {
     }
   }, [interviewId, userId, isRecording]);
 
-  // ✅ FIX: Stop recording and upload final chunk
+  //  Stop recording and upload final chunk
   const stopRecording = useCallback(async () => {
     if (!isRecording || !mediaRecorderRef.current) {
       console.log("⚠️ No active recording to stop");
@@ -169,7 +169,7 @@ const useVideoRecording = (interviewId, userId, cameraStream) => {
 
         const finalBlob = new Blob(chunksRef.current, { type: "video/webm" });
 
-        // ✅ FIX: Upload final video with proper error handling
+        //  Upload final video with proper error handling
         try {
           const formData = new FormData();
           formData.append(
@@ -216,7 +216,7 @@ const useVideoRecording = (interviewId, userId, cameraStream) => {
     });
   }, [isRecording, interviewId, userId, uploadChunks]);
 
-  // ✅ FIX: Cleanup on unmount
+  //  Cleanup on unmount
   const cleanup = useCallback(() => {
     console.log("🧹 Cleaning up video recording...");
 

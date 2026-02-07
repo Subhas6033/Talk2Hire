@@ -4,7 +4,7 @@ import { io } from "socket.io-client";
 import { Card } from "../Common/Card";
 import { Button } from "../index";
 
-const SOCKET_URL = import.meta.env.VITE_WS_URL || window.location.origin;
+const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
 const MobileSecurityCamera = () => {
   const [searchParams] = useSearchParams();
@@ -21,7 +21,7 @@ const MobileSecurityCamera = () => {
   const canvasRef = useRef(null);
   const captureIntervalRef = useRef(null);
 
-  // Device orientation refs
+  // Device orientation refs (commented out for now)
   const [alpha, setAlpha] = useState(null);
   const [beta, setBeta] = useState(null);
   const [gamma, setGamma] = useState(null);
@@ -33,11 +33,9 @@ const MobileSecurityCamera = () => {
   const [framesSent, setFramesSent] = useState(0);
 
   // ✅ COMMENTED: Angle verification states (temporarily disabled)
-  // const [showAngleCalibration, setShowAngleCalibration] = useState(true);
-  const [showAngleCalibration, setShowAngleCalibration] = useState(false); // Disabled for now
-  const [currentAngle, setCurrentAngle] = useState(90); // Default angle
-  // const [angleVerified, setAngleVerified] = useState(false);
-  const [angleVerified, setAngleVerified] = useState(true); // Auto-verified for now
+  const [showAngleCalibration, setShowAngleCalibration] = useState(false);
+  const [currentAngle, setCurrentAngle] = useState(90);
+  const [angleVerified, setAngleVerified] = useState(true);
   const [angleQuality, setAngleQuality] = useState({
     level: "excellent",
     color: "green",
@@ -46,36 +44,39 @@ const MobileSecurityCamera = () => {
   const [calibrationAttempts, setCalibrationAttempts] = useState(0);
   const TARGET_ANGLE = 90;
 
+  /* 🔌 SOCKET CONNECTION */
   useEffect(() => {
     if (!interviewId || !userId) {
       setError("Invalid interview session. Please scan the QR code again.");
       return;
     }
 
-    // Connect to socket
+    console.log("🔌 Attempting socket connection to:", SOCKET_URL);
+
     const socket = io(SOCKET_URL, {
       query: {
         interviewId,
         userId,
         type: "security_camera",
       },
-      transports: ["websocket", "polling"], // Try websocket first, fallback to polling
+      transports: ["websocket", "polling"],
       path: "/socket.io",
       reconnection: true,
-      reconnectionAttempts: 5,
+      reconnectionAttempts: 10,
       reconnectionDelay: 1000,
-      timeout: 10000,
+      reconnectionDelayMax: 5000,
+      timeout: 20000,
+      autoConnect: true,
+      withCredentials: true,
     });
-
-    console.log("🔌 Attempting socket connection to:", SOCKET_URL);
 
     socketRef.current = socket;
 
     socket.on("connect", () => {
-      console.log("✅ Security camera connected to server");
+      console.log("✅ Security camera connected to server, ID:", socket.id);
       setIsConnected(true);
+      setError(null);
 
-      // If camera is already streaming, emit the connection event
       if (isStreaming) {
         socket.emit("security_camera_connected", {
           interviewId,
@@ -85,22 +86,26 @@ const MobileSecurityCamera = () => {
           timestamp: Date.now(),
         });
         console.log(
-          "✅ Re-emitted security_camera_connected after socket reconnection",
+          "✅ Re-emitted security_camera_connected after reconnection",
         );
       }
     });
 
-    socket.on("disconnect", () => {
-      console.log("⚠️ Security camera disconnected");
+    socket.on("disconnect", (reason) => {
+      console.log("⚠️ Security camera disconnected, reason:", reason);
       setIsConnected(false);
-      localStorage.removeItem(`security_${interviewId}`);
-      localStorage.removeItem(`security_angle_verified_${interviewId}`);
+
+      // ✅ FIX: Correct syntax
+      if (reason === "io server disconnect") {
+        localStorage.removeItem(`security_${interviewId}`);
+        localStorage.removeItem(`security_angle_verified_${interviewId}`);
+      }
     });
 
     socket.on("connect_error", (err) => {
       console.error("❌ Socket connection error:", err);
-      console.log("Trying to connect to:", SOCKET_URL);
-      setError(`Connection error: ${err.message}. Camera will still work.`);
+      setError(`Connection error: ${err.message}. Retrying...`);
+      setIsConnected(false);
     });
 
     socket.on("error", (err) => {
@@ -110,28 +115,54 @@ const MobileSecurityCamera = () => {
 
     socket.on("reconnect_attempt", (attemptNumber) => {
       console.log(`🔄 Reconnection attempt ${attemptNumber}...`);
+      setError(`Reconnecting... (attempt ${attemptNumber})`);
     });
 
     socket.on("reconnect", (attemptNumber) => {
       console.log(`✅ Reconnected after ${attemptNumber} attempts`);
       setIsConnected(true);
       setError(null);
+
+      if (isStreaming) {
+        socket.emit("security_camera_connected", {
+          interviewId,
+          userId,
+          angle: currentAngle,
+          angleQuality: angleQuality?.level,
+          timestamp: Date.now(),
+        });
+      }
+    });
+
+    socket.on("reconnect_failed", () => {
+      console.error("❌ Reconnection failed");
+      setError("Failed to reconnect. Please refresh the page.");
+    });
+
+    socket.on("security_camera_ack", (data) => {
+      console.log("✅ Server acknowledged security camera:", data);
+    });
+
+    socket.on("frame_received", (data) => {
+      if (data.frameNumber % 10 === 0) {
+        console.log("✅ Server received frame:", data.frameNumber);
+      }
     });
 
     return () => {
+      console.log("🧹 Cleaning up socket connection");
       socket.disconnect();
       localStorage.removeItem(`security_${interviewId}`);
       localStorage.removeItem(`security_angle_verified_${interviewId}`);
     };
-  }, [interviewId, userId]);
+  }, [interviewId, userId, isStreaming, currentAngle, angleQuality]);
 
-  // ✅ Start camera automatically when component mounts (don't wait for socket)
+  // ✅ Start camera automatically when component mounts
   useEffect(() => {
     if (interviewId && userId && !isStreaming) {
-      // Start camera immediately, don't wait for socket connection
       const timer = setTimeout(() => {
         startCamera();
-      }, 500); // Small delay to ensure component is mounted
+      }, 1000);
 
       return () => clearTimeout(timer);
     }
@@ -141,149 +172,20 @@ const MobileSecurityCamera = () => {
      COMMENTED OUT: ANGLE VERIFICATION CODE
      ======================================== */
 
-  // ✅ COMMENTED: Request device orientation permission
   /*
-  const requestSensorPermission = async () => {
-    if (
-      typeof DeviceOrientationEvent !== "undefined" &&
-      typeof DeviceOrientationEvent.requestPermission === "function"
-    ) {
-      try {
-        const permission = await DeviceOrientationEvent.requestPermission();
-        if (permission === "granted") {
-          console.log("✅ Sensor permission granted");
-          return true;
-        } else {
-          setError(
-            "Sensor permission denied. Angle detection requires device sensors.",
-          );
-          return false;
-        }
-      } catch (error) {
-        console.error("❌ Sensor permission error:", error);
-        setError("Unable to request sensor permission.");
-        return false;
-      }
-    } else {
-      // Sensors available without explicit permission
-      return true;
-    }
-  };
-  */
-
-  // ✅ COMMENTED: Calculate angle from device sensors
-  /*
-  const calculateAngleFromSensors = (betaVal, gammaVal) => {
-    if (betaVal === null || gammaVal === null) return null;
-
-    // Beta represents tilt front-to-back (X-axis rotation)
-    // For 90° positioning, we want beta close to 90 (device upright)
-    let normalizedBeta = betaVal;
-
-    // Adjust for negative values
-    if (betaVal < 0) {
-      normalizedBeta = 180 + betaVal;
-    }
-
-    const angle = Math.abs(normalizedBeta);
-
-    // Account for device lean (gamma = side-to-side tilt)
-    const leanAdjustment = Math.abs(gammaVal) / 10;
-
-    return Math.round(Math.max(0, Math.min(180, angle - leanAdjustment)));
-  };
-  */
-
-  // ✅ COMMENTED: Get angle quality assessment
-  /*
-  const getAngleQuality = (angle) => {
-    const difference = Math.abs(angle - TARGET_ANGLE);
-
-    if (difference <= 5)
-      return { level: "excellent", color: "green", score: 100 };
-    if (difference <= 10) return { level: "good", color: "yellow", score: 80 };
-    if (difference <= 20) return { level: "fair", color: "orange", score: 60 };
-    return { level: "poor", color: "red", score: 40 };
-  };
-  */
-
-  // ✅ COMMENTED: Start orientation monitoring
-  /*
-  const startOrientationListener = () => {
-    const handleOrientation = (event) => {
-      setAlpha(event.alpha);
-      setBeta(event.beta);
-      setGamma(event.gamma);
-
-      const angle = calculateAngleFromSensors(event.beta, event.gamma);
-      setCurrentAngle(angle);
-
-      if (angle !== null) {
-        const quality = getAngleQuality(angle);
-        setAngleQuality(quality);
-
-        // Auto-verify if excellent for 3 seconds
-        if (quality.level === "excellent" && !angleVerified) {
-          setTimeout(() => {
-            if (angleQuality?.level === "excellent") {
-              verifyAngle();
-            }
-          }, 3000);
-        }
-      }
-    };
-
-    orientationHandlerRef.current = handleOrientation;
-    window.addEventListener("deviceorientation", handleOrientation);
-    console.log("✅ Orientation listener started");
-  };
-  */
-
-  // ✅ COMMENTED: Verify angle and proceed
-  /*
-  const verifyAngle = () => {
-    if (!currentAngle || !angleQuality) {
-      alert("Please position your device first.");
-      return;
-    }
-
-    if (angleQuality.level !== "excellent" && angleQuality.level !== "good") {
-      const proceed = window.confirm(
-        `Angle quality is ${angleQuality.level} (${currentAngle}°). For best results, aim for 85-95 degrees. Proceed anyway?`,
-      );
-      if (!proceed) return;
-    }
-
-    console.log(`✅ Angle verified: ${currentAngle}° (${angleQuality.level})`);
-    setAngleVerified(true);
-    setShowAngleCalibration(false);
-
-    // Signal angle verification
-    localStorage.setItem(`security_angle_verified_${interviewId}`, "true");
-
-    // Now start camera
-    startCamera();
-  };
-  */
-
-  // ✅ COMMENTED: Start angle calibration
-  /*
-  const beginCalibration = async () => {
-    const hasPermission = await requestSensorPermission();
-    if (!hasPermission) return;
-
-    setCalibrationAttempts((prev) => prev + 1);
-    startOrientationListener();
-  };
+  const requestSensorPermission = async () => { ... };
+  const calculateAngleFromSensors = (betaVal, gammaVal) => { ... };
+  const getAngleQuality = (angle) => { ... };
+  const startOrientationListener = () => { ... };
+  const verifyAngle = () => { ... };
+  const beginCalibration = async () => { ... };
   */
 
   /* ========================================
      END OF COMMENTED ANGLE VERIFICATION CODE
      ======================================== */
 
-  // ✅ MODIFIED: Start camera immediately (no angle verification required)
   const startCamera = async () => {
-    // Prevent multiple camera starts
     if (streamRef.current || isStreaming) {
       console.log("⚠️ Camera already started, skipping...");
       return;
@@ -292,7 +194,6 @@ const MobileSecurityCamera = () => {
     try {
       console.log("📱 Starting camera...");
 
-      // Request rear camera (environment facing)
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: "environment",
@@ -303,42 +204,89 @@ const MobileSecurityCamera = () => {
       });
 
       streamRef.current = stream;
+      console.log("✅ Camera stream obtained");
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+
         videoRef.current.onloadedmetadata = () => {
-          videoRef.current.play().catch((err) => {
-            console.error("❌ Video play error:", err);
-          });
+          console.log("✅ Video metadata loaded");
+
+          const playPromise = videoRef.current.play();
+
+          if (playPromise !== undefined) {
+            playPromise
+              .then(() => {
+                console.log("✅ Video playing successfully");
+                setError(null);
+              })
+              .catch((err) => {
+                console.error("❌ Video play error:", err);
+
+                if (err.name === "NotAllowedError") {
+                  setError("Please tap the screen to start video");
+
+                  const handleUserGesture = () => {
+                    videoRef.current
+                      .play()
+                      .then(() => {
+                        console.log("✅ Video started after user gesture");
+                        setError(null);
+                      })
+                      .catch(console.error);
+                  };
+
+                  document.addEventListener("click", handleUserGesture, {
+                    once: true,
+                  });
+                  document.addEventListener("touchstart", handleUserGesture, {
+                    once: true,
+                  });
+                }
+              });
+          }
+        };
+
+        videoRef.current.onplay = () => {
+          console.log("▶️ Video started playing");
+          setError(null);
+        };
+
+        videoRef.current.onerror = (e) => {
+          console.error("❌ Video element error:", e);
+          setError("Video playback error. Please refresh.");
         };
       }
 
       setIsStreaming(true);
       startCapture();
 
-      // Signal connection
       localStorage.setItem(`security_${interviewId}`, "connected");
-      localStorage.setItem(`security_angle_verified_${interviewId}`, "true"); // Auto-set for now
+      localStorage.setItem(`security_angle_verified_${interviewId}`, "true");
+      console.log("✅ Security status saved to localStorage");
 
-      // Emit socket event (if connected)
-      if (socketRef.current?.connected) {
-        socketRef.current.emit("security_camera_connected", {
-          interviewId,
-          userId,
-          angle: currentAngle,
-          angleQuality: angleQuality?.level,
-          timestamp: Date.now(),
-        });
-        console.log("✅ Socket event sent: security_camera_connected");
-      } else {
-        console.log("⚠️ Socket not connected yet, will emit when connected");
-      }
+      const emitConnection = () => {
+        if (socketRef.current?.connected) {
+          socketRef.current.emit("security_camera_connected", {
+            interviewId,
+            userId,
+            angle: currentAngle,
+            angleQuality: angleQuality?.level,
+            timestamp: Date.now(),
+          });
+          console.log("✅ Socket event sent: security_camera_connected");
+        } else {
+          console.log("⚠️ Socket not connected, retrying in 1s...");
+          setTimeout(emitConnection, 1000);
+        }
+      };
+
+      emitConnection();
 
       console.log("✅ Camera started successfully");
     } catch (err) {
       console.error("❌ Camera error:", err);
 
-      // Provide more specific error messages
       let errorMessage = "Unable to access camera. ";
       if (err.name === "NotAllowedError") {
         errorMessage += "Please grant camera permissions and refresh the page.";
@@ -365,11 +313,9 @@ const MobileSecurityCamera = () => {
       captureIntervalRef.current = null;
     }
 
-    // Clear signals
     localStorage.removeItem(`security_${interviewId}`);
     localStorage.removeItem(`security_angle_verified_${interviewId}`);
 
-    // Emit disconnect
     if (socketRef.current?.connected) {
       socketRef.current.emit("security_camera_disconnected", {
         interviewId,
@@ -399,8 +345,9 @@ const MobileSecurityCamera = () => {
       return;
     }
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
     canvas.toBlob(
@@ -415,10 +362,15 @@ const MobileSecurityCamera = () => {
               userId,
               frame: base64data,
               timestamp: Date.now(),
-              currentAngle: currentAngle, // Send current angle with frame
+              currentAngle: currentAngle,
+              frameNumber: framesSent + 1,
             });
 
             setFramesSent((prev) => prev + 1);
+
+            if ((framesSent + 1) % 10 === 0) {
+              console.log(`📤 Security frames sent: ${framesSent + 1}`);
+            }
           };
           reader.readAsDataURL(blob);
         }
@@ -429,17 +381,26 @@ const MobileSecurityCamera = () => {
   };
 
   const startCapture = () => {
-    captureIntervalRef.current = setInterval(() => {
+    console.log("🎥 Starting frame capture (every 2 seconds)");
+
+    if (captureIntervalRef.current) {
+      clearInterval(captureIntervalRef.current);
+    }
+
+    setTimeout(() => {
+      captureIntervalRef.current = setInterval(() => {
+        captureAndSendFrame();
+      }, 2000);
+
       captureAndSendFrame();
-    }, 2000);
+    }, 1000);
   };
 
-  // Cleanup
   useEffect(() => {
     return () => {
+      console.log("🧹 Component unmounting - cleaning up");
       stopCamera();
 
-      // Remove orientation listener (if enabled)
       if (orientationHandlerRef.current) {
         window.removeEventListener(
           "deviceorientation",
@@ -450,7 +411,6 @@ const MobileSecurityCamera = () => {
     };
   }, []);
 
-  // Prevent page close during monitoring
   useEffect(() => {
     const handleBeforeUnload = (e) => {
       if (isStreaming) {
@@ -464,18 +424,6 @@ const MobileSecurityCamera = () => {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [isStreaming]);
 
-  // ✅ COMMENTED: Angle calibration screen (not shown anymore)
-  /*
-  if (showAngleCalibration && !angleVerified) {
-    return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4">
-        ... angle calibration UI ...
-      </div>
-    );
-  }
-  */
-
-  // Main camera monitoring UI (shown immediately)
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4">
       <div className="max-w-2xl mx-auto space-y-4">
@@ -510,9 +458,7 @@ const MobileSecurityCamera = () => {
             <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
               <div className="flex items-center gap-2">
                 <div
-                  className={`w-2 h-2 rounded-full ${
-                    isConnected ? "bg-green-500 animate-pulse" : "bg-gray-400"
-                  }`}
+                  className={`w-2 h-2 rounded-full ${isConnected ? "bg-green-500 animate-pulse" : "bg-red-500 animate-pulse"}`}
                 />
                 <span className="text-sm text-gray-700 dark:text-gray-300">
                   Server: {isConnected ? "Connected" : "Disconnected"}
@@ -522,9 +468,7 @@ const MobileSecurityCamera = () => {
             <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
               <div className="flex items-center gap-2">
                 <div
-                  className={`w-2 h-2 rounded-full ${
-                    isStreaming ? "bg-green-500 animate-pulse" : "bg-gray-400"
-                  }`}
+                  className={`w-2 h-2 rounded-full ${isStreaming ? "bg-green-500 animate-pulse" : "bg-gray-400"}`}
                 />
                 <span className="text-sm text-gray-700 dark:text-gray-300">
                   Camera: {isStreaming ? "Monitoring" : "Inactive"}
@@ -571,10 +515,10 @@ const MobileSecurityCamera = () => {
                   playsInline
                   className="w-full h-full object-cover"
                   onCanPlay={(e) => {
-                    console.log("✅ Video can play - starting playback");
+                    console.log("✅ Video can play");
                     e.target
                       .play()
-                      .catch((err) => console.error("Play error:", err));
+                      .catch((err) => console.warn("Play attempt:", err.name));
                   }}
                 />
                 <canvas ref={canvasRef} className="hidden" />
@@ -589,7 +533,9 @@ const MobileSecurityCamera = () => {
                 </div>
 
                 <div className="absolute top-4 right-4">
-                  <div className="flex items-center gap-2 px-3 py-2 bg-green-600/90 backdrop-blur-sm rounded-md">
+                  <div
+                    className={`flex items-center gap-2 px-3 py-2 backdrop-blur-sm rounded-md ${isConnected ? "bg-green-600/90" : "bg-red-600/90"}`}
+                  >
                     <svg
                       className="w-4 h-4 text-white"
                       fill="none"
@@ -600,11 +546,23 @@ const MobileSecurityCamera = () => {
                         strokeLinecap="round"
                         strokeLinejoin="round"
                         strokeWidth={2}
-                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                        d={
+                          isConnected
+                            ? "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                            : "M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                        }
                       />
                     </svg>
                     <span className="text-xs font-medium text-white">
-                      CONNECTED
+                      {isConnected ? "CONNECTED" : "DISCONNECTED"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="absolute bottom-4 left-4">
+                  <div className="px-3 py-1.5 bg-black/80 backdrop-blur-sm rounded-md">
+                    <span className="text-xs font-mono text-white">
+                      Frames: {framesSent}
                     </span>
                   </div>
                 </div>

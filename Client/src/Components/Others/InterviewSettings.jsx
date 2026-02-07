@@ -66,7 +66,9 @@ const InterviewSettings = ({ onInterviewReady }) => {
 
       console.log("🚀 Starting interview setup...");
       setIsGeneratingQuestions(true);
+      setQuestionsReady(false); // Reset state
 
+      // Start question generation
       const questionGenerationPromise = dispatch(
         startInterview({
           skills: !hasExistingSkills ? skills : undefined,
@@ -80,6 +82,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
         ),
       );
 
+      // Process question generation in background
       Promise.race([questionGenerationPromise, timeoutPromise])
         .then((res) => {
           console.log("✅ Questions generated:", res);
@@ -93,16 +96,20 @@ const InterviewSettings = ({ onInterviewReady }) => {
             userId: user?.id,
           });
 
+          // Mark questions as ready
           setQuestionsReady(true);
           setIsGeneratingQuestions(false);
+          console.log("✅ Questions ready flag set to true");
         })
         .catch((err) => {
           console.error("❌ Question generation failed:", err);
           setError(err?.message || "Failed to generate questions");
           setIsGeneratingQuestions(false);
+          setQuestionsReady(false);
           setStatus("failed");
         });
 
+      // Show guidelines immediately
       setOpenGuideLines(true);
       setStatus("succeeded");
     } catch (err) {
@@ -110,39 +117,61 @@ const InterviewSettings = ({ onInterviewReady }) => {
       setError(err?.message || "Failed to start interview");
       setStatus("failed");
       setIsGeneratingQuestions(false);
+      setQuestionsReady(false);
     }
   };
 
   const handleCameraSuccess = (stream) => {
+    console.log("📹 Primary camera stream received");
     setPrimaryCameraStream(stream);
     setIsCameraOpen(false);
     setShowSecuritySetup(true);
   };
 
   const handleSecuritySetupComplete = () => {
-    console.log("🔍 Security setup complete - checking conditions...");
+    console.log("🔍 Security setup complete - checking ALL conditions...");
 
-    // ✅ FIXED: Check BOTH security camera connection AND questions ready
+    // ✅ Check ALL conditions with detailed logging
+    const conditions = {
+      questionsReady,
+      sessionData: !!sessionData,
+      primaryCameraStream: !!primaryCameraStream,
+      notGenerating: !isGeneratingQuestions,
+    };
+
+    console.log("📊 Condition check:", conditions);
+
+    // Verify questions are ready
     if (!questionsReady) {
-      console.log("⏳ Questions not ready yet - cannot start interview");
+      console.log("⏳ Questions not ready yet");
       setError("Questions are still being generated. Please wait...");
       return;
     }
 
+    // Verify not still generating
+    if (isGeneratingQuestions) {
+      console.log("⏳ Questions still generating");
+      setError("Questions are being generated. Please wait...");
+      return;
+    }
+
+    // Verify session data
     if (!sessionData) {
       console.error("❌ No session data available");
       setError("Session data not available. Please try again.");
       return;
     }
 
+    // Verify camera stream
     if (!primaryCameraStream) {
       console.error("❌ No camera stream available");
       setError("Camera stream not available. Please try again.");
       return;
     }
 
-    console.log("✅ All checks passed - starting interview");
+    console.log("✅ ALL CHECKS PASSED - Starting interview");
     setShowSecuritySetup(false);
+    setError(null);
 
     // Start the interview
     onInterviewReady({
@@ -230,7 +259,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
               <div className="flex items-center justify-center gap-2 text-blue-400">
                 <div className="animate-spin w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full" />
                 <span className="text-sm">
-                  Generating questions in background...
+                  Generating interview questions...
                 </span>
               </div>
             </div>
@@ -306,7 +335,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
   );
 };
 
-// ✅ FIXED: Only allow interview to start when BOTH security camera is connected AND questions are ready
+// ✅ FIXED: Wait for ALL THREE conditions before allowing interview start
 const SecurityCameraSetup = ({
   isOpen,
   onClose,
@@ -344,29 +373,43 @@ const SecurityCameraSetup = ({
     }
   };
 
-  // ✅ CRITICAL FIX: Auto-continue ONLY when ALL THREE conditions are met:
-  // 1. Security camera connected
-  // 2. Angle verified (auto-true for now since we commented angle verification)
-  // 3. Questions ready
+  // ✅ CRITICAL: Auto-continue ONLY when ALL conditions met
   useEffect(() => {
-    if (isSecurityConnected && angleVerified && questionsReady) {
-      console.log("🎯 ALL CONDITIONS MET - AUTO-CONTINUING!");
-      const timer = setTimeout(() => onSecurityConnected?.(), 1000);
-      return () => clearTimeout(timer);
-    } else {
-      console.log("⏳ Waiting for conditions:", {
-        isSecurityConnected,
-        angleVerified,
-        questionsReady,
-      });
-    }
-  }, [isSecurityConnected, angleVerified, questionsReady, onSecurityConnected]);
+    const allConditionsMet =
+      isSecurityConnected &&
+      angleVerified &&
+      questionsReady &&
+      !isGeneratingQuestions;
 
-  // ✅ Poll localStorage every 500ms
+    console.log("🎯 Security setup conditions:", {
+      isSecurityConnected,
+      angleVerified,
+      questionsReady,
+      isGeneratingQuestions,
+      allConditionsMet,
+    });
+
+    if (allConditionsMet) {
+      console.log("✅ ALL CONDITIONS MET - Auto-starting interview!");
+      const timer = setTimeout(() => {
+        console.log("🚀 Invoking onSecurityConnected callback");
+        onSecurityConnected?.();
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [
+    isSecurityConnected,
+    angleVerified,
+    questionsReady,
+    isGeneratingQuestions,
+    onSecurityConnected,
+  ]);
+
+  // ✅ Poll localStorage every 500ms for security camera status
   useEffect(() => {
     if (!isOpen || !sessionData) return;
 
-    console.log("👀 Starting security detection...");
+    console.log("👀 Starting security camera detection polling...");
 
     const pollInterval = setInterval(() => {
       const mobileStatus = localStorage.getItem(
@@ -377,17 +420,20 @@ const SecurityCameraSetup = ({
       );
 
       if (mobileStatus === "connected" && !isSecurityConnected) {
-        console.log("✅ Security camera CONNECTED!");
+        console.log("✅ Security camera CONNECTED detected!");
         setIsSecurityConnected(true);
       }
 
       if (angleStatus === "true" && !angleVerified) {
-        console.log("✅ Angle VERIFIED!");
+        console.log("✅ Angle VERIFIED detected!");
         setAngleVerified(true);
       }
     }, 500);
 
-    return () => clearInterval(pollInterval);
+    return () => {
+      console.log("🧹 Stopping security detection polling");
+      clearInterval(pollInterval);
+    };
   }, [isOpen, sessionData, isSecurityConnected, angleVerified]);
 
   // Generate QR when modal opens
@@ -399,8 +445,12 @@ const SecurityCameraSetup = ({
 
   if (!isOpen) return null;
 
-  // ✅ CRITICAL: Can only continue when ALL THREE are true
-  const canContinue = isSecurityConnected && angleVerified && questionsReady;
+  // ✅ Can only continue when ALL conditions are true
+  const canContinue =
+    isSecurityConnected &&
+    angleVerified &&
+    questionsReady &&
+    !isGeneratingQuestions;
 
   return (
     <Modal
@@ -440,17 +490,29 @@ const SecurityCameraSetup = ({
           </div>
         )}
 
-        {/* Question Status */}
+        {/* Question Generation Status */}
         <div className="p-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 rounded-lg">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div
-                className={`w-3 h-3 rounded-full ${questionsReady ? "bg-green-500" : isGeneratingQuestions ? "bg-blue-400 animate-pulse" : "bg-gray-400"}`}
+                className={`w-3 h-3 rounded-full ${
+                  questionsReady
+                    ? "bg-green-500"
+                    : isGeneratingQuestions
+                      ? "bg-blue-400 animate-pulse"
+                      : "bg-gray-400"
+                }`}
               />
               <span className="text-sm font-medium">Interview Questions:</span>
             </div>
             <span
-              className={`text-sm font-semibold ${questionsReady ? "text-green-600" : "text-blue-600"}`}
+              className={`text-sm font-semibold ${
+                questionsReady
+                  ? "text-green-600"
+                  : isGeneratingQuestions
+                    ? "text-blue-600"
+                    : "text-gray-600"
+              }`}
             >
               {questionsReady
                 ? "✓ Ready"
@@ -461,17 +523,29 @@ const SecurityCameraSetup = ({
           </div>
         </div>
 
-        {/* Security Status */}
+        {/* Security Camera Status */}
         <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div
-                className={`w-3 h-3 rounded-full ${isSecurityConnected && angleVerified ? "bg-green-500" : isSecurityConnected ? "bg-yellow-400 animate-pulse" : "bg-amber-400 animate-pulse"}`}
+                className={`w-3 h-3 rounded-full ${
+                  isSecurityConnected && angleVerified
+                    ? "bg-green-500"
+                    : isSecurityConnected
+                      ? "bg-yellow-400 animate-pulse"
+                      : "bg-amber-400 animate-pulse"
+                }`}
               />
               <span className="text-sm font-medium">Security Camera:</span>
             </div>
             <span
-              className={`text-sm font-semibold ${isSecurityConnected && angleVerified ? "text-green-600" : isSecurityConnected ? "text-yellow-600" : "text-amber-600"}`}
+              className={`text-sm font-semibold ${
+                isSecurityConnected && angleVerified
+                  ? "text-green-600"
+                  : isSecurityConnected
+                    ? "text-yellow-600"
+                    : "text-amber-600"
+              }`}
             >
               {isSecurityConnected && angleVerified
                 ? "✓ Connected & Verified"
@@ -484,7 +558,9 @@ const SecurityCameraSetup = ({
           <div className="flex items-center justify-between p-2 bg-white dark:bg-gray-900 rounded">
             <span className="text-xs text-gray-600">Connection Status:</span>
             <span
-              className={`text-xs font-semibold ${angleVerified ? "text-green-600" : "text-gray-500"}`}
+              className={`text-xs font-semibold ${
+                angleVerified ? "text-green-600" : "text-gray-500"
+              }`}
             >
               {angleVerified ? "✓ Verified" : "Pending"}
             </span>
@@ -508,6 +584,10 @@ const SecurityCameraSetup = ({
                   />
                 </div>
               </div>
+            ) : qrGenerationError ? (
+              <div className="w-64 h-64 bg-red-100 rounded-lg flex items-center justify-center mx-auto">
+                <p className="text-red-600 text-sm px-4">{qrGenerationError}</p>
+              </div>
             ) : (
               <div className="w-64 h-64 bg-gray-200 rounded-lg flex items-center justify-center mx-auto">
                 <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" />
@@ -519,17 +599,17 @@ const SecurityCameraSetup = ({
                 📱 Setup Steps:
               </h5>
               <ol className="text-sm text-blue-800 space-y-2 ml-4">
-                <li>1. Scan QR with mobile camera</li>
-                <li>2. Grant camera permissions</li>
-                <li>3. Wait for camera to start</li>
-                <li>4. Keep device steady</li>
-                <li>5. Interview auto-starts when questions ready!</li>
+                <li>1. Scan QR code with mobile camera</li>
+                <li>2. Grant camera permissions when prompted</li>
+                <li>3. Wait for camera to start streaming</li>
+                <li>4. Keep device steady and positioned</li>
+                <li>5. Interview will auto-start when all ready!</li>
               </ol>
             </div>
           </div>
         </div>
 
-        {/* Info */}
+        {/* Warning Info */}
         <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
           <div className="flex gap-3">
             <svg
@@ -547,21 +627,22 @@ const SecurityCameraSetup = ({
             </svg>
             <div>
               <h4 className="text-sm font-semibold text-amber-900 mb-1">
-                ⚠️ Interview starts only when both ready:
+                ⚠️ Required Conditions:
               </h4>
               <p className="text-xs text-amber-800">
-                • Security camera must be connected
-                <br />
                 • Interview questions must be generated
                 <br />
-                Both conditions must be met before starting
+                • Security camera must be connected
+                <br />
+                • Both conditions must be satisfied to start
+                <br />• Keep security camera page open during entire interview
               </p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Button */}
+      {/* Action Button */}
       <div className="mt-6 pt-4 border-t border-gray-200">
         <Button
           onClick={() => canContinue && onSecurityConnected?.()}
@@ -571,7 +652,9 @@ const SecurityCameraSetup = ({
           {canContinue
             ? "✓ Start Interview (Auto-starting...)"
             : !questionsReady
-              ? "⏳ Generating Questions..."
+              ? isGeneratingQuestions
+                ? "⏳ Generating Questions..."
+                : "⏳ Waiting for Questions..."
               : !isSecurityConnected
                 ? "⏳ Waiting for Security Camera..."
                 : "⏳ Verifying Connection..."}
@@ -579,10 +662,12 @@ const SecurityCameraSetup = ({
         {!canContinue && (
           <p className="text-xs text-center text-gray-500 mt-2">
             {!questionsReady
-              ? "Questions generating..."
+              ? isGeneratingQuestions
+                ? "Please wait while questions are being generated..."
+                : "Waiting for question generation to complete..."
               : !isSecurityConnected
-                ? "Scan QR code to connect..."
-                : "Verifying connection..."}
+                ? "Please scan QR code with your mobile device..."
+                : "Verifying security camera connection..."}
           </p>
         )}
       </div>
