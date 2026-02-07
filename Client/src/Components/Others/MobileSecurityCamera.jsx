@@ -34,7 +34,7 @@ const MobileSecurityCamera = () => {
   const [angleVerified, setAngleVerified] = useState(false);
   const [angleQuality, setAngleQuality] = useState(null);
   const [calibrationAttempts, setCalibrationAttempts] = useState(0);
-
+  const TARGET_ANGLE = 90;
   useEffect(() => {
     if (!interviewId || !userId) {
       setError("Invalid interview session. Please scan the QR code again.");
@@ -91,7 +91,7 @@ const MobileSecurityCamera = () => {
           return true;
         } else {
           setError(
-            "Sensor permission denied. Angle detection requires device sensors."
+            "Sensor permission denied. Angle detection requires device sensors.",
           );
           return false;
         }
@@ -129,7 +129,7 @@ const MobileSecurityCamera = () => {
 
   // ✅ NEW: Get angle quality assessment
   const getAngleQuality = (angle) => {
-    const difference = Math.abs(angle - 90);
+    const difference = Math.abs(angle - TARGET_ANGLE);
 
     if (difference <= 5)
       return { level: "excellent", color: "green", score: 100 };
@@ -177,7 +177,7 @@ const MobileSecurityCamera = () => {
 
     if (angleQuality.level !== "excellent" && angleQuality.level !== "good") {
       const proceed = window.confirm(
-        `Angle quality is ${angleQuality.level} (${currentAngle}°). For best results, aim for 85-95 degrees. Proceed anyway?`
+        `Angle quality is ${angleQuality.level} (${currentAngle}°). For best results, aim for 85-95 degrees. Proceed anyway?`,
       );
       if (!proceed) return;
     }
@@ -236,7 +236,7 @@ const MobileSecurityCamera = () => {
     } catch (err) {
       console.error("❌ Camera error:", err);
       setError(
-        "Unable to access camera. Please grant camera permissions and try again."
+        "Unable to access camera. Please grant camera permissions and try again.",
       );
     }
   };
@@ -311,7 +311,7 @@ const MobileSecurityCamera = () => {
         }
       },
       "image/jpeg",
-      0.7
+      0.7,
     );
   };
 
@@ -339,7 +339,7 @@ const MobileSecurityCamera = () => {
       if (orientationHandlerRef.current) {
         window.removeEventListener(
           "deviceorientation",
-          orientationHandlerRef.current
+          orientationHandlerRef.current,
         );
         orientationHandlerRef.current = null;
       }

@@ -11,7 +11,6 @@ import {
 import { Card } from "../Common/Card";
 import { useDispatch, useSelector } from "react-redux";
 import { startInterview } from "../../API/interviewApi";
-import { updateUser } from "../../API/authApi";
 import QRCode from "qrcode";
 
 const InterviewSettings = ({ onInterviewReady }) => {
@@ -66,17 +65,14 @@ const InterviewSettings = ({ onInterviewReady }) => {
       setError(null);
 
       console.log("🚀 Starting interview setup...");
-
       setIsGeneratingQuestions(true);
 
-      // ✅ FIX: Proper promise handling with timeout
       const questionGenerationPromise = dispatch(
         startInterview({
           skills: !hasExistingSkills ? skills : undefined,
         }),
       ).unwrap();
 
-      // Add timeout to prevent hanging
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(
           () => reject(new Error("Question generation timeout")),
@@ -311,7 +307,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
   );
 };
 
-// ✅ FIXED: Security Camera Setup Component with reduced timeout and auto-continue
+// ✅ COMPLETELY FIXED: Event-driven security detection with no timeout
 const SecurityCameraSetup = ({
   isOpen,
   onClose,
@@ -322,141 +318,76 @@ const SecurityCameraSetup = ({
 }) => {
   const [qrCodeDataURL, setQRCodeDataURL] = useState(null);
   const [isSecurityConnected, setIsSecurityConnected] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState("waiting");
   const [angleVerified, setAngleVerified] = useState(false);
-  const [connectionAttempts, setConnectionAttempts] = useState(0);
   const [qrGenerationError, setQrGenerationError] = useState(null);
-
-  // ✅ FIX: Reduced timeout from 150s to 30s (60 checks × 500ms)
-  const MAX_CONNECTION_CHECKS = 60; // 30 seconds total
 
   // Generate QR Code
   const generateQRCode = async () => {
-    if (!sessionData) {
-      console.log("⚠️ No session data available for QR generation");
-      return;
-    }
+    if (!sessionData) return;
 
     try {
       console.log("📱 Generating QR code...");
       const baseURL = window.location.origin;
       const securityURL = `${baseURL}/mobile-security?interviewId=${sessionData.interviewId}&userId=${sessionData.userId}`;
 
-      console.log("🔗 Security URL:", securityURL);
-
       const qrDataURL = await QRCode.toDataURL(securityURL, {
         width: 300,
         margin: 2,
-        color: {
-          dark: "#000000",
-          light: "#FFFFFF",
-        },
+        color: { dark: "#000000", light: "#FFFFFF" },
       });
 
       setQRCodeDataURL(qrDataURL);
       setQrGenerationError(null);
-      console.log("✅ QR code generated successfully");
+      console.log("✅ QR code generated");
     } catch (error) {
-      console.error("❌ Error generating QR code:", error);
+      console.error("❌ QR generation error:", error);
       setQrGenerationError(error.message);
     }
   };
 
-  // ✅ FIX: Auto-continue when both conditions are met
+  // ✅ Auto-continue when ready
   useEffect(() => {
     if (isSecurityConnected && angleVerified && questionsReady) {
-      console.log("🎯 All conditions met - auto-continuing to interview!");
-
-      // Small delay to show the "ready" state
-      const timer = setTimeout(() => {
-        if (onSecurityConnected) {
-          onSecurityConnected();
-        }
-      }, 1000);
-
+      console.log("🎯 ALL CONDITIONS MET - AUTO-CONTINUING!");
+      const timer = setTimeout(() => onSecurityConnected?.(), 1000);
       return () => clearTimeout(timer);
     }
   }, [isSecurityConnected, angleVerified, questionsReady, onSecurityConnected]);
 
-  // Monitor for mobile security connection AND angle verification
+  // ✅ FIXED: Poll localStorage every 500ms with NO timeout
   useEffect(() => {
     if (!isOpen || !sessionData) return;
 
-    console.log("👀 Starting security camera connection detection...");
+    console.log("👀 Starting security detection (NO TIMEOUT)...");
 
-    let checkCount = 0;
-
-    const checkInterval = setInterval(() => {
-      checkCount++;
-
-      // Check mobile connection
+    const pollInterval = setInterval(() => {
       const mobileStatus = localStorage.getItem(
         `security_${sessionData.interviewId}`,
       );
-
-      // Check if angle is verified (90° angle)
       const angleStatus = localStorage.getItem(
         `security_angle_verified_${sessionData.interviewId}`,
       );
 
-      if (mobileStatus === "connected" && angleStatus === "true") {
-        console.log("✅ Mobile security camera detected with correct angle!");
-        setConnectionStatus("connected");
+      if (mobileStatus === "connected" && !isSecurityConnected) {
+        console.log("✅ Security camera CONNECTED!");
         setIsSecurityConnected(true);
+      }
+
+      if (angleStatus === "true" && !angleVerified) {
+        console.log("✅ Angle VERIFIED!");
         setAngleVerified(true);
-        clearInterval(checkInterval);
-        return;
       }
+    }, 500); // Check every 500ms
 
-      if (mobileStatus === "connected" && !angleStatus) {
-        console.log("⚠️ Camera connected but angle not verified yet...");
-        setConnectionStatus("verifying_angle");
-        setIsSecurityConnected(true);
-      }
+    return () => clearInterval(pollInterval);
+  }, [isOpen, sessionData, isSecurityConnected, angleVerified]);
 
-      // Update attempt count
-      setConnectionAttempts(checkCount);
-
-      // ✅ FIX: Reduced timeout from 300 to 60 checks (30 seconds)
-      if (checkCount >= MAX_CONNECTION_CHECKS) {
-        console.log("⏱️ Connection detection timeout after 30s");
-        setConnectionStatus("timeout");
-        clearInterval(checkInterval);
-      }
-    }, 500);
-
-    return () => {
-      clearInterval(checkInterval);
-    };
-  }, [isOpen, sessionData]);
-
-  // Generate QR code when modal opens
+  // Generate QR when modal opens
   useEffect(() => {
     if (isOpen && sessionData && !qrCodeDataURL) {
       generateQRCode();
     }
   }, [isOpen, sessionData]);
-
-  const handleContinue = () => {
-    if (!isSecurityConnected || !angleVerified) {
-      alert("Please wait for security camera to connect and verify 90° angle.");
-      return;
-    }
-
-    if (!questionsReady) {
-      alert(
-        "Please wait while we finish generating your interview questions...",
-      );
-      return;
-    }
-
-    console.log("📍 Manual continue button clicked");
-
-    if (onSecurityConnected) {
-      console.log("📍 Calling onSecurityConnected callback...");
-      onSecurityConnected();
-    }
-  };
 
   if (!isOpen) return null;
 
@@ -471,40 +402,12 @@ const SecurityCameraSetup = ({
       closeOnOverlayClick={false}
     >
       <div className="max-h-[70vh] overflow-y-auto pr-2 space-y-6">
-        {/* Mandatory Notice */}
-        <div className="p-4 bg-red-50 dark:bg-red-950/30 border-2 border-red-500 dark:border-red-700 rounded-lg">
-          <div className="flex items-start gap-3">
-            <svg
-              className="w-6 h-6 text-red-600 dark:text-red-400 shrink-0 mt-0.5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-              />
-            </svg>
-            <div>
-              <h4 className="text-sm font-bold text-red-900 dark:text-red-300 mb-1">
-                ⚠️ MANDATORY REQUIREMENT
-              </h4>
-              <p className="text-sm text-red-800 dark:text-red-200">
-                You MUST connect a mobile security camera at 90° angle BEFORE
-                starting the interview. This is NON-NEGOTIABLE.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* ✅ NEW: Ready to Start Notice */}
+        {/* Ready Notice */}
         {canContinue && (
-          <div className="p-4 bg-green-50 dark:bg-green-950/30 border-2 border-green-500 dark:border-green-700 rounded-lg animate-pulse">
+          <div className="p-4 bg-green-50 dark:bg-green-950/30 border-2 border-green-500 rounded-lg animate-pulse">
             <div className="flex items-start gap-3">
               <svg
-                className="w-6 h-6 text-green-600 dark:text-green-400 shrink-0 mt-0.5"
+                className="w-6 h-6 text-green-600 shrink-0"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -517,42 +420,28 @@ const SecurityCameraSetup = ({
                 />
               </svg>
               <div>
-                <h4 className="text-sm font-bold text-green-900 dark:text-green-300 mb-1">
+                <h4 className="text-sm font-bold text-green-900 mb-1">
                   ✅ ALL SYSTEMS READY
                 </h4>
-                <p className="text-sm text-green-800 dark:text-green-200">
-                  Starting interview automatically in 1 second...
+                <p className="text-sm text-green-800">
+                  Starting interview in 1 second...
                 </p>
               </div>
             </div>
           </div>
         )}
 
-        {/* Question Generation Status */}
-        <div className="p-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg">
+        {/* Question Status */}
+        <div className="p-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 rounded-lg">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div
-                className={`w-3 h-3 rounded-full ${
-                  questionsReady
-                    ? "bg-green-500"
-                    : isGeneratingQuestions
-                      ? "bg-blue-400 animate-pulse"
-                      : "bg-gray-400"
-                }`}
+                className={`w-3 h-3 rounded-full ${questionsReady ? "bg-green-500" : isGeneratingQuestions ? "bg-blue-400 animate-pulse" : "bg-gray-400"}`}
               />
-              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                Interview Questions:
-              </span>
+              <span className="text-sm font-medium">Interview Questions:</span>
             </div>
             <span
-              className={`text-sm font-semibold ${
-                questionsReady
-                  ? "text-green-600 dark:text-green-400"
-                  : isGeneratingQuestions
-                    ? "text-blue-600 dark:text-blue-400"
-                    : "text-gray-600 dark:text-gray-400"
-              }`}
+              className={`text-sm font-semibold ${questionsReady ? "text-green-600" : "text-blue-600"}`}
             >
               {questionsReady
                 ? "✓ Ready"
@@ -563,165 +452,79 @@ const SecurityCameraSetup = ({
           </div>
         </div>
 
-        {/* Connection Status */}
-        <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-          <div className="flex items-center justify-between mb-3">
+        {/* Security Status */}
+        <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg space-y-3">
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div
-                className={`w-3 h-3 rounded-full ${
-                  isSecurityConnected && angleVerified
-                    ? "bg-green-500"
-                    : connectionStatus === "verifying_angle"
-                      ? "bg-yellow-400 animate-pulse"
-                      : connectionStatus === "timeout"
-                        ? "bg-red-500"
-                        : "bg-amber-400 animate-pulse"
-                }`}
+                className={`w-3 h-3 rounded-full ${isSecurityConnected && angleVerified ? "bg-green-500" : isSecurityConnected ? "bg-yellow-400 animate-pulse" : "bg-amber-400 animate-pulse"}`}
               />
-              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                Security Camera Status:
-              </span>
+              <span className="text-sm font-medium">Security Camera:</span>
             </div>
             <span
-              className={`text-sm font-semibold ${
-                isSecurityConnected && angleVerified
-                  ? "text-green-600 dark:text-green-400"
-                  : connectionStatus === "verifying_angle"
-                    ? "text-yellow-600 dark:text-yellow-400"
-                    : connectionStatus === "timeout"
-                      ? "text-red-600 dark:text-red-400"
-                      : "text-amber-600 dark:text-amber-400"
-              }`}
+              className={`text-sm font-semibold ${isSecurityConnected && angleVerified ? "text-green-600" : isSecurityConnected ? "text-yellow-600" : "text-amber-600"}`}
             >
               {isSecurityConnected && angleVerified
                 ? "✓ Connected & Verified"
-                : connectionStatus === "verifying_angle"
-                  ? "Verifying 90° angle..."
-                  : connectionStatus === "timeout"
-                    ? "⏱ Timeout - Please retry"
-                    : `Waiting... (${connectionAttempts}/${MAX_CONNECTION_CHECKS})`}
+                : isSecurityConnected
+                  ? "Verifying angle..."
+                  : "Waiting..."}
             </span>
           </div>
 
-          {/* Angle Verification Status */}
           <div className="flex items-center justify-between p-2 bg-white dark:bg-gray-900 rounded">
-            <span className="text-xs text-gray-600 dark:text-gray-400">
-              90° Angle Verification:
-            </span>
+            <span className="text-xs text-gray-600">90° Angle:</span>
             <span
-              className={`text-xs font-semibold ${
-                angleVerified
-                  ? "text-green-600 dark:text-green-400"
-                  : "text-gray-500 dark:text-gray-400"
-              }`}
+              className={`text-xs font-semibold ${angleVerified ? "text-green-600" : "text-gray-500"}`}
             >
               {angleVerified ? "✓ Verified" : "Pending"}
             </span>
           </div>
-
-          {/* Progress bar */}
-          {!isSecurityConnected && connectionStatus !== "timeout" && (
-            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 mt-3">
-              <div
-                className="bg-amber-500 h-2 rounded-full transition-all duration-500"
-                style={{
-                  width: `${(connectionAttempts / MAX_CONNECTION_CHECKS) * 100}%`,
-                }}
-              />
-            </div>
-          )}
-
-          {/* ✅ NEW: Timeout retry button */}
-          {connectionStatus === "timeout" && (
-            <div className="mt-3">
-              <button
-                onClick={() => {
-                  setConnectionStatus("waiting");
-                  setConnectionAttempts(0);
-                  window.location.reload();
-                }}
-                className="w-full px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors"
-              >
-                Retry Connection
-              </button>
-            </div>
-          )}
         </div>
 
-        {/* QR Code Section */}
-        <div className="p-6 border-2 border-blue-200 dark:border-blue-800 rounded-lg bg-blue-50 dark:bg-blue-950/30">
+        {/* QR Code */}
+        <div className="p-6 border-2 border-blue-200 rounded-lg bg-blue-50">
           <div className="text-center space-y-4">
-            <div className="flex items-center justify-center gap-2 mb-4">
-              <svg
-                className="w-6 h-6 text-blue-600 dark:text-blue-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"
-                />
-              </svg>
-              <h4 className="text-lg font-bold text-blue-900 dark:text-blue-300">
-                Scan QR Code with Mobile Device
-              </h4>
-            </div>
+            <h4 className="text-lg font-bold text-blue-900">
+              Scan QR Code with Mobile
+            </h4>
 
-            {qrGenerationError ? (
-              <div className="p-4 bg-red-50 dark:bg-red-950/30 rounded-lg">
-                <p className="text-sm text-red-800 dark:text-red-200 mb-2">
-                  Error generating QR code: {qrGenerationError}
-                </p>
-                <button
-                  onClick={generateQRCode}
-                  className="text-sm text-blue-600 dark:text-blue-400 underline"
-                >
-                  Retry
-                </button>
-              </div>
-            ) : qrCodeDataURL ? (
+            {qrCodeDataURL ? (
               <div className="flex justify-center my-4">
-                <div className="inline-block p-4 bg-white rounded-xl shadow-lg">
+                <div className="p-4 bg-white rounded-xl shadow-lg">
                   <img
                     src={qrCodeDataURL}
-                    alt="Security Camera QR Code"
+                    alt="QR Code"
                     className="w-64 h-64"
                   />
                 </div>
               </div>
             ) : (
-              <div className="w-64 h-64 bg-gray-200 dark:bg-gray-700 rounded-lg flex items-center justify-center mx-auto my-4">
+              <div className="w-64 h-64 bg-gray-200 rounded-lg flex items-center justify-center mx-auto">
                 <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" />
               </div>
             )}
 
-            <div className="space-y-2 text-left bg-white dark:bg-gray-900 rounded-lg p-4">
-              <h5 className="text-sm font-semibold text-blue-900 dark:text-blue-300 mb-3">
-                📱 Quick Setup (30 seconds):
+            <div className="text-left bg-white rounded-lg p-4">
+              <h5 className="text-sm font-semibold text-blue-900 mb-3">
+                📱 Setup Steps:
               </h5>
-              <ol className="text-sm text-blue-800 dark:text-blue-200 space-y-2 ml-4">
-                <li>1. Scan QR code with mobile camera</li>
+              <ol className="text-sm text-blue-800 space-y-2 ml-4">
+                <li>1. Scan QR with mobile camera</li>
                 <li>2. Grant camera permissions</li>
-                <li>
-                  3. <strong>Position device at 90° angle</strong>
-                </li>
-                <li>4. Follow angle calibration</li>
-                <li>
-                  5. <strong>Interview starts automatically!</strong>
-                </li>
+                <li>3. Position device at 90° angle</li>
+                <li>4. Follow calibration</li>
+                <li>5. Interview auto-starts!</li>
               </ol>
             </div>
           </div>
         </div>
 
-        {/* Critical Warning */}
-        <div className="p-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg">
-          <div className="flex items-start gap-3">
+        {/* Info */}
+        <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+          <div className="flex gap-3">
             <svg
-              className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5"
+              className="w-5 h-5 text-amber-600 shrink-0"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -734,86 +537,37 @@ const SecurityCameraSetup = ({
               />
             </svg>
             <div>
-              <h4 className="text-sm font-semibold text-amber-900 dark:text-amber-300 mb-1">
-                ⚠️ You have 30 seconds to connect
+              <h4 className="text-sm font-semibold text-amber-900 mb-1">
+                ⚠️ No time limit - connect when ready
               </h4>
-              <ul className="text-xs text-amber-800 dark:text-amber-200 space-y-1">
-                <li>• Camera must be at 90° angle (perpendicular)</li>
-                <li>• Interview auto-starts when ready</li>
-                <li>• Moving camera during interview = termination</li>
-              </ul>
+              <p className="text-xs text-amber-800">
+                Auto-starts when camera at 90° and questions ready
+              </p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Action Button - Manual override if needed */}
-      <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+      {/* Button */}
+      <div className="mt-6 pt-4 border-t border-gray-200">
         <Button
-          onClick={handleContinue}
+          onClick={() => canContinue && onSecurityConnected?.()}
           disabled={!canContinue}
           className="w-full"
         >
-          {canContinue ? (
-            <>
-              <svg
-                className="w-5 h-5 mr-2"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-              Start Interview Now (Auto-starting...)
-            </>
-          ) : !questionsReady ? (
-            <>
-              <svg
-                className="w-5 h-5 mr-2 animate-spin"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                />
-              </svg>
-              Generating Questions...
-            </>
-          ) : (
-            <>
-              <svg
-                className="w-5 h-5 mr-2 animate-spin"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                />
-              </svg>
-              Waiting for Security Camera ({connectionAttempts}/
-              {MAX_CONNECTION_CHECKS})
-            </>
-          )}
+          {canContinue
+            ? "✓ Start Interview (Auto-starting...)"
+            : !questionsReady
+              ? "⏳ Generating Questions..."
+              : "⏳ Waiting for Security Camera..."}
         </Button>
-
         {!canContinue && (
-          <p className="text-xs text-center text-gray-500 dark:text-gray-400 mt-2">
-            {!questionsReady && "Generating questions... "}
-            {!isSecurityConnected &&
-              `You have ${Math.max(0, 30 - Math.floor(connectionAttempts / 2))}s to connect security camera`}
+          <p className="text-xs text-center text-gray-500 mt-2">
+            {!questionsReady
+              ? "Questions generating..."
+              : !isSecurityConnected
+                ? "Scan QR code to connect..."
+                : "Verify 90° angle on mobile..."}
           </p>
         )}
       </div>
