@@ -21,28 +21,26 @@ const MobileSecurityCamera = () => {
   const canvasRef = useRef(null);
   const captureIntervalRef = useRef(null);
 
-  // Device orientation refs (commented out for now)
-  const [alpha, setAlpha] = useState(null);
-  const [beta, setBeta] = useState(null);
-  const [gamma, setGamma] = useState(null);
-  const orientationHandlerRef = useRef(null);
-
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [videoReady, setVideoReady] = useState(false);
   const [error, setError] = useState(null);
   const [framesSent, setFramesSent] = useState(0);
 
-  // ✅ COMMENTED: Angle verification states (temporarily disabled)
-  const [showAngleCalibration, setShowAngleCalibration] = useState(false);
-  const [currentAngle, setCurrentAngle] = useState(90);
-  const [angleVerified, setAngleVerified] = useState(true);
-  const [angleQuality, setAngleQuality] = useState({
+  // Debug state
+  const [debugInfo, setDebugInfo] = useState({
+    streamObtained: false,
+    metadataLoaded: false,
+    playAttempted: false,
+    playSucceeded: false,
+  });
+
+  const [currentAngle] = useState(90);
+  const [angleQuality] = useState({
     level: "excellent",
     color: "green",
     score: 100,
   });
-  const [calibrationAttempts, setCalibrationAttempts] = useState(0);
-  const TARGET_ANGLE = 90;
 
   /* 🔌 SOCKET CONNECTION */
   useEffect(() => {
@@ -77,17 +75,15 @@ const MobileSecurityCamera = () => {
       setIsConnected(true);
       setError(null);
 
-      if (isStreaming) {
-        socket.emit("security_camera_connected", {
-          interviewId,
-          userId,
-          angle: currentAngle,
-          angleQuality: angleQuality?.level,
-          timestamp: Date.now(),
+      if (videoReady) {
+        console.log("🎥 Video ready, emitting connection event");
+        emitConnectionEvent();
+      } else {
+        console.log("⏳ Video not ready yet, waiting... Current state:", {
+          videoReady,
+          isStreaming,
+          debugInfo,
         });
-        console.log(
-          "✅ Re-emitted security_camera_connected after reconnection",
-        );
       }
     });
 
@@ -95,10 +91,13 @@ const MobileSecurityCamera = () => {
       console.log("⚠️ Security camera disconnected, reason:", reason);
       setIsConnected(false);
 
-      // ✅ FIX: Correct syntax
+      // ✅ ONLY clear on server disconnect, not client
       if (reason === "io server disconnect") {
+        console.log("🧹 Server initiated disconnect, clearing localStorage");
         localStorage.removeItem(`security_${interviewId}`);
         localStorage.removeItem(`security_angle_verified_${interviewId}`);
+      } else {
+        console.log("⚠️ Client disconnect - NOT clearing localStorage");
       }
     });
 
@@ -108,58 +107,66 @@ const MobileSecurityCamera = () => {
       setIsConnected(false);
     });
 
-    socket.on("error", (err) => {
-      console.error("❌ Socket error:", err);
-      setError(err.message || "Socket error occurred");
-    });
-
-    socket.on("reconnect_attempt", (attemptNumber) => {
-      console.log(`🔄 Reconnection attempt ${attemptNumber}...`);
-      setError(`Reconnecting... (attempt ${attemptNumber})`);
-    });
-
     socket.on("reconnect", (attemptNumber) => {
       console.log(`✅ Reconnected after ${attemptNumber} attempts`);
       setIsConnected(true);
       setError(null);
 
-      if (isStreaming) {
-        socket.emit("security_camera_connected", {
-          interviewId,
-          userId,
-          angle: currentAngle,
-          angleQuality: angleQuality?.level,
-          timestamp: Date.now(),
-        });
-      }
-    });
-
-    socket.on("reconnect_failed", () => {
-      console.error("❌ Reconnection failed");
-      setError("Failed to reconnect. Please refresh the page.");
-    });
-
-    socket.on("security_camera_ack", (data) => {
-      console.log("✅ Server acknowledged security camera:", data);
-    });
-
-    socket.on("frame_received", (data) => {
-      if (data.frameNumber % 10 === 0) {
-        console.log("✅ Server received frame:", data.frameNumber);
+      if (videoReady) {
+        emitConnectionEvent();
       }
     });
 
     return () => {
       console.log("🧹 Cleaning up socket connection");
       socket.disconnect();
+      // Only clear on unmount
       localStorage.removeItem(`security_${interviewId}`);
       localStorage.removeItem(`security_angle_verified_${interviewId}`);
     };
-  }, [interviewId, userId, isStreaming, currentAngle, angleQuality]);
+  }, [interviewId, userId, videoReady, isStreaming, debugInfo]);
 
-  // ✅ Start camera automatically when component mounts
+  const emitConnectionEvent = () => {
+    if (socketRef.current?.connected) {
+      socketRef.current.emit("security_camera_connected", {
+        interviewId,
+        userId,
+        angle: currentAngle,
+        angleQuality: angleQuality?.level,
+        timestamp: Date.now(),
+      });
+      console.log("✅ Socket event sent: security_camera_connected");
+    }
+  };
+
+  // ✅ Update localStorage ONLY when video ready
   useEffect(() => {
-    if (interviewId && userId && !isStreaming) {
+    if (videoReady && isConnected) {
+      console.log("✅✅✅ CRITICAL: Setting localStorage NOW");
+      localStorage.setItem(`security_${interviewId}`, "connected");
+      localStorage.setItem(`security_angle_verified_${interviewId}`, "true");
+
+      // Verify it was set
+      const check1 = localStorage.getItem(`security_${interviewId}`);
+      const check2 = localStorage.getItem(
+        `security_angle_verified_${interviewId}`,
+      );
+      console.log("✅ localStorage verification:", { check1, check2 });
+
+      emitConnectionEvent();
+    } else {
+      console.log("⏳ NOT setting localStorage. Conditions:", {
+        videoReady,
+        isConnected,
+        debugInfo,
+      });
+    }
+  }, [videoReady, isConnected, interviewId]);
+
+  // ✅ Start camera automatically
+  useEffect(() => {
+    if (interviewId && userId && !isStreaming && !streamRef.current) {
+      console.log("🎬 Auto-starting camera in 1 second...");
       const timer = setTimeout(() => {
         startCamera();
       }, 1000);
@@ -168,23 +175,6 @@ const MobileSecurityCamera = () => {
     }
   }, [interviewId, userId]);
 
-  /* ========================================
-     COMMENTED OUT: ANGLE VERIFICATION CODE
-     ======================================== */
-
-  /*
-  const requestSensorPermission = async () => { ... };
-  const calculateAngleFromSensors = (betaVal, gammaVal) => { ... };
-  const getAngleQuality = (angle) => { ... };
-  const startOrientationListener = () => { ... };
-  const verifyAngle = () => { ... };
-  const beginCalibration = async () => { ... };
-  */
-
-  /* ========================================
-     END OF COMMENTED ANGLE VERIFICATION CODE
-     ======================================== */
-
   const startCamera = async () => {
     if (streamRef.current || isStreaming) {
       console.log("⚠️ Camera already started, skipping...");
@@ -192,7 +182,8 @@ const MobileSecurityCamera = () => {
     }
 
     try {
-      console.log("📱 Starting camera...");
+      console.log("📱 Requesting camera access...");
+      setError(null);
 
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -204,105 +195,118 @@ const MobileSecurityCamera = () => {
       });
 
       streamRef.current = stream;
-      console.log("✅ Camera stream obtained");
+      setDebugInfo((prev) => ({ ...prev, streamObtained: true }));
+      console.log("✅ Camera stream obtained:", {
+        tracks: stream.getTracks().length,
+        active: stream.active,
+      });
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-
-        videoRef.current.onloadedmetadata = () => {
-          console.log("✅ Video metadata loaded");
-
-          const playPromise = videoRef.current.play();
-
-          if (playPromise !== undefined) {
-            playPromise
-              .then(() => {
-                console.log("✅ Video playing successfully");
-                setError(null);
-              })
-              .catch((err) => {
-                console.error("❌ Video play error:", err);
-
-                if (err.name === "NotAllowedError") {
-                  setError("Please tap the screen to start video");
-
-                  const handleUserGesture = () => {
-                    videoRef.current
-                      .play()
-                      .then(() => {
-                        console.log("✅ Video started after user gesture");
-                        setError(null);
-                      })
-                      .catch(console.error);
-                  };
-
-                  document.addEventListener("click", handleUserGesture, {
-                    once: true,
-                  });
-                  document.addEventListener("touchstart", handleUserGesture, {
-                    once: true,
-                  });
-                }
-              });
-          }
-        };
-
-        videoRef.current.onplay = () => {
-          console.log("▶️ Video started playing");
-          setError(null);
-        };
-
-        videoRef.current.onerror = (e) => {
-          console.error("❌ Video element error:", e);
-          setError("Video playback error. Please refresh.");
-        };
+      if (!videoRef.current) {
+        console.error("❌ Video ref is null!");
+        setError("Video element not found");
+        return;
       }
 
-      setIsStreaming(true);
-      startCapture();
+      // Set stream to video
+      videoRef.current.srcObject = stream;
+      console.log("✅ Stream assigned to video element");
 
-      localStorage.setItem(`security_${interviewId}`, "connected");
-      localStorage.setItem(`security_angle_verified_${interviewId}`, "true");
-      console.log("✅ Security status saved to localStorage");
+      // Wait for metadata
+      videoRef.current.onloadedmetadata = async () => {
+        console.log("✅ Video metadata loaded");
+        setDebugInfo((prev) => ({ ...prev, metadataLoaded: true }));
 
-      const emitConnection = () => {
-        if (socketRef.current?.connected) {
-          socketRef.current.emit("security_camera_connected", {
-            interviewId,
-            userId,
-            angle: currentAngle,
-            angleQuality: angleQuality?.level,
-            timestamp: Date.now(),
-          });
-          console.log("✅ Socket event sent: security_camera_connected");
-        } else {
-          console.log("⚠️ Socket not connected, retrying in 1s...");
-          setTimeout(emitConnection, 1000);
+        console.log("🎬 Attempting to play video...");
+        setDebugInfo((prev) => ({ ...prev, playAttempted: true }));
+
+        try {
+          await videoRef.current.play();
+          console.log("✅✅✅ VIDEO PLAYING SUCCESSFULLY!");
+          setDebugInfo((prev) => ({ ...prev, playSucceeded: true }));
+          setError(null);
+          setVideoReady(true);
+          setIsStreaming(true);
+
+          // Start capturing frames
+          setTimeout(() => {
+            console.log("🎥 Starting frame capture...");
+            startCapture();
+          }, 1000);
+        } catch (err) {
+          console.error("❌ Video play FAILED:", err.name, err.message);
+
+          if (err.name === "NotAllowedError") {
+            setError("⚠️ TAP THE SCREEN to start video");
+
+            const handleUserGesture = async () => {
+              console.log("👆 User tapped screen, retrying play...");
+              try {
+                await videoRef.current.play();
+                console.log("✅ Video started after user gesture!");
+                setDebugInfo((prev) => ({ ...prev, playSucceeded: true }));
+                setError(null);
+                setVideoReady(true);
+                setIsStreaming(true);
+                setTimeout(() => startCapture(), 1000);
+              } catch (e) {
+                console.error("❌ Play failed even after gesture:", e);
+                setError("Failed to start video. Please refresh the page.");
+              }
+            };
+
+            document.addEventListener("click", handleUserGesture, {
+              once: true,
+            });
+            document.addEventListener("touchstart", handleUserGesture, {
+              once: true,
+            });
+          } else {
+            setError(`Video error: ${err.message}`);
+          }
         }
       };
 
-      emitConnection();
+      // Additional event listeners
+      videoRef.current.onplay = () => {
+        console.log("▶️ Video onplay event fired");
+        setVideoReady(true);
+      };
 
-      console.log("✅ Camera started successfully");
+      videoRef.current.onplaying = () => {
+        console.log("▶️ Video onplaying event fired");
+        setVideoReady(true);
+      };
+
+      videoRef.current.onerror = (e) => {
+        console.error("❌ Video element error:", e);
+        setError("Video playback error");
+        setVideoReady(false);
+      };
+
+      console.log("✅ Camera setup complete, waiting for metadata and play...");
     } catch (err) {
-      console.error("❌ Camera error:", err);
+      console.error("❌ Camera access error:", err);
 
       let errorMessage = "Unable to access camera. ";
       if (err.name === "NotAllowedError") {
-        errorMessage += "Please grant camera permissions and refresh the page.";
+        errorMessage += "Please grant camera permissions.";
       } else if (err.name === "NotFoundError") {
-        errorMessage += "No camera found on this device.";
+        errorMessage += "No camera found.";
       } else if (err.name === "NotReadableError") {
-        errorMessage += "Camera is already in use by another application.";
+        errorMessage += "Camera in use by another app.";
       } else {
-        errorMessage += err.message || "Unknown error occurred.";
+        errorMessage += err.message;
       }
 
       setError(errorMessage);
+      setIsStreaming(false);
+      setVideoReady(false);
     }
   };
 
   const stopCamera = () => {
+    console.log("🛑 Stopping camera...");
+
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
@@ -325,6 +329,7 @@ const MobileSecurityCamera = () => {
     }
 
     setIsStreaming(false);
+    setVideoReady(false);
     console.log("🛑 Camera stopped");
   };
 
@@ -332,7 +337,8 @@ const MobileSecurityCamera = () => {
     if (
       !videoRef.current ||
       !canvasRef.current ||
-      !socketRef.current?.connected
+      !socketRef.current?.connected ||
+      !videoReady
     ) {
       return;
     }
@@ -342,6 +348,10 @@ const MobileSecurityCamera = () => {
     const ctx = canvas.getContext("2d");
 
     if (video.readyState !== video.HAVE_ENOUGH_DATA) {
+      console.log(
+        "⚠️ Video not ready for capture, readyState:",
+        video.readyState,
+      );
       return;
     }
 
@@ -388,26 +398,18 @@ const MobileSecurityCamera = () => {
     }
 
     setTimeout(() => {
+      captureAndSendFrame();
+
       captureIntervalRef.current = setInterval(() => {
         captureAndSendFrame();
       }, 2000);
-
-      captureAndSendFrame();
     }, 1000);
   };
 
   useEffect(() => {
     return () => {
-      console.log("🧹 Component unmounting - cleaning up");
+      console.log("🧹 Component unmounting");
       stopCamera();
-
-      if (orientationHandlerRef.current) {
-        window.removeEventListener(
-          "deviceorientation",
-          orientationHandlerRef.current,
-        );
-        orientationHandlerRef.current = null;
-      }
     };
   }, []);
 
@@ -427,6 +429,20 @@ const MobileSecurityCamera = () => {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4">
       <div className="max-w-2xl mx-auto space-y-4">
+        {/* Debug Info Card */}
+        <Card className="p-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200">
+          <h3 className="text-sm font-bold text-blue-900 mb-2">Debug Info</h3>
+          <div className="text-xs text-blue-800 space-y-1 font-mono">
+            <div>Stream: {debugInfo.streamObtained ? "✅" : "❌"}</div>
+            <div>Metadata: {debugInfo.metadataLoaded ? "✅" : "❌"}</div>
+            <div>Play Attempted: {debugInfo.playAttempted ? "✅" : "❌"}</div>
+            <div>Play Succeeded: {debugInfo.playSucceeded ? "✅" : "❌"}</div>
+            <div>Video Ready: {videoReady ? "✅" : "❌"}</div>
+            <div>Is Streaming: {isStreaming ? "✅" : "❌"}</div>
+            <div>Socket Connected: {isConnected ? "✅" : "❌"}</div>
+          </div>
+        </Card>
+
         <Card className="p-6">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center">
@@ -446,10 +462,10 @@ const MobileSecurityCamera = () => {
             </div>
             <div>
               <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
-                Security Camera Active
+                Security Camera
               </h1>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                Monitoring in progress
+                {videoReady ? "Monitoring active" : "Initializing..."}
               </p>
             </div>
           </div>
@@ -468,13 +484,24 @@ const MobileSecurityCamera = () => {
             <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
               <div className="flex items-center gap-2">
                 <div
-                  className={`w-2 h-2 rounded-full ${isStreaming ? "bg-green-500 animate-pulse" : "bg-gray-400"}`}
+                  className={`w-2 h-2 rounded-full ${
+                    videoReady
+                      ? "bg-green-500 animate-pulse"
+                      : isStreaming
+                        ? "bg-yellow-500 animate-pulse"
+                        : "bg-gray-400"
+                  }`}
                 />
                 <span className="text-sm text-gray-700 dark:text-gray-300">
-                  Camera: {isStreaming ? "Monitoring" : "Inactive"}
+                  Camera:{" "}
+                  {videoReady
+                    ? "Monitoring"
+                    : isStreaming
+                      ? "Starting..."
+                      : "Inactive"}
                 </span>
               </div>
-              {isStreaming && (
+              {framesSent > 0 && (
                 <span className="text-xs text-gray-500 dark:text-gray-400">
                   Frames: {framesSent}
                 </span>
@@ -484,10 +511,10 @@ const MobileSecurityCamera = () => {
         </Card>
 
         {error && (
-          <Card className="p-4 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800">
+          <Card className="p-4 bg-red-50 dark:bg-red-950/30 border-2 border-red-500">
             <div className="flex items-start gap-2">
               <svg
-                className="w-5 h-5 text-red-600 dark:text-red-400 shrink-0"
+                className="w-5 h-5 text-red-600 shrink-0"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -499,30 +526,32 @@ const MobileSecurityCamera = () => {
                   d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
                 />
               </svg>
-              <p className="text-sm text-red-800 dark:text-red-200">{error}</p>
+              <div>
+                <p className="text-sm font-bold text-red-900">{error}</p>
+                {error.includes("TAP") && (
+                  <p className="text-xs text-red-700 mt-1">
+                    Your browser blocked autoplay. Please tap anywhere on the
+                    screen.
+                  </p>
+                )}
+              </div>
             </div>
           </Card>
         )}
 
         <Card className="overflow-hidden">
-          <div className="relative aspect-4/3 bg-gray-900">
-            {isStreaming ? (
-              <>
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  className="w-full h-full object-cover"
-                  onCanPlay={(e) => {
-                    console.log("✅ Video can play");
-                    e.target
-                      .play()
-                      .catch((err) => console.warn("Play attempt:", err.name));
-                  }}
-                />
-                <canvas ref={canvasRef} className="hidden" />
+          <div className="relative aspect-video bg-gray-900">
+            <video
+              ref={videoRef}
+              autoPlay
+              muted
+              playsInline
+              className="w-full h-full object-cover"
+            />
+            <canvas ref={canvasRef} className="hidden" />
 
+            {videoReady && (
+              <>
                 <div className="absolute top-4 left-4">
                   <div className="flex items-center gap-2 px-3 py-2 bg-black/80 backdrop-blur-sm rounded-md">
                     <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
@@ -534,25 +563,10 @@ const MobileSecurityCamera = () => {
 
                 <div className="absolute top-4 right-4">
                   <div
-                    className={`flex items-center gap-2 px-3 py-2 backdrop-blur-sm rounded-md ${isConnected ? "bg-green-600/90" : "bg-red-600/90"}`}
+                    className={`flex items-center gap-2 px-3 py-2 backdrop-blur-sm rounded-md ${
+                      isConnected ? "bg-green-600/90" : "bg-red-600/90"
+                    }`}
                   >
-                    <svg
-                      className="w-4 h-4 text-white"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d={
-                          isConnected
-                            ? "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                            : "M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                        }
-                      />
-                    </svg>
                     <span className="text-xs font-medium text-white">
                       {isConnected ? "CONNECTED" : "DISCONNECTED"}
                     </span>
@@ -567,62 +581,68 @@ const MobileSecurityCamera = () => {
                   </div>
                 </div>
               </>
-            ) : (
-              <div className="absolute inset-0 flex items-center justify-center">
+            )}
+
+            {!videoReady && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/50">
                 <div className="text-center">
-                  <svg
-                    className="w-16 h-16 mx-auto text-gray-600 mb-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
-                    />
-                  </svg>
-                  <p className="text-sm text-gray-400">
-                    Camera initializing...
+                  <div className="animate-spin w-12 h-12 border-4 border-gray-600 border-t-blue-500 rounded-full mx-auto mb-4" />
+                  <p className="text-sm text-white">
+                    {debugInfo.streamObtained
+                      ? debugInfo.playAttempted
+                        ? "Waiting for video play..."
+                        : "Loading video..."
+                      : "Accessing camera..."}
                   </p>
+                  {error?.includes("TAP") && (
+                    <p className="text-xs text-yellow-400 mt-2 animate-pulse">
+                      👆 TAP SCREEN TO START
+                    </p>
+                  )}
                 </div>
               </div>
             )}
           </div>
         </Card>
 
-        {isStreaming && (
-          <div className="flex gap-3">
-            <Button onClick={stopCamera} variant="secondary" className="flex-1">
-              <svg
-                className="w-5 h-5 mr-2"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"
-                />
-              </svg>
+        {videoReady && (
+          <>
+            <Button onClick={stopCamera} variant="secondary" className="w-full">
               Stop Monitoring (Ends Interview)
             </Button>
-          </div>
+
+            <Card className="p-4 bg-green-50 dark:bg-green-950/30 border border-green-500">
+              <div className="flex items-start gap-2">
+                <svg
+                  className="w-5 h-5 text-green-600 shrink-0"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+                <div>
+                  <p className="text-sm font-semibold text-green-900">
+                    ✅ Security Camera Operational!
+                  </p>
+                  <p className="text-xs text-green-800 mt-1">
+                    Return to your laptop. Keep this page open.
+                  </p>
+                </div>
+              </div>
+            </Card>
+          </>
         )}
 
-        <Card className="p-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+        <Card className="p-4 bg-amber-50 border border-amber-200">
           <div className="flex gap-2">
             <svg
-              className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0"
+              className="w-5 h-5 text-amber-600 shrink-0"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -634,42 +654,12 @@ const MobileSecurityCamera = () => {
                 d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
               />
             </svg>
-            <p className="text-xs text-amber-800 dark:text-amber-200">
-              <strong>WARNING:</strong> Keep device steady and positioned to
-              view your screen. Closing this page will automatically terminate
-              the interview. Do not lock your phone.
+            <p className="text-xs text-amber-800">
+              <strong>WARNING:</strong> Do not close this page or lock your
+              phone during the interview.
             </p>
           </div>
         </Card>
-
-        {isStreaming && (
-          <Card className="p-4 bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800">
-            <div className="flex items-start gap-2">
-              <svg
-                className="w-5 h-5 text-green-600 dark:text-green-400 shrink-0"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-              <div>
-                <p className="text-sm font-semibold text-green-900 dark:text-green-300">
-                  Security Camera Operational!
-                </p>
-                <p className="text-xs text-green-800 dark:text-green-200 mt-1">
-                  You can now return to the main interview page on your laptop.
-                  Keep this page open and device steady.
-                </p>
-              </div>
-            </div>
-          </Card>
-        )}
       </div>
     </div>
   );
