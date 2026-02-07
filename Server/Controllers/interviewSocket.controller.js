@@ -63,14 +63,73 @@ function initInterviewSocket(httpServer) {
         );
       });
 
-      // Handle security video frames
-      socket.on("security_frame", (data) => {
-        // Log first frame and every 10th frame to reduce spam
-        if (!socket.frameCount) socket.frameCount = 0;
-        socket.frameCount++;
+      socket.on("security_frame", async (data) => {
+        // Log every 10th frame to reduce spam
+        if (!socket.securityFrameCount) socket.securityFrameCount = 0;
+        socket.securityFrameCount++;
 
-        if (socket.frameCount === 1 || socket.frameCount % 10 === 0) {
-          console.log(`📸 Security frame #${socket.frameCount} received`);
+        if (
+          socket.securityFrameCount === 1 ||
+          socket.securityFrameCount % 10 === 0
+        ) {
+          console.log(
+            `📸 Security frame #${socket.securityFrameCount} received`,
+          );
+        }
+
+        // ✅ NEW: Save security camera frames as video chunks
+        try {
+          const videoInfo = videoUploads.security_camera;
+
+          // Initialize security camera video session if not exists
+          if (!videoInfo || !videoInfo.videoId) {
+            console.log("📹 Initializing security camera video session...");
+
+            const videoId = await InterviewVideo.create({
+              interviewId,
+              userId,
+              videoType: "security_camera",
+              originalFilename: `security_camera_${Date.now()}.webm`,
+              fileSize: 0,
+              totalChunks: 0,
+              duration: null,
+            });
+
+            videoUploads.security_camera = {
+              videoId,
+              chunks: 0,
+              totalChunks: 0,
+            };
+
+            console.log(`✅ Security camera video session created: ${videoId}`);
+          }
+
+          // Convert base64 frame to buffer
+          const frameData = data.frame.replace(/^data:image\/\w+;base64,/, "");
+          const chunkBuffer = Buffer.from(frameData, "base64");
+
+          // Upload frame as chunk
+          uploadVideoChunk({
+            chunkBuffer,
+            videoId: videoUploads.security_camera.videoId,
+            chunkNumber: socket.securityFrameCount,
+            totalChunks: 0, // Will be updated at end
+            interviewId,
+          })
+            .then((result) => {
+              videoUploads.security_camera.chunks++;
+
+              if (socket.securityFrameCount % 10 === 0) {
+                console.log(
+                  `✅ Security frame ${socket.securityFrameCount} uploaded`,
+                );
+              }
+            })
+            .catch((error) => {
+              console.error(`❌ Security frame upload failed:`, error);
+            });
+        } catch (error) {
+          console.error("❌ Error processing security frame:", error);
         }
 
         // Broadcast frame to main interview client

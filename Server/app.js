@@ -12,31 +12,54 @@ dotenv.config();
 
 const app = express();
 
+const allowedOrigins = [
+  "https://hrkakhyzro.loclx.io", // frontend
+  "https://qrr6yskgyo.loclx.io", // backend
+  "http://localhost:5173",
+  "http://localhost:3000",
+];
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // allow server-to-server / curl / postman
+    if (!origin) return callback(null, true);
+
+    // allow all loclx tunnels
+    if (origin.endsWith(".loclx.io")) {
+      return callback(null, true);
+    }
+
+    // allow local dev
+    if (
+      origin === "http://localhost:5173" ||
+      origin === "http://localhost:3000"
+    ) {
+      return callback(null, true);
+    }
+
+    // IMPORTANT: no error, just false
+    return callback(null, false);
+  },
+  credentials: true,
+};
+
 app.use((req, res, next) => {
   req.setTimeout(600000);
   res.setTimeout(600000);
   next();
 });
 
-// CORS configuration
-app.use(
-  cors({
-    origin: process.env.CORS_ORIGIN,
-    credentials: true,
-  })
-);
-
 app.use(
   express.json({
     limit: "100mb",
-  })
+  }),
 );
 
 app.use(
   express.urlencoded({
     limit: "100mb",
     extended: true,
-  })
+  }),
 );
 
 app.use(cookieParser());
@@ -76,7 +99,7 @@ if (process.env.ENABLE_VIDEO_RETRY === "true") {
         console.error("❌ Scheduled retry failed:", error);
       }
     },
-    60 * 60 * 1000
+    60 * 60 * 1000,
   ); // Every hour
 }
 
@@ -94,7 +117,7 @@ if (process.env.ENABLE_CHUNK_CLEANUP === "true") {
         console.error("❌ Scheduled cleanup failed:", error);
       }
     },
-    24 * 60 * 60 * 1000
+    24 * 60 * 60 * 1000,
   ); // Every 24 hours
 }
 
