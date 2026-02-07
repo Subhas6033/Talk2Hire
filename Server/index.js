@@ -15,7 +15,7 @@ connectDB()
   .then(async () => {
     app.get("/", (req, res) => {
       res.send(
-        "Welcome to the Quantamhash Corporation AI Interview Platform Server"
+        "Welcome to the Quantamhash Corporation AI Interview Platform Server",
       );
     });
 
