@@ -34,34 +34,27 @@ const useVideoRecording = (interviewId, userId, cameraStream) => {
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          console.log("📦 Video chunk available:", event.data.size, "bytes");
-          chunksRef.current.push(event.data);
-        }
-      };
+      // ✅ NEW: Notify server that recording is starting
+      const socket = io(baseURL, {
+        withCredentials: true,
+      });
 
-      mediaRecorder.onstop = () => {
-        console.log("🛑 MediaRecorder stopped");
-      };
+      socket.emit("video_recording_start", {
+        interviewId,
+        userId,
+        videoType: "primary_camera",
+        totalChunks: 0, // Will be updated
+        metadata: {
+          mimeType: "video/webm;codecs=vp9",
+          videoBitsPerSecond: 2500000,
+        },
+      });
 
-      mediaRecorder.onerror = (event) => {
-        console.error("❌ MediaRecorder error:", event.error);
-      };
+      socket.on("video_recording_ready", (response) => {
+        console.log("✅ Server ready for video chunks:", response);
+      });
 
-      mediaRecorder.start(CHUNK_DURATION);
-      setIsRecording(true);
-
-      // ✅ FIX: Set up periodic upload with better error handling
-      uploadIntervalRef.current = setInterval(() => {
-        if (!isUploadingRef.current) {
-          uploadChunks();
-        } else {
-          console.log("⏳ Previous upload still in progress, skipping...");
-        }
-      }, CHUNK_DURATION);
-
-      console.log("✅ Video recording started");
+      // ... rest of your code
     } catch (error) {
       console.error("❌ Failed to start video recording:", error);
     }
