@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import {
   SkillsSelector,
@@ -66,50 +66,32 @@ const InterviewSettings = ({ onInterviewReady }) => {
 
       console.log("🚀 Starting interview setup...");
       setIsGeneratingQuestions(true);
-      setQuestionsReady(false); // Reset state
+      setQuestionsReady(false);
 
       // Start question generation
-      const questionGenerationPromise = dispatch(
+      const result = await dispatch(
         startInterview({
           skills: !hasExistingSkills ? skills : undefined,
         }),
       ).unwrap();
 
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new Error("Question generation timeout")),
-          30000,
-        ),
-      );
+      console.log("✅ Questions generated:", result);
 
-      // Process question generation in background
-      Promise.race([questionGenerationPromise, timeoutPromise])
-        .then((res) => {
-          console.log("✅ Questions generated:", res);
+      if (!result?.sessionId) {
+        throw new Error("Session ID not returned from server");
+      }
 
-          if (!res?.sessionId) {
-            throw new Error("Session ID not returned from server");
-          }
+      setSessionData({
+        interviewId: result.sessionId,
+        userId: user?.id,
+      });
 
-          setSessionData({
-            interviewId: res.sessionId,
-            userId: user?.id,
-          });
+      // Mark questions as ready
+      setQuestionsReady(true);
+      setIsGeneratingQuestions(false);
+      console.log("✅ Questions ready");
 
-          // Mark questions as ready
-          setQuestionsReady(true);
-          setIsGeneratingQuestions(false);
-          console.log("✅ Questions ready flag set to true");
-        })
-        .catch((err) => {
-          console.error("❌ Question generation failed:", err);
-          setError(err?.message || "Failed to generate questions");
-          setIsGeneratingQuestions(false);
-          setQuestionsReady(false);
-          setStatus("failed");
-        });
-
-      // Show guidelines immediately
+      // Show guidelines
       setOpenGuideLines(true);
       setStatus("succeeded");
     } catch (err) {
@@ -131,7 +113,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
   const handleSecuritySetupComplete = () => {
     console.log("🔍 Security setup complete - checking ALL conditions...");
 
-    // ✅ Check ALL conditions with detailed logging
     const conditions = {
       questionsReady,
       sessionData: !!sessionData,
@@ -141,28 +122,24 @@ const InterviewSettings = ({ onInterviewReady }) => {
 
     console.log("📊 Condition check:", conditions);
 
-    // Verify questions are ready
     if (!questionsReady) {
       console.log("⏳ Questions not ready yet");
       setError("Questions are still being generated. Please wait...");
       return;
     }
 
-    // Verify not still generating
     if (isGeneratingQuestions) {
       console.log("⏳ Questions still generating");
       setError("Questions are being generated. Please wait...");
       return;
     }
 
-    // Verify session data
     if (!sessionData) {
       console.error("❌ No session data available");
       setError("Session data not available. Please try again.");
       return;
     }
 
-    // Verify camera stream
     if (!primaryCameraStream) {
       console.error("❌ No camera stream available");
       setError("Camera stream not available. Please try again.");
@@ -335,7 +312,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
   );
 };
 
-// ✅ FIXED: Wait for ALL THREE conditions before allowing interview start
+// ✅ FIXED: Proper polling and state management
 const SecurityCameraSetup = ({
   isOpen,
   onClose,
@@ -349,7 +326,9 @@ const SecurityCameraSetup = ({
   const [angleVerified, setAngleVerified] = useState(false);
   const [qrGenerationError, setQrGenerationError] = useState(null);
 
-  // Generate QR Code
+  // ✅ FIXED: Track if we've already triggered the start
+  const hasTriggeredStartRef = useRef(false);
+
   const generateQRCode = async () => {
     if (!sessionData) return;
 
@@ -373,7 +352,7 @@ const SecurityCameraSetup = ({
     }
   };
 
-  // ✅ CRITICAL: Auto-continue ONLY when ALL conditions met
+  // ✅ FIXED: Auto-continue with debounce protection
   useEffect(() => {
     const allConditionsMet =
       isSecurityConnected &&
@@ -387,14 +366,18 @@ const SecurityCameraSetup = ({
       questionsReady,
       isGeneratingQuestions,
       allConditionsMet,
+      hasTriggered: hasTriggeredStartRef.current,
     });
 
-    if (allConditionsMet) {
+    if (allConditionsMet && !hasTriggeredStartRef.current) {
       console.log("✅ ALL CONDITIONS MET - Auto-starting interview!");
+      hasTriggeredStartRef.current = true;
+
       const timer = setTimeout(() => {
         console.log("🚀 Invoking onSecurityConnected callback");
         onSecurityConnected?.();
       }, 1000);
+
       return () => clearTimeout(timer);
     }
   }, [
@@ -405,9 +388,12 @@ const SecurityCameraSetup = ({
     onSecurityConnected,
   ]);
 
-  // ✅ Poll localStorage every 500ms for security camera status
+  // ✅ FIXED: More aggressive polling with better logging
   useEffect(() => {
-    if (!isOpen || !sessionData) return;
+    if (!isOpen || !sessionData) {
+      hasTriggeredStartRef.current = false;
+      return;
+    }
 
     console.log("👀 Starting security camera detection polling...");
 
@@ -419,6 +405,13 @@ const SecurityCameraSetup = ({
         `security_angle_verified_${sessionData.interviewId}`,
       );
 
+      console.log("📡 Polling localStorage:", {
+        mobileStatus,
+        angleStatus,
+        isSecurityConnected,
+        angleVerified,
+      });
+
       if (mobileStatus === "connected" && !isSecurityConnected) {
         console.log("✅ Security camera CONNECTED detected!");
         setIsSecurityConnected(true);
@@ -428,7 +421,7 @@ const SecurityCameraSetup = ({
         console.log("✅ Angle VERIFIED detected!");
         setAngleVerified(true);
       }
-    }, 500);
+    }, 300); // ✅ Poll every 300ms for faster detection
 
     return () => {
       console.log("🧹 Stopping security detection polling");
@@ -443,9 +436,17 @@ const SecurityCameraSetup = ({
     }
   }, [isOpen, sessionData]);
 
+  // ✅ Reset trigger flag when modal closes
+  useEffect(() => {
+    if (!isOpen) {
+      hasTriggeredStartRef.current = false;
+      setIsSecurityConnected(false);
+      setAngleVerified(false);
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
-  // ✅ Can only continue when ALL conditions are true
   const canContinue =
     isSecurityConnected &&
     angleVerified &&
