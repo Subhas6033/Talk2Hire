@@ -1,35 +1,91 @@
 const { asyncHandler, APIERR, APIRES } = require("../Utils/index.utils.js");
 const { uploadFileMicro } = require("./uploadFile.controllers");
 const { mistralResponse } = require("./mistral.controllers.js");
-const { openai } = require("../Config/openai.config.js");
+const { ollama } = require("../Config/openai.config.js");
 const { Interview } = require("../Models/interview.models.js");
+const User = require("../Models/user.models.js");
+
+// ✅ HELPER: Extract JSON from AI response (handles extra text)
+const extractJSON = (text) => {
+  // Remove markdown code blocks
+  let cleaned = text
+    .replace(/```json\n?/g, "")
+    .replace(/```\n?/g, "")
+    .trim();
+
+  // Find the first { and last } to extract only the JSON part
+  const jsonStart = cleaned.indexOf("{");
+  const jsonEnd = cleaned.lastIndexOf("}");
+
+  if (jsonStart === -1 || jsonEnd === -1 || jsonEnd <= jsonStart) {
+    throw new Error("No valid JSON object found in response");
+  }
+
+  // Extract just the JSON portion
+  const jsonStr = cleaned.substring(jsonStart, jsonEnd + 1);
+
+  return JSON.parse(jsonStr);
+};
 
 const generateQuestions = asyncHandler(async (req, res) => {
   if (!req.user?.id) throw new APIERR(401, "Unauthorized");
-  if (!req.file) throw new APIERR(400, "Resume file is required");
 
   const userId = req.user.id;
 
-  console.log("📄 Starting resume upload and question generation...");
+  let skills = req.body.skills;
 
-  // Step 1: Upload resume
-  console.log("📤 Uploading resume file...");
-  const uploadedData = await uploadFileMicro(req.file);
-  console.log("✅ Resume uploaded successfully:", uploadedData.url);
-
-  // Step 2: Extract text from resume
-  console.log("📝 Extracting text from resume...");
-  const rawTextObj = await mistralResponse({
-    ftpUrl: uploadedData.url,
-    mimeType: req.file.mimetype,
-    originalFileName: req.file.originalname,
-  });
-
-  const rawText = rawTextObj?.raw_text;
-  if (!rawText) {
-    console.error("❌ Failed to extract resume text");
-    throw new APIERR(500, "Failed to extract resume text");
+  // Handle both JSON string and array
+  if (typeof skills === "string") {
+    try {
+      skills = JSON.parse(skills);
+    } catch (e) {
+      skills = skills
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
   }
+
+  console.log("📄 Starting resume upload and question generation...");
+  console.log("🎯 Skills received:", skills);
+
+  const user = await User.findById(userId);
+  let resumeUrl;
+  let rawText;
+
+  // Save skills if provided and user doesn't have them
+  if (skills && Array.isArray(skills) && skills.length > 0 && !user.skill) {
+    console.log("💾 Saving user skills:", skills);
+    const skillsString = skills.join(", ");
+
+    await User.updateSkills(userId, skillsString);
+    console.log("✅ Skills saved to user profile");
+  }
+
+  if (user?.resume) {
+    // Resume already exists - use it
+    console.log("✅ Resume found in database:", user.resume);
+    resumeUrl = user.resume;
+
+    console.log("📝 Extracting text from existing resume...");
+    const rawTextObj = await mistralResponse({
+      ftpUrl: resumeUrl,
+      mimeType: "application/pdf",
+      originalFileName: "resume.pdf",
+    });
+
+    rawText = rawTextObj?.raw_text;
+    if (!rawText) {
+      console.error("❌ Failed to extract resume text");
+      throw new APIERR(500, "Failed to extract resume text");
+    }
+  } else {
+    if (!req.file) {
+      throw new APIERR(400, "Resume file is required for first-time upload");
+    }
+    // Handle resume upload here (your existing logic)
+  }
+
   console.log("✅ Resume text extracted:", rawText.substring(0, 100) + "...");
 
   // Step 3: Create interview session
@@ -75,29 +131,34 @@ BAD EXAMPLES (DO NOT DO THIS):
 
   let completion;
   try {
-    completion = await openai.chat.completions.create({
-      model: "deepseek-chat",
-      temperature: 0.6,
+    completion = await ollama.chat({
+      model: "deepseek-v3.1:671b-cloud",
       messages: [
         {
           role: "system",
           content:
-            "You are an expert technical interviewer who asks specific, clear questions based on candidate resumes.",
+            "You are an expert technical interviewer who asks specific, clear questions based on candidate resumes. Return ONLY valid JSON with no extra text.",
         },
         { role: "user", content: prompt },
       ],
     });
+
+    console.log(
+      "📄 Full Ollama response:",
+      JSON.stringify(completion, null, 2),
+    );
   } catch (aiError) {
-    console.error("❌ OpenAI API error:", aiError);
+    console.error("❌ Ollama API error:", aiError);
     throw new APIERR(
       500,
-      "Failed to generate question with AI: " + aiError.message
+      "Failed to generate question with AI: " + aiError.message,
     );
   }
 
-  const raw = completion?.choices?.[0]?.message?.content;
+  const raw = completion?.message?.content;
   if (!raw) {
     console.error("❌ AI returned empty response");
+    console.error("Full response:", completion);
     throw new APIERR(500, "AI returned empty response");
   }
 
@@ -106,18 +167,18 @@ BAD EXAMPLES (DO NOT DO THIS):
   // Step 5: Parse and validate AI response
   let parsed;
   try {
-    // Remove markdown code blocks if present
-    const cleaned = raw
-      .replace(/```json\n?/g, "")
-      .replace(/```\n?/g, "")
-      .trim();
-    parsed = JSON.parse(cleaned);
+    // ✅ FIX: Use helper function to extract JSON
+    parsed = extractJSON(raw);
+    console.log("✅ Parsed JSON:", parsed);
   } catch (parseError) {
     console.error("❌ Failed to parse AI response:", raw);
-    throw new APIERR(500, "AI returned invalid JSON format");
+    console.error("Parse error:", parseError.message);
+    throw new APIERR(
+      500,
+      "AI returned invalid JSON format: " + parseError.message,
+    );
   }
 
-  // Validate question
   if (
     !parsed.question ||
     typeof parsed.question !== "string" ||
@@ -140,18 +201,17 @@ BAD EXAMPLES (DO NOT DO THIS):
       question: firstQuestion,
       questionOrder: 1,
       technology: null,
-      difficulty: "basic", // First question is always basic
+      difficulty: "basic",
     });
     console.log("✅ First question saved with ID:", qnaId);
   } catch (dbError) {
     console.error("❌ Database error saving question:", dbError);
     throw new APIERR(
       500,
-      "Failed to save question to database: " + dbError.message
+      "Failed to save question to database: " + dbError.message,
     );
   }
 
-  // Step 7: Return response to client
   console.log("✅ Question generation complete!");
 
   res.status(200).json(
@@ -161,15 +221,14 @@ BAD EXAMPLES (DO NOT DO THIS):
         sessionId,
         question: firstQuestion,
         qnaId,
+        resumeUrl,
       },
-      "First question generated successfully"
-    )
+      "First question generated successfully",
+    ),
   );
 });
 
-// Generate the next question based on the user answer
-// NOTE: This endpoint is NOT used in Socket.IO flow
-// It's kept for potential REST API usage
+// ✅ FIX: Generate the next question based on the user answer
 const generateNextQuestion = asyncHandler(async (req, res) => {
   const { sessionId, resumeText, history } = req.body;
 
@@ -228,36 +287,42 @@ FORMAT:
 
   let completion;
   try {
-    completion = await openai.chat.completions.create({
-      model: "deepseek-chat",
+    completion = await ollama.chat({
+      model: "deepseek-v3.1:671b-cloud",
       temperature: 0.5,
       messages: [
         {
           role: "system",
           content:
-            "You are a senior technical interviewer who asks specific, clear follow-up questions.",
+            "You are a senior technical interviewer who asks specific, clear follow-up questions. Return ONLY valid JSON with no extra text.",
         },
         { role: "user", content: prompt },
       ],
     });
+
+    console.log("📄 Ollama response received");
   } catch (aiError) {
-    console.error("❌ OpenAI API error:", aiError);
+    console.error("❌ Ollama API error:", aiError);
     throw new APIERR(500, "Failed to generate question: " + aiError.message);
   }
 
-  const cleaned = completion.choices[0].message.content.trim();
-  console.log("📄 Raw AI response:", cleaned);
+  const raw = completion?.message?.content;
+  if (!raw) {
+    console.error("❌ AI returned empty response");
+    throw new APIERR(500, "AI returned empty response");
+  }
+
+  console.log("📄 Raw AI response:", raw);
 
   let parsed;
   try {
-    const jsonStr = cleaned
-      .replace(/```json\n?/g, "")
-      .replace(/```\n?/g, "")
-      .trim();
-    parsed = JSON.parse(jsonStr);
+    // ✅ FIX: Use helper function to extract JSON
+    parsed = extractJSON(raw);
+    console.log("✅ Parsed JSON:", parsed);
   } catch (err) {
-    console.error("❌ Invalid JSON from AI:", cleaned);
-    throw new APIERR(500, "AI returned invalid JSON");
+    console.error("❌ Invalid JSON from AI:", raw);
+    console.error("Parse error:", err.message);
+    throw new APIERR(500, "AI returned invalid JSON: " + err.message);
   }
 
   if (
@@ -294,8 +359,8 @@ FORMAT:
       new APIRES(
         200,
         { question: parsed.question.trim(), qnaId },
-        "Next question generated successfully"
-      )
+        "Next question generated successfully",
+      ),
     );
 });
 

@@ -18,7 +18,7 @@ async function generateNextQuestionWithAI({
     if (!answer || typeof answer !== "string") {
       throw new APIERR(
         400,
-        "Previous answer is required for AI question generation"
+        "Previous answer is required for AI question generation",
       );
     }
 
@@ -49,8 +49,8 @@ Now ask exactly ONE ${depth}-level technical interview question.
 `;
 
     console.log("🔄 Calling OpenAI API...");
-    const response = await openai.chat.completions.create({
-      model: "deepseek-chat",
+    const response = await ollama.chat({
+      model: "deepseek-v3.1:671b-cloud",
       temperature: 0.4,
       messages: [
         { role: "system", content: "You are a strict technical interviewer." },

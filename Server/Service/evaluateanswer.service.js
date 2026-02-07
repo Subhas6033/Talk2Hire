@@ -13,8 +13,8 @@ Return JSON:
 }
 `;
 
-  const res = await openai.chat.completions.create({
-    model: "deepseek-chat",
+  const res = await ollama.chat({
+    model: "deepseek-v3.1:671b-cloud",
     temperature: 0.3,
     messages: [{ role: "user", content: prompt }],
   });

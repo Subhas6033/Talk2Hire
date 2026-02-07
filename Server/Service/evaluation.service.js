@@ -40,8 +40,8 @@ Be strict but fair. Look for:
 - Real-world application knowledge
 `;
 
-    const response = await openai.chat.completions.create({
-      model: "deepseek-chat",
+    const response = await ollama.chat({
+      model: "deepseek-v3.1:671b-cloud",
       temperature: 0.3,
       messages: [
         {
@@ -96,7 +96,7 @@ async function evaluateInterview(interviewId) {
 
     // Filter only answered questions
     const answeredQuestions = history.filter(
-      (q) => q.answer && q.answer.trim() !== ""
+      (q) => q.answer && q.answer.trim() !== "",
     );
 
     if (answeredQuestions.length === 0) {
@@ -104,7 +104,7 @@ async function evaluateInterview(interviewId) {
     }
 
     console.log(
-      `📊 Evaluating ${answeredQuestions.length} answered questions...`
+      `📊 Evaluating ${answeredQuestions.length} answered questions...`,
     );
 
     // Evaluate each question-answer pair
@@ -138,7 +138,7 @@ async function evaluateInterview(interviewId) {
       });
 
       console.log(
-        `✅ Question ${question.question_order} evaluated: ${evaluation.score}/10`
+        `✅ Question ${question.question_order} evaluated: ${evaluation.score}/10`,
       );
     }
 
@@ -146,11 +146,11 @@ async function evaluateInterview(interviewId) {
     const overallEvaluation = await generateOverallEvaluation(
       interviewId,
       evaluations,
-      answeredQuestions
+      answeredQuestions,
     );
 
     console.log(
-      `✅ Interview evaluation complete. Overall score: ${overallEvaluation.overallScore}/100`
+      `✅ Interview evaluation complete. Overall score: ${overallEvaluation.overallScore}/100`,
     );
 
     return {
@@ -225,7 +225,7 @@ async function generateOverallEvaluation(interviewId, evaluations, questions) {
       strengths: summary.strengths,
       weaknesses: summary.weaknesses,
       summary: summary.summary,
-      modelVersion: "deepseek-chat",
+      modelVersion: "deepseek-v3.1:671b-cloud",
     });
 
     // Save skill evaluations by technology
@@ -333,8 +333,8 @@ Return ONLY a JSON object:
 }
 `;
 
-    const response = await openai.chat.completions.create({
-      model: "deepseek-chat",
+    const response = await ollama.chat({
+      model: "deepseek-v3.1:671b-cloud",
       temperature: 0.4,
       messages: [
         {
@@ -380,7 +380,7 @@ async function getEvaluationResults(interviewId) {
     // Get interview evaluation
     const [interviewEval] = await db.execute(
       `SELECT * FROM interview_evaluations WHERE interview_id = ?`,
-      [interviewId]
+      [interviewId],
     );
 
     // Get question evaluations
@@ -390,13 +390,13 @@ async function getEvaluationResults(interviewId) {
        JOIN interview_questions iq ON qe.question_id = iq.id
        WHERE qe.interview_id = ?
        ORDER BY iq.question_order ASC`,
-      [interviewId]
+      [interviewId],
     );
 
     // Get skill evaluations
     const [skillEvals] = await db.execute(
       `SELECT * FROM skill_evaluations WHERE interview_id = ? ORDER BY average_score DESC`,
-      [interviewId]
+      [interviewId],
     );
 
     return {
