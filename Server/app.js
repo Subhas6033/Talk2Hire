@@ -12,42 +12,12 @@ dotenv.config();
 
 const app = express();
 
-const allowedOrigins = [
-  "https://hrkakhyzro.loclx.io", // frontend
-  "https://qrr6yskgyo.loclx.io", // backend
-  "http://localhost:5173",
-  "http://localhost:3000",
-];
-
-const corsOptions = {
-  origin: (origin, callback) => {
-    // allow server-to-server / curl / postman
-    if (!origin) return callback(null, true);
-
-    // allow all loclx tunnels
-    if (origin.endsWith(".loclx.io")) {
-      return callback(null, true);
-    }
-
-    // allow local dev
-    if (
-      origin === "http://localhost:5173" ||
-      origin === "http://localhost:3000"
-    ) {
-      return callback(null, true);
-    }
-
-    // IMPORTANT: no error, just false
-    return callback(null, false);
-  },
-  credentials: true,
-};
-
-app.use((req, res, next) => {
-  req.setTimeout(600000);
-  res.setTimeout(600000);
-  next();
-});
+app.use(
+  cors({
+    origin: process.env.CORS_ORIGIN,
+    credentials: true,
+  }),
+);
 
 app.use(
   express.json({
