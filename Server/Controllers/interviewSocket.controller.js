@@ -18,13 +18,12 @@ function initInterviewSocket(httpServer) {
       methods: ["GET", "POST"],
     },
     transports: ["websocket", "polling"],
-    maxHttpBufferSize: 10 * 1024 * 1024, // 10MB for video chunks
-    pingTimeout: 60000, // ✅ ADD: Increase timeout
-    pingInterval: 25000, // ✅ ADD: Increase ping interval
+    maxHttpBufferSize: 10 * 1024 * 1024,
+    pingTimeout: 60000,
+    pingInterval: 25000,
   });
 
-  // ✅ PERSISTENT STORAGE - Survives socket reconnections
-  const interviewSessions = new Map(); // Map<interviewId, sessionData>
+  const interviewSessions = new Map();
 
   function getOrCreateSession(interviewId) {
     if (!interviewSessions.has(interviewId)) {
@@ -47,7 +46,6 @@ function initInterviewSocket(httpServer) {
   }
 
   io.on("connection", async (socket) => {
-    // ✅ Extract all query params at once
     const { interviewId, userId, type } = socket.handshake.query;
 
     console.log("🔌 New socket connection attempt:", {
@@ -58,17 +56,14 @@ function initInterviewSocket(httpServer) {
       transport: socket.conn.transport.name,
     });
 
-    // ✅ Check for missing params early
     if (!interviewId || !userId) {
       console.error("❌ Missing interviewId or userId");
       socket.emit("error", { message: "Missing interview or user ID" });
       return socket.disconnect();
     }
 
-    // ✅ For main interview connections, join the interview room
     socket.join(`interview_${interviewId}`);
 
-    // ✅ Get persistent session (survives reconnections)
     const session = getOrCreateSession(interviewId);
     const videoUploads = session.videoUploads;
 
@@ -93,10 +88,8 @@ function initInterviewSocket(httpServer) {
     let currentQuestionText = "";
     let idleCount = 0;
 
-    // Maximum questions limit
     const MAX_QUESTIONS = 10;
 
-    // ⚡ INITIALIZE IMMEDIATELY
     console.log("📥 Starting IMMEDIATE initialization...");
 
     try {
@@ -148,10 +141,6 @@ function initInterviewSocket(httpServer) {
       });
 
       console.log("✅ ✅ ✅ Initialization complete!");
-
-      // ============================================================================
-      // ✅ REGISTER ALL EVENT HANDLERS FIRST - BEFORE EMITTING server_ready
-      // ============================================================================
 
       console.log("📝 Registering all socket event handlers...");
 
@@ -346,6 +335,9 @@ function initInterviewSocket(httpServer) {
           });
 
           console.log(`✅ Video ${videoType} finalized:`, result.ftpUrl);
+          console.log(
+            `🎬 Video will be automatically merged by background job`,
+          );
         } catch (error) {
           console.error(`❌ Error finalizing video:`, error);
           socket.emit("video_processing_error", {
@@ -362,7 +354,7 @@ function initInterviewSocket(httpServer) {
         }
       });
 
-      // ✅ INTERVIEW HANDLERS
+      // INTERVIEW HANDLERS
 
       async function handleIdle() {
         console.log("⏰ Handling idle timeout");
@@ -468,7 +460,7 @@ function initInterviewSocket(httpServer) {
       }
 
       async function endInterview() {
-        console.log("🏁 Ending interview and starting evaluation...");
+        console.log("🏁 Ending interview...");
 
         try {
           socket.emit("interview_complete", {
@@ -488,6 +480,7 @@ function initInterviewSocket(httpServer) {
             deepgramConnection = null;
           }
 
+          // ✅ START EVALUATION ONLY
           socket.emit("evaluation_started", {
             message: "Evaluating your interview responses...",
           });
@@ -509,6 +502,11 @@ function initInterviewSocket(httpServer) {
                   experienceLevel: results.overallEvaluation.experienceLevel,
                 },
               });
+
+              // ✅ VIDEO MERGE WILL HAPPEN AUTOMATICALLY VIA BACKGROUND JOB
+              console.log(
+                "🎬 Videos will be merged automatically by background job",
+              );
 
               cleanupSession(interviewId);
             })
@@ -930,7 +928,6 @@ function initInterviewSocket(httpServer) {
 
       console.log("✅ All event listeners registered");
 
-      // ✅ CRITICAL: Emit server_ready AFTER all handlers are registered
       setTimeout(() => {
         socket.emit("server_ready");
         console.log("📤 Emitted 'server_ready' signal to client");

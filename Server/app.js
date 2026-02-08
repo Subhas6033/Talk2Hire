@@ -7,6 +7,8 @@ const questionRoutes = require("./Middlewares/multer.middlewares.js");
 const speechRoutes = require("./Middlewares/multer.middlewares.js");
 const resultRouter = require("./Routes/result.routes.js");
 const videoUploadRoutes = require("./Routes/videoUpload.routes.js");
+const VideoProcessingJobs = require("./Jobs/videoProcessing.jobs.js");
+const hiringRoutes = require("./Routes/hiring.routes.js");
 
 dotenv.config();
 
@@ -39,6 +41,7 @@ app.use("/api/v1/questions", questionRoutes);
 app.use("/api/v1/speech", speechRoutes);
 app.use("/api/v1/result", resultRouter);
 app.use("/api/v1/interview", videoUploadRoutes);
+app.use("/api/v1/hiring", hiringRoutes);
 
 // Health check endpoint
 app.get("/health", (req, res) => {
@@ -48,6 +51,8 @@ app.get("/health", (req, res) => {
     uptime: process.uptime(),
   });
 });
+
+VideoProcessingJobs.startScheduledJobs();
 
 // Background jobs for video processing
 const {

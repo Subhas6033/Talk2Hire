@@ -363,6 +363,7 @@ FORMAT:
     completion = await ollama.chat({
       model: "deepseek-v3.1:671b-cloud",
       temperature: 0.5,
+      format: "json",
       messages: [
         {
           role: "system",

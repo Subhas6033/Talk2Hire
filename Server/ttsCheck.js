@@ -1,166 +1,263 @@
 /**
- * Migration: Add checksum and enhanced tracking to interview_videos table
- * This script executes the SQL exactly as provided — no changes.
+ * Migration Script: Merge All Pending Video Chunks
+ * Run this to manually trigger merge for all interviews with uploaded chunks
  */
 
-const mysql = require("mysql2/promise");
-require("dotenv").config();
-// This is the migration scripts
-(async () => {
-  let connection;
+const { connectDB } = require("./Config/database.config.js");
+const VideoProcessingJobs = require("./Jobs/videoProcessing.jobs");
+const config = require("./Config/videoProcessing.config");
 
+async function migrateAndMergePendingChunks(options = {}) {
+  const {
+    batchSize = 5, // Process 5 interviews at a time
+    delayBetweenBatches = 5000, // 5 second delay between batches
+    continueOnError = true,
+    dryRun = false, // Set to true to see what would be processed
+  } = options;
+
+  console.log("🚀 Starting migration: Merge all pending video chunks...\n");
+  if (dryRun) {
+    console.log("⚠️  DRY RUN MODE - No actual merging will occur\n");
+  }
+
+  let db;
   try {
-    connection = await mysql.createConnection({
-      host: process.env.DB_HOST,
-      user: process.env.DB_USER,
-      password: process.env.DB_PASSWORD,
-      database: process.env.DB_NAME,
-      multipleStatements: true,
+    db = await connectDB();
+
+    // Step 1: Find all interviews with uploaded chunks that need merging
+    console.log("📊 Step 1: Finding interviews with pending chunks...");
+
+    const [interviewsWithChunks] = await db.execute(
+      `SELECT DISTINCT 
+         i.id as interview_id,
+         i.user_id,
+         i.created_at,
+         COUNT(DISTINCT q.id) as question_count,
+         COUNT(DISTINCT v.id) as video_count,
+         COUNT(DISTINCT c.id) as chunk_count,
+         GROUP_CONCAT(DISTINCT v.video_type) as video_types
+       FROM interviews i
+       LEFT JOIN interview_questions q ON i.id = q.interview_id
+       INNER JOIN interview_videos v ON i.id = v.interview_id
+       INNER JOIN interview_video_chunks c ON v.id = c.video_id
+       WHERE c.upload_status = 'uploaded'
+       AND (v.ftp_url IS NULL OR v.ftp_url = '' OR v.checksum IS NULL)
+       GROUP BY i.id
+       ORDER BY i.created_at DESC`,
+    );
+
+    console.log(
+      `\n✅ Found ${interviewsWithChunks.length} interviews with pending chunks\n`,
+    );
+
+    if (interviewsWithChunks.length === 0) {
+      console.log("ℹ️  No interviews need merging. Migration complete.");
+      db.release();
+      return {
+        success: true,
+        totalInterviews: 0,
+        processed: 0,
+        results: [],
+      };
+    }
+
+    // Display summary
+    console.log("📋 Summary of interviews to process:");
+    console.log("─".repeat(80));
+    interviewsWithChunks.forEach((interview, index) => {
+      console.log(`${index + 1}. Interview ID: ${interview.interview_id}`);
+      console.log(`   Questions: ${interview.question_count}`);
+      console.log(`   Videos: ${interview.video_count}`);
+      console.log(`   Chunks: ${interview.chunk_count}`);
+      console.log(`   Types: ${interview.video_types}`);
+      console.log(`   Created: ${interview.created_at}`);
+      console.log("─".repeat(80));
     });
 
-    console.log("🚀 Running migration: Add checksum & chunk tracking");
+    // Step 2: Get detailed chunk information for each interview
+    console.log("\n📊 Step 2: Analyzing chunk details...\n");
 
-    //     const migrationSQL = `-- Migration: Add checksum and enhanced tracking to interview_videos table
-    // -- Run this migration to support video integrity checks and chunk management
+    for (const interview of interviewsWithChunks) {
+      const [chunkDetails] = await db.execute(
+        `SELECT 
+           v.id as video_id,
+           v.video_type,
+           v.upload_status as video_status,
+           v.total_chunks,
+           v.uploaded_chunks,
+           v.ftp_url,
+           v.checksum,
+           COUNT(c.id) as actual_chunk_count,
+           GROUP_CONCAT(c.chunk_number ORDER BY c.chunk_number) as chunk_numbers
+         FROM interview_videos v
+         LEFT JOIN interview_video_chunks c ON v.id = c.video_id
+         WHERE v.interview_id = ?
+         GROUP BY v.id`,
+        [interview.interview_id],
+      );
 
-    // -- Add checksum column for integrity verification
-    // ALTER TABLE interview_videos
-    // ADD COLUMN IF NOT EXISTS checksum VARCHAR(64) NULL COMMENT 'SHA-256 checksum for integrity verification';
+      console.log(`\n📹 Interview ${interview.interview_id} - Video Details:`);
+      chunkDetails.forEach((video) => {
+        console.log(`   ${video.video_type}:`);
+        console.log(`     - Video Status: ${video.video_status}`);
+        console.log(`     - Total Chunks: ${video.total_chunks}`);
+        console.log(`     - Uploaded Chunks: ${video.uploaded_chunks}`);
+        console.log(`     - Actual Chunks in DB: ${video.actual_chunk_count}`);
+        console.log(`     - Has FTP URL: ${video.ftp_url ? "Yes" : "No"}`);
+        console.log(`     - Has Checksum: ${video.checksum ? "Yes" : "No"}`);
+        console.log(`     - Chunk Numbers: ${video.chunk_numbers || "None"}`);
+      });
+    }
 
-    // -- Add total_chunks column to track expected number of chunks
-    // ALTER TABLE interview_videos
-    // ADD COLUMN IF NOT EXISTS total_chunks INT DEFAULT 1 COMMENT 'Total number of chunks expected';
+    db.release();
 
-    // -- Add uploaded_chunks column to track upload progress
-    // ALTER TABLE interview_videos
-    // ADD COLUMN IF NOT EXISTS uploaded_chunks INT DEFAULT 0 COMMENT 'Number of chunks successfully uploaded';
+    if (dryRun) {
+      console.log("\n\n⚠️  DRY RUN COMPLETE - No videos were merged");
+      return {
+        success: true,
+        dryRun: true,
+        totalInterviews: interviewsWithChunks.length,
+        wouldProcess: interviewsWithChunks.map((i) => i.interview_id),
+      };
+    }
 
-    // -- Add index for faster checksum lookups
-    // CREATE INDEX IF NOT EXISTS idx_checksum ON interview_videos(checksum);
+    // Step 3: Process each interview through the merge job in batches
+    console.log("\n\n🎬 Step 3: Starting merge process...\n");
 
-    // -- Add index for status filtering
-    // CREATE INDEX IF NOT EXISTS idx_upload_status ON interview_videos(upload_status, created_at);
+    const results = [];
+    let successCount = 0;
+    let failCount = 0;
 
-    // -- Update interview_video_chunks table with checksum
-    // ALTER TABLE interview_video_chunks
-    // ADD COLUMN IF NOT EXISTS checksum VARCHAR(64) NULL COMMENT 'SHA-256 checksum for chunk integrity';
+    // Process in batches
+    for (let i = 0; i < interviewsWithChunks.length; i += batchSize) {
+      const batch = interviewsWithChunks.slice(i, i + batchSize);
+      const batchNum = Math.floor(i / batchSize) + 1;
+      const totalBatches = Math.ceil(interviewsWithChunks.length / batchSize);
 
-    // -- Add deleted_at column for soft delete tracking
-    // ALTER TABLE interview_video_chunks
-    // ADD COLUMN IF NOT EXISTS deleted_at DATETIME NULL COMMENT 'When chunk was deleted from FTP';
+      console.log(
+        `\n📦 Processing Batch ${batchNum}/${totalBatches} (${batch.length} interviews)...`,
+      );
+      console.log("─".repeat(80));
 
-    // -- Add index for chunk queries
-    // CREATE INDEX IF NOT EXISTS idx_video_chunk ON interview_video_chunks(video_id, chunk_number);
+      // Process batch concurrently with Promise.allSettled
+      const batchPromises = batch.map((interview) =>
+        VideoProcessingJobs.mergeInterviewVideos(interview.interview_id, {
+          timeoutMs: config.merge.maxTimeoutMs,
+          skipOnError: true,
+          maxRetries: config.merge.maxRetries,
+        })
+          .then((result) => ({
+            interviewId: interview.interview_id,
+            success: true,
+            ...result,
+          }))
+          .catch((error) => ({
+            interviewId: interview.interview_id,
+            success: false,
+            error: error.message,
+          })),
+      );
 
-    // -- Add index for cleanup queries
-    // CREATE INDEX IF NOT EXISTS idx_chunk_cleanup ON interview_video_chunks(created_at, upload_status);
+      const batchResults = await Promise.allSettled(batchPromises);
 
-    // -- Add 'merging' status to enum if not exists (depends on your database)
-    // -- For MySQL 5.7+:
-    // -- ALTER TABLE interview_videos
-    // -- MODIFY COLUMN upload_status ENUM('pending', 'uploading', 'merging', 'completed', 'failed') DEFAULT 'pending';
+      // Extract results
+      const processedResults = batchResults.map((r) =>
+        r.status === "fulfilled"
+          ? r.value
+          : {
+              interviewId: "unknown",
+              success: false,
+              error: r.reason?.message || "Unknown error",
+            },
+      );
 
-    // -- Create a helper function to add enum value if your DB version supports it
-    // -- Otherwise, manually add 'merging' to the upload_status enum
+      results.push(...processedResults);
 
-    // -- Add method to get failed uploads (for retry job)
-    // -- This is just documentation - the actual query is in the model
-    // -- SELECT * FROM interview_videos
-    // -- WHERE upload_status = 'failed' AND retry_count < 3
-    // -- ORDER BY created_at ASC;
+      // Update counters
+      processedResults.forEach((r) => {
+        if (r.success) successCount++;
+        else failCount++;
+      });
 
-    // -- Create view for monitoring video upload progress
-    // CREATE OR REPLACE VIEW video_upload_progress AS
-    // SELECT
-    //     v.id,
-    //     v.interview_id,
-    //     v.video_type,
-    //     v.upload_status,
-    //     v.upload_progress,
-    //     v.total_chunks,
-    //     v.uploaded_chunks,
-    //     v.file_size,
-    //     v.duration,
-    //     v.checksum,
-    //     v.retry_count,
-    //     v.error_message,
-    //     v.created_at,
-    //     v.started_at,
-    //     v.completed_at,
-    //     COUNT(c.id) as actual_chunk_count,
-    //     SUM(c.chunk_size) as total_chunk_size
-    // FROM interview_videos v
-    // LEFT JOIN interview_video_chunks c ON v.id = c.video_id AND c.upload_status != 'deleted'
-    // GROUP BY v.id;
+      // Log batch results
+      const batchSuccess = processedResults.filter((r) => r.success).length;
+      console.log(
+        `✅ Batch ${batchNum} complete: ${batchSuccess}/${batch.length} successful`,
+      );
 
-    // -- Create view for interview video statistics
-    // CREATE OR REPLACE VIEW interview_video_stats AS
-    // SELECT
-    //     interview_id,
-    //     COUNT(*) as total_videos,
-    //     SUM(CASE WHEN upload_status = 'completed' THEN 1 ELSE 0 END) as completed,
-    //     SUM(CASE WHEN upload_status = 'failed' THEN 1 ELSE 0 END) as failed,
-    //     SUM(CASE WHEN upload_status = 'pending' THEN 1 ELSE 0 END) as pending,
-    //     SUM(CASE WHEN upload_status = 'uploading' THEN 1 ELSE 0 END) as uploading,
-    //     SUM(CASE WHEN upload_status = 'merging' THEN 1 ELSE 0 END) as merging,
-    //     SUM(file_size) as total_size,
-    //     AVG(duration) as avg_duration,
-    //     SUM(duration) as total_duration,
-    //     MIN(created_at) as first_upload,
-    //     MAX(completed_at) as last_completed
-    // FROM interview_videos
-    // GROUP BY interview_id;
+      // Delay before next batch (except for last batch)
+      if (i + batchSize < interviewsWithChunks.length) {
+        console.log(`⏳ Waiting ${delayBetweenBatches}ms before next batch...`);
+        await new Promise((resolve) =>
+          setTimeout(resolve, delayBetweenBatches),
+        );
+      }
+    }
 
-    // -- Add comments for documentation
-    // ALTER TABLE interview_videos
-    // MODIFY COLUMN checksum VARCHAR(64) NULL
-    // COMMENT 'SHA-256 checksum for integrity verification - calculated during upload';
+    // Step 4: Final Summary
+    console.log("\n\n" + "=".repeat(80));
+    console.log("📊 MIGRATION COMPLETE - FINAL SUMMARY");
+    console.log("=".repeat(80));
+    console.log(`Total Interviews Found: ${interviewsWithChunks.length}`);
+    console.log(`✅ Successfully Merged: ${successCount}`);
+    console.log(`❌ Failed: ${failCount}`);
+    console.log("=".repeat(80));
 
-    // ALTER TABLE interview_videos
-    // MODIFY COLUMN total_chunks INT DEFAULT 1
-    // COMMENT 'Total number of chunks expected for chunked uploads';
+    if (failCount > 0) {
+      console.log("\n❌ Failed Interviews:");
+      results
+        .filter((r) => !r.success)
+        .forEach((r) => {
+          console.log(`   - Interview ${r.interviewId}: ${r.error}`);
+        });
+    }
 
-    // ALTER TABLE interview_videos
-    // MODIFY COLUMN uploaded_chunks INT DEFAULT 0
-    // COMMENT 'Number of chunks successfully uploaded - used for progress tracking';
+    console.log("\n✅ Migration script completed!\n");
 
-    // -- Verification queries (run these to test the migration)
-    // -- SELECT COUNT(*) as videos_with_checksums FROM interview_videos WHERE checksum IS NOT NULL;
-    // -- SELECT COUNT(*) as pending_merges FROM interview_videos WHERE upload_status = 'merging';
-    // -- SELECT * FROM video_upload_progress WHERE upload_status != 'completed' ORDER BY created_at DESC;
-    // -- SELECT * FROM interview_video_stats ORDER BY interview_id DESC LIMIT 10;
-
-    // -- Migration complete!`;
-
-    const migrationSQL = `-- Fix for 'upload_status' column data truncation error
--- This script updates the interview_video_chunks table to support 'deleted' status
-
--- Option 1: If using VARCHAR, increase the length
-ALTER TABLE interview_video_chunks 
-MODIFY COLUMN upload_status VARCHAR(20) NOT NULL DEFAULT 'pending';
-
--- Option 2: If using ENUM, add 'deleted' to the allowed values
--- (Comment out Option 1 above and uncomment this if you're using ENUM)
--- ALTER TABLE interview_video_chunks 
--- MODIFY COLUMN upload_status ENUM('pending', 'uploading', 'uploaded', 'failed', 'deleted') NOT NULL DEFAULT 'pending';
-
--- Verify the change
-DESCRIBE interview_video_chunks;
-
--- Check existing data
-SELECT upload_status, COUNT(*) as count 
-FROM interview_video_chunks 
-GROUP BY upload_status;
-`;
-
-    await connection.query(migrationSQL);
-
-    console.log("✅ Migration completed successfully");
-    process.exit(0);
-  } catch (err) {
-    console.error("❌ Migration failed:", err.message);
-    process.exit(1);
+    return {
+      success: true,
+      totalInterviews: interviewsWithChunks.length,
+      successful: successCount,
+      failed: failCount,
+      results,
+    };
+  } catch (error) {
+    console.error("\n❌ Migration failed with error:", error);
+    if (!continueOnError) throw error;
+    return {
+      success: false,
+      error: error.message,
+    };
   } finally {
-    if (connection) await connection.end();
+    if (db) {
+      db.release();
+    }
   }
-})();
+}
+
+// Execute migration if run directly
+if (require.main === module) {
+  // Parse command line arguments
+  const args = process.argv.slice(2);
+  const dryRun = args.includes("--dry-run");
+  const batchSize =
+    parseInt(args.find((arg) => arg.startsWith("--batch="))?.split("=")[1]) ||
+    5;
+
+  console.log(`\n🔧 Configuration:`);
+  console.log(`   Batch Size: ${batchSize}`);
+  console.log(`   Dry Run: ${dryRun ? "Yes" : "No"}`);
+  console.log("");
+
+  migrateAndMergePendingChunks({ batchSize, dryRun })
+    .then((result) => {
+      console.log("\n✅ Migration successful");
+      process.exit(0);
+    })
+    .catch((error) => {
+      console.error("\n❌ Migration failed:", error);
+      process.exit(1);
+    });
+}
+
+module.exports = { migrateAndMergePendingChunks };

@@ -553,6 +553,27 @@ const InterviewVideo = {
       if (db) db.release();
     }
   },
+
+  async getFailedUploads() {
+    let db;
+    try {
+      db = await connectDB();
+
+      const [rows] = await db.execute(
+        `SELECT * FROM interview_videos 
+       WHERE upload_status = 'failed'
+       AND retry_count < 3
+       ORDER BY created_at ASC`,
+      );
+
+      return rows;
+    } catch (error) {
+      console.error("❌ Error getting failed uploads:", error);
+      throw error;
+    } finally {
+      if (db) db.release();
+    }
+  },
 };
 
 module.exports = { InterviewVideo };

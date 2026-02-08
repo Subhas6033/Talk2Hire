@@ -52,6 +52,7 @@ Now ask exactly ONE ${depth}-level technical interview question.
     const response = await ollama.chat({
       model: "deepseek-v3.1:671b-cloud",
       temperature: 0.4,
+      format: "json",
       messages: [
         { role: "system", content: "You are a strict technical interviewer." },
         { role: "user", content: prompt },
