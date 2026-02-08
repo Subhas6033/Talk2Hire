@@ -39,6 +39,9 @@ const InterviewSettings = ({ onInterviewReady }) => {
 
   const hasExistingSkills = user?.skill && user.skill.trim() !== "";
 
+  // Store selected skills for later use
+  const selectedSkillsRef = useRef(null);
+
   useEffect(() => {
     if (hasExistingSkills) {
       const skillsArray = user.skill
@@ -49,29 +52,22 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
   }, [user, hasExistingSkills, setValue]);
 
-  const onSubmit = async () => {
-    if (!hasExistingSkills && (!skills || skills.length === 0)) {
-      setError("Please select at least one skill to continue.");
-      return;
-    }
-
+  // ✅ NEW: This generates questions in the background
+  const generateQuestionsInBackground = async () => {
     if (!user?.id) {
       setError("User not authenticated.");
       return;
     }
 
     try {
-      setStatus("loading");
-      setError(null);
-
-      console.log("🚀 Starting interview setup...");
+      console.log("🚀 Starting question generation in background...");
       setIsGeneratingQuestions(true);
       setQuestionsReady(false);
 
       // Start question generation
       const result = await dispatch(
         startInterview({
-          skills: !hasExistingSkills ? skills : undefined,
+          skills: !hasExistingSkills ? selectedSkillsRef.current : undefined,
         }),
       ).unwrap();
 
@@ -89,17 +85,46 @@ const InterviewSettings = ({ onInterviewReady }) => {
       // Mark questions as ready
       setQuestionsReady(true);
       setIsGeneratingQuestions(false);
-      console.log("✅ Questions ready");
+      console.log("✅ Questions ready, sessionId:", result.sessionId);
+    } catch (err) {
+      console.error("❌ Question generation error:", err);
+      setError(err?.message || "Failed to generate questions");
+      setIsGeneratingQuestions(false);
+      setQuestionsReady(false);
+    }
+  };
 
-      // Show guidelines
+  // ✅ MODIFIED: Just open guidelines, don't generate questions yet
+  const onSubmit = async () => {
+    if (!hasExistingSkills && (!skills || skills.length === 0)) {
+      setError("Please select at least one skill to continue.");
+      return;
+    }
+
+    if (!user?.id) {
+      setError("User not authenticated.");
+      return;
+    }
+
+    try {
+      setStatus("loading");
+      setError(null);
+
+      // Store skills for later
+      selectedSkillsRef.current = skills;
+
+      console.log("📋 Opening guidelines modal...");
+
+      // Just open guidelines - questions will generate in background
       setOpenGuideLines(true);
       setStatus("succeeded");
+
+      // ✅ Start generating questions in background immediately
+      generateQuestionsInBackground();
     } catch (err) {
       console.error("❌ Submit error:", err);
       setError(err?.message || "Failed to start interview");
       setStatus("failed");
-      setIsGeneratingQuestions(false);
-      setQuestionsReady(false);
     }
   };
 
@@ -231,17 +256,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
             </div>
           )}
 
-          {isGeneratingQuestions && (
-            <div className="mb-4 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg text-center">
-              <div className="flex items-center justify-center gap-2 text-blue-400">
-                <div className="animate-spin w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full" />
-                <span className="text-sm">
-                  Generating interview questions...
-                </span>
-              </div>
-            </div>
-          )}
-
           <div className="flex justify-center">
             <Button
               type="submit"
@@ -312,7 +326,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
   );
 };
 
-// ✅ FIXED: Proper polling and state management
+// ✅ Security Camera Setup Component
 const SecurityCameraSetup = ({
   isOpen,
   onClose,
@@ -326,7 +340,7 @@ const SecurityCameraSetup = ({
   const [angleVerified, setAngleVerified] = useState(false);
   const [qrGenerationError, setQrGenerationError] = useState(null);
 
-  // ✅ FIXED: Track if we've already triggered the start
+  // ✅ Track if we've already triggered the start
   const hasTriggeredStartRef = useRef(false);
 
   const generateQRCode = async () => {
@@ -352,7 +366,7 @@ const SecurityCameraSetup = ({
     }
   };
 
-  // ✅ FIXED: Auto-continue with debounce protection
+  // ✅ Auto-continue when all conditions are met
   useEffect(() => {
     const allConditionsMet =
       isSecurityConnected &&
@@ -388,7 +402,7 @@ const SecurityCameraSetup = ({
     onSecurityConnected,
   ]);
 
-  // ✅ FIXED: More aggressive polling with better logging
+  // ✅ Poll localStorage for security camera connection
   useEffect(() => {
     if (!isOpen || !sessionData) {
       hasTriggeredStartRef.current = false;
@@ -421,7 +435,7 @@ const SecurityCameraSetup = ({
         console.log("✅ Angle VERIFIED detected!");
         setAngleVerified(true);
       }
-    }, 300); // ✅ Poll every 300ms for faster detection
+    }, 300);
 
     return () => {
       console.log("🧹 Stopping security detection polling");
@@ -429,12 +443,15 @@ const SecurityCameraSetup = ({
     };
   }, [isOpen, sessionData, isSecurityConnected, angleVerified]);
 
-  // Generate QR when modal opens
+  // Generate QR when modal opens AND sessionData is available
   useEffect(() => {
     if (isOpen && sessionData && !qrCodeDataURL) {
+      console.log("🎯 Modal open with session data, generating QR...");
       generateQRCode();
+    } else if (isOpen && !sessionData) {
+      console.log("⏳ Modal open but waiting for session data...");
     }
-  }, [isOpen, sessionData]);
+  }, [isOpen, sessionData, qrCodeDataURL]);
 
   // ✅ Reset trigger flag when modal closes
   useEffect(() => {
@@ -442,6 +459,7 @@ const SecurityCameraSetup = ({
       hasTriggeredStartRef.current = false;
       setIsSecurityConnected(false);
       setAngleVerified(false);
+      setQRCodeDataURL(null);
     }
   }, [isOpen]);
 
@@ -568,14 +586,22 @@ const SecurityCameraSetup = ({
           </div>
         </div>
 
-        {/* QR Code */}
+        {/* QR Code Section */}
         <div className="p-6 border-2 border-blue-200 rounded-lg bg-blue-50">
           <div className="text-center space-y-4">
             <h4 className="text-lg font-bold text-blue-900">
               Scan QR Code with Mobile
             </h4>
 
-            {qrCodeDataURL ? (
+            {/* ✅ Show waiting state if session data not ready */}
+            {!sessionData ? (
+              <div className="w-64 h-64 bg-blue-100 rounded-lg flex flex-col items-center justify-center mx-auto gap-3">
+                <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" />
+                <p className="text-blue-700 text-sm px-4">
+                  Waiting for session data...
+                </p>
+              </div>
+            ) : qrCodeDataURL ? (
               <div className="flex justify-center my-4">
                 <div className="p-4 bg-white rounded-xl shadow-lg">
                   <img

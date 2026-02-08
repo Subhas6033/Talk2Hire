@@ -244,7 +244,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       const audioBuffer = audioCtx.createBuffer(
         1,
         pcm32.length,
-        AUDIO_CONFIG.SAMPLE_RATE
+        AUDIO_CONFIG.SAMPLE_RATE,
       );
       audioBuffer.copyToChannel(pcm32, 0);
 
@@ -257,7 +257,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         currentSourceRef.current = null;
         console.log(
           "🔊 Chunk finished, remaining:",
-          audioQueueRef.current.length
+          audioQueueRef.current.length,
         );
         playNextChunk();
       };
@@ -352,7 +352,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       audioQueueRef.current = [];
       waitingForMoreChunksRef.current = false;
     },
-    [dispatch, clearRecognitionTimeout]
+    [dispatch, clearRecognitionTimeout],
   );
 
   const handleNextQuestion = useCallback(
@@ -366,7 +366,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       audioQueueRef.current = [];
       waitingForMoreChunksRef.current = false;
     },
-    [dispatch, clearRecognitionTimeout]
+    [dispatch, clearRecognitionTimeout],
   );
 
   const handleIdlePrompt = useCallback(
@@ -380,7 +380,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       audioQueueRef.current = [];
       waitingForMoreChunksRef.current = false;
     },
-    [dispatch, clearRecognitionTimeout]
+    [dispatch, clearRecognitionTimeout],
   );
 
   const handleTranscriptReceived = useCallback(
@@ -389,7 +389,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       dispatch(setUserText(text));
       dispatch(disableListening());
     },
-    [dispatch]
+    [dispatch],
   );
 
   const handleFinalAnswer = useCallback(
@@ -397,7 +397,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       console.log("✅ Final answer:", text);
       dispatch(receiveFinalAnswer(text));
     },
-    [dispatch]
+    [dispatch],
   );
 
   // ✅ IMPROVED: Handle TTS audio with chunk timing
@@ -414,12 +414,12 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       } else if (chunk instanceof Uint8Array || chunk instanceof Buffer) {
         arrayBuffer = chunk.buffer.slice(
           chunk.byteOffset,
-          chunk.byteOffset + chunk.byteLength
+          chunk.byteOffset + chunk.byteLength,
         );
       } else if (chunk.buffer) {
         arrayBuffer = chunk.buffer.slice(
           chunk.byteOffset,
-          chunk.byteOffset + chunk.byteLength
+          chunk.byteOffset + chunk.byteLength,
         );
       } else {
         console.error("❌ Unknown chunk format:", typeof chunk);
@@ -454,12 +454,12 @@ export const useInterview = (interviewId, userId, cameraStream) => {
           playNextChunk();
         } else {
           console.log(
-            `⏳ Buffering (${audioQueueRef.current.length}/${AUDIO_CONFIG.MIN_BUFFER_SIZE})`
+            `⏳ Buffering (${audioQueueRef.current.length}/${AUDIO_CONFIG.MIN_BUFFER_SIZE})`,
           );
         }
       }
     },
-    [dispatch, clearRecognitionTimeout, playNextChunk]
+    [dispatch, clearRecognitionTimeout, playNextChunk],
   );
 
   // ✅ IMPROVED: Handle TTS end with better synchronization
@@ -493,7 +493,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       dispatch(completeInterview({ totalQuestions: data.totalQuestions }));
       dispatch(setMicStreamingActive(false));
     },
-    [dispatch]
+    [dispatch],
   );
 
   // Auto-start interview

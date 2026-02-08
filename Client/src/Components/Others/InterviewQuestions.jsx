@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useCallback, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { Button } from "../index";
 import { Card } from "../Common/Card";
@@ -17,12 +17,13 @@ const InterviewQuestions = ({
 }) => {
   const interview = useInterview(interviewId, userId, cameraStream);
 
+  // ✅ FIX 1: Pass socketRef to video recording hook
   const {
     isRecording: isVideoRecording,
     startRecording: startVideoRecording,
     stopRecording: stopVideoRecording,
     recordedChunks,
-  } = useVideoRecording(interviewId, userId, cameraStream);
+  } = useVideoRecording(interviewId, userId, cameraStream, interview.socketRef);
 
   const videoRef = useRef(null);
   const isCleaningUpRef = useRef(false);
@@ -91,7 +92,11 @@ const InterviewQuestions = ({
     interview.socketRef.current = socket;
 
     socket.onAny((eventName, ...args) => {
-      if (eventName !== "user_audio_chunk" && eventName !== "security_frame") {
+      if (
+        eventName !== "user_audio_chunk" &&
+        eventName !== "security_frame" &&
+        eventName !== "video_chunk"
+      ) {
         console.log(
           `📡 Socket event: "${eventName}"`,
           args.length > 0 ? args : "",
@@ -112,9 +117,12 @@ const InterviewQuestions = ({
         console.log("🚀 Auto-starting interview...");
         interview.autoStartInterview();
 
+        // ✅ FIX 2: Start video recording after a small delay to ensure socket is fully ready
         if (cameraStream) {
-          console.log("🎥 Starting video recording...");
-          startVideoRecording();
+          setTimeout(() => {
+            console.log("🎥 Starting video recording...");
+            startVideoRecording();
+          }, 500);
         }
       }
     });
@@ -134,6 +142,38 @@ const InterviewQuestions = ({
     socket.on("security_camera_disconnected", (data) => {
       console.warn("⚠️ Security camera disconnected:", data);
       setSecurityFrameData(null);
+    });
+
+    // ✅ NEW: Listen for video processing updates
+    socket.on("video_recording_ready", (data) => {
+      console.log("✅ Video recording session ready:", data);
+    });
+
+    socket.on("video_chunk_uploaded", (data) => {
+      if (data.chunkNumber % 10 === 0) {
+        console.log(
+          `✅ Server confirmed chunk ${data.chunkNumber} (${data.progress}%)`,
+        );
+      }
+    });
+
+    socket.on("video_chunk_error", (data) => {
+      console.error(
+        `❌ Server error with chunk ${data.chunkNumber}:`,
+        data.error,
+      );
+    });
+
+    socket.on("video_recording_stopped", (data) => {
+      console.log("✅ Server acknowledged recording stop:", data);
+    });
+
+    socket.on("video_processing_complete", (data) => {
+      console.log("✅ Video processing complete:", data);
+    });
+
+    socket.on("all_videos_processed", (data) => {
+      console.log("✅ All videos processed:", data);
     });
 
     socket.on("question", (data) => {
@@ -184,17 +224,15 @@ const InterviewQuestions = ({
       console.log("🎉 Interview completed:", data);
       interview.handleInterviewComplete(data);
 
+      // ✅ FIX 3: Stop video recording and let server finalize
       if (isVideoRecording) {
         console.log("🎥 Stopping video recording...");
-        const blob = await stopVideoRecording();
-
-        if (blob) {
-          console.log("📤 Uploading interview video...");
-        }
+        await stopVideoRecording();
+        console.log("✅ Video recording stopped, server will process chunks");
       }
 
       alert(
-        `Interview completed! You answered ${data.totalQuestions} questions.`,
+        `Interview completed! You answered ${data.totalQuestions} questions. Your videos are being processed.`,
       );
 
       if (onFinish) {
@@ -252,6 +290,7 @@ const InterviewQuestions = ({
       console.log("🧹 Cleaning up socket and resources...");
       isCleaningUpRef.current = true;
 
+      // Stop video recording if still active
       if (isVideoRecording) {
         stopVideoRecording();
       }
@@ -714,9 +753,11 @@ const InterviewQuestions = ({
                     />
                     <div className="absolute top-3 left-3">
                       <div className="flex items-center gap-2 px-3 py-1.5 bg-black/80 backdrop-blur-sm rounded-md">
-                        <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                        <div
+                          className={`w-2 h-2 rounded-full ${isVideoRecording ? "bg-red-500 animate-pulse" : "bg-gray-500"}`}
+                        />
                         <span className="text-xs font-medium text-white">
-                          REC
+                          {isVideoRecording ? "REC" : "STANDBY"}
                         </span>
                         <span className="text-xs font-mono text-white/80">
                           {interview.recordingDuration}
@@ -728,7 +769,7 @@ const InterviewQuestions = ({
               </Card>
             )}
 
-            {/* ✅ NEW: Security Camera Feed Display */}
+            {/* ✅ Security Camera Feed Display */}
             {securityFrameData && (
               <Card className="flex flex-col overflow-hidden shadow-sm border border-gray-200 dark:border-gray-800">
                 <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">

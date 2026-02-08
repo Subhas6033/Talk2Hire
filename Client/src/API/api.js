@@ -8,7 +8,7 @@ const api = axios.create({
   },
 });
 
-// ✅ Log all API requests for debugging
+//  Log all API requests for debugging
 api.interceptors.request.use(
   (config) => {
     console.log(`🌐 API Call: ${config.method.toUpperCase()} ${config.url}`);

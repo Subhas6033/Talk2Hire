@@ -18,14 +18,18 @@ const MobileSecurityCamera = () => {
   const videoRef = useRef(null);
   const socketRef = useRef(null);
   const streamRef = useRef(null);
-  const canvasRef = useRef(null);
-  const captureIntervalRef = useRef(null);
+
+  // ✅ NEW: MediaRecorder refs (replacing canvas)
+  const mediaRecorderRef = useRef(null);
+  const recordedChunksRef = useRef([]);
+  const chunkCountRef = useRef(0);
 
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState(null);
-  const [framesSent, setFramesSent] = useState(0);
+  const [chunksSent, setChunksSent] = useState(0);
 
   // Debug state
   const [debugInfo, setDebugInfo] = useState({
@@ -33,6 +37,7 @@ const MobileSecurityCamera = () => {
     metadataLoaded: false,
     playAttempted: false,
     playSucceeded: false,
+    recordingStarted: false,
   });
 
   const [currentAngle] = useState(90);
@@ -78,12 +83,6 @@ const MobileSecurityCamera = () => {
       if (videoReady) {
         console.log("🎥 Video ready, emitting connection event");
         emitConnectionEvent();
-      } else {
-        console.log("⏳ Video not ready yet, waiting... Current state:", {
-          videoReady,
-          isStreaming,
-          debugInfo,
-        });
       }
     });
 
@@ -91,13 +90,10 @@ const MobileSecurityCamera = () => {
       console.log("⚠️ Security camera disconnected, reason:", reason);
       setIsConnected(false);
 
-      // ✅ ONLY clear on server disconnect, not client
       if (reason === "io server disconnect") {
         console.log("🧹 Server initiated disconnect, clearing localStorage");
         localStorage.removeItem(`security_${interviewId}`);
         localStorage.removeItem(`security_angle_verified_${interviewId}`);
-      } else {
-        console.log("⚠️ Client disconnect - NOT clearing localStorage");
       }
     });
 
@@ -117,14 +113,34 @@ const MobileSecurityCamera = () => {
       }
     });
 
+    // ✅ NEW: Listen for server acknowledgments
+    socket.on("video_recording_ready", (response) => {
+      console.log("✅ Server ready for video chunks:", response);
+    });
+
+    socket.on("video_chunk_uploaded", (data) => {
+      if (data.chunkNumber % 5 === 0) {
+        console.log(
+          `✅ Server confirmed chunk ${data.chunkNumber} (${data.progress}%)`,
+        );
+      }
+    });
+
+    socket.on("video_chunk_error", (data) => {
+      console.error(
+        `❌ Server error with chunk ${data.chunkNumber}:`,
+        data.error,
+      );
+    });
+
     return () => {
       console.log("🧹 Cleaning up socket connection");
+      stopVideoRecording(); // Stop recording before disconnect
       socket.disconnect();
-      // Only clear on unmount
       localStorage.removeItem(`security_${interviewId}`);
       localStorage.removeItem(`security_angle_verified_${interviewId}`);
     };
-  }, [interviewId, userId, videoReady, isStreaming, debugInfo]);
+  }, [interviewId, userId, videoReady]);
 
   const emitConnectionEvent = () => {
     if (socketRef.current?.connected) {
@@ -146,7 +162,6 @@ const MobileSecurityCamera = () => {
       localStorage.setItem(`security_${interviewId}`, "connected");
       localStorage.setItem(`security_angle_verified_${interviewId}`, "true");
 
-      // Verify it was set
       const check1 = localStorage.getItem(`security_${interviewId}`);
       const check2 = localStorage.getItem(
         `security_angle_verified_${interviewId}`,
@@ -154,12 +169,6 @@ const MobileSecurityCamera = () => {
       console.log("✅ localStorage verification:", { check1, check2 });
 
       emitConnectionEvent();
-    } else {
-      console.log("⏳ NOT setting localStorage. Conditions:", {
-        videoReady,
-        isConnected,
-        debugInfo,
-      });
     }
   }, [videoReady, isConnected, interviewId]);
 
@@ -207,11 +216,9 @@ const MobileSecurityCamera = () => {
         return;
       }
 
-      // Set stream to video
       videoRef.current.srcObject = stream;
       console.log("✅ Stream assigned to video element");
 
-      // Wait for metadata
       videoRef.current.onloadedmetadata = async () => {
         console.log("✅ Video metadata loaded");
         setDebugInfo((prev) => ({ ...prev, metadataLoaded: true }));
@@ -227,10 +234,10 @@ const MobileSecurityCamera = () => {
           setVideoReady(true);
           setIsStreaming(true);
 
-          // Start capturing frames
+          // ✅ NEW: Start video recording (not frame capture)
           setTimeout(() => {
-            console.log("🎥 Starting frame capture...");
-            startCapture();
+            console.log("🎥 Starting video recording...");
+            startVideoRecording();
           }, 1000);
         } catch (err) {
           console.error("❌ Video play FAILED:", err.name, err.message);
@@ -247,7 +254,7 @@ const MobileSecurityCamera = () => {
                 setError(null);
                 setVideoReady(true);
                 setIsStreaming(true);
-                setTimeout(() => startCapture(), 1000);
+                setTimeout(() => startVideoRecording(), 1000);
               } catch (e) {
                 console.error("❌ Play failed even after gesture:", e);
                 setError("Failed to start video. Please refresh the page.");
@@ -266,7 +273,6 @@ const MobileSecurityCamera = () => {
         }
       };
 
-      // Additional event listeners
       videoRef.current.onplay = () => {
         console.log("▶️ Video onplay event fired");
         setVideoReady(true);
@@ -304,17 +310,168 @@ const MobileSecurityCamera = () => {
     }
   };
 
+  // ✅ NEW: Start actual video recording with MediaRecorder
+  const startVideoRecording = () => {
+    if (!streamRef.current) {
+      console.error("❌ No stream available for recording");
+      return;
+    }
+
+    if (mediaRecorderRef.current) {
+      console.log("⚠️ MediaRecorder already exists");
+      return;
+    }
+
+    try {
+      console.log("🎥 Starting MediaRecorder for security camera...");
+
+      // Check supported MIME types
+      const mimeTypes = [
+        "video/webm;codecs=vp9",
+        "video/webm;codecs=vp8",
+        "video/webm",
+      ];
+
+      let selectedMimeType = null;
+      for (const mimeType of mimeTypes) {
+        if (MediaRecorder.isTypeSupported(mimeType)) {
+          selectedMimeType = mimeType;
+          console.log(`✅ Using MIME type: ${mimeType}`);
+          break;
+        }
+      }
+
+      if (!selectedMimeType) {
+        throw new Error("No supported video MIME type found");
+      }
+
+      const options = {
+        mimeType: selectedMimeType,
+        videoBitsPerSecond: 2500000, // 2.5 Mbps
+      };
+
+      const mediaRecorder = new MediaRecorder(streamRef.current, options);
+      mediaRecorderRef.current = mediaRecorder;
+      recordedChunksRef.current = [];
+      chunkCountRef.current = 0;
+
+      // Handle data available (chunks)
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          chunkCountRef.current++;
+          recordedChunksRef.current.push(event.data);
+
+          console.log(
+            `📦 Security chunk ${chunkCountRef.current} captured (${event.data.size} bytes)`,
+          );
+
+          // Convert to base64 and send via WebSocket
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            if (socketRef.current?.connected) {
+              const base64data = reader.result.split(",")[1];
+
+              socketRef.current.emit("video_chunk", {
+                videoType: "security_camera",
+                chunkNumber: chunkCountRef.current,
+                chunkData: base64data,
+                isLastChunk: false,
+                timestamp: Date.now(),
+              });
+
+              setChunksSent(chunkCountRef.current);
+
+              if (chunkCountRef.current % 5 === 0) {
+                console.log(
+                  `📤 Security chunks sent: ${chunkCountRef.current}`,
+                );
+              }
+            }
+          };
+          reader.readAsDataURL(event.data);
+        }
+      };
+
+      mediaRecorder.onerror = (error) => {
+        console.error("❌ MediaRecorder error:", error);
+        setError("Video recording failed: " + error.message);
+      };
+
+      mediaRecorder.onstop = () => {
+        console.log(
+          `🛑 MediaRecorder stopped. Total chunks: ${chunkCountRef.current}`,
+        );
+        setIsRecording(false);
+        setDebugInfo((prev) => ({ ...prev, recordingStarted: false }));
+
+        // Notify server recording stopped
+        if (socketRef.current?.connected) {
+          socketRef.current.emit("video_recording_stop", {
+            videoType: "security_camera",
+            totalChunks: chunkCountRef.current,
+          });
+        }
+      };
+
+      mediaRecorder.onstart = () => {
+        console.log("▶️ MediaRecorder started");
+        setIsRecording(true);
+        setDebugInfo((prev) => ({ ...prev, recordingStarted: true }));
+
+        // Notify server recording started
+        if (socketRef.current?.connected) {
+          socketRef.current.emit("video_recording_start", {
+            videoType: "security_camera",
+            totalChunks: 0,
+            metadata: {
+              width: videoRef.current?.videoWidth || 1280,
+              height: videoRef.current?.videoHeight || 720,
+              codec: selectedMimeType,
+            },
+          });
+        }
+      };
+
+      // Start recording - emit data every 2 seconds
+      mediaRecorder.start(2000);
+      console.log("✅ MediaRecorder started (2s chunks)");
+    } catch (error) {
+      console.error("❌ Failed to start MediaRecorder:", error);
+      setError("Failed to start video recording: " + error.message);
+    }
+  };
+
+  // ✅ NEW: Stop video recording properly
+  const stopVideoRecording = () => {
+    console.log("🛑 Stopping video recording...");
+
+    if (
+      mediaRecorderRef.current &&
+      mediaRecorderRef.current.state !== "inactive"
+    ) {
+      try {
+        mediaRecorderRef.current.stop();
+        console.log("✅ MediaRecorder stop requested");
+      } catch (error) {
+        console.error("❌ Error stopping MediaRecorder:", error);
+      }
+    }
+
+    mediaRecorderRef.current = null;
+    recordedChunksRef.current = [];
+    chunkCountRef.current = 0;
+  };
+
   const stopCamera = () => {
     console.log("🛑 Stopping camera...");
 
+    // Stop recording first
+    stopVideoRecording();
+
+    // Stop stream
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
-    }
-
-    if (captureIntervalRef.current) {
-      clearInterval(captureIntervalRef.current);
-      captureIntervalRef.current = null;
     }
 
     localStorage.removeItem(`security_${interviewId}`);
@@ -330,80 +487,8 @@ const MobileSecurityCamera = () => {
 
     setIsStreaming(false);
     setVideoReady(false);
+    setIsRecording(false);
     console.log("🛑 Camera stopped");
-  };
-
-  const captureAndSendFrame = () => {
-    if (
-      !videoRef.current ||
-      !canvasRef.current ||
-      !socketRef.current?.connected ||
-      !videoReady
-    ) {
-      return;
-    }
-
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-
-    if (video.readyState !== video.HAVE_ENOUGH_DATA) {
-      console.log(
-        "⚠️ Video not ready for capture, readyState:",
-        video.readyState,
-      );
-      return;
-    }
-
-    canvas.width = video.videoWidth || 1280;
-    canvas.height = video.videoHeight || 720;
-
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    canvas.toBlob(
-      (blob) => {
-        if (blob) {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const base64data = reader.result;
-
-            socketRef.current.emit("security_frame", {
-              interviewId,
-              userId,
-              frame: base64data,
-              timestamp: Date.now(),
-              currentAngle: currentAngle,
-              frameNumber: framesSent + 1,
-            });
-
-            setFramesSent((prev) => prev + 1);
-
-            if ((framesSent + 1) % 10 === 0) {
-              console.log(`📤 Security frames sent: ${framesSent + 1}`);
-            }
-          };
-          reader.readAsDataURL(blob);
-        }
-      },
-      "image/jpeg",
-      0.7,
-    );
-  };
-
-  const startCapture = () => {
-    console.log("🎥 Starting frame capture (every 2 seconds)");
-
-    if (captureIntervalRef.current) {
-      clearInterval(captureIntervalRef.current);
-    }
-
-    setTimeout(() => {
-      captureAndSendFrame();
-
-      captureIntervalRef.current = setInterval(() => {
-        captureAndSendFrame();
-      }, 2000);
-    }, 1000);
   };
 
   useEffect(() => {
@@ -439,6 +524,7 @@ const MobileSecurityCamera = () => {
             <div>Play Succeeded: {debugInfo.playSucceeded ? "✅" : "❌"}</div>
             <div>Video Ready: {videoReady ? "✅" : "❌"}</div>
             <div>Is Streaming: {isStreaming ? "✅" : "❌"}</div>
+            <div>Recording: {isRecording ? "✅" : "❌"}</div>
             <div>Socket Connected: {isConnected ? "✅" : "❌"}</div>
           </div>
         </Card>
@@ -465,7 +551,11 @@ const MobileSecurityCamera = () => {
                 Security Camera
               </h1>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                {videoReady ? "Monitoring active" : "Initializing..."}
+                {videoReady && isRecording
+                  ? "Recording active"
+                  : videoReady
+                    ? "Ready"
+                    : "Initializing..."}
               </p>
             </div>
           </div>
@@ -485,25 +575,25 @@ const MobileSecurityCamera = () => {
               <div className="flex items-center gap-2">
                 <div
                   className={`w-2 h-2 rounded-full ${
-                    videoReady
-                      ? "bg-green-500 animate-pulse"
-                      : isStreaming
-                        ? "bg-yellow-500 animate-pulse"
+                    isRecording
+                      ? "bg-red-500 animate-pulse"
+                      : videoReady
+                        ? "bg-green-500"
                         : "bg-gray-400"
                   }`}
                 />
                 <span className="text-sm text-gray-700 dark:text-gray-300">
                   Camera:{" "}
-                  {videoReady
-                    ? "Monitoring"
-                    : isStreaming
-                      ? "Starting..."
+                  {isRecording
+                    ? "Recording"
+                    : videoReady
+                      ? "Ready"
                       : "Inactive"}
                 </span>
               </div>
-              {framesSent > 0 && (
+              {chunksSent > 0 && (
                 <span className="text-xs text-gray-500 dark:text-gray-400">
-                  Frames: {framesSent}
+                  Chunks: {chunksSent}
                 </span>
               )}
             </div>
@@ -548,15 +638,16 @@ const MobileSecurityCamera = () => {
               playsInline
               className="w-full h-full object-cover"
             />
-            <canvas ref={canvasRef} className="hidden" />
 
             {videoReady && (
               <>
                 <div className="absolute top-4 left-4">
                   <div className="flex items-center gap-2 px-3 py-2 bg-black/80 backdrop-blur-sm rounded-md">
-                    <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
+                    <div
+                      className={`w-3 h-3 rounded-full ${isRecording ? "bg-red-500 animate-pulse" : "bg-gray-500"}`}
+                    />
                     <span className="text-sm font-medium text-white">
-                      MONITORING
+                      {isRecording ? "RECORDING" : "STANDBY"}
                     </span>
                   </div>
                 </div>
@@ -576,7 +667,7 @@ const MobileSecurityCamera = () => {
                 <div className="absolute bottom-4 left-4">
                   <div className="px-3 py-1.5 bg-black/80 backdrop-blur-sm rounded-md">
                     <span className="text-xs font-mono text-white">
-                      Frames: {framesSent}
+                      Chunks: {chunksSent}
                     </span>
                   </div>
                 </div>
@@ -628,7 +719,7 @@ const MobileSecurityCamera = () => {
                 </svg>
                 <div>
                   <p className="text-sm font-semibold text-green-900">
-                    ✅ Security Camera Operational!
+                    ✅ Security Camera {isRecording ? "Recording" : "Ready"}!
                   </p>
                   <p className="text-xs text-green-800 mt-1">
                     Return to your laptop. Keep this page open.

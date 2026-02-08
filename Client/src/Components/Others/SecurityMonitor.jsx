@@ -29,7 +29,7 @@ const SecurityMonitor = ({
     const checkExistingConnection = () => {
       const mobileConnected = localStorage.getItem(`security_${interviewId}`);
       const angleVerified = localStorage.getItem(
-        `security_angle_verified_${interviewId}`
+        `security_angle_verified_${interviewId}`,
       );
 
       if (mobileConnected === "connected" && angleVerified === "true") {
@@ -77,7 +77,7 @@ const SecurityMonitor = ({
       setSecurityStream(stream);
       setIsConnected(true);
       setConnectionMethod(
-        preferredFacing === "environment" ? "mobile" : "external"
+        preferredFacing === "environment" ? "mobile" : "external",
       );
       setShowInstructions(false);
       startDetection();
@@ -99,12 +99,12 @@ const SecurityMonitor = ({
           startDetection();
         } catch (fallbackError) {
           alert(
-            "Unable to access security camera. Please ensure camera permissions are granted."
+            "Unable to access security camera. Please ensure camera permissions are granted.",
           );
         }
       } else {
         alert(
-          "Unable to access security camera. Please ensure camera permissions are granted."
+          "Unable to access security camera. Please ensure camera permissions are granted.",
         );
       }
     }

@@ -85,7 +85,7 @@ export const Card = ({
             !hideScrollbar &&
             "scrollbar-thin scrollbar-thumb-purpleMain/50 scrollbar-track-transparent",
           scrollable && hideScrollbar && "scrollbar-hide overflow-y-auto",
-          className
+          className,
         )}
         style={customStyles}
         {...props}
@@ -119,7 +119,7 @@ export const CardBody = ({
             "text-sm text-white/75 overflow-y-auto pr-2",
             hideScrollbar
               ? "scrollbar-hide"
-              : "scrollbar-thin scrollbar-thumb-purpleMain/50 scrollbar-track-transparent"
+              : "scrollbar-thin scrollbar-thumb-purpleMain/50 scrollbar-track-transparent",
           )}
           style={customStyles}
         >
@@ -137,7 +137,7 @@ export const CardFooter = ({ children, sticky = false }) => (
     className={clsx(
       "mt-6 flex items-center justify-center gap-3",
       sticky &&
-        "sticky bottom-0 bg-[#12091F]/95 backdrop-blur-sm pt-4 -mx-6 px-6 -mb-6 pb-6 border-t border-white/10"
+        "sticky bottom-0 bg-[#12091F]/95 backdrop-blur-sm pt-4 -mx-6 px-6 -mb-6 pb-6 border-t border-white/10",
     )}
   >
     {children}
