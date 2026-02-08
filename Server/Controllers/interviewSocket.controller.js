@@ -888,7 +888,13 @@ function initInterviewSocket(httpServer) {
           return;
         }
 
+        // ✅ NEW: Set processing flag immediately
         isProcessing = true;
+
+        // ✅ NEW: Disable listening immediately
+        isListeningActive = false;
+        socket.emit("listening_disabled");
+
         console.log("📝 Processing user transcript:", text);
         console.log(
           `📊 Current question order: ${currentOrder}/${MAX_QUESTIONS}`,
@@ -1043,6 +1049,9 @@ function initInterviewSocket(httpServer) {
           });
           isProcessing = false;
           isListeningActive = false;
+
+          // ✅ NEW: Emit listening_disabled to sync client state
+          socket.emit("listening_disabled");
         }
       }
 
