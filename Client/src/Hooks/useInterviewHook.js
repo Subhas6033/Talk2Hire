@@ -30,7 +30,7 @@ const AUDIO_CONFIG = {
   MIN_BUFFER_SIZE: 3,
   SAMPLE_RATE: 48000,
   RECOGNITION_DELAY: 2000,
-  MAX_RECOGNITION_WAIT: 5000, // ✅ NEW: Max time to wait for recognition
+  MAX_RECOGNITION_WAIT: 5000,
 };
 
 export const useInterview = (interviewId, userId, cameraStream) => {
@@ -50,7 +50,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   // Audio queue stored ONLY in ref
   const audioQueueRef = useRef([]);
 
-  // ✅ NEW: Track if we're waiting for more audio chunks
+  // Track if we're waiting for more audio chunks
   const waitingForMoreChunksRef = useRef(false);
   const lastChunkReceivedTimeRef = useRef(null);
 
@@ -107,7 +107,23 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }
   }, [interview.isInitializing, interview.status, dispatch]);
 
-  // ✅ IMPROVED: Clear recognition timeout
+  // ✅ NEW: Auto-start when server is ready
+  useEffect(() => {
+    if (
+      interview.serverReady &&
+      !interview.hasStarted &&
+      !interview.isInitializing
+    ) {
+      console.log("🎯 Server ready detected - auto-starting interview");
+
+      const timer = setTimeout(() => {
+        autoStartInterview();
+      }, 500);
+
+      return () => clearTimeout(timer);
+    }
+  }, [interview.serverReady, interview.hasStarted, interview.isInitializing]);
+
   const clearRecognitionTimeout = useCallback(() => {
     if (recognitionTimeoutRef.current) {
       clearTimeout(recognitionTimeoutRef.current);
@@ -116,7 +132,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }
   }, []);
 
-  // ✅ IMPROVED: Check if we should enable recognition
   const shouldEnableRecognition = useCallback(() => {
     const shouldEnable =
       hasStartedRef.current &&
@@ -137,12 +152,10 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     return shouldEnable;
   }, []);
 
-  // ✅ IMPROVED: Enable recognition with safety checks
   const enableRecognitionAfterDelay = useCallback(() => {
     console.log("⏰ enableRecognitionAfterDelay called");
     clearRecognitionTimeout();
 
-    // ✅ NEW: Check if we recently received a chunk (might get more soon)
     const timeSinceLastChunk =
       Date.now() - (lastChunkReceivedTimeRef.current || 0);
 
@@ -167,7 +180,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       } else {
         console.log("❌ Conditions not met, checking again in 1s");
 
-        // ✅ NEW: Retry after a short delay (max 5 seconds total)
         if (timeSinceLastChunk < AUDIO_CONFIG.MAX_RECOGNITION_WAIT) {
           setTimeout(() => enableRecognitionAfterDelay(), 1000);
         } else {
@@ -178,7 +190,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }, AUDIO_CONFIG.RECOGNITION_DELAY);
   }, [clearRecognitionTimeout, shouldEnableRecognition, dispatch]);
 
-  // ✅ IMPROVED: Play next chunk with better state management
   const playNextChunk = useCallback(async () => {
     const audioCtx = audioCtxRef.current;
     if (!audioCtx) {
@@ -187,13 +198,11 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       return;
     }
 
-    // ✅ NEW: If queue is empty but TTS is active, wait a bit
     if (audioQueueRef.current.length === 0) {
       if (ttsStreamActiveRef.current) {
         console.log("⏳ Queue empty but TTS active - waiting for more chunks");
         waitingForMoreChunksRef.current = true;
 
-        // Wait up to 2 seconds for more chunks
         setTimeout(() => {
           if (audioQueueRef.current.length > 0) {
             console.log("✅ Received more chunks - continuing playback");
@@ -278,7 +287,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }
   }, [dispatch, enableRecognitionAfterDelay]);
 
-  // Microphone streaming
   const startMicStreaming = useCallback(async () => {
     if (micStreamRef.current) {
       console.log("🎤 Mic already streaming");
@@ -400,7 +408,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch],
   );
 
-  // ✅ IMPROVED: Handle TTS audio with chunk timing
   const handleTtsAudio = useCallback(
     (chunk) => {
       if (!chunk) {
@@ -433,7 +440,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
       console.log("🔊 Audio chunk:", arrayBuffer.byteLength, "bytes");
 
-      // ✅ NEW: Track when we received this chunk
       lastChunkReceivedTimeRef.current = Date.now();
 
       dispatch(setTtsStreamActive(true));
@@ -462,7 +468,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch, clearRecognitionTimeout, playNextChunk],
   );
 
-  // ✅ IMPROVED: Handle TTS end with better synchronization
   const handleTtsEnd = useCallback(() => {
     console.log("🔔 TTS stream ended");
     dispatch(setTtsStreamActive(false));
@@ -499,12 +504,11 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const handleInterimTranscript = useCallback(
     (data) => {
       console.log("💬 Interim transcript:", data.text);
-      dispatch(setUserText(data.text)); // Reuse existing action or create new one
+      dispatch(setUserText(data.text));
     },
     [dispatch],
   );
 
-  // Auto-start interview
   const autoStartInterview = useCallback(async () => {
     if (hasStartedRef.current) {
       console.log("🚫 Already started");
@@ -512,52 +516,46 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }
 
     try {
-      console.log("🚀 Auto-starting...");
+      console.log("🚀 Auto-starting interview...");
+      console.log("📊 Current state:", {
+        serverReady: serverReadyRef.current,
+        hasStarted: hasStartedRef.current,
+        isInitializing: interview.isInitializing,
+      });
 
       if (audioCtxRef.current?.state === "suspended") {
         await audioCtxRef.current.resume();
         console.log("🔊 AudioContext resumed");
       }
 
+      console.log("🎤 Starting microphone...");
       await startMicStreaming();
-
-      console.log("⏳ Waiting for server...");
+      console.log("✅ Microphone started");
 
       if (!serverReadyRef.current) {
-        let waitTime = 0;
-        const maxWait = 10000;
-        const checkInterval = 100;
-
-        while (!serverReadyRef.current && waitTime < maxWait) {
-          await new Promise((resolve) => setTimeout(resolve, checkInterval));
-          waitTime += checkInterval;
-        }
-
-        if (!serverReadyRef.current) {
-          console.error("❌ Server timeout");
-          dispatch(setIsInitializing(false));
-          alert("Server timeout. Please refresh.");
-          return;
-        }
+        console.error("❌ Server not ready");
+        return;
       }
 
-      console.log("✅ Server ready");
-
-      if (socketRef.current?.connected) {
-        dispatch(setHasStarted(true));
-        console.log("✅ Interview started");
-        socketRef.current.emit("ready_for_question");
-      } else {
-        console.error("⚠️ Not connected");
-        dispatch(setIsInitializing(false));
-        alert("Connection error. Please refresh.");
+      if (!socketRef.current?.connected) {
+        console.error("❌ Socket not connected");
+        return;
       }
+
+      console.log("✅ All prerequisites met, setting hasStarted flag");
+      dispatch(setHasStarted(true));
+
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      console.log("📤 Emitting ready_for_question event");
+      socketRef.current.emit("ready_for_question");
+      console.log("✅ ready_for_question emitted successfully");
     } catch (error) {
-      console.error("❌ Start error:", error);
+      console.error("❌ Auto-start error:", error);
       dispatch(setHasStarted(false));
-      dispatch(setIsInitializing(false));
+      alert("Failed to start interview: " + error.message);
     }
-  }, [dispatch, startMicStreaming]);
+  }, [dispatch, startMicStreaming, interview.isInitializing]);
 
   return {
     ...interview,

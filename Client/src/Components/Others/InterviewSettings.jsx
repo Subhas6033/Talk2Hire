@@ -11,7 +11,8 @@ import {
 import { Card } from "../Common/Card";
 import { useDispatch, useSelector } from "react-redux";
 import { startInterview } from "../../API/interviewApi";
-import QRCode from "qrcode";
+// ❌ SECURITY CAMERA BYPASSED - Commented out QR code import
+// import QRCode from "qrcode";
 
 const InterviewSettings = ({ onInterviewReady }) => {
   const dispatch = useDispatch();
@@ -29,7 +30,8 @@ const InterviewSettings = ({ onInterviewReady }) => {
   const [openGuideLines, setOpenGuideLines] = useState(false);
   const [isMicOpen, setIsMicOpen] = useState(false);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
-  const [showSecuritySetup, setShowSecuritySetup] = useState(false);
+  // ❌ SECURITY CAMERA BYPASSED - Commented out security setup state
+  // const [showSecuritySetup, setShowSecuritySetup] = useState(false);
 
   const [sessionData, setSessionData] = useState(null);
   const [primaryCameraStream, setPrimaryCameraStream] = useState(null);
@@ -52,7 +54,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
   }, [user, hasExistingSkills, setValue]);
 
-  // ✅ NEW: This generates questions in the background
+  // ✅ Generate questions in the background
   const generateQuestionsInBackground = async () => {
     if (!user?.id) {
       setError("User not authenticated.");
@@ -77,15 +79,26 @@ const InterviewSettings = ({ onInterviewReady }) => {
         throw new Error("Session ID not returned from server");
       }
 
-      setSessionData({
+      // ✅ FIX: Set both states together to ensure they update
+      const newSessionData = {
         interviewId: result.sessionId,
         userId: user?.id,
-      });
+      };
 
-      // Mark questions as ready
-      setQuestionsReady(true);
-      setIsGeneratingQuestions(false);
-      console.log("✅ Questions ready, sessionId:", result.sessionId);
+      console.log("✅ Setting session data:", newSessionData);
+      setSessionData(newSessionData);
+
+      // ✅ FIX: Use setTimeout to ensure state updates are processed
+      setTimeout(() => {
+        setQuestionsReady(true);
+        setIsGeneratingQuestions(false);
+        console.log("✅ Questions ready, sessionId:", result.sessionId);
+        console.log("✅ State should now be:", {
+          questionsReady: true,
+          sessionData: newSessionData,
+          isGenerating: false,
+        });
+      }, 100);
     } catch (err) {
       console.error("❌ Question generation error:", err);
       setError(err?.message || "Failed to generate questions");
@@ -94,7 +107,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
   };
 
-  // ✅ MODIFIED: Just open guidelines, don't generate questions yet
   const onSubmit = async () => {
     if (!hasExistingSkills && (!skills || skills.length === 0)) {
       setError("Please select at least one skill to continue.");
@@ -128,57 +140,57 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
   };
 
+  // ✅ MODIFIED: Go directly to interview after camera success (Security Bypassed)
   const handleCameraSuccess = (stream) => {
     console.log("📹 Primary camera stream received");
     setPrimaryCameraStream(stream);
     setIsCameraOpen(false);
-    setShowSecuritySetup(true);
+
+    // ❌ SECURITY CAMERA BYPASSED - Removed security setup modal
+    // Original code: setShowSecuritySetup(true);
+
+    // ✅ FIX: Don't call handleSecuritySetupComplete immediately
+    // Let the useEffect below handle it when all states are ready
+    console.log("✅ Camera ready, waiting for questions to complete...");
   };
 
-  const handleSecuritySetupComplete = () => {
-    console.log("🔍 Security setup complete - checking ALL conditions...");
-
-    const conditions = {
-      questionsReady,
-      sessionData: !!sessionData,
-      primaryCameraStream: !!primaryCameraStream,
-      notGenerating: !isGeneratingQuestions,
-    };
-
-    console.log("📊 Condition check:", conditions);
-
-    if (!questionsReady) {
-      console.log("⏳ Questions not ready yet");
-      setError("Questions are still being generated. Please wait...");
-      return;
+  // ✅ NEW: Auto-start interview when all conditions are met
+  useEffect(() => {
+    if (
+      questionsReady &&
+      sessionData &&
+      primaryCameraStream &&
+      !isGeneratingQuestions
+    ) {
+      console.log("🎯 All conditions met - starting interview!");
+      handleSecuritySetupComplete();
     }
+  }, [questionsReady, sessionData, primaryCameraStream, isGeneratingQuestions]);
 
-    if (isGeneratingQuestions) {
-      console.log("⏳ Questions still generating");
-      setError("Questions are being generated. Please wait...");
-      return;
-    }
+  // ✅ MODIFIED: Simplified to bypass security check
+  const handleSecuritySetupComplete = (cameraStream = primaryCameraStream) => {
+    console.log("🔍 Starting interview (Security Bypassed)");
 
+    // Final validation (useEffect already checked questionsReady and isGeneratingQuestions)
     if (!sessionData) {
       console.error("❌ No session data available");
       setError("Session data not available. Please try again.");
       return;
     }
 
-    if (!primaryCameraStream) {
+    if (!cameraStream && !primaryCameraStream) {
       console.error("❌ No camera stream available");
       setError("Camera stream not available. Please try again.");
       return;
     }
 
     console.log("✅ ALL CHECKS PASSED - Starting interview");
-    setShowSecuritySetup(false);
     setError(null);
 
     // Start the interview
     onInterviewReady({
       ...sessionData,
-      cameraStream: primaryCameraStream,
+      cameraStream: cameraStream || primaryCameraStream,
     });
   };
 
@@ -187,12 +199,13 @@ const InterviewSettings = ({ onInterviewReady }) => {
       if (primaryCameraStream) {
         primaryCameraStream.getTracks().forEach((track) => track.stop());
       }
-      if (sessionData) {
-        localStorage.removeItem(`security_${sessionData.interviewId}`);
-        localStorage.removeItem(
-          `security_angle_verified_${sessionData.interviewId}`,
-        );
-      }
+      // ❌ SECURITY CAMERA BYPASSED - Commented out localStorage cleanup
+      // if (sessionData) {
+      //   localStorage.removeItem(`security_${sessionData.interviewId}`);
+      //   localStorage.removeItem(
+      //     `security_angle_verified_${sessionData.interviewId}`,
+      //   );
+      // }
     };
   }, [primaryCameraStream, sessionData]);
 
@@ -300,6 +313,11 @@ const InterviewSettings = ({ onInterviewReady }) => {
         onSuccess={handleCameraSuccess}
       />
 
+      {/* ❌❌❌ SECURITY CAMERA BYPASSED - ENTIRE SecurityCameraSetup COMPONENT REMOVED ❌❌❌ */}
+      {/* Original code was here - SecurityCameraSetup modal with QR code scanner */}
+      {/* If you need to restore security camera, uncomment the section below: */}
+
+      {/*
       <SecurityCameraSetup
         isOpen={showSecuritySetup}
         onClose={() => {
@@ -322,11 +340,13 @@ const InterviewSettings = ({ onInterviewReady }) => {
         isGeneratingQuestions={isGeneratingQuestions}
         onSecurityConnected={handleSecuritySetupComplete}
       />
+      */}
     </>
   );
 };
 
-// ✅ Security Camera Setup Component
+/* ❌❌❌ SECURITY CAMERA BYPASSED - ENTIRE SecurityCameraSetup COMPONENT COMMENTED OUT ❌❌❌ */
+/*
 const SecurityCameraSetup = ({
   isOpen,
   onClose,
@@ -340,7 +360,6 @@ const SecurityCameraSetup = ({
   const [angleVerified, setAngleVerified] = useState(false);
   const [qrGenerationError, setQrGenerationError] = useState(null);
 
-  // ✅ Track if we've already triggered the start
   const hasTriggeredStartRef = useRef(false);
 
   const generateQRCode = async () => {
@@ -366,7 +385,6 @@ const SecurityCameraSetup = ({
     }
   };
 
-  // ✅ Auto-continue when all conditions are met
   useEffect(() => {
     const allConditionsMet =
       isSecurityConnected &&
@@ -402,7 +420,6 @@ const SecurityCameraSetup = ({
     onSecurityConnected,
   ]);
 
-  // ✅ Poll localStorage for security camera connection
   useEffect(() => {
     if (!isOpen || !sessionData) {
       hasTriggeredStartRef.current = false;
@@ -443,7 +460,6 @@ const SecurityCameraSetup = ({
     };
   }, [isOpen, sessionData, isSecurityConnected, angleVerified]);
 
-  // Generate QR when modal opens AND sessionData is available
   useEffect(() => {
     if (isOpen && sessionData && !qrCodeDataURL) {
       console.log("🎯 Modal open with session data, generating QR...");
@@ -453,7 +469,6 @@ const SecurityCameraSetup = ({
     }
   }, [isOpen, sessionData, qrCodeDataURL]);
 
-  // ✅ Reset trigger flag when modal closes
   useEffect(() => {
     if (!isOpen) {
       hasTriggeredStartRef.current = false;
@@ -480,7 +495,6 @@ const SecurityCameraSetup = ({
       closeOnOverlayClick={false}
     >
       <div className="max-h-[70vh] overflow-y-auto pr-2 space-y-6">
-        {/* Ready Notice */}
         {canContinue && (
           <div className="p-4 bg-green-50 dark:bg-green-950/30 border-2 border-green-500 rounded-lg animate-pulse">
             <div className="flex items-start gap-3">
@@ -509,7 +523,6 @@ const SecurityCameraSetup = ({
           </div>
         )}
 
-        {/* Question Generation Status */}
         <div className="p-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 rounded-lg">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -542,7 +555,6 @@ const SecurityCameraSetup = ({
           </div>
         </div>
 
-        {/* Security Camera Status */}
         <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -586,14 +598,12 @@ const SecurityCameraSetup = ({
           </div>
         </div>
 
-        {/* QR Code Section */}
         <div className="p-6 border-2 border-blue-200 rounded-lg bg-blue-50">
           <div className="text-center space-y-4">
             <h4 className="text-lg font-bold text-blue-900">
               Scan QR Code with Mobile
             </h4>
 
-            {/* ✅ Show waiting state if session data not ready */}
             {!sessionData ? (
               <div className="w-64 h-64 bg-blue-100 rounded-lg flex flex-col items-center justify-center mx-auto gap-3">
                 <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" />
@@ -636,7 +646,6 @@ const SecurityCameraSetup = ({
           </div>
         </div>
 
-        {/* Warning Info */}
         <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
           <div className="flex gap-3">
             <svg
@@ -669,7 +678,6 @@ const SecurityCameraSetup = ({
         </div>
       </div>
 
-      {/* Action Button */}
       <div className="mt-6 pt-4 border-t border-gray-200">
         <Button
           onClick={() => canContinue && onSecurityConnected?.()}
@@ -701,5 +709,7 @@ const SecurityCameraSetup = ({
     </Modal>
   );
 };
+*/
+/* ❌❌❌ END OF SECURITY CAMERA COMPONENT ❌❌❌ */
 
 export default InterviewSettings;

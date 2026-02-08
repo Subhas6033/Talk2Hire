@@ -4,7 +4,8 @@ import { Button } from "../index";
 import { Card } from "../Common/Card";
 import { useInterview } from "../../Hooks/useInterviewHook";
 import useVideoRecording from "../../Hooks/useVideoRecordingHook";
-import SecurityMonitor from "./SecurityMonitor";
+// ❌ SECURITY CAMERA BYPASSED - SecurityMonitor import commented out
+// import SecurityMonitor from "./SecurityMonitor";
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
@@ -27,20 +28,22 @@ const InterviewQuestions = ({
   const videoRef = useRef(null);
   const isCleaningUpRef = useRef(false);
 
-  // Security camera state
-  const [securityStream, setSecurityStream] = useState(null);
-  const [securityWarnings, setSecurityWarnings] = useState([]);
-  const [showSecurityPanel, setShowSecurityPanel] = useState(true);
+  // ❌ SECURITY CAMERA BYPASSED - All security camera state commented out
+  // const [securityStream, setSecurityStream] = useState(null);
+  // const [securityWarnings, setSecurityWarnings] = useState([]);
+  // const [showSecurityPanel, setShowSecurityPanel] = useState(true);
   const [waitingForQuestions, setWaitingForQuestions] = useState(false);
 
-  // ✅ Security camera frame display
-  const [securityFrameData, setSecurityFrameData] = useState(null);
-  const securityVideoRef = useRef(null);
+  // ❌ SECURITY CAMERA BYPASSED - Security camera frame display commented out
+  // const [securityFrameData, setSecurityFrameData] = useState(null);
+  // const securityVideoRef = useRef(null);
 
   // ✅ Evaluation state
   const [evaluationStatus, setEvaluationStatus] = useState(null); // 'started', 'complete', 'error'
   const [evaluationResults, setEvaluationResults] = useState(null);
 
+  // ❌ SECURITY CAMERA BYPASSED - Security connection check removed
+  /*
   useEffect(() => {
     const checkSecurityConnection = () => {
       const mobileConnected = localStorage.getItem(`security_${interviewId}`);
@@ -61,13 +64,41 @@ const InterviewQuestions = ({
       checkSecurityConnection();
     }
   }, [interviewId]);
+  */
 
   useEffect(() => {
-    console.log("📹 InterviewQuestions mounted with cameraStream:", {
+    console.log("📹 Camera stream state:", {
       hasStream: !!cameraStream,
-      streamActive: cameraStream?.active,
-      tracks: cameraStream?.getTracks().length,
+      active: cameraStream?.active,
+      tracks: cameraStream?.getTracks().map((t) => ({
+        kind: t.kind,
+        enabled: t.enabled,
+        readyState: t.readyState,
+      })),
     });
+
+    if (videoRef.current && cameraStream) {
+      console.log("📹 Setting stream to video element");
+      videoRef.current.srcObject = cameraStream;
+
+      videoRef.current.onloadedmetadata = () => {
+        console.log("✅ Video metadata loaded");
+        videoRef.current
+          .play()
+          .then(() => console.log("✅ Video playing"))
+          .catch((err) => console.error("❌ Play error:", err));
+      };
+
+      videoRef.current.onerror = (err) => {
+        console.error("❌ Video element error:", err);
+      };
+    }
+
+    return () => {
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+    };
   }, [cameraStream]);
 
   // Monitor socket health
@@ -85,16 +116,26 @@ const InterviewQuestions = ({
     return () => clearInterval(healthCheckInterval);
   }, [interview.socketRef]);
 
-  useEffect(() => {
+  /*   useEffect(() => {
     if (videoRef.current && cameraStream) {
       console.log("📹 Setting camera stream to video element");
       videoRef.current.srcObject = cameraStream;
 
-      videoRef.current.play().catch((err) => {
-        console.error("❌ Error playing video:", err);
-      });
+      // ✅ FIX: Ensure video plays after setting stream
+      videoRef.current.onloadedmetadata = () => {
+        videoRef.current.play().catch((err) => {
+          console.error("❌ Error playing video:", err);
+        });
+      };
     }
-  }, [cameraStream]);
+
+    // ✅ FIX: Cleanup video element on unmount
+    return () => {
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+    };
+  }, [cameraStream]); */
 
   useEffect(() => {
     console.log("🔌 Creating socket instance...");
@@ -107,7 +148,7 @@ const InterviewQuestions = ({
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
       timeout: 20000,
-      autoConnect: false, // ✅ CHANGED: Control connection timing
+      autoConnect: false,
     });
 
     interview.socketRef.current = socket;
@@ -141,7 +182,8 @@ const InterviewQuestions = ({
       }
     });
 
-    // ✅ Listen for security camera frames
+    // ❌ SECURITY CAMERA BYPASSED - Security frame listeners commented out
+    /*
     socket.on("security_frame", (data) => {
       console.log("📸 Security frame received");
       setSecurityFrameData(data);
@@ -155,7 +197,12 @@ const InterviewQuestions = ({
       console.warn("⚠️ Security camera disconnected:", data);
       setSecurityFrameData(null);
     });
-
+    */
+    socket.on("server_ready", () => {
+      console.log("✅ Server ready signal received!");
+      interview.setServerReady(true);
+      interview.setIsInitializing(false); // ✅ CRITICAL: Clear initializing flag
+    });
     // ✅ Listen for interim transcripts
     socket.on("interim_transcript", (data) => {
       console.log("💬 Interim transcript:", data.text);
@@ -253,18 +300,24 @@ const InterviewQuestions = ({
     });
 
     socket.on("interview_complete", async (data) => {
-      console.log("🎉 Interview completed:", data);
+      console.log("🎉 Interview complete:", data);
       interview.handleInterviewComplete(data);
 
-      // Stop video recording and let server finalize
+      // ✅ FIX: Stop recording and wait for finalization
       if (isVideoRecording) {
         console.log("🎥 Stopping video recording...");
-        await stopVideoRecording();
-        console.log("✅ Video recording stopped, server will process chunks");
+        try {
+          await stopVideoRecording();
+          console.log("✅ Video recording stopped");
+
+          // ✅ FIX: Wait a bit for chunks to finish uploading
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        } catch (err) {
+          console.error("❌ Error stopping video:", err);
+        }
       }
 
-      // Don't immediately call onFinish - wait for evaluation
-      console.log("⏳ Waiting for evaluation to complete...");
+      console.log("⏳ Waiting for evaluation...");
     });
 
     socket.on("tts_end", () => {
@@ -336,9 +389,10 @@ const InterviewQuestions = ({
         cameraStream.getTracks().forEach((track) => track.stop());
       }
 
-      if (securityStream) {
-        securityStream.getTracks().forEach((track) => track.stop());
-      }
+      // ❌ SECURITY CAMERA BYPASSED - Security stream cleanup commented out
+      // if (securityStream) {
+      //   securityStream.getTracks().forEach((track) => track.stop());
+      // }
 
       socket.disconnect();
       console.log("🔌 Cleanup complete");
@@ -347,7 +401,8 @@ const InterviewQuestions = ({
     interviewId,
     userId,
     cameraStream,
-    securityStream,
+    // ❌ SECURITY CAMERA BYPASSED - Removed securityStream from dependencies
+    // securityStream,
     onFinish,
     isVideoRecording,
     startVideoRecording,
@@ -356,26 +411,37 @@ const InterviewQuestions = ({
 
   // ✅ Add serverReady check to prevent premature recording start
   useEffect(() => {
-    if (
+    const shouldStartRecording =
       interview.status === "live" &&
       !interview.isInitializing &&
+      interview.serverReady &&
       interview.hasStarted &&
-      interview.serverReady && // ✅ Ensure server is ready
       cameraStream &&
-      !isVideoRecording
-    ) {
-      console.log("🎥 Interview started - initiating video recording...");
+      !isVideoRecording;
+
+    console.log("📹 Video recording check:", {
+      status: interview.status,
+      isInitializing: interview.isInitializing,
+      serverReady: interview.serverReady,
+      hasStarted: interview.hasStarted,
+      hasStream: !!cameraStream,
+      isRecording: isVideoRecording,
+      shouldStart: shouldStartRecording,
+    });
+
+    if (shouldStartRecording) {
+      console.log("🎥 Starting video recording...");
       const timer = setTimeout(() => {
         startVideoRecording();
-      }, 2000); // Small delay to ensure socket is ready
+      }, 1000);
 
       return () => clearTimeout(timer);
     }
   }, [
     interview.status,
     interview.isInitializing,
+    interview.serverReady,
     interview.hasStarted,
-    interview.serverReady, // ✅ Add to dependencies
     cameraStream,
     isVideoRecording,
     startVideoRecording,
@@ -402,6 +468,8 @@ Your videos have been processed and evaluation is complete.`;
     }
   }, [evaluationStatus, evaluationResults, interview.questionOrder, onFinish]);
 
+  // ❌ SECURITY CAMERA BYPASSED - Security warning handler commented out
+  /*
   const handleSecurityWarning = (warning) => {
     const newWarning = {
       id: Date.now(),
@@ -421,13 +489,17 @@ Your videos have been processed and evaluation is complete.`;
 
     console.warn("🚨 Security Warning:", newWarning);
   };
+  */
 
   return (
     <section className="p-4 md:p-6">
       <div className="max-w-350 mx-auto h-full">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-6 h-full">
+        {/* ❌ SECURITY CAMERA BYPASSED - Changed grid to show only main interview section */}
+        {/* Original: grid-cols-1 lg:grid-cols-12 - now just single column */}
+        <div className="grid grid-cols-1 gap-4 md:gap-6 h-full">
           {/* Main Interview Section */}
-          <div className="lg:col-span-8 flex flex-col gap-4">
+          {/* ❌ SECURITY CAMERA BYPASSED - Removed lg:col-span-8, now full width */}
+          <div className="flex flex-col gap-4">
             <Card className="flex-1 flex flex-col overflow-hidden shadow-sm border border-gray-200 dark:border-gray-800">
               {/* Clean Header */}
               <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
@@ -526,6 +598,8 @@ Your videos have been processed and evaluation is complete.`;
                     />
                     Mic
                   </div>
+                  {/* ❌ SECURITY CAMERA BYPASSED - Security status indicator removed */}
+                  {/*
                   <div
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
                       securityWarnings.length > 0
@@ -546,6 +620,7 @@ Your videos have been processed and evaluation is complete.`;
                     />
                     Security
                   </div>
+                  */}
                   <div
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
                       isVideoRecording
@@ -594,6 +669,8 @@ Your videos have been processed and evaluation is complete.`;
 
               {/* Main Content Area - Interview Questions */}
               <div className="flex-1 flex flex-col p-6 bg-white dark:bg-gray-900">
+                {/* ❌ SECURITY CAMERA BYPASSED - Security warnings display removed */}
+                {/*
                 {securityWarnings.length > 0 && (
                   <div className="mb-4 p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg">
                     <div className="flex items-center gap-2">
@@ -621,6 +698,7 @@ Your videos have been processed and evaluation is complete.`;
                     </p>
                   </div>
                 )}
+                */}
 
                 {/* ✅ Evaluation in progress */}
                 {evaluationStatus === "started" && (
@@ -836,11 +914,8 @@ Your videos have been processed and evaluation is complete.`;
                 </div>
               )}
             </Card>
-          </div>
 
-          {/* Right Column: Camera & Security */}
-          <div className="lg:col-span-4 flex flex-col gap-4">
-            {/* Primary Camera */}
+            {/* ✅ Primary Camera - Moved outside of grid to show full width */}
             {cameraStream && (
               <Card className="flex flex-col overflow-hidden shadow-sm border border-gray-200 dark:border-gray-800">
                 <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
@@ -891,8 +966,14 @@ Your videos have been processed and evaluation is complete.`;
                 </div>
               </Card>
             )}
+          </div>
 
-            {/* ✅ Security Camera Feed Display */}
+          {/* ❌❌❌ SECURITY CAMERA BYPASSED - ENTIRE RIGHT COLUMN REMOVED ❌❌❌ */}
+          {/* Original code had security camera feed and SecurityMonitor here */}
+          {/* If you need to restore, uncomment the section below: */}
+
+          {/*
+          <div className="lg:col-span-4 flex flex-col gap-4">
             {securityFrameData && (
               <Card className="flex flex-col overflow-hidden shadow-sm border border-gray-200 dark:border-gray-800">
                 <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
@@ -939,7 +1020,6 @@ Your videos have been processed and evaluation is complete.`;
               </Card>
             )}
 
-            {/* Security Monitor - Read Only */}
             <SecurityMonitor
               interviewId={interviewId}
               userId={userId}
@@ -953,6 +1033,8 @@ Your videos have been processed and evaluation is complete.`;
               readOnly={true}
             />
           </div>
+          */}
+          {/* ❌❌❌ END OF SECURITY CAMERA SECTION ❌❌❌ */}
         </div>
       </div>
     </section>
