@@ -4,8 +4,6 @@ import { Button } from "../index";
 import { Card } from "../Common/Card";
 import { useInterview } from "../../Hooks/useInterviewHook";
 import useVideoRecording from "../../Hooks/useVideoRecordingHook";
-// ❌ SECURITY CAMERA BYPASSED - SecurityMonitor import commented out
-// import SecurityMonitor from "./SecurityMonitor";
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
@@ -28,80 +26,307 @@ const InterviewQuestions = ({
   const videoRef = useRef(null);
   const isCleaningUpRef = useRef(false);
 
-  // ❌ SECURITY CAMERA BYPASSED - All security camera state commented out
-  // const [securityStream, setSecurityStream] = useState(null);
-  // const [securityWarnings, setSecurityWarnings] = useState([]);
-  // const [showSecurityPanel, setShowSecurityPanel] = useState(true);
   const [waitingForQuestions, setWaitingForQuestions] = useState(false);
-
-  // ❌ SECURITY CAMERA BYPASSED - Security camera frame display commented out
-  // const [securityFrameData, setSecurityFrameData] = useState(null);
-  // const securityVideoRef = useRef(null);
-
-  // ✅ Evaluation state
-  const [evaluationStatus, setEvaluationStatus] = useState(null); // 'started', 'complete', 'error'
+  const [evaluationStatus, setEvaluationStatus] = useState(null);
   const [evaluationResults, setEvaluationResults] = useState(null);
 
-  // ❌ SECURITY CAMERA BYPASSED - Security connection check removed
-  /*
+  // ✅ ADD: Track if we've sent ready_for_question
+  const readyForQuestionSentRef = useRef(false);
+
+  // Video element setup (unchanged)
   useEffect(() => {
-    const checkSecurityConnection = () => {
-      const mobileConnected = localStorage.getItem(`security_${interviewId}`);
-      const angleVerified = localStorage.getItem(
-        `security_angle_verified_${interviewId}`,
-      );
-
-      if (mobileConnected === "connected" && angleVerified === "true") {
-        console.log("✅ Security camera already connected from setup");
-      } else {
-        console.warn(
-          "⚠️ Security camera not connected - interview may be terminated",
-        );
-      }
-    };
-
-    if (interviewId) {
-      checkSecurityConnection();
-    }
-  }, [interviewId]);
-  */
-
-  useEffect(() => {
-    console.log("📹 Camera stream state:", {
-      hasStream: !!cameraStream,
-      active: cameraStream?.active,
-      tracks: cameraStream?.getTracks().map((t) => ({
-        kind: t.kind,
-        enabled: t.enabled,
-        readyState: t.readyState,
-      })),
+    console.log("📹 Video element setup START:", {
+      hasVideoRef: !!videoRef.current,
+      hasCameraStream: !!cameraStream,
+      streamActive: cameraStream?.active,
     });
 
-    if (videoRef.current && cameraStream) {
-      console.log("📹 Setting stream to video element");
+    if (!videoRef.current || !cameraStream) {
+      console.log("⚠️ Missing video ref or camera stream, skipping setup");
+      return;
+    }
+
+    const videoTrack = cameraStream.getVideoTracks()[0];
+
+    if (!videoTrack) {
+      console.error("❌ FATAL: No video track found in stream!");
+      alert(
+        "No video track available. Please refresh and allow camera access.",
+      );
+      return;
+    }
+
+    console.log("📹 Video track details:", {
+      label: videoTrack.label,
+      enabled: videoTrack.enabled,
+      readyState: videoTrack.readyState,
+    });
+
+    if (videoTrack.readyState !== "live") {
+      console.error(
+        "❌ FATAL: Video track is not live! State:",
+        videoTrack.readyState,
+      );
+      alert(
+        `Video track is ${videoTrack.readyState}. Please refresh and try again.`,
+      );
+      return;
+    }
+
+    console.log("✅ Video track verified as LIVE");
+
+    const setupVideo = () => {
+      if (!videoRef.current || !cameraStream) {
+        console.log("⚠️ Video ref or stream lost during setup");
+        return;
+      }
+
+      console.log("📹 Attaching stream to video element");
+
+      if (
+        videoRef.current.srcObject &&
+        videoRef.current.srcObject !== cameraStream
+      ) {
+        console.log("🧹 Clearing old stream");
+        videoRef.current.srcObject = null;
+      }
+
       videoRef.current.srcObject = cameraStream;
+      videoRef.current.setAttribute("playsinline", "true");
+      videoRef.current.setAttribute("autoplay", "true");
+      videoRef.current.muted = true;
+      videoRef.current.playsInline = true;
+
+      console.log("📹 Video element attributes set");
 
       videoRef.current.onloadedmetadata = () => {
         console.log("✅ Video metadata loaded");
-        videoRef.current
-          .play()
-          .then(() => console.log("✅ Video playing"))
-          .catch((err) => console.error("❌ Play error:", err));
+
+        if (!videoRef.current) return;
+
+        const playPromise = videoRef.current.play();
+
+        if (playPromise !== undefined) {
+          playPromise
+            .then(() => {
+              console.log("✅ Video playing successfully!");
+
+              if (!videoRef.current) return;
+
+              const state = {
+                paused: videoRef.current.paused,
+                readyState: videoRef.current.readyState,
+                videoWidth: videoRef.current.videoWidth,
+                videoHeight: videoRef.current.videoHeight,
+                currentTime: videoRef.current.currentTime,
+              };
+
+              console.log("📹 Video playback state:", state);
+
+              if (state.videoWidth <= 2 || state.videoHeight <= 2) {
+                console.error("❌ INVALID VIDEO DIMENSIONS:", state);
+                console.error("Stream may be inactive or corrupted!");
+
+                setTimeout(() => {
+                  console.log("🔄 Attempting to reload stream...");
+                  if (videoRef.current && cameraStream) {
+                    videoRef.current.srcObject = null;
+                    setTimeout(() => {
+                      if (videoRef.current && cameraStream) {
+                        videoRef.current.srcObject = cameraStream;
+                        videoRef.current.play();
+                      }
+                    }, 500);
+                  }
+                }, 1000);
+              } else {
+                console.log(
+                  "✅ Video dimensions are valid:",
+                  `${state.videoWidth}x${state.videoHeight}`,
+                );
+              }
+            })
+            .catch((err) => {
+              console.error("❌ Video play() failed:", err);
+
+              if (err.name === "NotAllowedError" || err.name === "AbortError") {
+                console.log(
+                  "🔊 Autoplay blocked - waiting for user interaction",
+                );
+
+                const playOnClick = () => {
+                  console.log("👆 User interaction detected, playing video");
+                  videoRef.current
+                    ?.play()
+                    .then(() =>
+                      console.log("✅ Video playing after interaction"),
+                    )
+                    .catch((e) =>
+                      console.error("❌ Still failed after click:", e),
+                    );
+                  document.removeEventListener("click", playOnClick);
+                };
+
+                document.addEventListener("click", playOnClick, { once: true });
+                alert("Click anywhere to start video preview");
+              } else {
+                alert("Video playback error: " + err.message);
+              }
+            });
+        }
       };
 
       videoRef.current.onerror = (err) => {
         console.error("❌ Video element error:", err);
       };
+    };
+
+    if (cameraStream.active && videoTrack.readyState === "live") {
+      console.log("✅ Stream is active, setting up video immediately");
+      setupVideo();
+    } else {
+      console.log("⏳ Waiting for stream to fully activate...");
+      const activationTimer = setTimeout(() => {
+        if (cameraStream.active && videoTrack.readyState === "live") {
+          console.log("✅ Stream activated, setting up video");
+          setupVideo();
+        } else {
+          console.error("❌ Stream failed to activate:", {
+            streamActive: cameraStream.active,
+            trackState: videoTrack.readyState,
+          });
+          alert("Camera stream failed to activate. Please refresh.");
+        }
+      }, 500);
+
+      return () => clearTimeout(activationTimer);
     }
 
     return () => {
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
+      console.log("🧹 Video setup cleanup - keeping stream active");
     };
   }, [cameraStream]);
 
-  // Monitor socket health
+  // Stream health monitor (unchanged)
+  useEffect(() => {
+    if (!cameraStream) {
+      console.log("⚠️ No camera stream to monitor");
+      return;
+    }
+
+    let checkCount = 0;
+    let hasAlerted = false;
+
+    console.log("🏥 Starting stream health monitor");
+
+    const monitorInterval = setInterval(() => {
+      checkCount++;
+
+      const videoTrack = cameraStream.getVideoTracks()[0];
+      const health = {
+        check: checkCount,
+        stream: {
+          active: cameraStream.active,
+          id: cameraStream.id,
+        },
+        track: videoTrack
+          ? {
+              label: videoTrack.label,
+              readyState: videoTrack.readyState,
+              enabled: videoTrack.enabled,
+            }
+          : null,
+        videoElement: videoRef.current
+          ? {
+              paused: videoRef.current.paused,
+              readyState: videoRef.current.readyState,
+              videoWidth: videoRef.current.videoWidth,
+              videoHeight: videoRef.current.videoHeight,
+              srcObject: !!videoRef.current.srcObject,
+            }
+          : null,
+      };
+
+      if (checkCount % 3 === 0) {
+        console.log(`🏥 Health check #${checkCount}:`, health);
+      }
+
+      if (!cameraStream.active && !hasAlerted) {
+        console.error("❌ CRITICAL: Camera stream became inactive!");
+        alert("Camera stream stopped. Please refresh.");
+        hasAlerted = true;
+        clearInterval(monitorInterval);
+        return;
+      }
+
+      if (videoTrack && videoTrack.readyState === "ended" && !hasAlerted) {
+        console.error("❌ CRITICAL: Video track ended!");
+        alert("Camera track stopped. Please refresh.");
+        hasAlerted = true;
+        clearInterval(monitorInterval);
+        return;
+      }
+
+      if (
+        videoRef.current &&
+        videoRef.current.videoWidth <= 2 &&
+        videoRef.current.videoHeight <= 2 &&
+        checkCount >= 2 &&
+        !hasAlerted
+      ) {
+        console.error("❌ CRITICAL: Invalid video dimensions!");
+        console.log("🔄 Attempting emergency stream restart...");
+
+        if (videoRef.current && cameraStream) {
+          videoRef.current.srcObject = null;
+
+          setTimeout(() => {
+            if (videoRef.current && cameraStream) {
+              videoRef.current.srcObject = cameraStream;
+              videoRef.current
+                .play()
+                .then(() => {
+                  console.log("✅ Emergency restart successful");
+
+                  setTimeout(() => {
+                    if (videoRef.current) {
+                      const newDims = {
+                        width: videoRef.current.videoWidth,
+                        height: videoRef.current.videoHeight,
+                      };
+                      console.log("📹 New dimensions:", newDims);
+
+                      if (newDims.width <= 2 || newDims.height <= 2) {
+                        console.error("❌ Restart failed");
+                        alert("Video display failed. Please refresh.");
+                        hasAlerted = true;
+                      }
+                    }
+                  }, 1000);
+                })
+                .catch((err) => {
+                  console.error("❌ Emergency restart failed:", err);
+                  alert("Failed to fix video. Please refresh.");
+                  hasAlerted = true;
+                });
+            }
+          }, 500);
+        }
+      }
+
+      if (checkCount >= 20) {
+        console.log("✅ Stream health monitoring completed");
+        clearInterval(monitorInterval);
+      }
+    }, 10000);
+
+    return () => {
+      console.log("🧹 Stopping stream health monitor");
+      clearInterval(monitorInterval);
+    };
+  }, [cameraStream]);
+
+  // Socket health monitor
   useEffect(() => {
     if (!interview.socketRef.current) return;
 
@@ -111,32 +336,12 @@ const InterviewQuestions = ({
       } else {
         console.warn("💔 Socket health: Disconnected");
       }
-    }, 10000); // Check every 10 seconds
+    }, 10000);
 
     return () => clearInterval(healthCheckInterval);
   }, [interview.socketRef]);
 
-  /*   useEffect(() => {
-    if (videoRef.current && cameraStream) {
-      console.log("📹 Setting camera stream to video element");
-      videoRef.current.srcObject = cameraStream;
-
-      // ✅ FIX: Ensure video plays after setting stream
-      videoRef.current.onloadedmetadata = () => {
-        videoRef.current.play().catch((err) => {
-          console.error("❌ Error playing video:", err);
-        });
-      };
-    }
-
-    // ✅ FIX: Cleanup video element on unmount
-    return () => {
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
-    };
-  }, [cameraStream]); */
-
+  // ✅ MAIN SOCKET INITIALIZATION
   useEffect(() => {
     console.log("🔌 Creating socket instance...");
 
@@ -153,7 +358,6 @@ const InterviewQuestions = ({
 
     interview.socketRef.current = socket;
 
-    // ✅ Register ALL event listeners FIRST before connecting
     socket.onAny((eventName, ...args) => {
       if (
         eventName !== "user_audio_chunk" &&
@@ -172,38 +376,22 @@ const InterviewQuestions = ({
       interview.setStatus("live");
     });
 
-    socket.on("server_ready", () => {
-      console.log("✅ Server ready!");
-      interview.setServerReady(true);
-
-      if (!interview.hasStarted) {
-        console.log("🚀 Auto-starting interview...");
-        interview.autoStartInterview();
-      }
-    });
-
-    // ❌ SECURITY CAMERA BYPASSED - Security frame listeners commented out
-    /*
-    socket.on("security_frame", (data) => {
-      console.log("📸 Security frame received");
-      setSecurityFrameData(data);
-    });
-
-    socket.on("security_camera_connected", (data) => {
-      console.log("✅ Security camera connected event received:", data);
-    });
-
-    socket.on("security_camera_disconnected", (data) => {
-      console.warn("⚠️ Security camera disconnected:", data);
-      setSecurityFrameData(null);
-    });
-    */
+    // ✅ CRITICAL: Wait for server_ready before sending ready_for_question
     socket.on("server_ready", () => {
       console.log("✅ Server ready signal received!");
       interview.setServerReady(true);
-      interview.setIsInitializing(false); // ✅ CRITICAL: Clear initializing flag
+      interview.setIsInitializing(false);
+
+      // ✅ NEW: Send ready_for_question ONLY after server_ready
+      setTimeout(() => {
+        if (!readyForQuestionSentRef.current) {
+          console.log("📤 Sending ready_for_question to server...");
+          socket.emit("ready_for_question");
+          readyForQuestionSentRef.current = true;
+        }
+      }, 200);
     });
-    // ✅ Listen for interim transcripts
+
     socket.on("interim_transcript", (data) => {
       console.log("💬 Interim transcript:", data.text);
       interview.setLiveTranscript(data.text);
@@ -232,7 +420,6 @@ const InterviewQuestions = ({
       console.log("✅ Video processing complete:", data);
     });
 
-    // ✅ Evaluation event listeners
     socket.on("evaluation_started", (data) => {
       console.log("🔄 Evaluation started:", data.message);
       setEvaluationStatus("started");
@@ -303,14 +490,11 @@ const InterviewQuestions = ({
       console.log("🎉 Interview complete:", data);
       interview.handleInterviewComplete(data);
 
-      // ✅ FIX: Stop recording and wait for finalization
       if (isVideoRecording) {
         console.log("🎥 Stopping video recording...");
         try {
           await stopVideoRecording();
           console.log("✅ Video recording stopped");
-
-          // ✅ FIX: Wait a bit for chunks to finish uploading
           await new Promise((resolve) => setTimeout(resolve, 2000));
         } catch (err) {
           console.error("❌ Error stopping video:", err);
@@ -360,14 +544,12 @@ const InterviewQuestions = ({
       interview.setStatus("error");
     });
 
-    // ✅ Initialize interview FIRST
     interview.initializeInterview({
       interviewId,
       userId,
       sessionId: interviewId,
     });
 
-    // ✅ Connect AFTER all listeners are registered
     console.log("🔌 Connecting socket...");
     socket.connect();
 
@@ -386,30 +568,17 @@ const InterviewQuestions = ({
       }
 
       if (cameraStream) {
-        cameraStream.getTracks().forEach((track) => track.stop());
+        console.log(
+          "✅ Camera stream still active - NOT stopping (owned by parent)",
+        );
       }
-
-      // ❌ SECURITY CAMERA BYPASSED - Security stream cleanup commented out
-      // if (securityStream) {
-      //   securityStream.getTracks().forEach((track) => track.stop());
-      // }
 
       socket.disconnect();
       console.log("🔌 Cleanup complete");
     };
-  }, [
-    interviewId,
-    userId,
-    cameraStream,
-    // ❌ SECURITY CAMERA BYPASSED - Removed securityStream from dependencies
-    // securityStream,
-    onFinish,
-    isVideoRecording,
-    startVideoRecording,
-    stopVideoRecording,
-  ]);
+  }, [interviewId, userId]);
 
-  // ✅ Add serverReady check to prevent premature recording start
+  // ✅ VIDEO RECORDING START LOGIC
   useEffect(() => {
     const shouldStartRecording =
       interview.status === "live" &&
@@ -419,21 +588,34 @@ const InterviewQuestions = ({
       cameraStream &&
       !isVideoRecording;
 
-    console.log("📹 Video recording check:", {
+    console.log("📹 Video recording decision check:", {
       status: interview.status,
       isInitializing: interview.isInitializing,
       serverReady: interview.serverReady,
       hasStarted: interview.hasStarted,
       hasStream: !!cameraStream,
+      streamActive: cameraStream?.active,
       isRecording: isVideoRecording,
       shouldStart: shouldStartRecording,
+      socketConnected: interview.socketRef.current?.connected,
     });
 
     if (shouldStartRecording) {
-      console.log("🎥 Starting video recording...");
+      console.log(
+        "🎥 All conditions met - scheduling video recording start...",
+      );
+
       const timer = setTimeout(() => {
+        console.log("🎥 Starting video recording now...");
+        console.log("📊 Final check before start:", {
+          socketExists: !!interview.socketRef.current,
+          socketConnected: interview.socketRef.current?.connected,
+          streamExists: !!cameraStream,
+          streamActive: cameraStream?.active,
+        });
+
         startVideoRecording();
-      }, 1000);
+      }, 1500);
 
       return () => clearTimeout(timer);
     }
@@ -445,9 +627,10 @@ const InterviewQuestions = ({
     cameraStream,
     isVideoRecording,
     startVideoRecording,
+    interview.socketRef,
   ]);
 
-  // ✅ Auto-finish when evaluation completes
+  // Auto-finish when evaluation completes
   useEffect(() => {
     if (evaluationStatus === "complete" && evaluationResults) {
       console.log("✅ Evaluation complete, showing results and finishing...");
@@ -468,40 +651,57 @@ Your videos have been processed and evaluation is complete.`;
     }
   }, [evaluationStatus, evaluationResults, interview.questionOrder, onFinish]);
 
-  // ❌ SECURITY CAMERA BYPASSED - Security warning handler commented out
-  /*
-  const handleSecurityWarning = (warning) => {
-    const newWarning = {
-      id: Date.now(),
-      timestamp: new Date().toISOString(),
-      ...warning,
-    };
+  // Emergency stream recovery
+  useEffect(() => {
+    if (!cameraStream) return;
 
-    setSecurityWarnings((prev) => [...prev, newWarning]);
+    const checkInterval = setInterval(() => {
+      const videoTrack = cameraStream.getVideoTracks()[0];
 
-    if (interview.socketRef.current?.connected) {
-      interview.socketRef.current.emit("security_alert", {
-        interviewId,
-        userId,
-        warning: newWarning,
-      });
-    }
+      if (!videoTrack) {
+        console.error("❌ CRITICAL: Video track disappeared!");
+        clearInterval(checkInterval);
+        alert(
+          "Camera track lost. Interview will be interrupted. Please refresh.",
+        );
+        return;
+      }
 
-    console.warn("🚨 Security Warning:", newWarning);
-  };
-  */
+      if (videoTrack.readyState === "ended") {
+        console.error("❌ CRITICAL: Video track ended unexpectedly!");
+        clearInterval(checkInterval);
+
+        navigator.mediaDevices
+          .getUserMedia({
+            video: { facingMode: "user" },
+          })
+          .then((newStream) => {
+            console.log("✅ Recovered camera stream");
+
+            if (videoRef.current) {
+              videoRef.current.srcObject = newStream;
+              videoRef.current.play();
+            }
+
+            alert("Camera was restarted. Recording may have gaps.");
+          })
+          .catch((err) => {
+            console.error("❌ Recovery failed:", err);
+            alert("Camera stopped and could not be recovered. Please refresh.");
+          });
+      }
+    }, 2000);
+
+    return () => clearInterval(checkInterval);
+  }, [cameraStream]);
 
   return (
     <section className="p-4 md:p-6">
       <div className="max-w-350 mx-auto h-full">
-        {/* ❌ SECURITY CAMERA BYPASSED - Changed grid to show only main interview section */}
-        {/* Original: grid-cols-1 lg:grid-cols-12 - now just single column */}
         <div className="grid grid-cols-1 gap-4 md:gap-6 h-full">
-          {/* Main Interview Section */}
-          {/* ❌ SECURITY CAMERA BYPASSED - Removed lg:col-span-8, now full width */}
           <div className="flex flex-col gap-4">
             <Card className="flex-1 flex flex-col overflow-hidden shadow-sm border border-gray-200 dark:border-gray-800">
-              {/* Clean Header */}
+              {/* Header */}
               <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
                 <div className="flex items-center gap-3">
                   <div className="relative">
@@ -598,29 +798,6 @@ Your videos have been processed and evaluation is complete.`;
                     />
                     Mic
                   </div>
-                  {/* ❌ SECURITY CAMERA BYPASSED - Security status indicator removed */}
-                  {/*
-                  <div
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                      securityWarnings.length > 0
-                        ? "bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300"
-                        : securityFrameData
-                          ? "bg-green-50 dark:bg-green-950/50 text-green-700 dark:text-green-300"
-                          : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400"
-                    }`}
-                  >
-                    <div
-                      className={`w-1.5 h-1.5 rounded-full ${
-                        securityWarnings.length > 0
-                          ? "bg-red-600 animate-pulse"
-                          : securityFrameData
-                            ? "bg-green-600 animate-pulse"
-                            : "bg-gray-400"
-                      }`}
-                    />
-                    Security
-                  </div>
-                  */}
                   <div
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
                       isVideoRecording
@@ -637,7 +814,6 @@ Your videos have been processed and evaluation is complete.`;
                     />
                     {isVideoRecording ? "Recording" : "Video"}
                   </div>
-                  {/* ✅ Evaluation status indicator */}
                   {evaluationStatus && (
                     <div
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
@@ -667,40 +843,8 @@ Your videos have been processed and evaluation is complete.`;
                 </div>
               </div>
 
-              {/* Main Content Area - Interview Questions */}
+              {/* Main Content Area */}
               <div className="flex-1 flex flex-col p-6 bg-white dark:bg-gray-900">
-                {/* ❌ SECURITY CAMERA BYPASSED - Security warnings display removed */}
-                {/*
-                {securityWarnings.length > 0 && (
-                  <div className="mb-4 p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg">
-                    <div className="flex items-center gap-2">
-                      <svg
-                        className="w-5 h-5 text-red-600 dark:text-red-400"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                        />
-                      </svg>
-                      <span className="text-sm font-semibold text-red-900 dark:text-red-300">
-                        {securityWarnings.length} Security Alert
-                        {securityWarnings.length > 1 ? "s" : ""}
-                      </span>
-                    </div>
-                    <p className="text-xs text-red-800 dark:text-red-200 mt-1">
-                      {securityWarnings[securityWarnings.length - 1]?.type}:{" "}
-                      {securityWarnings[securityWarnings.length - 1]?.message}
-                    </p>
-                  </div>
-                )}
-                */}
-
-                {/* ✅ Evaluation in progress */}
                 {evaluationStatus === "started" && (
                   <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg">
                     <div className="flex items-center gap-3">
@@ -915,7 +1059,7 @@ Your videos have been processed and evaluation is complete.`;
               )}
             </Card>
 
-            {/* ✅ Primary Camera - Moved outside of grid to show full width */}
+            {/* Primary Camera */}
             {cameraStream && (
               <Card className="flex flex-col overflow-hidden shadow-sm border border-gray-200 dark:border-gray-800">
                 <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
@@ -967,74 +1111,6 @@ Your videos have been processed and evaluation is complete.`;
               </Card>
             )}
           </div>
-
-          {/* ❌❌❌ SECURITY CAMERA BYPASSED - ENTIRE RIGHT COLUMN REMOVED ❌❌❌ */}
-          {/* Original code had security camera feed and SecurityMonitor here */}
-          {/* If you need to restore, uncomment the section below: */}
-
-          {/*
-          <div className="lg:col-span-4 flex flex-col gap-4">
-            {securityFrameData && (
-              <Card className="flex flex-col overflow-hidden shadow-sm border border-gray-200 dark:border-gray-800">
-                <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-                  <div className="flex items-center gap-2">
-                    <svg
-                      className="w-4 h-4 text-gray-400"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M9 12l2 2 4-4m5.618-4.016A11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-                      />
-                    </svg>
-                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                      Security Camera
-                    </h3>
-                    <div className="ml-auto flex items-center gap-1.5 px-2 py-1 bg-green-100 dark:bg-green-900/30 rounded text-xs font-medium text-green-700 dark:text-green-300">
-                      <div className="w-1.5 h-1.5 bg-green-600 rounded-full animate-pulse" />
-                      Live
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-4 bg-white dark:bg-gray-900">
-                  <div className="relative w-full aspect-4/3 bg-gray-900 rounded-lg overflow-hidden">
-                    <img
-                      src={securityFrameData.frame}
-                      alt="Security Camera Feed"
-                      className="w-full h-full object-cover"
-                    />
-                    <div className="absolute bottom-3 left-3">
-                      <div className="px-2 py-1 bg-black/80 backdrop-blur-sm rounded text-xs font-mono text-white">
-                        {new Date(
-                          securityFrameData.timestamp,
-                        ).toLocaleTimeString()}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </Card>
-            )}
-
-            <SecurityMonitor
-              interviewId={interviewId}
-              userId={userId}
-              onWarning={handleSecurityWarning}
-              securityStream={securityStream}
-              setSecurityStream={setSecurityStream}
-              isVisible={showSecurityPanel}
-              onToggleVisibility={() =>
-                setShowSecurityPanel(!showSecurityPanel)
-              }
-              readOnly={true}
-            />
-          </div>
-          */}
-          {/* ❌❌❌ END OF SECURITY CAMERA SECTION ❌❌❌ */}
         </div>
       </div>
     </section>

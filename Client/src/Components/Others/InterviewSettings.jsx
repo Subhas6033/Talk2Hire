@@ -11,8 +11,6 @@ import {
 import { Card } from "../Common/Card";
 import { useDispatch, useSelector } from "react-redux";
 import { startInterview } from "../../API/interviewApi";
-// ❌ SECURITY CAMERA BYPASSED - Commented out QR code import
-// import QRCode from "qrcode";
 
 const InterviewSettings = ({ onInterviewReady }) => {
   const dispatch = useDispatch();
@@ -30,11 +28,10 @@ const InterviewSettings = ({ onInterviewReady }) => {
   const [openGuideLines, setOpenGuideLines] = useState(false);
   const [isMicOpen, setIsMicOpen] = useState(false);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
-  // ❌ SECURITY CAMERA BYPASSED - Commented out security setup state
-  // const [showSecuritySetup, setShowSecuritySetup] = useState(false);
 
   const [sessionData, setSessionData] = useState(null);
-  const [primaryCameraStream, setPrimaryCameraStream] = useState(null);
+  // ✅ REMOVE STATE - use only ref
+  // const [primaryCameraStream, setPrimaryCameraStream] = useState(null);
 
   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
   const [questionsReady, setQuestionsReady] = useState(false);
@@ -43,6 +40,12 @@ const InterviewSettings = ({ onInterviewReady }) => {
 
   // Store selected skills for later use
   const selectedSkillsRef = useRef(null);
+
+  // ✅ CRITICAL FIX: Store stream ONLY in ref (not state)
+  const cameraStreamRef = useRef(null);
+
+  // ✅ Track if we've already started
+  const hasStartedInterviewRef = useRef(false);
 
   useEffect(() => {
     if (hasExistingSkills) {
@@ -79,7 +82,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
         throw new Error("Session ID not returned from server");
       }
 
-      // ✅ FIX: Set both states together to ensure they update
       const newSessionData = {
         interviewId: result.sessionId,
         userId: user?.id,
@@ -88,16 +90,10 @@ const InterviewSettings = ({ onInterviewReady }) => {
       console.log("✅ Setting session data:", newSessionData);
       setSessionData(newSessionData);
 
-      // ✅ FIX: Use setTimeout to ensure state updates are processed
       setTimeout(() => {
         setQuestionsReady(true);
         setIsGeneratingQuestions(false);
         console.log("✅ Questions ready, sessionId:", result.sessionId);
-        console.log("✅ State should now be:", {
-          questionsReady: true,
-          sessionData: newSessionData,
-          isGenerating: false,
-        });
       }, 100);
     } catch (err) {
       console.error("❌ Question generation error:", err);
@@ -122,16 +118,13 @@ const InterviewSettings = ({ onInterviewReady }) => {
       setStatus("loading");
       setError(null);
 
-      // Store skills for later
       selectedSkillsRef.current = skills;
 
       console.log("📋 Opening guidelines modal...");
 
-      // Just open guidelines - questions will generate in background
       setOpenGuideLines(true);
       setStatus("succeeded");
 
-      // ✅ Start generating questions in background immediately
       generateQuestionsInBackground();
     } catch (err) {
       console.error("❌ Submit error:", err);
@@ -140,74 +133,153 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
   };
 
-  // ✅ MODIFIED: Go directly to interview after camera success (Security Bypassed)
+  // ✅ CRITICAL FIX: Handle camera success - store in ref and check immediately
   const handleCameraSuccess = (stream) => {
     console.log("📹 Primary camera stream received");
-    setPrimaryCameraStream(stream);
+
+    // ✅ Store ONLY in ref (not state)
+    cameraStreamRef.current = stream;
+
+    // ✅ Verify stream immediately
+    const videoTrack = stream.getVideoTracks()[0];
+
+    console.log("📹 Stream stored and verified:", {
+      streamId: stream.id,
+      active: stream.active,
+      trackState: videoTrack?.readyState,
+      trackEnabled: videoTrack?.enabled,
+    });
+
+    // ✅ Add track ended listener
+    if (videoTrack) {
+      videoTrack.addEventListener(
+        "ended",
+        () => {
+          console.error(
+            "❌ CRITICAL: Video track ended unexpectedly in InterviewSettings!",
+          );
+          alert("Camera stream stopped. Please refresh and try again.");
+        },
+        { once: true },
+      );
+    }
+
     setIsCameraOpen(false);
 
-    // ❌ SECURITY CAMERA BYPASSED - Removed security setup modal
-    // Original code: setShowSecuritySetup(true);
+    console.log("✅ Camera ready, checking if can start now...");
 
-    // ✅ FIX: Don't call handleSecuritySetupComplete immediately
-    // Let the useEffect below handle it when all states are ready
-    console.log("✅ Camera ready, waiting for questions to complete...");
+    // ✅ CRITICAL: Check if we can start immediately
+    tryStartInterview();
   };
 
-  // ✅ NEW: Auto-start interview when all conditions are met
-  useEffect(() => {
-    if (
+  // ✅ CRITICAL FIX: Consolidated start logic
+  const tryStartInterview = () => {
+    // Check all conditions
+    const canStart =
       questionsReady &&
       sessionData &&
-      primaryCameraStream &&
-      !isGeneratingQuestions
-    ) {
-      console.log("🎯 All conditions met - starting interview!");
-      handleSecuritySetupComplete();
-    }
-  }, [questionsReady, sessionData, primaryCameraStream, isGeneratingQuestions]);
+      cameraStreamRef.current &&
+      !isGeneratingQuestions &&
+      !hasStartedInterviewRef.current;
 
-  // ✅ MODIFIED: Simplified to bypass security check
-  const handleSecuritySetupComplete = (cameraStream = primaryCameraStream) => {
-    console.log("🔍 Starting interview (Security Bypassed)");
+    console.log("🔍 tryStartInterview check:", {
+      questionsReady,
+      hasSessionData: !!sessionData,
+      hasStream: !!cameraStreamRef.current,
+      streamActive: cameraStreamRef.current?.active,
+      isGenerating: isGeneratingQuestions,
+      hasStarted: hasStartedInterviewRef.current,
+      canStart,
+    });
 
-    // Final validation (useEffect already checked questionsReady and isGeneratingQuestions)
-    if (!sessionData) {
-      console.error("❌ No session data available");
-      setError("Session data not available. Please try again.");
+    if (!canStart) {
       return;
     }
 
-    if (!cameraStream && !primaryCameraStream) {
-      console.error("❌ No camera stream available");
-      setError("Camera stream not available. Please try again.");
+    // Mark as started
+    hasStartedInterviewRef.current = true;
+
+    console.log("🎯 All conditions met - starting interview NOW!");
+
+    // Get stream from ref
+    const stream = cameraStreamRef.current;
+
+    // ✅ CRITICAL: Verify stream one final time
+    const videoTrack = stream.getVideoTracks()[0];
+
+    if (!videoTrack) {
+      console.error("❌ No video track!");
+      setError("No video track found. Please refresh and try again.");
+      hasStartedInterviewRef.current = false;
       return;
     }
 
-    console.log("✅ ALL CHECKS PASSED - Starting interview");
+    if (videoTrack.readyState !== "live") {
+      console.error("❌ Video track not live:", videoTrack.readyState);
+      setError(
+        `Video track is ${videoTrack.readyState}. Please refresh and try again.`,
+      );
+      hasStartedInterviewRef.current = false;
+      return;
+    }
+
+    if (!stream.active) {
+      console.error("❌ Stream not active!");
+      setError("Camera stream is not active. Please refresh and try again.");
+      hasStartedInterviewRef.current = false;
+      return;
+    }
+
+    console.log("✅ ALL VERIFICATIONS PASSED:", {
+      streamActive: stream.active,
+      trackState: videoTrack.readyState,
+      trackEnabled: videoTrack.enabled,
+      sessionId: sessionData.interviewId,
+    });
+
     setError(null);
 
-    // Start the interview
-    onInterviewReady({
-      ...sessionData,
-      cameraStream: cameraStream || primaryCameraStream,
-    });
+    // ✅ Start immediately
+    try {
+      onInterviewReady({
+        ...sessionData,
+        cameraStream: stream,
+      });
+      console.log("✅ Interview started successfully!");
+    } catch (err) {
+      console.error("❌ Error starting interview:", err);
+      alert("Failed to start interview: " + err.message);
+      hasStartedInterviewRef.current = false;
+    }
   };
 
+  // ✅ Watch for questions ready - but use ref for stream
+  useEffect(() => {
+    if (questionsReady && !isGeneratingQuestions) {
+      console.log("✅ Questions ready, attempting to start interview...");
+      tryStartInterview();
+    }
+  }, [questionsReady, isGeneratingQuestions]);
+
+  // ✅ Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (primaryCameraStream) {
-        primaryCameraStream.getTracks().forEach((track) => track.stop());
+      console.log("🧹 InterviewSettings cleanup");
+
+      // Only stop if we haven't started the interview yet
+      if (!hasStartedInterviewRef.current && cameraStreamRef.current) {
+        console.log("🛑 Stopping camera (interview never started)");
+        cameraStreamRef.current.getTracks().forEach((track) => track.stop());
+      } else if (hasStartedInterviewRef.current) {
+        console.log(
+          "✅ Interview started - NOT stopping camera (owned by Interview.jsx now)",
+        );
       }
-      // ❌ SECURITY CAMERA BYPASSED - Commented out localStorage cleanup
-      // if (sessionData) {
-      //   localStorage.removeItem(`security_${sessionData.interviewId}`);
-      //   localStorage.removeItem(
-      //     `security_angle_verified_${sessionData.interviewId}`,
-      //   );
-      // }
+
+      cameraStreamRef.current = null;
+      hasStartedInterviewRef.current = false;
     };
-  }, [primaryCameraStream, sessionData]);
+  }, []);
 
   return (
     <>
@@ -312,404 +384,8 @@ const InterviewSettings = ({ onInterviewReady }) => {
         onClose={() => setIsCameraOpen(false)}
         onSuccess={handleCameraSuccess}
       />
-
-      {/* ❌❌❌ SECURITY CAMERA BYPASSED - ENTIRE SecurityCameraSetup COMPONENT REMOVED ❌❌❌ */}
-      {/* Original code was here - SecurityCameraSetup modal with QR code scanner */}
-      {/* If you need to restore security camera, uncomment the section below: */}
-
-      {/*
-      <SecurityCameraSetup
-        isOpen={showSecuritySetup}
-        onClose={() => {
-          const confirmClose = window.confirm(
-            "Security camera setup is MANDATORY to start the interview. Closing this will cancel the interview setup. Are you sure?",
-          );
-          if (confirmClose) {
-            setShowSecuritySetup(false);
-            if (primaryCameraStream) {
-              primaryCameraStream.getTracks().forEach((track) => track.stop());
-            }
-            setPrimaryCameraStream(null);
-            setSessionData(null);
-            setQuestionsReady(false);
-            setIsGeneratingQuestions(false);
-          }
-        }}
-        sessionData={sessionData}
-        questionsReady={questionsReady}
-        isGeneratingQuestions={isGeneratingQuestions}
-        onSecurityConnected={handleSecuritySetupComplete}
-      />
-      */}
     </>
   );
 };
-
-/* ❌❌❌ SECURITY CAMERA BYPASSED - ENTIRE SecurityCameraSetup COMPONENT COMMENTED OUT ❌❌❌ */
-/*
-const SecurityCameraSetup = ({
-  isOpen,
-  onClose,
-  sessionData,
-  questionsReady,
-  isGeneratingQuestions,
-  onSecurityConnected,
-}) => {
-  const [qrCodeDataURL, setQRCodeDataURL] = useState(null);
-  const [isSecurityConnected, setIsSecurityConnected] = useState(false);
-  const [angleVerified, setAngleVerified] = useState(false);
-  const [qrGenerationError, setQrGenerationError] = useState(null);
-
-  const hasTriggeredStartRef = useRef(false);
-
-  const generateQRCode = async () => {
-    if (!sessionData) return;
-
-    try {
-      console.log("📱 Generating QR code...");
-      const baseURL = window.location.origin;
-      const securityURL = `${baseURL}/mobile-security?interviewId=${sessionData.interviewId}&userId=${sessionData.userId}`;
-
-      const qrDataURL = await QRCode.toDataURL(securityURL, {
-        width: 300,
-        margin: 2,
-        color: { dark: "#000000", light: "#FFFFFF" },
-      });
-
-      setQRCodeDataURL(qrDataURL);
-      setQrGenerationError(null);
-      console.log("✅ QR code generated");
-    } catch (error) {
-      console.error("❌ QR generation error:", error);
-      setQrGenerationError(error.message);
-    }
-  };
-
-  useEffect(() => {
-    const allConditionsMet =
-      isSecurityConnected &&
-      angleVerified &&
-      questionsReady &&
-      !isGeneratingQuestions;
-
-    console.log("🎯 Security setup conditions:", {
-      isSecurityConnected,
-      angleVerified,
-      questionsReady,
-      isGeneratingQuestions,
-      allConditionsMet,
-      hasTriggered: hasTriggeredStartRef.current,
-    });
-
-    if (allConditionsMet && !hasTriggeredStartRef.current) {
-      console.log("✅ ALL CONDITIONS MET - Auto-starting interview!");
-      hasTriggeredStartRef.current = true;
-
-      const timer = setTimeout(() => {
-        console.log("🚀 Invoking onSecurityConnected callback");
-        onSecurityConnected?.();
-      }, 1000);
-
-      return () => clearTimeout(timer);
-    }
-  }, [
-    isSecurityConnected,
-    angleVerified,
-    questionsReady,
-    isGeneratingQuestions,
-    onSecurityConnected,
-  ]);
-
-  useEffect(() => {
-    if (!isOpen || !sessionData) {
-      hasTriggeredStartRef.current = false;
-      return;
-    }
-
-    console.log("👀 Starting security camera detection polling...");
-
-    const pollInterval = setInterval(() => {
-      const mobileStatus = localStorage.getItem(
-        `security_${sessionData.interviewId}`,
-      );
-      const angleStatus = localStorage.getItem(
-        `security_angle_verified_${sessionData.interviewId}`,
-      );
-
-      console.log("📡 Polling localStorage:", {
-        mobileStatus,
-        angleStatus,
-        isSecurityConnected,
-        angleVerified,
-      });
-
-      if (mobileStatus === "connected" && !isSecurityConnected) {
-        console.log("✅ Security camera CONNECTED detected!");
-        setIsSecurityConnected(true);
-      }
-
-      if (angleStatus === "true" && !angleVerified) {
-        console.log("✅ Angle VERIFIED detected!");
-        setAngleVerified(true);
-      }
-    }, 300);
-
-    return () => {
-      console.log("🧹 Stopping security detection polling");
-      clearInterval(pollInterval);
-    };
-  }, [isOpen, sessionData, isSecurityConnected, angleVerified]);
-
-  useEffect(() => {
-    if (isOpen && sessionData && !qrCodeDataURL) {
-      console.log("🎯 Modal open with session data, generating QR...");
-      generateQRCode();
-    } else if (isOpen && !sessionData) {
-      console.log("⏳ Modal open but waiting for session data...");
-    }
-  }, [isOpen, sessionData, qrCodeDataURL]);
-
-  useEffect(() => {
-    if (!isOpen) {
-      hasTriggeredStartRef.current = false;
-      setIsSecurityConnected(false);
-      setAngleVerified(false);
-      setQRCodeDataURL(null);
-    }
-  }, [isOpen]);
-
-  if (!isOpen) return null;
-
-  const canContinue =
-    isSecurityConnected &&
-    angleVerified &&
-    questionsReady &&
-    !isGeneratingQuestions;
-
-  return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title="🔒 Security Camera Setup - MANDATORY"
-      size="lg"
-      closeOnOverlayClick={false}
-    >
-      <div className="max-h-[70vh] overflow-y-auto pr-2 space-y-6">
-        {canContinue && (
-          <div className="p-4 bg-green-50 dark:bg-green-950/30 border-2 border-green-500 rounded-lg animate-pulse">
-            <div className="flex items-start gap-3">
-              <svg
-                className="w-6 h-6 text-green-600 shrink-0"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-              <div>
-                <h4 className="text-sm font-bold text-green-900 mb-1">
-                  ✅ ALL SYSTEMS READY
-                </h4>
-                <p className="text-sm text-green-800">
-                  Starting interview in 1 second...
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div className="p-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 rounded-lg">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div
-                className={`w-3 h-3 rounded-full ${
-                  questionsReady
-                    ? "bg-green-500"
-                    : isGeneratingQuestions
-                      ? "bg-blue-400 animate-pulse"
-                      : "bg-gray-400"
-                }`}
-              />
-              <span className="text-sm font-medium">Interview Questions:</span>
-            </div>
-            <span
-              className={`text-sm font-semibold ${
-                questionsReady
-                  ? "text-green-600"
-                  : isGeneratingQuestions
-                    ? "text-blue-600"
-                    : "text-gray-600"
-              }`}
-            >
-              {questionsReady
-                ? "✓ Ready"
-                : isGeneratingQuestions
-                  ? "Generating..."
-                  : "Pending"}
-            </span>
-          </div>
-        </div>
-
-        <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div
-                className={`w-3 h-3 rounded-full ${
-                  isSecurityConnected && angleVerified
-                    ? "bg-green-500"
-                    : isSecurityConnected
-                      ? "bg-yellow-400 animate-pulse"
-                      : "bg-amber-400 animate-pulse"
-                }`}
-              />
-              <span className="text-sm font-medium">Security Camera:</span>
-            </div>
-            <span
-              className={`text-sm font-semibold ${
-                isSecurityConnected && angleVerified
-                  ? "text-green-600"
-                  : isSecurityConnected
-                    ? "text-yellow-600"
-                    : "text-amber-600"
-              }`}
-            >
-              {isSecurityConnected && angleVerified
-                ? "✓ Connected & Verified"
-                : isSecurityConnected
-                  ? "Verifying..."
-                  : "Waiting..."}
-            </span>
-          </div>
-
-          <div className="flex items-center justify-between p-2 bg-white dark:bg-gray-900 rounded">
-            <span className="text-xs text-gray-600">Connection Status:</span>
-            <span
-              className={`text-xs font-semibold ${
-                angleVerified ? "text-green-600" : "text-gray-500"
-              }`}
-            >
-              {angleVerified ? "✓ Verified" : "Pending"}
-            </span>
-          </div>
-        </div>
-
-        <div className="p-6 border-2 border-blue-200 rounded-lg bg-blue-50">
-          <div className="text-center space-y-4">
-            <h4 className="text-lg font-bold text-blue-900">
-              Scan QR Code with Mobile
-            </h4>
-
-            {!sessionData ? (
-              <div className="w-64 h-64 bg-blue-100 rounded-lg flex flex-col items-center justify-center mx-auto gap-3">
-                <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" />
-                <p className="text-blue-700 text-sm px-4">
-                  Waiting for session data...
-                </p>
-              </div>
-            ) : qrCodeDataURL ? (
-              <div className="flex justify-center my-4">
-                <div className="p-4 bg-white rounded-xl shadow-lg">
-                  <img
-                    src={qrCodeDataURL}
-                    alt="QR Code"
-                    className="w-64 h-64"
-                  />
-                </div>
-              </div>
-            ) : qrGenerationError ? (
-              <div className="w-64 h-64 bg-red-100 rounded-lg flex items-center justify-center mx-auto">
-                <p className="text-red-600 text-sm px-4">{qrGenerationError}</p>
-              </div>
-            ) : (
-              <div className="w-64 h-64 bg-gray-200 rounded-lg flex items-center justify-center mx-auto">
-                <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" />
-              </div>
-            )}
-
-            <div className="text-left bg-white rounded-lg p-4">
-              <h5 className="text-sm font-semibold text-blue-900 mb-3">
-                📱 Setup Steps:
-              </h5>
-              <ol className="text-sm text-blue-800 space-y-2 ml-4">
-                <li>1. Scan QR code with mobile camera</li>
-                <li>2. Grant camera permissions when prompted</li>
-                <li>3. Wait for camera to start streaming</li>
-                <li>4. Keep device steady and positioned</li>
-                <li>5. Interview will auto-start when all ready!</li>
-              </ol>
-            </div>
-          </div>
-        </div>
-
-        <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
-          <div className="flex gap-3">
-            <svg
-              className="w-5 h-5 text-amber-600 shrink-0"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-              />
-            </svg>
-            <div>
-              <h4 className="text-sm font-semibold text-amber-900 mb-1">
-                ⚠️ Required Conditions:
-              </h4>
-              <p className="text-xs text-amber-800">
-                • Interview questions must be generated
-                <br />
-                • Security camera must be connected
-                <br />
-                • Both conditions must be satisfied to start
-                <br />• Keep security camera page open during entire interview
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-6 pt-4 border-t border-gray-200">
-        <Button
-          onClick={() => canContinue && onSecurityConnected?.()}
-          disabled={!canContinue}
-          className="w-full"
-        >
-          {canContinue
-            ? "✓ Start Interview (Auto-starting...)"
-            : !questionsReady
-              ? isGeneratingQuestions
-                ? "⏳ Generating Questions..."
-                : "⏳ Waiting for Questions..."
-              : !isSecurityConnected
-                ? "⏳ Waiting for Security Camera..."
-                : "⏳ Verifying Connection..."}
-        </Button>
-        {!canContinue && (
-          <p className="text-xs text-center text-gray-500 mt-2">
-            {!questionsReady
-              ? isGeneratingQuestions
-                ? "Please wait while questions are being generated..."
-                : "Waiting for question generation to complete..."
-              : !isSecurityConnected
-                ? "Please scan QR code with your mobile device..."
-                : "Verifying security camera connection..."}
-          </p>
-        )}
-      </div>
-    </Modal>
-  );
-};
-*/
-/* ❌❌❌ END OF SECURITY CAMERA COMPONENT ❌❌❌ */
 
 export default InterviewSettings;

@@ -5,9 +5,9 @@ const CameraCheck = ({ isOpen, onClose, onSuccess }) => {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const stoppedRef = useRef(false);
-  const streamTransferredRef = useRef(false); // Track if stream was transferred
+  const streamTransferredRef = useRef(false);
 
-  const [status, setStatus] = useState("idle"); // idle | checking | success | failed
+  const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
 
   const startCameraTest = async () => {
@@ -17,6 +17,7 @@ const CameraCheck = ({ isOpen, onClose, onSuccess }) => {
     streamTransferredRef.current = false;
 
     try {
+      console.log("📹 Requesting camera access...");
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: "user",
@@ -30,17 +31,38 @@ const CameraCheck = ({ isOpen, onClose, onSuccess }) => {
         return;
       }
 
+      console.log("✅ Camera access granted");
+      console.log("📹 Stream details:", {
+        id: stream.id,
+        active: stream.active,
+        tracks: stream.getTracks().map((t) => ({
+          kind: t.kind,
+          label: t.label,
+          enabled: t.enabled,
+          readyState: t.readyState,
+          settings: t.getSettings(),
+        })),
+      });
+
       streamRef.current = stream;
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+
+        videoRef.current.onloadedmetadata = async () => {
+          console.log("✅ Video metadata loaded in CameraCheck");
+          try {
+            await videoRef.current.play();
+            console.log("✅ Video preview playing");
+          } catch (err) {
+            console.error("❌ Preview play error:", err);
+          }
+        };
       }
 
-      // If stream is active → success
       setStatus("success");
     } catch (err) {
-      console.error("Camera error:", err);
+      console.error("❌ Camera error:", err);
       setStatus("failed");
       setError("Camera access denied or camera not available.");
       stopCamera();
@@ -52,23 +74,57 @@ const CameraCheck = ({ isOpen, onClose, onSuccess }) => {
     stoppedRef.current = true;
 
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
+      console.log("🛑 Stopping camera in CameraCheck");
+      streamRef.current.getTracks().forEach((t) => {
+        console.log(`🛑 Stopping track: ${t.kind} (${t.label})`);
+        t.stop();
+      });
       streamRef.current = null;
     }
   };
 
   const handleStartInterview = () => {
-    if (streamRef.current && onSuccess) {
-      console.log("📹 Transferring camera stream to parent");
-      // Mark that we've transferred the stream
-      streamTransferredRef.current = true;
-
-      // Pass the stream to parent component
-      onSuccess(streamRef.current);
-
-      // Remove our reference but DON'T stop the stream
-      streamRef.current = null;
+    if (!streamRef.current) {
+      console.error("❌ No stream to transfer!");
+      alert("Camera stream not available. Please try again.");
+      return;
     }
+
+    // ✅ CRITICAL: Verify stream is active before transfer
+    const videoTrack = streamRef.current.getVideoTracks()[0];
+
+    console.log("📹 Verifying stream before transfer:", {
+      streamActive: streamRef.current.active,
+      trackExists: !!videoTrack,
+      trackState: videoTrack?.readyState,
+      trackEnabled: videoTrack?.enabled,
+    });
+
+    if (!streamRef.current.active) {
+      console.error("❌ Stream is not active!");
+      alert("Camera stream is not active. Please try again.");
+      return;
+    }
+
+    if (!videoTrack || videoTrack.readyState !== "live") {
+      console.error("❌ Video track is not live!");
+      alert("Camera is not ready. Please try again.");
+      return;
+    }
+
+    console.log("✅ Stream verified - transferring to parent");
+    console.log("📹 Transferring camera stream to parent");
+
+    // Mark that we've transferred the stream
+    streamTransferredRef.current = true;
+
+    // Pass the stream to parent component
+    if (onSuccess) {
+      onSuccess(streamRef.current);
+    }
+
+    // Remove our reference but DON'T stop the stream
+    streamRef.current = null;
   };
 
   useEffect(() => {
@@ -82,9 +138,9 @@ const CameraCheck = ({ isOpen, onClose, onSuccess }) => {
         transferred: streamTransferredRef.current,
       });
 
-      // Only stop camera if we still own the stream AND it wasn't transferred
+      // ✅ CRITICAL: Only stop camera if we still own it AND it wasn't transferred
       if (streamRef.current && !streamTransferredRef.current) {
-        console.log("🛑 Stopping camera stream in cleanup");
+        console.log("🛑 Stopping camera stream in cleanup (not transferred)");
         stopCamera();
       } else if (streamTransferredRef.current) {
         console.log("✅ Stream transferred - not stopping in cleanup");
