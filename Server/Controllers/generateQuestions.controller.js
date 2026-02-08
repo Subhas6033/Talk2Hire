@@ -202,6 +202,15 @@ BAD EXAMPLES (DO NOT DO THIS):
     );
   } catch (aiError) {
     console.error("❌ Ollama API error:", aiError);
+
+    // Check if Ollama is running
+    try {
+      const healthCheck = await ollama.list();
+      console.log("✅ Ollama is running, available models:", healthCheck);
+    } catch (healthError) {
+      console.error("❌ Ollama server is not responding:", healthError.message);
+    }
+
     throw new APIERR(
       500,
       "Failed to generate question with AI: " + aiError.message,

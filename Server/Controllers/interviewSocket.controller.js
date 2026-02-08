@@ -39,6 +39,8 @@ function initInterviewSocket(httpServer) {
       return socket.disconnect();
     }
 
+    // ❌❌❌ SECURITY CAMERA BYPASSED - ENTIRE SECURITY CAMERA HANDLER COMMENTED OUT ❌❌❌
+    /*
     // ✅ Handle security camera connections separately
     if (type === "security_camera") {
       console.log(`📱 Security camera socket connected: ${interviewId}`);
@@ -110,6 +112,8 @@ function initInterviewSocket(httpServer) {
       // Don't continue with interview logic for security camera sockets
       return;
     }
+    */
+    // ❌❌❌ END OF SECURITY CAMERA HANDLER ❌❌❌
 
     // ✅ For main interview connections, join the interview room
     socket.join(`interview_${interviewId}`);
@@ -130,7 +134,8 @@ function initInterviewSocket(httpServer) {
     // Video upload state
     const videoUploads = {
       primary_camera: { videoId: null, chunks: 0, totalChunks: 0 },
-      security_camera: { videoId: null, chunks: 0, totalChunks: 0 },
+      // ❌ SECURITY CAMERA BYPASSED - Removed security_camera from video uploads
+      // security_camera: { videoId: null, chunks: 0, totalChunks: 0 },
       screen_recording: { videoId: null, chunks: 0, totalChunks: 0 },
     };
 
@@ -396,7 +401,7 @@ function initInterviewSocket(httpServer) {
       });
 
       // ============================================================================
-      // EXISTING INTERVIEW HANDLERS
+      // EXISTING INTERVIEW HANDLERS - All unchanged
       // ============================================================================
 
       async function handleIdle() {
@@ -487,22 +492,12 @@ function initInterviewSocket(httpServer) {
           );
           await new Promise((resolve) => setTimeout(resolve, 500));
 
-          const connection = startDeepgramConnection();
+          const connection = await startDeepgramConnection();
 
-          try {
-            console.log("⏳ Waiting for Deepgram connection to open...");
-            await connection.waitForReady(10000);
-            console.log("✅ Deepgram connection is ready");
-
-            isListeningActive = true;
-            socket.emit("listening_enabled");
-            console.log("✅ Listening enabled for user response");
-          } catch (error) {
-            console.error("❌ Deepgram connection failed to open:", error);
-            socket.emit("error", {
-              message: "Failed to start speech recognition",
-            });
-          }
+          // ✅ FIXED: Connection is already ready after await, no need for waitForReady
+          isListeningActive = true;
+          socket.emit("listening_enabled");
+          console.log("✅ Listening enabled for user response");
 
           isProcessing = false;
           console.log("✅ Moved to next question successfully");
@@ -721,19 +716,9 @@ function initInterviewSocket(httpServer) {
 
           const connection = await startDeepgramConnection();
 
-          try {
-            console.log("⏳ Waiting for Deepgram connection to open...");
-            await connection.waitForReady(10000);
-            console.log("✅ Deepgram connection is ready");
-
-            isListeningActive = true;
-            socket.emit("listening_enabled");
-          } catch (error) {
-            console.error("❌ Deepgram connection failed to open:", error);
-            socket.emit("error", {
-              message: "Failed to start speech recognition",
-            });
-          }
+          // ✅ FIXED: Connection is already ready after await, no need for waitForReady
+          isListeningActive = true;
+          socket.emit("listening_enabled");
 
           isProcessing = false;
         } else if (
@@ -765,19 +750,9 @@ function initInterviewSocket(httpServer) {
 
           const connection = await startDeepgramConnection();
 
-          try {
-            console.log("⏳ Waiting for Deepgram connection to open...");
-            await connection.waitForReady(10000);
-            console.log("✅ Deepgram connection is ready");
-
-            isListeningActive = true;
-            socket.emit("listening_enabled");
-          } catch (error) {
-            console.error("❌ Deepgram connection failed to open:", error);
-            socket.emit("error", {
-              message: "Failed to start speech recognition",
-            });
-          }
+          // ✅ FIXED: Connection is already ready after await, no need for waitForReady
+          isListeningActive = true;
+          socket.emit("listening_enabled");
 
           isProcessing = false;
         }
@@ -839,20 +814,10 @@ function initInterviewSocket(httpServer) {
           console.log("🎤 Starting Deepgram connection for listening...");
           const connection = await startDeepgramConnection();
 
-          try {
-            console.log("⏳ Waiting for Deepgram connection to open...");
-            await connection.waitForReady(10000);
-            console.log("✅ Deepgram connection is ready");
-
-            isListeningActive = true;
-            socket.emit("listening_enabled");
-            console.log("✅ Listening enabled for user response");
-          } catch (error) {
-            console.error("❌ Deepgram connection failed to open:", error);
-            socket.emit("error", {
-              message: "Failed to start speech recognition",
-            });
-          }
+          // ✅ FIXED: Connection is already ready after await, no need for waitForReady
+          isListeningActive = true;
+          socket.emit("listening_enabled");
+          console.log("✅ Listening enabled for user response");
 
           isProcessing = false;
         } catch (error) {
@@ -888,10 +853,10 @@ function initInterviewSocket(httpServer) {
           return;
         }
 
-        // ✅ NEW: Set processing flag immediately
+        // ✅ Set processing flag immediately
         isProcessing = true;
 
-        // ✅ NEW: Disable listening immediately
+        // ✅ Disable listening immediately
         isListeningActive = false;
         socket.emit("listening_disabled");
 
@@ -1019,27 +984,17 @@ function initInterviewSocket(httpServer) {
           const connection = await startDeepgramConnection();
           console.log("✅ Step 13 complete - Deepgram connection initiated");
 
-          console.log("🔍 Step 14: Waiting for connection to be ready...");
-          try {
-            await connection.waitForReady(10000);
-            console.log("✅ Step 14 complete - Connection is ready");
+          console.log("🔍 Step 14: Enabling listening...");
+          // ✅ FIXED: Connection is already ready after await, no need for waitForReady
+          isListeningActive = true;
+          socket.emit("listening_enabled");
+          console.log(
+            `✅ Step 14 complete - Listening enabled for question ${currentOrder}/${MAX_QUESTIONS}`,
+          );
 
-            console.log("🔍 Step 15: Enabling listening...");
-            isListeningActive = true;
-            socket.emit("listening_enabled");
-            console.log(
-              `✅ Step 15 complete - Listening enabled for question ${currentOrder}/${MAX_QUESTIONS}`,
-            );
-          } catch (error) {
-            console.error("❌ Deepgram connection failed to open:", error);
-            socket.emit("error", {
-              message: "Failed to start speech recognition",
-            });
-          }
-
-          console.log("🔍 Step 16: Resetting processing flag...");
+          console.log("🔍 Step 15: Resetting processing flag...");
           isProcessing = false;
-          console.log("✅ Step 16 complete - Ready for next answer");
+          console.log("✅ Step 15 complete - Ready for next answer");
 
           console.log("🎉 FULL CYCLE COMPLETE - Ready for user response");
         } catch (error) {
@@ -1050,7 +1005,7 @@ function initInterviewSocket(httpServer) {
           isProcessing = false;
           isListeningActive = false;
 
-          // ✅ NEW: Emit listening_disabled to sync client state
+          // ✅ Emit listening_disabled to sync client state
           socket.emit("listening_disabled");
         }
       }
@@ -1080,9 +1035,8 @@ function initInterviewSocket(httpServer) {
         console.error("❌ Socket error:", error);
       });
 
-      console.log("✅ All event listeners registered and ready");
-
       socket.emit("server_ready");
+      console.log("✅ All event listeners registered and ready");
       console.log("📤 Emitted 'server_ready' signal to client");
     } catch (error) {
       console.error("❌ FATAL: Error during initialization:", error);

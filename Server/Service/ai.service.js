@@ -1,4 +1,4 @@
-const { openai } = require("../Config/openai.config.js");
+const { ollama } = require("../Config/openai.config.js");
 const { APIERR } = require("../Utils/index.utils.js");
 
 async function generateNextQuestionWithAI({
@@ -13,7 +13,7 @@ async function generateNextQuestionWithAI({
     console.log("❓ Previous question:", previousQuestion?.substring(0, 100));
 
     console.log("🔑 API Key exists:", !!process.env.DEEPSEEK_API_KEY);
-    console.log("🌐 OpenAI base URL:", openai.baseURL);
+    console.log("🌐 Ollama base URL:", ollama.baseURL);
 
     if (!answer || typeof answer !== "string") {
       throw new APIERR(
@@ -48,7 +48,7 @@ Now ask exactly ONE ${depth}-level technical interview question.
 { "question": "Your question here?" }
 `;
 
-    console.log("🔄 Calling OpenAI API...");
+    console.log("🔄 Calling Ollama API...");
     const response = await ollama.chat({
       model: "deepseek-v3.1:671b-cloud",
       temperature: 0.4,
@@ -58,9 +58,9 @@ Now ask exactly ONE ${depth}-level technical interview question.
       ],
     });
 
-    console.log("✅ OpenAI response received");
+    console.log("✅ Ollama response received");
 
-    const raw = response?.choices?.[0]?.message?.content;
+    const raw = response?.message?.content;
 
     if (!raw) {
       console.error("❌ AI returned empty response");
