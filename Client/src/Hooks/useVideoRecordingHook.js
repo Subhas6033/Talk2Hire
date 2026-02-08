@@ -10,8 +10,9 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
   const chunkCountRef = useRef(0);
   const videoSessionReadyRef = useRef(false);
   const isRequestingSessionRef = useRef(false);
+  const hasStoppedRef = useRef(false);
 
-  // ✅ FIX: Start recording - wait for server confirmation
+  // ✅ FIXED: Start recording - wait for server confirmation
   const startRecording = useCallback(() => {
     if (!cameraStream || isRecording) {
       console.log("⚠️ Cannot start recording:", {
@@ -26,14 +27,25 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
       return;
     }
 
-    // ✅ CRITICAL FIX: Check if socket is actually connected
+    // ✅ IMPROVED: Wait for socket connection before starting
     if (!socketRef.current.connected) {
-      console.error("❌ Socket not connected yet, cannot start recording");
-      console.log("⏳ Socket state:", {
-        exists: !!socketRef.current,
-        connected: socketRef.current?.connected,
-        id: socketRef.current?.id,
-      });
+      console.warn("⚠️ Socket not connected, waiting for connection...");
+
+      const maxWaitTime = 10000; // 10 seconds
+      const startTime = Date.now();
+
+      const connectionWaitInterval = setInterval(() => {
+        if (socketRef.current?.connected) {
+          clearInterval(connectionWaitInterval);
+          console.log("✅ Socket connected, starting recording now");
+          startRecording(); // Retry
+        } else if (Date.now() - startTime > maxWaitTime) {
+          clearInterval(connectionWaitInterval);
+          console.error("❌ Socket connection timeout after 10s");
+          setError("Failed to connect to server. Please refresh.");
+        }
+      }, 500);
+
       return;
     }
 
@@ -45,8 +57,11 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
     try {
       console.log("🎥 Requesting video session from server...");
       isRequestingSessionRef.current = true;
+      hasStoppedRef.current = false;
+      videoSessionReadyRef.current = false;
+      chunkCountRef.current = 0;
 
-      // Check supported MIME types
+      // Supported MIME types
       const mimeTypes = [
         "video/webm;codecs=vp9",
         "video/webm;codecs=vp8",
@@ -66,8 +81,7 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
         throw new Error("No supported video MIME type found");
       }
 
-      // ✅ STEP 1: Request video session from server FIRST
-      console.log("📤 Emitting video_recording_start to server...");
+      // ✅ STEP 1: Request video session
       socketRef.current.emit("video_recording_start", {
         videoType: "primary_camera",
         totalChunks: 0,
@@ -77,125 +91,114 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
         },
       });
 
-      // ✅ STEP 2: Wait for server confirmation before starting MediaRecorder
+      // ✅ STEP 2: Wait for server confirmation
       const readyListener = (response) => {
-        if (response.videoType === "primary_camera") {
-          console.log("✅ Server ready for primary camera chunks:", response);
-          videoSessionReadyRef.current = true;
-          isRequestingSessionRef.current = false;
+        if (response?.videoType !== "primary_camera") return;
 
-          // ✅ STEP 3: NOW start MediaRecorder
-          const options = {
-            mimeType: selectedMimeType,
-            videoBitsPerSecond: 2500000,
-          };
+        console.log("✅ Server ready for primary camera:", response);
+        videoSessionReadyRef.current = true;
+        isRequestingSessionRef.current = false;
 
-          const mediaRecorder = new MediaRecorder(cameraStream, options);
-          mediaRecorderRef.current = mediaRecorder;
-          chunkCountRef.current = 0;
+        const mediaRecorder = new MediaRecorder(cameraStream, {
+          mimeType: selectedMimeType,
+          videoBitsPerSecond: 2500000,
+        });
 
-          // Handle data available (chunks)
-          mediaRecorder.ondataavailable = (event) => {
-            if (event.data && event.data.size > 0) {
-              chunkCountRef.current++;
+        mediaRecorderRef.current = mediaRecorder;
 
-              console.log(
-                `📦 Primary camera chunk ${chunkCountRef.current} captured (${event.data.size} bytes)`,
-              );
+        mediaRecorder.ondataavailable = (event) => {
+          if (!event.data || event.data.size === 0) return;
 
-              // Send via WebSocket
-              const reader = new FileReader();
-              reader.onloadend = () => {
-                if (
-                  socketRef.current?.connected &&
-                  videoSessionReadyRef.current
-                ) {
-                  const base64data = reader.result.split(",")[1];
+          chunkCountRef.current++;
 
-                  socketRef.current.emit("video_chunk", {
-                    videoType: "primary_camera",
-                    chunkNumber: chunkCountRef.current,
-                    chunkData: base64data,
-                    isLastChunk: false,
-                    timestamp: Date.now(),
-                  });
-
-                  if (chunkCountRef.current % 5 === 0) {
-                    console.log(
-                      `📤 Primary camera chunks sent: ${chunkCountRef.current}`,
-                    );
-                  }
-                } else {
-                  console.warn(
-                    "⚠️ Socket not connected or session not ready, chunk not sent",
-                  );
-                }
-              };
-              reader.readAsDataURL(event.data);
-
-              // Keep chunks in state for reference
-              setRecordedChunks((prev) => [...prev, event.data]);
-            }
-          };
-
-          mediaRecorder.onerror = (error) => {
-            console.error("❌ MediaRecorder error:", error);
-            setIsRecording(false);
-          };
-
-          mediaRecorder.onstop = () => {
-            console.log(
-              `🛑 MediaRecorder stopped. Total chunks: ${chunkCountRef.current}`,
-            );
-            setIsRecording(false);
-
-            // Notify server recording stopped
-            if (socketRef.current?.connected) {
-              socketRef.current.emit("video_recording_stop", {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            if (socketRef.current?.connected && videoSessionReadyRef.current) {
+              socketRef.current.emit("video_chunk", {
                 videoType: "primary_camera",
-                totalChunks: chunkCountRef.current,
+                chunkNumber: chunkCountRef.current,
+                chunkData: reader.result.split(",")[1],
+                isLastChunk: false,
+                timestamp: Date.now(),
               });
-              console.log("📤 Sent video_recording_stop to server");
             }
           };
+          reader.readAsDataURL(event.data);
 
-          mediaRecorder.onstart = () => {
-            console.log("▶️ MediaRecorder started");
-            setIsRecording(true);
-          };
+          setRecordedChunks((prev) => [...prev, event.data]);
+        };
 
-          // ✅ STEP 4: Start recording
-          mediaRecorder.start(CHUNK_DURATION);
-          console.log("✅ MediaRecorder started (2s chunks)");
+        mediaRecorder.onerror = (err) => {
+          console.error("❌ MediaRecorder error:", err);
+          setIsRecording(false);
+        };
 
-          // Remove listener after receiving
-          socketRef.current.off("video_recording_ready", readyListener);
-        }
+        mediaRecorder.onstart = () => {
+          console.log("▶️ MediaRecorder started");
+          setIsRecording(true);
+        };
+
+        mediaRecorder.onstop = () => {
+          if (hasStoppedRef.current) return;
+          hasStoppedRef.current = true;
+
+          console.log(
+            `🛑 MediaRecorder stopped. Total chunks: ${chunkCountRef.current}`,
+          );
+
+          setIsRecording(false);
+          videoSessionReadyRef.current = false;
+
+          if (socketRef.current?.connected) {
+            socketRef.current.emit("video_recording_stop", {
+              videoType: "primary_camera",
+              totalChunks: chunkCountRef.current,
+            });
+          }
+        };
+
+        // ✅ Handle socket disconnect / reconnect
+        socketRef.current.off("disconnect");
+        socketRef.current.off("reconnect");
+
+        socketRef.current.on("disconnect", () => {
+          console.warn("🔌 Socket disconnected — pausing recorder");
+          if (mediaRecorder.state === "recording") {
+            mediaRecorder.pause();
+          }
+        });
+
+        socketRef.current.on("reconnect", () => {
+          console.log("🔄 Socket reconnected — resuming recorder");
+          if (mediaRecorder.state === "paused") {
+            mediaRecorder.resume();
+          }
+        });
+
+        mediaRecorder.start(CHUNK_DURATION);
+        console.log("✅ MediaRecorder started (2s chunks)");
+
+        socketRef.current.off("video_recording_ready", readyListener);
       };
 
-      // Listen for server confirmation
       socketRef.current.off("video_recording_ready");
       socketRef.current.on("video_recording_ready", readyListener);
 
-      // ✅ STEP 5: Timeout if server doesn't respond
+      // Timeout safety
       setTimeout(() => {
         if (!videoSessionReadyRef.current && isRequestingSessionRef.current) {
-          console.error(
-            "❌ Server didn't confirm video session within 10s, starting anyway",
-          );
+          console.error("❌ Server did not confirm video session in time");
           isRequestingSessionRef.current = false;
-          // Could optionally start recording here as fallback
-          // or show error to user
         }
       }, 10000);
-    } catch (error) {
-      console.error("❌ Failed to start video recording:", error);
-      setIsRecording(false);
+    } catch (err) {
+      console.error("❌ Failed to start video recording:", err);
       isRequestingSessionRef.current = false;
+      setIsRecording(false);
     }
   }, [cameraStream, isRecording, interviewId, userId, socketRef]);
 
-  // ✅ Stop recording
+  // ✅ Stop recording safely
   const stopRecording = useCallback(async () => {
     if (!isRecording || !mediaRecorderRef.current) {
       console.log("⚠️ No active recording to stop");
@@ -205,30 +208,25 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
     console.log("🛑 Stopping video recording...");
 
     return new Promise((resolve) => {
-      const mediaRecorder = mediaRecorderRef.current;
+      const recorder = mediaRecorderRef.current;
 
-      mediaRecorder.onstop = async () => {
-        console.log("✅ Recording stopped");
-        console.log(`📊 Total chunks recorded: ${chunkCountRef.current}`);
-
+      recorder.onstop = () => {
         setIsRecording(false);
         videoSessionReadyRef.current = false;
         resolve(chunkCountRef.current);
       };
 
-      // Stop recording
-      if (mediaRecorder.state !== "inactive") {
-        mediaRecorder.stop();
+      if (recorder.state !== "inactive") {
+        recorder.stop();
       } else {
-        // Already stopped
-        mediaRecorder.onstop();
+        recorder.onstop();
       }
     });
   }, [isRecording]);
 
-  // Cleanup on unmount
+  // Cleanup
   const cleanup = useCallback(() => {
-    console.log("🧹 Cleaning up video recording...");
+    console.log("🧹 Cleaning up video recording");
 
     if (
       mediaRecorderRef.current &&
@@ -237,16 +235,20 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
       mediaRecorderRef.current.stop();
     }
 
+    if (socketRef?.current) {
+      socketRef.current.off("video_recording_ready");
+      socketRef.current.off("disconnect");
+      socketRef.current.off("reconnect");
+    }
+
     chunkCountRef.current = 0;
     videoSessionReadyRef.current = false;
     isRequestingSessionRef.current = false;
-  }, []);
+    hasStoppedRef.current = false;
+  }, [socketRef]);
 
-  // Auto-cleanup on unmount
   useEffect(() => {
-    return () => {
-      cleanup();
-    };
+    return () => cleanup();
   }, [cleanup]);
 
   return {

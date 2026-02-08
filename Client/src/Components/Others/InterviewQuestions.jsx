@@ -33,11 +33,11 @@ const InterviewQuestions = ({
   const [showSecurityPanel, setShowSecurityPanel] = useState(true);
   const [waitingForQuestions, setWaitingForQuestions] = useState(false);
 
-  // ✅ NEW: Security camera frame display
+  // ✅ Security camera frame display
   const [securityFrameData, setSecurityFrameData] = useState(null);
   const securityVideoRef = useRef(null);
 
-  // ✅ NEW: Evaluation state
+  // ✅ Evaluation state
   const [evaluationStatus, setEvaluationStatus] = useState(null); // 'started', 'complete', 'error'
   const [evaluationResults, setEvaluationResults] = useState(null);
 
@@ -70,6 +70,21 @@ const InterviewQuestions = ({
     });
   }, [cameraStream]);
 
+  // Monitor socket health
+  useEffect(() => {
+    if (!interview.socketRef.current) return;
+
+    const healthCheckInterval = setInterval(() => {
+      if (interview.socketRef.current?.connected) {
+        console.log("💚 Socket health: Connected");
+      } else {
+        console.warn("💔 Socket health: Disconnected");
+      }
+    }, 10000); // Check every 10 seconds
+
+    return () => clearInterval(healthCheckInterval);
+  }, [interview.socketRef]);
+
   useEffect(() => {
     if (videoRef.current && cameraStream) {
       console.log("📹 Setting camera stream to video element");
@@ -82,7 +97,8 @@ const InterviewQuestions = ({
   }, [cameraStream]);
 
   useEffect(() => {
-    console.log("🔌 Initializing socket connection to:", SOCKET_URL);
+    console.log("🔌 Creating socket instance...");
+
     const socket = io(SOCKET_URL, {
       query: { interviewId, userId },
       transports: ["websocket", "polling"],
@@ -91,9 +107,12 @@ const InterviewQuestions = ({
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
       timeout: 20000,
+      autoConnect: false, // ✅ CHANGED: Control connection timing
     });
+
     interview.socketRef.current = socket;
 
+    // ✅ Register ALL event listeners FIRST before connecting
     socket.onAny((eventName, ...args) => {
       if (
         eventName !== "user_audio_chunk" &&
@@ -122,7 +141,7 @@ const InterviewQuestions = ({
       }
     });
 
-    // ✅ FIXED: Listen for security camera frames
+    // ✅ Listen for security camera frames
     socket.on("security_frame", (data) => {
       console.log("📸 Security frame received");
       setSecurityFrameData(data);
@@ -137,7 +156,7 @@ const InterviewQuestions = ({
       setSecurityFrameData(null);
     });
 
-    // ✅ NEW: Listen for interim transcripts
+    // ✅ Listen for interim transcripts
     socket.on("interim_transcript", (data) => {
       console.log("💬 Interim transcript:", data.text);
       interview.setLiveTranscript(data.text);
@@ -166,7 +185,7 @@ const InterviewQuestions = ({
       console.log("✅ Video processing complete:", data);
     });
 
-    // ✅ NEW: Evaluation event listeners
+    // ✅ Evaluation event listeners
     socket.on("evaluation_started", (data) => {
       console.log("🔄 Evaluation started:", data.message);
       setEvaluationStatus("started");
@@ -288,11 +307,16 @@ const InterviewQuestions = ({
       interview.setStatus("error");
     });
 
+    // ✅ Initialize interview FIRST
     interview.initializeInterview({
       interviewId,
       userId,
       sessionId: interviewId,
     });
+
+    // ✅ Connect AFTER all listeners are registered
+    console.log("🔌 Connecting socket...");
+    socket.connect();
 
     return () => {
       console.log("🧹 Cleaning up socket and resources...");
@@ -330,13 +354,13 @@ const InterviewQuestions = ({
     stopVideoRecording,
   ]);
 
-  // ✅ FIXED: Add serverReady check to prevent premature recording start
+  // ✅ Add serverReady check to prevent premature recording start
   useEffect(() => {
     if (
       interview.status === "live" &&
       !interview.isInitializing &&
       interview.hasStarted &&
-      interview.serverReady && // ✅ NEW: Ensure server is ready
+      interview.serverReady && // ✅ Ensure server is ready
       cameraStream &&
       !isVideoRecording
     ) {
@@ -351,13 +375,13 @@ const InterviewQuestions = ({
     interview.status,
     interview.isInitializing,
     interview.hasStarted,
-    interview.serverReady, // ✅ NEW: Add to dependencies
+    interview.serverReady, // ✅ Add to dependencies
     cameraStream,
     isVideoRecording,
     startVideoRecording,
   ]);
 
-  // ✅ NEW: Auto-finish when evaluation completes
+  // ✅ Auto-finish when evaluation completes
   useEffect(() => {
     if (evaluationStatus === "complete" && evaluationResults) {
       console.log("✅ Evaluation complete, showing results and finishing...");
@@ -538,7 +562,7 @@ Your videos have been processed and evaluation is complete.`;
                     />
                     {isVideoRecording ? "Recording" : "Video"}
                   </div>
-                  {/* ✅ NEW: Evaluation status indicator */}
+                  {/* ✅ Evaluation status indicator */}
                   {evaluationStatus && (
                     <div
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
@@ -598,7 +622,7 @@ Your videos have been processed and evaluation is complete.`;
                   </div>
                 )}
 
-                {/* ✅ NEW: Evaluation in progress */}
+                {/* ✅ Evaluation in progress */}
                 {evaluationStatus === "started" && (
                   <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg">
                     <div className="flex items-center gap-3">
