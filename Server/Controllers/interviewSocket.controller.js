@@ -22,24 +22,24 @@ function initInterviewSocket(httpServer) {
   });
 
   io.on("connection", async (socket) => {
-    // ✅ FIXED: Extract all query params at once
+    // ✅ Extract all query params at once
     const { interviewId, userId, type } = socket.handshake.query;
 
     console.log("🔌 New socket connection attempt:", {
       socketId: socket.id,
       interviewId,
       userId,
-      type, // Log connection type
+      type,
     });
 
-    // ✅ FIXED: Check for missing params early
+    // ✅ Check for missing params early
     if (!interviewId || !userId) {
       console.error("❌ Missing interviewId or userId");
       socket.emit("error", { message: "Missing interview or user ID" });
       return socket.disconnect();
     }
 
-    // ✅ NEW: Handle security camera connections separately
+    // ✅ Handle security camera connections separately
     if (type === "security_camera") {
       console.log(`📱 Security camera socket connected: ${interviewId}`);
 
@@ -63,81 +63,18 @@ function initInterviewSocket(httpServer) {
         );
       });
 
-      socket.on("security_frame", async (data) => {
-        // Log every 10th frame to reduce spam
-        if (!socket.securityFrameCount) socket.securityFrameCount = 0;
-        socket.securityFrameCount++;
-
-        if (
-          socket.securityFrameCount === 1 ||
-          socket.securityFrameCount % 10 === 0
-        ) {
-          console.log(
-            `📸 Security frame #${socket.securityFrameCount} received`,
-          );
-        }
-
-        // ✅ NEW: Save security camera frames as video chunks
-        try {
-          const videoInfo = videoUploads.security_camera;
-
-          // Initialize security camera video session if not exists
-          if (!videoInfo || !videoInfo.videoId) {
-            console.log("📹 Initializing security camera video session...");
-
-            const videoId = await InterviewVideo.create({
-              interviewId,
-              userId,
-              videoType: "security_camera",
-              originalFilename: `security_camera_${Date.now()}.webm`,
-              fileSize: 0,
-              totalChunks: 0,
-              duration: null,
-            });
-
-            videoUploads.security_camera = {
-              videoId,
-              chunks: 0,
-              totalChunks: 0,
-            };
-
-            console.log(`✅ Security camera video session created: ${videoId}`);
-          }
-
-          // Convert base64 frame to buffer
-          const frameData = data.frame.replace(/^data:image\/\w+;base64,/, "");
-          const chunkBuffer = Buffer.from(frameData, "base64");
-
-          // Upload frame as chunk
-          uploadVideoChunk({
-            chunkBuffer,
-            videoId: videoUploads.security_camera.videoId,
-            chunkNumber: socket.securityFrameCount,
-            totalChunks: 0, // Will be updated at end
-            interviewId,
-          })
-            .then((result) => {
-              videoUploads.security_camera.chunks++;
-
-              if (socket.securityFrameCount % 10 === 0) {
-                console.log(
-                  `✅ Security frame ${socket.securityFrameCount} uploaded`,
-                );
-              }
-            })
-            .catch((error) => {
-              console.error(`❌ Security frame upload failed:`, error);
-            });
-        } catch (error) {
-          console.error("❌ Error processing security frame:", error);
-        }
-
-        // Broadcast frame to main interview client
+      // ✅ FIXED: Only broadcast to main interview client, NOT back to sender
+      socket.on("security_frame_request", (data, callback) => {
+        // Broadcast to main interview client only (excludes sender)
         socket.to(`interview_${interviewId}`).emit("security_frame", {
           frame: data.frame,
-          timestamp: data.timestamp,
-          angle: data.currentAngle,
+          timestamp: data.timestamp || Date.now(),
         });
+
+        // ✅ Acknowledge receipt to prevent queue buildup (matches frontend callback)
+        if (callback && typeof callback === "function") {
+          callback();
+        }
       });
 
       // Handle security camera disconnection
@@ -308,7 +245,7 @@ function initInterviewSocket(httpServer) {
           console.log(`📦 Received video chunk:`, {
             videoType,
             chunkNumber,
-            size: chunkData.length,
+            size: chunkData?.length || 0,
             isLastChunk,
           });
         }
@@ -381,10 +318,13 @@ function initInterviewSocket(httpServer) {
         }
       });
 
+      // ✅ FIX: Finalize video immediately when recording stops
       socket.on("video_recording_stop", async (data) => {
-        const { videoType } = data;
+        const { videoType, totalChunks } = data;
 
-        console.log(`🎬 Video recording stopped: ${videoType}`);
+        console.log(`🎬 Video recording stopped: ${videoType}`, {
+          totalChunks,
+        });
 
         try {
           const videoInfo = videoUploads[videoType];
@@ -394,26 +334,46 @@ function initInterviewSocket(httpServer) {
             return;
           }
 
-          // Update video status to indicate all chunks received
-          await InterviewVideo.updateUploadStatus(
-            videoInfo.videoId,
-            "uploading",
-          );
+          // Update total chunks if provided
+          if (totalChunks && totalChunks > 0) {
+            videoInfo.totalChunks = totalChunks;
+          }
 
-          socket.emit("video_recording_stopped", {
-            videoType,
+          console.log(`🎬 Finalizing video ${videoType}...`, {
             videoId: videoInfo.videoId,
             chunksReceived: videoInfo.chunks,
-            message: "Video recording stopped, chunks being processed",
+            totalChunks: videoInfo.totalChunks,
           });
 
-          console.log(`✅ Video ${videoType} marked as uploading`);
+          // ✅ Finalize video immediately
+          const result = await finalizeVideoUpload({
+            videoId: videoInfo.videoId,
+            interviewId,
+          });
+
+          socket.emit("video_processing_complete", {
+            videoType,
+            videoId: videoInfo.videoId,
+            ftpUrl: result.ftpUrl,
+            fileSize: result.fileSize,
+            duration: result.duration,
+          });
+
+          console.log(`✅ Video ${videoType} finalized:`, result.ftpUrl);
         } catch (error) {
-          console.error(`❌ Error stopping video recording:`, error);
-          socket.emit("video_recording_error", {
+          console.error(`❌ Error finalizing video:`, error);
+          socket.emit("video_processing_error", {
             videoType,
             error: error.message,
           });
+
+          // Mark video as failed
+          if (videoUploads[videoType]?.videoId) {
+            await InterviewVideo.markAsFailed(
+              videoUploads[videoType].videoId,
+              error.message,
+            );
+          }
         }
       });
 
@@ -574,25 +534,10 @@ function initInterviewSocket(httpServer) {
             deepgramConnection = null;
           }
 
-          // ✅ STOP ALL VIDEO RECORDINGS
-          console.log("🎬 Stopping all video recordings...");
-          socket.emit("stop_all_recordings", {
-            message: "Interview ended, stopping recordings",
-          });
+          // ✅ Videos are finalized when video_recording_stop is received
+          // No need for processInterviewVideos here
 
-          // Small delay to let client stop recordings
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-
-          // ✅ TRIGGER AUTOMATIC VIDEO UPLOAD AND MERGE
-          console.log("📹 Triggering automatic video upload and merge...");
-          socket.emit("video_upload_starting", {
-            message: "Processing and uploading your interview videos...",
-          });
-
-          // Process videos in background (don't block evaluation)
-          processInterviewVideos(interviewId, socket);
-
-          // ✅ START EVALUATION IMMEDIATELY (parallel to video processing)
+          // ✅ START EVALUATION IMMEDIATELY
           socket.emit("evaluation_started", {
             message: "Evaluating your interview responses...",
           });
@@ -629,82 +574,7 @@ function initInterviewSocket(httpServer) {
         }
       }
 
-      async function processInterviewVideos(interviewId, socket) {
-        try {
-          console.log(`🎬 Processing videos for interview ${interviewId}...`);
-
-          const videos = await InterviewVideo.getByInterviewId(interviewId);
-          const pendingVideos = videos.filter(
-            (v) =>
-              v.upload_status === "pending" || v.upload_status === "uploading",
-          );
-
-          console.log(`📹 Found ${pendingVideos.length} videos to process`);
-
-          for (const video of pendingVideos) {
-            try {
-              console.log(
-                `🔄 Processing video ${video.id} (${video.video_type})...`,
-              );
-
-              socket.emit("video_processing_update", {
-                videoType: video.video_type,
-                status: "merging",
-                message: "Merging video chunks...",
-              });
-
-              // Check if video has chunks
-              const chunks = await InterviewVideo.getChunks(video.id);
-
-              if (chunks && chunks.length > 0) {
-                // Finalize (merge chunks)
-                const result = await finalizeVideoUpload({
-                  videoId: video.id,
-                  interviewId,
-                });
-
-                console.log(
-                  `✅ Video ${video.video_type} finalized:`,
-                  result.ftpUrl,
-                );
-
-                socket.emit("video_processing_complete", {
-                  videoType: video.video_type,
-                  videoId: video.id,
-                  ftpUrl: result.ftpUrl,
-                  fileSize: result.fileSize,
-                  duration: result.duration,
-                });
-              } else {
-                console.warn(`⚠️ Video ${video.id} has no chunks to merge`);
-                await InterviewVideo.updateUploadStatus(video.id, "completed");
-              }
-            } catch (error) {
-              console.error(`❌ Failed to process video ${video.id}:`, error);
-              await InterviewVideo.markAsFailed(video.id, error.message);
-
-              socket.emit("video_processing_error", {
-                videoType: video.video_type,
-                error: error.message,
-              });
-            }
-          }
-
-          // All videos processed
-          socket.emit("all_videos_processed", {
-            message: "All videos processed successfully",
-            totalVideos: pendingVideos.length,
-          });
-
-          console.log("✅ All interview videos processed");
-        } catch (error) {
-          console.error("❌ Error processing interview videos:", error);
-          socket.emit("video_processing_error", {
-            error: error.message,
-          });
-        }
-      }
-
+      // ✅ FIX: Improved Deepgram connection management
       function startDeepgramConnection() {
         if (deepgramConnection) {
           console.log("⚠️ Deepgram connection already exists, closing old one");
@@ -716,98 +586,110 @@ function initInterviewSocket(httpServer) {
           deepgramConnection = null;
         }
 
-        console.log("🎤 Creating new Deepgram connection...");
-        const sttSession = createSTTSession();
+        // ✅ Wait a bit before creating new connection to ensure old one is closed
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            console.log("🎤 Creating new Deepgram connection...");
+            const sttSession = createSTTSession();
 
-        let hasReceivedTranscript = false;
+            let hasReceivedTranscript = false;
 
-        deepgramConnection = sttSession.startLiveTranscription({
-          onTranscript: async (transcript, data) => {
-            console.log("📝 Deepgram final transcript received:", transcript);
+            deepgramConnection = sttSession.startLiveTranscription({
+              onTranscript: async (transcript, data) => {
+                console.log(
+                  "📝 Deepgram final transcript received:",
+                  transcript,
+                );
 
-            if (!transcript || transcript.trim() === "") {
-              console.log("⚠️ Empty transcript, ignoring");
-              return;
-            }
+                if (!transcript || transcript.trim() === "") {
+                  console.log("⚠️ Empty transcript, ignoring");
+                  return;
+                }
 
-            if (!isListeningActive) {
-              console.log("🚫 Listening not active, ignoring transcript");
-              return;
-            }
+                if (!isListeningActive) {
+                  console.log("🚫 Listening not active, ignoring transcript");
+                  return;
+                }
 
-            if (isProcessing) {
-              console.log("⚠️ Already processing, ignoring transcript");
-              return;
-            }
+                if (isProcessing) {
+                  console.log("⚠️ Already processing, ignoring transcript");
+                  return;
+                }
 
-            if (hasReceivedTranscript) {
-              console.log("⚠️ Already received transcript, ignoring duplicate");
-              return;
-            }
+                if (hasReceivedTranscript) {
+                  console.log(
+                    "⚠️ Already received transcript, ignoring duplicate",
+                  );
+                  return;
+                }
 
-            hasReceivedTranscript = true;
+                hasReceivedTranscript = true;
 
-            isListeningActive = false;
-            console.log("🛑 Listening disabled after receiving transcript");
+                isListeningActive = false;
+                console.log("🛑 Listening disabled after receiving transcript");
 
-            if (deepgramConnection) {
-              deepgramConnection.pauseIdleDetection();
-            }
+                if (deepgramConnection) {
+                  deepgramConnection.pauseIdleDetection();
+                }
 
-            socket.emit("transcript_received", { text: transcript });
+                socket.emit("transcript_received", { text: transcript });
 
-            if (deepgramConnection) {
-              try {
-                deepgramConnection.finish();
-                console.log("✅ Deepgram connection closed after transcript");
-              } catch (e) {
-                console.error("Error finishing connection:", e);
-              }
-              deepgramConnection = null;
-            }
+                if (deepgramConnection) {
+                  try {
+                    deepgramConnection.finish();
+                    console.log(
+                      "✅ Deepgram connection closed after transcript",
+                    );
+                  } catch (e) {
+                    console.error("Error finishing connection:", e);
+                  }
+                  deepgramConnection = null;
+                }
 
-            if (awaitingRepeatResponse) {
-              await handleRepeatResponse(transcript);
-            } else {
-              await processUserTranscript(transcript);
-            }
-          },
+                if (awaitingRepeatResponse) {
+                  await handleRepeatResponse(transcript);
+                } else {
+                  await processUserTranscript(transcript);
+                }
+              },
 
-          onInterim: (transcript, data) => {
-            if (transcript && transcript.trim()) {
-              socket.emit("interim_transcript", { text: transcript });
-            }
-          },
+              onInterim: (transcript, data) => {
+                if (transcript && transcript.trim()) {
+                  socket.emit("interim_transcript", { text: transcript });
+                }
+              },
 
-          onError: (error) => {
-            console.error("❌ Deepgram STT error:", error);
+              onError: (error) => {
+                console.error("❌ Deepgram STT error:", error);
 
-            if (error.message?.includes("timeout")) {
-              console.error("🚫 Connection never opened - not retrying");
-              socket.emit("error", {
-                message: "Unable to start speech recognition",
-              });
-              isListeningActive = false;
-              return;
-            }
+                if (error.message?.includes("timeout")) {
+                  console.error("🚫 Connection never opened - not retrying");
+                  socket.emit("error", {
+                    message: "Unable to start speech recognition",
+                  });
+                  isListeningActive = false;
+                  return;
+                }
 
-            isListeningActive = false;
-          },
+                isListeningActive = false;
+              },
 
-          onClose: () => {
-            console.log("🔌 Deepgram STT connection closed");
-            deepgramConnection = null;
-          },
+              onClose: () => {
+                console.log("🔌 Deepgram STT connection closed");
+                deepgramConnection = null;
+              },
 
-          onIdle: async () => {
-            if (isListeningActive && !isProcessing) {
-              await handleIdle();
-            }
-          },
+              onIdle: async () => {
+                if (isListeningActive && !isProcessing) {
+                  await handleIdle();
+                }
+              },
+            });
+
+            console.log("✅ Deepgram connection created");
+            resolve(deepgramConnection);
+          }, 300); // Wait 300ms before creating new connection
         });
-
-        console.log("✅ Deepgram connection created");
-        return deepgramConnection;
       }
 
       async function handleRepeatResponse(transcript) {
@@ -837,7 +719,7 @@ function initInterviewSocket(httpServer) {
           );
           await new Promise((resolve) => setTimeout(resolve, 500));
 
-          const connection = startDeepgramConnection();
+          const connection = await startDeepgramConnection();
 
           try {
             console.log("⏳ Waiting for Deepgram connection to open...");
@@ -881,7 +763,7 @@ function initInterviewSocket(httpServer) {
           );
           await new Promise((resolve) => setTimeout(resolve, 500));
 
-          const connection = startDeepgramConnection();
+          const connection = await startDeepgramConnection();
 
           try {
             console.log("⏳ Waiting for Deepgram connection to open...");
@@ -955,7 +837,7 @@ function initInterviewSocket(httpServer) {
           await new Promise((resolve) => setTimeout(resolve, 500));
 
           console.log("🎤 Starting Deepgram connection for listening...");
-          const connection = startDeepgramConnection();
+          const connection = await startDeepgramConnection();
 
           try {
             console.log("⏳ Waiting for Deepgram connection to open...");
@@ -1128,7 +1010,7 @@ function initInterviewSocket(httpServer) {
           );
           await new Promise((resolve) => setTimeout(resolve, 500));
 
-          const connection = startDeepgramConnection();
+          const connection = await startDeepgramConnection();
           console.log("✅ Step 13 complete - Deepgram connection initiated");
 
           console.log("🔍 Step 14: Waiting for connection to be ready...");
@@ -1178,19 +1060,6 @@ function initInterviewSocket(httpServer) {
             console.error("❌ Error closing Deepgram connection:", error);
           }
           deepgramConnection = null;
-        }
-
-        // ✅ Trigger video processing on disconnect if interview was in progress
-        if (interviewId && currentOrder > 0) {
-          console.log("📹 Triggering video processing on disconnect...");
-
-          processInterviewVideos(interviewId, socket)
-            .then(() => {
-              console.log("✅ Video processing on disconnect completed");
-            })
-            .catch((error) => {
-              console.error("❌ Video processing on disconnect failed:", error);
-            });
         }
 
         isProcessing = false;

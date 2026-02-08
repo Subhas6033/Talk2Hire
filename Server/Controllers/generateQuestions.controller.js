@@ -5,7 +5,7 @@ const { ollama } = require("../Config/openai.config.js");
 const { Interview } = require("../Models/interview.models.js");
 const User = require("../Models/user.models.js");
 
-// ✅ HELPER: Extract JSON from AI response (handles extra text)
+//  Extract JSON from AI response (handles extra text)
 const extractJSON = (text) => {
   // Remove markdown code blocks
   let cleaned = text
@@ -46,14 +46,19 @@ const generateQuestions = asyncHandler(async (req, res) => {
     }
   }
 
-  console.log("📄 Starting resume upload and question generation...");
+  console.log("📄 Starting resume retrieval and question generation...");
   console.log("🎯 Skills received:", skills);
 
+  // ✅ STEP 1: Get user data
   const user = await User.findById(userId);
+  if (!user) {
+    throw new APIERR(404, "User not found");
+  }
+
   let resumeUrl;
   let rawText;
 
-  // Save skills if provided and user doesn't have them
+  // ✅ STEP 2: Save skills if provided and user doesn't have them
   if (skills && Array.isArray(skills) && skills.length > 0 && !user.skill) {
     console.log("💾 Saving user skills:", skills);
     const skillsString = skills.join(", ");
@@ -62,38 +67,86 @@ const generateQuestions = asyncHandler(async (req, res) => {
     console.log("✅ Skills saved to user profile");
   }
 
+  // ✅ STEP 3: Check if resume exists in DB
   if (user?.resume) {
-    // Resume already exists - use it
+    // Resume already exists - use it (NO FILE UPLOAD NEEDED)
     console.log("✅ Resume found in database:", user.resume);
     resumeUrl = user.resume;
 
     console.log("📝 Extracting text from existing resume...");
-    const rawTextObj = await mistralResponse({
-      ftpUrl: resumeUrl,
-      mimeType: "application/pdf",
-      originalFileName: "resume.pdf",
-    });
+    try {
+      const rawTextObj = await mistralResponse({
+        ftpUrl: resumeUrl,
+        mimeType: "application/pdf",
+        originalFileName: "resume.pdf",
+      });
 
-    rawText = rawTextObj?.raw_text;
-    if (!rawText) {
-      console.error("❌ Failed to extract resume text");
-      throw new APIERR(500, "Failed to extract resume text");
+      rawText = rawTextObj?.raw_text;
+
+      if (!rawText) {
+        console.error("❌ Failed to extract resume text");
+        throw new APIERR(
+          500,
+          "Failed to extract resume text from stored resume",
+        );
+      }
+
+      console.log("✅ Resume text extracted successfully");
+    } catch (extractError) {
+      console.error("❌ Error extracting resume text:", extractError);
+      throw new APIERR(
+        500,
+        "Failed to process existing resume: " + extractError.message,
+      );
     }
   } else {
+    // ✅ STEP 4: No resume in DB - handle new upload
     if (!req.file) {
       throw new APIERR(400, "Resume file is required for first-time upload");
     }
-    // Handle resume upload here (your existing logic)
+
+    console.log("📤 No resume in DB, uploading new resume...");
+
+    try {
+      // Upload the file
+      const uploadedFile = await uploadFileMicro(req.file);
+      resumeUrl = uploadedFile.ftpUrl;
+
+      console.log("✅ Resume uploaded:", resumeUrl);
+
+      // Save resume URL to user profile
+      user.resume = resumeUrl;
+      await user.save();
+      console.log("✅ Resume saved to user profile");
+
+      // Extract text from uploaded resume
+      const rawTextObj = await mistralResponse({
+        ftpUrl: resumeUrl,
+        mimeType: req.file.mimetype,
+        originalFileName: req.file.originalname,
+      });
+
+      rawText = rawTextObj?.raw_text;
+
+      if (!rawText) {
+        throw new APIERR(500, "Failed to extract text from uploaded resume");
+      }
+
+      console.log("✅ Resume text extracted from new upload");
+    } catch (uploadError) {
+      console.error("❌ Resume upload/processing error:", uploadError);
+      throw new APIERR(500, "Failed to process resume: " + uploadError.message);
+    }
   }
 
-  console.log("✅ Resume text extracted:", rawText.substring(0, 100) + "...");
+  console.log("✅ Resume text ready:", rawText.substring(0, 100) + "...");
 
-  // Step 3: Create interview session
+  // ✅ STEP 5: Create interview session
   console.log("🎯 Creating interview session...");
   const sessionId = await Interview.createSession(userId);
   console.log("✅ Interview session created:", sessionId);
 
-  // Step 4: Generate first question using AI
+  // ✅ STEP 6: Generate first question using AI
   console.log("🤖 Generating first interview question...");
 
   const prompt = `
@@ -164,10 +217,10 @@ BAD EXAMPLES (DO NOT DO THIS):
 
   console.log("📄 Raw AI response:", raw);
 
-  // Step 5: Parse and validate AI response
+  // ✅ STEP 7: Parse and validate AI response
   let parsed;
   try {
-    //  Use helper function to extract JSON
+    // Use helper function to extract JSON
     parsed = extractJSON(raw);
     console.log("✅ Parsed JSON:", parsed);
   } catch (parseError) {
@@ -191,7 +244,7 @@ BAD EXAMPLES (DO NOT DO THIS):
   const firstQuestion = parsed.question.trim();
   console.log("✅ First question generated:", firstQuestion);
 
-  // Step 6: Save first question to database
+  // ✅ STEP 8: Save first question to database
   console.log("💾 Saving first question to database...");
 
   let qnaId;
@@ -228,7 +281,7 @@ BAD EXAMPLES (DO NOT DO THIS):
   );
 });
 
-//  Generate the next question based on the user answer
+// ✅ Generate the next question based on the user answer
 const generateNextQuestion = asyncHandler(async (req, res) => {
   const { sessionId, resumeText, history } = req.body;
 
@@ -316,7 +369,7 @@ FORMAT:
 
   let parsed;
   try {
-    //  Use helper function to extract JSON
+    // Use helper function to extract JSON
     parsed = extractJSON(raw);
     console.log("✅ Parsed JSON:", parsed);
   } catch (err) {

@@ -9,7 +9,7 @@ function createSTTSession() {
   const apiKey = process.env.DEEPGRAM_API_KEY.trim();
   console.log(
     "🔑 Using Deepgram API Key:",
-    apiKey.substring(0, 15) + "..." + apiKey.substring(apiKey.length - 4)
+    apiKey.substring(0, 15) + "..." + apiKey.substring(apiKey.length - 4),
   );
   console.log("🔑 API Key length:", apiKey.length);
 
@@ -65,11 +65,11 @@ function createSTTSession() {
         openTimeout = setTimeout(() => {
           if (!isOpen && isConnecting) {
             console.error(
-              "❌ Connection timeout - WebSocket never opened after 10 seconds"
+              "❌ Connection timeout - WebSocket never opened after 10 seconds",
             );
             isConnecting = false;
             const timeoutError = new Error(
-              "WebSocket connection timeout - never opened"
+              "WebSocket connection timeout - never opened",
             );
             connectionError = timeoutError;
 
@@ -79,7 +79,7 @@ function createSTTSession() {
               } catch (e) {
                 console.error(
                   "Error finishing connection on timeout:",
-                  e.message
+                  e.message,
                 );
               }
               connection = null;
@@ -145,7 +145,7 @@ function createSTTSession() {
 
         connection.on(LiveTranscriptionEvents.Open, () => {
           console.log(
-            "✅✅✅ Deepgram WebSocket OPEN - Connection successful!"
+            "✅✅✅ Deepgram WebSocket OPEN - Connection successful!",
           );
           clearTimeout(openTimeout);
           isOpen = true;
@@ -178,7 +178,7 @@ function createSTTSession() {
           // Log transcript type
           console.log(
             `📝 [${isFinal ? "Final" : "Interim"}${speechFinal ? " - Speech Final" : ""}]:`,
-            transcript.substring(0, 50)
+            transcript.substring(0, 50),
           );
 
           // Handle interim results
@@ -249,7 +249,7 @@ function createSTTSession() {
           // ✅ If connection never opened, reject the promise
           if (!hasBeenOpened && openReject) {
             const closeError = new Error(
-              `WebSocket closed before opening (code: ${closeEvent?.code || "unknown"})`
+              `WebSocket closed before opening (code: ${closeEvent?.code || "unknown"})`,
             );
             connectionError = closeError;
             openReject(closeError);
@@ -267,7 +267,7 @@ function createSTTSession() {
         });
 
         console.log(
-          "🔄 WebSocket connection initiated, waiting for Open event..."
+          "🔄 WebSocket connection initiated, waiting for Open event...",
         );
       } catch (error) {
         console.error("❌ Exception creating Deepgram connection:", error);

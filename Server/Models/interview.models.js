@@ -10,7 +10,7 @@ const Interview = {
       db = await connectDB();
       const [result] = await db.execute(
         "INSERT INTO interviews (user_id) VALUES (?)",
-        [userId]
+        [userId],
       );
       return result.insertId;
     } catch (error) {
@@ -30,7 +30,7 @@ const Interview = {
          FROM interviews
          WHERE id = ?
          LIMIT 1`,
-        [interviewId]
+        [interviewId],
       );
 
       if (!rows[0]) {
@@ -73,7 +73,7 @@ const Interview = {
         `INSERT INTO interview_questions
          (interview_id, question, technology, difficulty, question_order)
          VALUES (?, ?, ?, ?, ?)`,
-        [interviewId, question, technology, difficulty, questionOrder]
+        [interviewId, question, technology, difficulty, questionOrder],
       );
 
       console.log("💾 Question saved successfully:", {
@@ -95,7 +95,7 @@ const Interview = {
       if (error.code === "ER_DUP_ENTRY") {
         throw new APIERR(
           409,
-          `Question with order ${questionOrder} already exists for this interview`
+          `Question with order ${questionOrder} already exists for this interview`,
         );
       }
 
@@ -124,7 +124,7 @@ const Interview = {
         `UPDATE interview_questions
          SET answer = ?
          WHERE id = ? AND interview_id = ?`,
-        [answer, questionId, interviewId]
+        [answer, questionId, interviewId],
       );
 
       if (result.affectedRows === 0) {
@@ -163,7 +163,7 @@ const Interview = {
          FROM interview_questions
          WHERE interview_id = ?
          ORDER BY question_order ASC`,
-        [interviewId]
+        [interviewId],
       );
 
       return rows;
@@ -189,7 +189,7 @@ const Interview = {
          WHERE interview_id = ?
            AND question_order = ?
          LIMIT 1`,
-        [interviewId, questionOrder]
+        [interviewId, questionOrder],
       );
 
       return rows[0] || null;
@@ -217,7 +217,7 @@ const Interview = {
            AND answer IS NOT NULL
          ORDER BY question_order DESC
          LIMIT 1`,
-        [interviewId]
+        [interviewId],
       );
 
       return rows[0] || null;
@@ -237,7 +237,7 @@ const Interview = {
         `SELECT COALESCE(MAX(question_order), 0) + 1 AS nextOrder
          FROM interview_questions
          WHERE interview_id = ?`,
-        [interviewId]
+        [interviewId],
       );
 
       return rows[0].nextOrder;
