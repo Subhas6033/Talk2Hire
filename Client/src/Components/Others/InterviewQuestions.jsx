@@ -17,7 +17,6 @@ const InterviewQuestions = ({
 }) => {
   const interview = useInterview(interviewId, userId, cameraStream);
 
-  // ✅ FIX 1: Pass socketRef to video recording hook
   const {
     isRecording: isVideoRecording,
     startRecording: startVideoRecording,
@@ -37,6 +36,10 @@ const InterviewQuestions = ({
   // ✅ NEW: Security camera frame display
   const [securityFrameData, setSecurityFrameData] = useState(null);
   const securityVideoRef = useRef(null);
+
+  // ✅ NEW: Evaluation state
+  const [evaluationStatus, setEvaluationStatus] = useState(null); // 'started', 'complete', 'error'
+  const [evaluationResults, setEvaluationResults] = useState(null);
 
   useEffect(() => {
     const checkSecurityConnection = () => {
@@ -116,37 +119,28 @@ const InterviewQuestions = ({
       if (!interview.hasStarted) {
         console.log("🚀 Auto-starting interview...");
         interview.autoStartInterview();
-
-        // ✅ FIX 2: Start video recording after a small delay to ensure socket is fully ready
-        if (cameraStream) {
-          setTimeout(() => {
-            console.log("🎥 Starting video recording...");
-            startVideoRecording();
-          }, 500);
-        }
       }
     });
 
-    // ✅ NEW: Listen for security camera frames
+    // ✅ FIXED: Listen for security camera frames
     socket.on("security_frame", (data) => {
-      // Update security frame display
+      console.log("📸 Security frame received");
       setSecurityFrameData(data);
     });
 
-    // ✅ NEW: Listen for security camera connection
     socket.on("security_camera_connected", (data) => {
       console.log("✅ Security camera connected event received:", data);
     });
 
-    // ✅ NEW: Listen for security camera disconnection
     socket.on("security_camera_disconnected", (data) => {
       console.warn("⚠️ Security camera disconnected:", data);
       setSecurityFrameData(null);
     });
 
-    // ✅ NEW: Listen for video processing updates
-    socket.on("video_recording_ready", (data) => {
-      console.log("✅ Video recording session ready:", data);
+    // ✅ NEW: Listen for interim transcripts
+    socket.on("interim_transcript", (data) => {
+      console.log("💬 Interim transcript:", data.text);
+      interview.setLiveTranscript(data.text);
     });
 
     socket.on("video_chunk_uploaded", (data) => {
@@ -172,8 +166,27 @@ const InterviewQuestions = ({
       console.log("✅ Video processing complete:", data);
     });
 
-    socket.on("all_videos_processed", (data) => {
-      console.log("✅ All videos processed:", data);
+    // ✅ NEW: Evaluation event listeners
+    socket.on("evaluation_started", (data) => {
+      console.log("🔄 Evaluation started:", data.message);
+      setEvaluationStatus("started");
+    });
+
+    socket.on("evaluation_complete", (data) => {
+      console.log("✅ Evaluation complete:", data.results);
+      setEvaluationStatus("complete");
+      setEvaluationResults(data.results);
+    });
+
+    socket.on("evaluation_error", (data) => {
+      console.error("❌ Evaluation error:", data.message);
+      setEvaluationStatus("error");
+      alert(`Evaluation failed: ${data.message}`);
+    });
+
+    socket.on("video_processing_error", (data) => {
+      console.error("❌ Video processing error:", data);
+      alert(`Video processing failed for ${data.videoType}: ${data.error}`);
     });
 
     socket.on("question", (data) => {
@@ -224,20 +237,15 @@ const InterviewQuestions = ({
       console.log("🎉 Interview completed:", data);
       interview.handleInterviewComplete(data);
 
-      // ✅ FIX 3: Stop video recording and let server finalize
+      // Stop video recording and let server finalize
       if (isVideoRecording) {
         console.log("🎥 Stopping video recording...");
         await stopVideoRecording();
         console.log("✅ Video recording stopped, server will process chunks");
       }
 
-      alert(
-        `Interview completed! You answered ${data.totalQuestions} questions. Your videos are being processed.`,
-      );
-
-      if (onFinish) {
-        onFinish();
-      }
+      // Don't immediately call onFinish - wait for evaluation
+      console.log("⏳ Waiting for evaluation to complete...");
     });
 
     socket.on("tts_end", () => {
@@ -290,7 +298,6 @@ const InterviewQuestions = ({
       console.log("🧹 Cleaning up socket and resources...");
       isCleaningUpRef.current = true;
 
-      // Stop video recording if still active
       if (isVideoRecording) {
         stopVideoRecording();
       }
@@ -322,6 +329,54 @@ const InterviewQuestions = ({
     startVideoRecording,
     stopVideoRecording,
   ]);
+
+  // ✅ FIXED: Add serverReady check to prevent premature recording start
+  useEffect(() => {
+    if (
+      interview.status === "live" &&
+      !interview.isInitializing &&
+      interview.hasStarted &&
+      interview.serverReady && // ✅ NEW: Ensure server is ready
+      cameraStream &&
+      !isVideoRecording
+    ) {
+      console.log("🎥 Interview started - initiating video recording...");
+      const timer = setTimeout(() => {
+        startVideoRecording();
+      }, 2000); // Small delay to ensure socket is ready
+
+      return () => clearTimeout(timer);
+    }
+  }, [
+    interview.status,
+    interview.isInitializing,
+    interview.hasStarted,
+    interview.serverReady, // ✅ NEW: Add to dependencies
+    cameraStream,
+    isVideoRecording,
+    startVideoRecording,
+  ]);
+
+  // ✅ NEW: Auto-finish when evaluation completes
+  useEffect(() => {
+    if (evaluationStatus === "complete" && evaluationResults) {
+      console.log("✅ Evaluation complete, showing results and finishing...");
+
+      const message = `Interview completed! You answered ${interview.questionOrder} questions.
+      
+Overall Score: ${evaluationResults.overallScore}%
+Decision: ${evaluationResults.hireDecision}
+Experience Level: ${evaluationResults.experienceLevel}
+
+Your videos have been processed and evaluation is complete.`;
+
+      alert(message);
+
+      if (onFinish) {
+        onFinish();
+      }
+    }
+  }, [evaluationStatus, evaluationResults, interview.questionOrder, onFinish]);
 
   const handleSecurityWarning = (warning) => {
     const newWarning = {
@@ -483,6 +538,33 @@ const InterviewQuestions = ({
                     />
                     {isVideoRecording ? "Recording" : "Video"}
                   </div>
+                  {/* ✅ NEW: Evaluation status indicator */}
+                  {evaluationStatus && (
+                    <div
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                        evaluationStatus === "complete"
+                          ? "bg-green-50 dark:bg-green-950/50 text-green-700 dark:text-green-300"
+                          : evaluationStatus === "error"
+                            ? "bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300"
+                            : "bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300"
+                      }`}
+                    >
+                      <div
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          evaluationStatus === "complete"
+                            ? "bg-green-600"
+                            : evaluationStatus === "error"
+                              ? "bg-red-600"
+                              : "bg-blue-600 animate-pulse"
+                        }`}
+                      />
+                      {evaluationStatus === "complete"
+                        ? "Evaluated"
+                        : evaluationStatus === "error"
+                          ? "Eval Error"
+                          : "Evaluating"}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -513,6 +595,23 @@ const InterviewQuestions = ({
                       {securityWarnings[securityWarnings.length - 1]?.type}:{" "}
                       {securityWarnings[securityWarnings.length - 1]?.message}
                     </p>
+                  </div>
+                )}
+
+                {/* ✅ NEW: Evaluation in progress */}
+                {evaluationStatus === "started" && (
+                  <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <div className="animate-spin w-5 h-5 border-3 border-blue-600 border-t-transparent rounded-full" />
+                      <div>
+                        <p className="text-sm font-semibold text-blue-900 dark:text-blue-300">
+                          Evaluating Your Interview
+                        </p>
+                        <p className="text-xs text-blue-800 dark:text-blue-200 mt-1">
+                          Please wait while we analyze your responses...
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 )}
 

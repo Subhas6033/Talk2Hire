@@ -496,6 +496,14 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch],
   );
 
+  const handleInterimTranscript = useCallback(
+    (data) => {
+      console.log("💬 Interim transcript:", data.text);
+      dispatch(setUserText(data.text)); // Reuse existing action or create new one
+    },
+    [dispatch],
+  );
+
   // Auto-start interview
   const autoStartInterview = useCallback(async () => {
     if (hasStartedRef.current) {
@@ -568,6 +576,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     startMicStreaming,
     autoStartInterview,
     enableRecognitionAfterDelay,
+    setLiveTranscript: handleInterimTranscript,
     setStatus: (status) => dispatch(setStatus(status)),
     setServerReady: (ready) => dispatch(setServerReady(ready)),
     setHasStarted: (started) => dispatch(setHasStarted(started)),

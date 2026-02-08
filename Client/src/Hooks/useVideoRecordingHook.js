@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 
-const CHUNK_DURATION = 2000; // Send video chunks every 2 seconds (matching security camera)
+const CHUNK_DURATION = 2000; // Send video chunks every 2 seconds
 
 const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
   const [isRecording, setIsRecording] = useState(false);
@@ -9,8 +9,9 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
   const mediaRecorderRef = useRef(null);
   const chunkCountRef = useRef(0);
   const videoSessionReadyRef = useRef(false);
+  const isRequestingSessionRef = useRef(false);
 
-  // Start recording
+  // ✅ FIX: Start recording - wait for server confirmation
   const startRecording = useCallback(() => {
     if (!cameraStream || isRecording) {
       console.log("⚠️ Cannot start recording:", {
@@ -25,8 +26,25 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
       return;
     }
 
+    // ✅ CRITICAL FIX: Check if socket is actually connected
+    if (!socketRef.current.connected) {
+      console.error("❌ Socket not connected yet, cannot start recording");
+      console.log("⏳ Socket state:", {
+        exists: !!socketRef.current,
+        connected: socketRef.current?.connected,
+        id: socketRef.current?.id,
+      });
+      return;
+    }
+
+    if (isRequestingSessionRef.current) {
+      console.log("⚠️ Already requesting video session");
+      return;
+    }
+
     try {
-      console.log("🎥 Starting primary camera video recording...");
+      console.log("🎥 Requesting video session from server...");
+      isRequestingSessionRef.current = true;
 
       // Check supported MIME types
       const mimeTypes = [
@@ -48,17 +66,7 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
         throw new Error("No supported video MIME type found");
       }
 
-      const options = {
-        mimeType: selectedMimeType,
-        videoBitsPerSecond: 2500000, // 2.5 Mbps
-      };
-
-      const mediaRecorder = new MediaRecorder(cameraStream, options);
-      mediaRecorderRef.current = mediaRecorder;
-      chunkCountRef.current = 0;
-      videoSessionReadyRef.current = false;
-
-      // ✅ FIX 1: Emit video_recording_start to server
+      // ✅ STEP 1: Request video session from server FIRST
       console.log("📤 Emitting video_recording_start to server...");
       socketRef.current.emit("video_recording_start", {
         videoType: "primary_camera",
@@ -69,117 +77,125 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
         },
       });
 
-      // ✅ FIX 2: Wait for server confirmation before starting recording
+      // ✅ STEP 2: Wait for server confirmation before starting MediaRecorder
       const readyListener = (response) => {
         if (response.videoType === "primary_camera") {
           console.log("✅ Server ready for primary camera chunks:", response);
           videoSessionReadyRef.current = true;
+          isRequestingSessionRef.current = false;
 
-          // Now start the actual recording
-          if (mediaRecorderRef.current) {
-            mediaRecorderRef.current.start(CHUNK_DURATION);
-            console.log("▶️ MediaRecorder started (2s chunks)");
-          }
+          // ✅ STEP 3: NOW start MediaRecorder
+          const options = {
+            mimeType: selectedMimeType,
+            videoBitsPerSecond: 2500000,
+          };
+
+          const mediaRecorder = new MediaRecorder(cameraStream, options);
+          mediaRecorderRef.current = mediaRecorder;
+          chunkCountRef.current = 0;
+
+          // Handle data available (chunks)
+          mediaRecorder.ondataavailable = (event) => {
+            if (event.data && event.data.size > 0) {
+              chunkCountRef.current++;
+
+              console.log(
+                `📦 Primary camera chunk ${chunkCountRef.current} captured (${event.data.size} bytes)`,
+              );
+
+              // Send via WebSocket
+              const reader = new FileReader();
+              reader.onloadend = () => {
+                if (
+                  socketRef.current?.connected &&
+                  videoSessionReadyRef.current
+                ) {
+                  const base64data = reader.result.split(",")[1];
+
+                  socketRef.current.emit("video_chunk", {
+                    videoType: "primary_camera",
+                    chunkNumber: chunkCountRef.current,
+                    chunkData: base64data,
+                    isLastChunk: false,
+                    timestamp: Date.now(),
+                  });
+
+                  if (chunkCountRef.current % 5 === 0) {
+                    console.log(
+                      `📤 Primary camera chunks sent: ${chunkCountRef.current}`,
+                    );
+                  }
+                } else {
+                  console.warn(
+                    "⚠️ Socket not connected or session not ready, chunk not sent",
+                  );
+                }
+              };
+              reader.readAsDataURL(event.data);
+
+              // Keep chunks in state for reference
+              setRecordedChunks((prev) => [...prev, event.data]);
+            }
+          };
+
+          mediaRecorder.onerror = (error) => {
+            console.error("❌ MediaRecorder error:", error);
+            setIsRecording(false);
+          };
+
+          mediaRecorder.onstop = () => {
+            console.log(
+              `🛑 MediaRecorder stopped. Total chunks: ${chunkCountRef.current}`,
+            );
+            setIsRecording(false);
+
+            // Notify server recording stopped
+            if (socketRef.current?.connected) {
+              socketRef.current.emit("video_recording_stop", {
+                videoType: "primary_camera",
+                totalChunks: chunkCountRef.current,
+              });
+              console.log("📤 Sent video_recording_stop to server");
+            }
+          };
+
+          mediaRecorder.onstart = () => {
+            console.log("▶️ MediaRecorder started");
+            setIsRecording(true);
+          };
+
+          // ✅ STEP 4: Start recording
+          mediaRecorder.start(CHUNK_DURATION);
+          console.log("✅ MediaRecorder started (2s chunks)");
 
           // Remove listener after receiving
           socketRef.current.off("video_recording_ready", readyListener);
         }
       };
 
+      // Listen for server confirmation
+      socketRef.current.off("video_recording_ready");
       socketRef.current.on("video_recording_ready", readyListener);
 
-      // Handle data available (chunks)
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          chunkCountRef.current++;
-
-          console.log(
-            `📦 Primary camera chunk ${chunkCountRef.current} captured (${event.data.size} bytes)`,
-          );
-
-          // ✅ FIX 3: Send via WebSocket instead of HTTP
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            if (socketRef.current?.connected && videoSessionReadyRef.current) {
-              const base64data = reader.result.split(",")[1];
-
-              socketRef.current.emit("video_chunk", {
-                videoType: "primary_camera",
-                chunkNumber: chunkCountRef.current,
-                chunkData: base64data,
-                isLastChunk: false,
-                timestamp: Date.now(),
-              });
-
-              if (chunkCountRef.current % 5 === 0) {
-                console.log(
-                  `📤 Primary camera chunks sent: ${chunkCountRef.current}`,
-                );
-              }
-            } else {
-              console.warn(
-                "⚠️ Socket not connected or session not ready, chunk not sent",
-              );
-            }
-          };
-          reader.readAsDataURL(event.data);
-
-          // Keep chunks in state for reference
-          setRecordedChunks((prev) => [...prev, event.data]);
-        }
-      };
-
-      mediaRecorder.onerror = (error) => {
-        console.error("❌ MediaRecorder error:", error);
-        setIsRecording(false);
-      };
-
-      mediaRecorder.onstop = () => {
-        console.log(
-          `🛑 MediaRecorder stopped. Total chunks: ${chunkCountRef.current}`,
-        );
-        setIsRecording(false);
-
-        // ✅ FIX 4: Notify server recording stopped
-        if (socketRef.current?.connected) {
-          socketRef.current.emit("video_recording_stop", {
-            videoType: "primary_camera",
-            totalChunks: chunkCountRef.current,
-          });
-          console.log("📤 Sent video_recording_stop to server");
-        }
-      };
-
-      mediaRecorder.onstart = () => {
-        console.log("▶️ MediaRecorder started");
-        setIsRecording(true);
-      };
-
-      console.log(
-        "✅ MediaRecorder configured, waiting for server confirmation...",
-      );
-
-      // Set timeout in case server doesn't respond
+      // ✅ STEP 5: Timeout if server doesn't respond
       setTimeout(() => {
-        if (!videoSessionReadyRef.current) {
+        if (!videoSessionReadyRef.current && isRequestingSessionRef.current) {
           console.error(
             "❌ Server didn't confirm video session within 10s, starting anyway",
           );
-          if (
-            mediaRecorderRef.current &&
-            mediaRecorderRef.current.state === "inactive"
-          ) {
-            mediaRecorderRef.current.start(CHUNK_DURATION);
-          }
+          isRequestingSessionRef.current = false;
+          // Could optionally start recording here as fallback
+          // or show error to user
         }
       }, 10000);
     } catch (error) {
       console.error("❌ Failed to start video recording:", error);
       setIsRecording(false);
+      isRequestingSessionRef.current = false;
     }
   }, [cameraStream, isRecording, interviewId, userId, socketRef]);
 
-  // ✅ FIX 5: Simplified stop recording (no redundant HTTP upload)
+  // ✅ Stop recording
   const stopRecording = useCallback(async () => {
     if (!isRecording || !mediaRecorderRef.current) {
       console.log("⚠️ No active recording to stop");
@@ -193,11 +209,10 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
 
       mediaRecorder.onstop = async () => {
         console.log("✅ Recording stopped");
-
-        // Server will finalize the video from chunks
         console.log(`📊 Total chunks recorded: ${chunkCountRef.current}`);
 
         setIsRecording(false);
+        videoSessionReadyRef.current = false;
         resolve(chunkCountRef.current);
       };
 
@@ -209,7 +224,7 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
         mediaRecorder.onstop();
       }
     });
-  }, [isRecording, socketRef]);
+  }, [isRecording]);
 
   // Cleanup on unmount
   const cleanup = useCallback(() => {
@@ -224,6 +239,7 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
 
     chunkCountRef.current = 0;
     videoSessionReadyRef.current = false;
+    isRequestingSessionRef.current = false;
   }, []);
 
   // Auto-cleanup on unmount
