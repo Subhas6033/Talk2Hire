@@ -18,6 +18,16 @@ const extractJSON = (text) => {
   const jsonEnd = cleaned.lastIndexOf("}");
 
   if (jsonStart === -1 || jsonEnd === -1 || jsonEnd <= jsonStart) {
+    // ✅ FALLBACK: If no JSON found, try to wrap plain text as JSON
+    console.warn("⚠️ No JSON structure found, attempting to wrap plain text");
+
+    // If it looks like a plain question, wrap it
+    if (cleaned.length > 10 && cleaned.includes("?")) {
+      return { question: cleaned };
+    }
+
+    // ✅ Log the actual response for debugging
+    console.error("❌ Raw response that failed:", text);
     throw new Error("No valid JSON object found in response");
   }
 
@@ -186,6 +196,7 @@ BAD EXAMPLES (DO NOT DO THIS):
   try {
     completion = await ollama.chat({
       model: "deepseek-v3.1:671b-cloud",
+      format: "json",
       messages: [
         {
           role: "system",

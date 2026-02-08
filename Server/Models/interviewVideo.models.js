@@ -2,9 +2,6 @@ const { connectDB } = require("../Config/database.config");
 const { APIERR } = require("../Utils/index.utils.js");
 
 const InterviewVideo = {
-  /**
-   * Create a new video record
-   */
   async create({
     interviewId,
     userId,
@@ -59,7 +56,7 @@ const InterviewVideo = {
           frameRate,
           checksum,
           totalChunks,
-        ]
+        ],
       );
 
       console.log("✅ Video record created:", result.insertId);
@@ -72,9 +69,6 @@ const InterviewVideo = {
     }
   },
 
-  /**
-   * Update video record with FTP details after upload
-   */
   async updateAfterUpload({
     videoId,
     ftpPath,
@@ -98,7 +92,7 @@ const InterviewVideo = {
              upload_progress = 100,
              completed_at = NOW()
          WHERE id = ?`,
-        [ftpPath, ftpUrl, fileSize, duration, videoId]
+        [ftpPath, ftpUrl, fileSize, duration, videoId],
       );
 
       console.log("✅ Video record updated successfully");
@@ -111,9 +105,6 @@ const InterviewVideo = {
     }
   },
 
-  /**
-   * Update video record after merging chunks
-   */
   async updateAfterMerge({ videoId, ftpUrl, fileSize, duration, checksum }) {
     let db;
     try {
@@ -131,7 +122,7 @@ const InterviewVideo = {
              upload_progress = 100,
              completed_at = NOW()
          WHERE id = ?`,
-        [ftpUrl, fileSize, duration, checksum, videoId]
+        [ftpUrl, fileSize, duration, checksum, videoId],
       );
 
       console.log("✅ Video updated after merge");
@@ -144,9 +135,6 @@ const InterviewVideo = {
     }
   },
 
-  /**
-   * Update upload status
-   */
   async updateUploadStatus(videoId, status, errorMessage = null) {
     let db;
     try {
@@ -160,7 +148,7 @@ const InterviewVideo = {
              error_message = ?,
              updated_at = NOW()
          WHERE id = ?`,
-        [status, errorMessage, videoId]
+        [status, errorMessage, videoId],
       );
 
       return true;
@@ -172,19 +160,18 @@ const InterviewVideo = {
     }
   },
 
-  /**
-   * Update upload progress
-   */
   async updateProgress(videoId, progress) {
     let db;
     try {
       db = await connectDB();
 
+      const validProgress = Math.min(100, Math.max(0, Math.round(progress)));
+
       await db.execute(
         `UPDATE interview_videos 
-         SET upload_progress = ?
-         WHERE id = ?`,
-        [progress, videoId]
+       SET upload_progress = ?
+       WHERE id = ?`,
+        [validProgress, videoId],
       );
 
       return true;
@@ -196,9 +183,6 @@ const InterviewVideo = {
     }
   },
 
-  /**
-   * Update video checksum
-   */
   async updateChecksum(videoId, checksum) {
     let db;
     try {
@@ -208,7 +192,7 @@ const InterviewVideo = {
         `UPDATE interview_videos 
          SET checksum = ?
          WHERE id = ?`,
-        [checksum, videoId]
+        [checksum, videoId],
       );
 
       console.log("✅ Checksum updated:", checksum.substring(0, 16) + "...");
@@ -221,9 +205,6 @@ const InterviewVideo = {
     }
   },
 
-  /**
-   * Get video by ID
-   */
   async getById(videoId) {
     let db;
     try {
@@ -231,7 +212,7 @@ const InterviewVideo = {
 
       const [rows] = await db.execute(
         `SELECT * FROM interview_videos WHERE id = ? LIMIT 1`,
-        [videoId]
+        [videoId],
       );
 
       return rows[0] || null;
@@ -243,9 +224,6 @@ const InterviewVideo = {
     }
   },
 
-  /**
-   * Get all videos for an interview
-   */
   async getByInterviewId(interviewId) {
     let db;
     try {
@@ -255,7 +233,7 @@ const InterviewVideo = {
         `SELECT * FROM interview_videos 
          WHERE interview_id = ?
          ORDER BY video_type ASC, created_at ASC`,
-        [interviewId]
+        [interviewId],
       );
 
       return rows;
@@ -267,9 +245,6 @@ const InterviewVideo = {
     }
   },
 
-  /**
-   * Get video by interview ID and type
-   */
   async getByInterviewAndType(interviewId, videoType) {
     let db;
     try {
@@ -279,7 +254,7 @@ const InterviewVideo = {
         `SELECT * FROM interview_videos 
          WHERE interview_id = ? AND video_type = ?
          LIMIT 1`,
-        [interviewId, videoType]
+        [interviewId, videoType],
       );
 
       return rows[0] || null;
@@ -291,9 +266,6 @@ const InterviewVideo = {
     }
   },
 
-  /**
-   * Get all pending uploads
-   */
   async getPendingUploads() {
     let db;
     try {
@@ -303,7 +275,7 @@ const InterviewVideo = {
         `SELECT * FROM interview_videos 
          WHERE upload_status IN ('pending', 'uploading')
          AND retry_count < 3
-         ORDER BY created_at ASC`
+         ORDER BY created_at ASC`,
       );
 
       return rows;
@@ -315,9 +287,6 @@ const InterviewVideo = {
     }
   },
 
-  /**
-   * Mark upload as failed
-   */
   async markAsFailed(videoId, errorMessage) {
     let db;
     try {
@@ -329,7 +298,7 @@ const InterviewVideo = {
              error_message = ?,
              retry_count = retry_count + 1
          WHERE id = ?`,
-        [errorMessage, videoId]
+        [errorMessage, videoId],
       );
 
       return true;
@@ -341,9 +310,6 @@ const InterviewVideo = {
     }
   },
 
-  /**
-   * Save chunk information
-   */
   async saveChunk({
     videoId,
     chunkNumber,
@@ -365,7 +331,7 @@ const InterviewVideo = {
          checksum = VALUES(checksum),
          upload_status = 'uploaded',
          uploaded_at = NOW()`,
-        [videoId, chunkNumber, chunkSize, tempFtpPath, checksum]
+        [videoId, chunkNumber, chunkSize, tempFtpPath, checksum],
       );
 
       // Update parent video record
@@ -373,7 +339,7 @@ const InterviewVideo = {
         `UPDATE interview_videos 
          SET uploaded_chunks = uploaded_chunks + 1
          WHERE id = ?`,
-        [videoId]
+        [videoId],
       );
 
       return true;
@@ -385,9 +351,6 @@ const InterviewVideo = {
     }
   },
 
-  /**
-   * Get all chunks for a video
-   */
   async getChunks(videoId) {
     let db;
     try {
@@ -398,7 +361,7 @@ const InterviewVideo = {
          WHERE video_id = ? 
          AND upload_status = 'uploaded'
          ORDER BY chunk_number ASC`,
-        [videoId]
+        [videoId],
       );
 
       return rows;
@@ -410,9 +373,6 @@ const InterviewVideo = {
     }
   },
 
-  /**
-   * Mark chunks as deleted after merge (FIXED VERSION)
-   */
   async markChunksDeleted(videoId) {
     let db;
     try {
@@ -427,20 +387,20 @@ const InterviewVideo = {
            SET upload_status = 'deleted',
                deleted_at = NOW()
            WHERE video_id = ?`,
-          [videoId]
+          [videoId],
         );
         console.log("✅ Chunks marked as deleted");
       } catch (statusError) {
         // If 'deleted' status fails (column too small), try alternative approach
         if (statusError.code === "WARN_DATA_TRUNCATED") {
           console.warn(
-            "⚠️ 'deleted' status not supported, using alternative approach"
+            "⚠️ 'deleted' status not supported, using alternative approach",
           );
 
           // Option 1: Just delete the records entirely
           await db.execute(
             `DELETE FROM interview_video_chunks WHERE video_id = ?`,
-            [videoId]
+            [videoId],
           );
           console.log("✅ Chunks deleted from database");
 
@@ -469,9 +429,6 @@ const InterviewVideo = {
     }
   },
 
-  /**
-   * Get upload statistics for an interview
-   */
   async getUploadStats(interviewId) {
     let db;
     try {
@@ -490,7 +447,7 @@ const InterviewVideo = {
            SUM(duration) as total_duration
          FROM interview_videos
          WHERE interview_id = ?`,
-        [interviewId]
+        [interviewId],
       );
 
       return rows[0];
@@ -502,9 +459,6 @@ const InterviewVideo = {
     }
   },
 
-  /**
-   * Get detailed statistics including chunk info
-   */
   async getDetailedStats(interviewId) {
     let db;
     try {
@@ -525,7 +479,7 @@ const InterviewVideo = {
            completed_at
          FROM interview_videos
          WHERE interview_id = ?`,
-        [interviewId]
+        [interviewId],
       );
 
       // Get chunk stats
@@ -539,7 +493,7 @@ const InterviewVideo = {
          LEFT JOIN interview_video_chunks c ON v.id = c.video_id
          WHERE v.interview_id = ?
          GROUP BY v.id, v.video_type`,
-        [interviewId]
+        [interviewId],
       );
 
       return {
@@ -554,9 +508,6 @@ const InterviewVideo = {
     }
   },
 
-  /**
-   * Delete video record
-   */
   async delete(videoId) {
     let db;
     try {
@@ -565,7 +516,7 @@ const InterviewVideo = {
       // Delete chunks first
       await db.execute(
         `DELETE FROM interview_video_chunks WHERE video_id = ?`,
-        [videoId]
+        [videoId],
       );
 
       // Delete video
@@ -581,9 +532,6 @@ const InterviewVideo = {
     }
   },
 
-  /**
-   * Clean up old failed uploads
-   */
   async cleanupOldFailedUploads(daysOld = 7) {
     let db;
     try {
@@ -593,7 +541,7 @@ const InterviewVideo = {
         `DELETE FROM interview_videos 
          WHERE upload_status = 'failed'
          AND created_at < DATE_SUB(NOW(), INTERVAL ? DAY)`,
-        [daysOld]
+        [daysOld],
       );
 
       console.log(`✅ Cleaned up ${result.affectedRows} old failed uploads`);
