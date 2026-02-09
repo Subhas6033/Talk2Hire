@@ -3,9 +3,9 @@ import axios from "axios";
 const api = axios.create({
   baseURL: `${import.meta.env.VITE_BACKEND_URL}/api/v1`,
   withCredentials: true,
-  headers: {
+  /* headers: {
     "Content-Type": "application/json",
-  },
+  }, */
 });
 
 //  Log all API requests for debugging
