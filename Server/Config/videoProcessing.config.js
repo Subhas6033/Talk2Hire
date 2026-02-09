@@ -24,12 +24,12 @@ module.exports = {
   },
 
   scheduling: {
-    autoMergeIntervalMs: 2 * 60 * 1000, // 2 minutes
-    pendingUploadsIntervalMs: 5 * 60 * 1000, // 5 minutes
-    retryFailedIntervalMs: 30 * 60 * 1000, // 30 minutes
-    cleanupChunksIntervalMs: 24 * 60 * 60 * 1000, // Daily
-    verifyUploadsIntervalMs: 60 * 60 * 1000, // Hourly
-    cleanupFailedIntervalMs: 7 * 24 * 60 * 60 * 1000, // Weekly
+    autoMergeIntervalMs: 30 * 60 * 1000, // 30 minutes ✅ UPDATED
+    pendingUploadsIntervalMs: 30 * 60 * 1000, // 30 minutes ✅ UPDATED
+    retryFailedIntervalMs: 30 * 60 * 1000, // 30 minutes ✅ UPDATED
+    cleanupChunksIntervalMs: 24 * 60 * 60 * 1000, // Daily (24 hours)
+    verifyUploadsIntervalMs: 60 * 60 * 1000, // Hourly (1 hour)
+    cleanupFailedIntervalMs: 7 * 24 * 60 * 60 * 1000, // Weekly (7 days)
 
     maxConcurrentMerges: 3, // Process 3 interviews at once
   },

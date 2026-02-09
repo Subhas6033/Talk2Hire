@@ -47,6 +47,12 @@ app.use(
 
 app.use(cookieParser());
 
+// Requests logs
+app.use((req, res, next) => {
+  console.log(`📥 ${new Date().toISOString()} - ${req.method} ${req.path}`);
+  next();
+});
+
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/questions", questionRoutes);
 app.use("/api/v1/speech", speechRoutes);
