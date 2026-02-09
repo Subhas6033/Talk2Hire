@@ -82,6 +82,7 @@ const registerUser = asyncHandler(async (req, res) => {
   const { fullName, email, password } = req.body;
   const resumeFile = req.file;
 
+  console.log("✅ Registration started");
   console.log("Registration data:", { fullName, email });
   console.log("Resume file:", resumeFile);
 
@@ -89,21 +90,28 @@ const registerUser = asyncHandler(async (req, res) => {
   if (
     [fullName, email, password].some((field) => !field || field.trim() === "")
   ) {
+    console.log("❌ Validation failed: Missing fields");
     throw new APIERR(400, "All fields are required");
   }
 
   if (password.length < 6) {
+    console.log("❌ Validation failed: Password too short");
     throw new APIERR(400, "Password must be at least 6 characters");
   }
 
   // Validate resume file
   if (!resumeFile) {
+    console.log("❌ Validation failed: No resume file");
     throw new APIERR(400, "Resume is required");
   }
+
+  console.log("✅ All validations passed");
+  console.log("🔍 Checking if user exists...");
 
   // Check if user already exists
   const existingUser = await User.findByEmail(email);
   if (existingUser) {
+    console.log("❌ User already exists");
     // Delete uploaded file if user exists
     if (resumeFile) {
       try {
@@ -115,17 +123,21 @@ const registerUser = asyncHandler(async (req, res) => {
     throw new APIERR(409, "Email is already registered");
   }
 
+  console.log("✅ User doesn't exist, proceeding with registration");
+
   let ftpUploadResult;
   try {
+    console.log("📖 Reading file from disk...");
+    console.log("File path:", resumeFile.path);
+
     // ✅ Read file buffer
     const fileBuffer = await fs.readFile(resumeFile.path);
+    console.log("✅ File read successfully, size:", fileBuffer.length, "bytes");
 
-    // ✅ Upload to FTP
-    console.log("📤 Uploading resume to FTP...");
     ftpUploadResult = await uploadFileToFTP(
       fileBuffer,
       resumeFile.originalname,
-      "/public/resumes", // Directory for resumes
+      "/public",
     );
 
     console.log("✅ Resume uploaded to FTP:", ftpUploadResult.url);
@@ -135,20 +147,26 @@ const registerUser = asyncHandler(async (req, res) => {
       await fs.unlink(resumeFile.path);
       console.log("🗑️ Local file deleted");
     } catch (err) {
-      console.log("Error deleting local file:", err);
+      console.log("⚠️ Error deleting local file:", err);
     }
   } catch (error) {
+    console.error("❌ FTP upload error:", error);
+    console.error("Error stack:", error.stack);
+
     // Clean up local file if FTP upload fails
     try {
       await fs.unlink(resumeFile.path);
+      console.log("🗑️ Local file cleaned up after error");
     } catch (err) {
-      console.log("Error deleting local file:", err);
+      console.log("⚠️ Error deleting local file after error:", err);
     }
     throw new APIERR(500, `Failed to upload resume: ${error.message}`);
   }
 
+  console.log("🔐 Hashing password...");
   const passwordHash = await bcrypt.hash(password, 10);
 
+  console.log("💾 Creating user in database...");
   // ✅ Create user with FTP URL
   const db = await connectDB();
   const [result] = await db.execute(
@@ -158,13 +176,16 @@ const registerUser = asyncHandler(async (req, res) => {
   );
 
   const userId = result.insertId;
+  console.log("✅ User created with ID:", userId);
 
+  console.log("🎟️ Generating tokens...");
   const { refreshToken, accessToken } = await generateRefreshAndAccessTokens({
     id: userId,
     email,
   });
 
   await User.updateRefreshToken(userId, refreshToken);
+  console.log("✅ Tokens generated and saved");
 
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
@@ -181,6 +202,8 @@ const registerUser = asyncHandler(async (req, res) => {
     path: "/",
     maxAge: 24 * 60 * 60 * 1000,
   });
+
+  console.log("✅ Registration complete, sending response");
 
   res.status(201).json(
     new APIRES(
