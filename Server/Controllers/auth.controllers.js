@@ -79,13 +79,9 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
 });
 
 const registerUser = asyncHandler(async (req, res) => {
-  console.log("Received registration request:", req.body);
+  console.log("✅ Registration started");
   const { fullName, email, password } = req.body;
   const resumeFile = req.file;
-
-  console.log("✅ Registration started");
-  console.log("Registration data:", { fullName, email });
-  console.log("Resume file:", resumeFile);
 
   // Validate required fields
   if (
@@ -100,59 +96,70 @@ const registerUser = asyncHandler(async (req, res) => {
     throw new APIERR(400, "Password must be at least 6 characters");
   }
 
-  // Validate resume file
   if (!resumeFile) {
     console.log("❌ Validation failed: No resume file");
     throw new APIERR(400, "Resume is required");
   }
 
-  console.log("✅ All validations passed");
   console.log("🔍 Checking if user exists...");
 
   // Check if user already exists
   const existingUser = await User.findByEmail(email);
   if (existingUser) {
     console.log("❌ User already exists");
-    if (resumeFile) {
-      try {
-        await fs.unlink(resumeFile.path);
-      } catch (err) {
-        console.log("Error deleting file:", err);
-      }
+    // Clean up uploaded file
+    try {
+      await fs.unlink(resumeFile.path);
+    } catch (err) {
+      console.log("Error deleting file:", err);
     }
     throw new APIERR(409, "Email is already registered");
   }
 
   console.log("✅ User doesn't exist, proceeding with registration");
 
+  let ftpUrl = null;
+
+  try {
+    // 1. Read file buffer
+    const fileBuffer = await fs.readFile(resumeFile.path);
+
+    // 2. Upload to FTP
+    console.log("📤 Uploading to FTP...");
+    const ftpUploadResult = await uploadFileToFTP(
+      fileBuffer,
+      resumeFile.originalname,
+      "/public/resumes",
+    );
+    ftpUrl = ftpUploadResult.url;
+    console.log("✅ FTP upload successful:", ftpUrl);
+
+    // 3. ✅ IMPORTANT: Delete local file immediately after FTP upload
+    await fs.unlink(resumeFile.path);
+    console.log("✅ Local file cleaned up");
+  } catch (uploadError) {
+    console.error("❌ FTP upload failed:", uploadError);
+    // Clean up local file even if upload fails
+    try {
+      await fs.unlink(resumeFile.path);
+    } catch (err) {
+      console.log("Error cleaning up file:", err);
+    }
+    throw new APIERR(500, "Failed to upload resume. Please try again.");
+  }
+
   // Hash password
   console.log("🔐 Hashing password...");
   const passwordHash = await bcrypt.hash(password, 10);
 
-  // ✅ Create user IMMEDIATELY with placeholder URL and 'uploading' status
+  // Create user with FTP URL
   console.log("💾 Creating user in database...");
   const db = await connectDB();
-
-  const fileBuffer = await fs.readFile(resumeFile.path);
-
-  const ftpUploadResult = await uploadFileToFTP(
-    fileBuffer,
-    resumeFile.originalname,
-    "/public/resumes",
-  );
-
-  const placeholderUrl = ftpUploadResult.url;
 
   const [result] = await db.execute(
     `INSERT INTO users (fullName, email, hashPassword, resume, resume_upload_status) 
      VALUES (?, ?, ?, ?, ?)`,
-    [
-      fullName,
-      email,
-      passwordHash,
-      placeholderUrl, // ✅ Store placeholder URL, not local path
-      "uploading", // Track upload status
-    ],
+    [fullName, email, passwordHash, ftpUrl, "completed"], // ✅ Use "completed" since FTP upload is done
   );
 
   const userId = result.insertId;
@@ -166,7 +173,6 @@ const registerUser = asyncHandler(async (req, res) => {
   });
 
   await User.updateRefreshToken(userId, refreshToken);
-  console.log("✅ Tokens generated and saved");
 
   // Set cookies
   res.cookie("refreshToken", refreshToken, {
@@ -185,8 +191,7 @@ const registerUser = asyncHandler(async (req, res) => {
     maxAge: 24 * 60 * 60 * 1000,
   });
 
-  // ✅ RESPOND IMMEDIATELY - User is registered!
-  console.log("✅ Registration complete, sending response");
+  console.log("✅ Registration complete");
   res.status(201).json(
     new APIRES(
       201,
@@ -194,9 +199,7 @@ const registerUser = asyncHandler(async (req, res) => {
         id: userId,
         fullName,
         email,
-        resumeUploading: true,
-        resumeStatus: "uploading",
-        message: "Resume is being uploaded in the background",
+        resumeStatus: "completed", // ✅ Changed to completed
       },
       "User registered successfully",
     ),
