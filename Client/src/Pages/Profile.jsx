@@ -1,4 +1,4 @@
-import { useState, useRef, use } from "react";
+import { useState, useRef } from "react";
 import { useAuth } from "../Hooks/useAuthHook";
 import {
   Button,
@@ -9,25 +9,35 @@ import {
 import { FormField } from "../Components/Common/Input";
 
 const ProfilePage = () => {
-  const { user } = useAuth();
+  const { user, updateUser } = useAuth();
 
   const [isModalOpen, setModalOpen] = useState(false);
+  const [isResumeModalOpen, setResumeModalOpen] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
+  const [resumeError, setResumeError] = useState("");
+  const [uploading, setUploading] = useState(false);
 
   // Image Upload
   const [selectedImage, setSelectedImage] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(user?.profileImage || null);
   const fileInputRef = useRef();
 
+  // Resume Upload
+  const [selectedResume, setSelectedResume] = useState(null);
+  const [resumeFileName, setResumeFileName] = useState(
+    user?.resumeName || null,
+  );
+  const resumeInputRef = useRef();
+
   if (!user) return null;
 
   // const firstLetter = user.fullName?.charAt(0).toUpperCase();
   const firstLetter = user?.fullName.split(" ")[0];
 
-  // Drag & Drop
+  // Drag & Drop for Image
   const handleDragOver = (e) => e.preventDefault();
   const handleDrop = (e) => {
     e.preventDefault();
@@ -46,10 +56,72 @@ const ProfilePage = () => {
     }
   };
 
-  const handleUploadImage = () => {
+  const handleUploadImage = async () => {
     if (!selectedImage) return;
-    console.log("Uploading image:", selectedImage);
-    // TODO: Call API to save image
+
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("profileImage", selectedImage);
+
+      await updateUser(formData).unwrap();
+
+      setSelectedImage(null);
+      console.log("Profile image uploaded successfully");
+    } catch (err) {
+      console.error("Failed to upload image:", err);
+      setError("Failed to upload profile image");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // Resume handlers
+  const handleResumeChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      // Validate file type (PDF only)
+      if (file.type !== "application/pdf") {
+        setResumeError("Please upload a PDF file");
+        return;
+      }
+
+      // Validate file size (max 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        setResumeError("File size must be less than 5MB");
+        return;
+      }
+
+      setResumeError("");
+      setSelectedResume(file);
+      setResumeFileName(file.name);
+    }
+  };
+
+  const handleUploadResume = async () => {
+    if (!selectedResume) {
+      setResumeError("Please select a resume file");
+      return;
+    }
+
+    setUploading(true);
+    setResumeError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("resume", selectedResume);
+
+      await updateUser(formData).unwrap();
+
+      console.log("Resume uploaded successfully");
+      setSelectedResume(null);
+      setResumeModalOpen(false);
+    } catch (err) {
+      console.error("Failed to upload resume:", err);
+      setResumeError(err.message || "Failed to upload resume");
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handlePasswordUpdate = () => {
@@ -120,8 +192,13 @@ const ProfilePage = () => {
             {/* Save and Cancel buttons */}
             {selectedImage && (
               <div className="flex gap-4 mt-2">
-                <Button size="sm" variant="primary" onClick={handleUploadImage}>
-                  Save
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={handleUploadImage}
+                  disabled={uploading}
+                >
+                  {uploading ? "Uploading..." : "Save"}
                 </Button>
                 <Button
                   size="sm"
@@ -130,6 +207,7 @@ const ProfilePage = () => {
                     setSelectedImage(null);
                     setPreviewUrl(user?.profileImage || null);
                   }}
+                  disabled={uploading}
                 >
                   Cancel
                 </Button>
@@ -163,11 +241,23 @@ const ProfilePage = () => {
 
               <p className="text-white/50">Overall Performace</p>
               <p className="font-semibold">{user.performance || "N/A"}</p>
+
+              <p className="text-white/50">Resume</p>
+              <p className="font-semibold">
+                {resumeFileName || user?.resumeName || "Not uploaded"}
+              </p>
             </div>
 
-            <div className="mt-6 flex justify-center ">
+            <div className="mt-6 flex justify-center gap-4">
               <Button variant="primary" onClick={() => setModalOpen(true)}>
                 Update Password
+              </Button>
+
+              <Button
+                variant="primary"
+                onClick={() => setResumeModalOpen(true)}
+              >
+                Update Resume
               </Button>
             </div>
           </div>
@@ -209,6 +299,116 @@ const ProfilePage = () => {
             />
 
             {error && <p className="text-red-400 text-sm">{error}</p>}
+          </div>
+        </Modal>
+
+        {/* Resume Upload Modal */}
+        <Modal
+          isOpen={isResumeModalOpen}
+          onClose={() => {
+            setResumeModalOpen(false);
+            setSelectedResume(null);
+            setResumeError("");
+          }}
+          title="Update Resume"
+          size="sm"
+          footer={
+            <div className="flex gap-4">
+              <Button
+                variant="primary"
+                onClick={handleUploadResume}
+                disabled={uploading || !selectedResume}
+              >
+                {uploading ? "Uploading..." : "Upload Resume"}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setResumeModalOpen(false);
+                  setSelectedResume(null);
+                  setResumeError("");
+                }}
+                disabled={uploading}
+              >
+                Cancel
+              </Button>
+            </div>
+          }
+        >
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-white/70 mb-2">
+                Select Resume (PDF only, max 5MB)
+              </label>
+
+              <input
+                type="file"
+                accept="application/pdf"
+                ref={resumeInputRef}
+                className="hidden"
+                onChange={handleResumeChange}
+              />
+
+              <div
+                onClick={() => resumeInputRef.current.click()}
+                className="border-2 border-dashed border-white/20 rounded-lg p-8 text-center cursor-pointer hover:border-purpleGlow transition"
+              >
+                {selectedResume ? (
+                  <div className="space-y-2">
+                    <svg
+                      className="w-12 h-12 mx-auto text-green-400"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
+                    </svg>
+                    <p className="text-white font-medium">{resumeFileName}</p>
+                    <p className="text-sm text-white/50">
+                      {(selectedResume.size / 1024 / 1024).toFixed(2)} MB
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <svg
+                      className="w-12 h-12 mx-auto text-white/50"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                      />
+                    </svg>
+                    <p className="text-white/70">
+                      Click to browse or drag and drop
+                    </p>
+                    <p className="text-sm text-white/50">
+                      PDF files only (max 5MB)
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {resumeError && (
+              <p className="text-red-400 text-sm">{resumeError}</p>
+            )}
+
+            {user?.resumeName && !selectedResume && (
+              <div className="bg-white/5 rounded-lg p-3 text-sm">
+                <p className="text-white/70">Current resume:</p>
+                <p className="text-white font-medium">{user.resumeName}</p>
+              </div>
+            )}
           </div>
         </Modal>
 

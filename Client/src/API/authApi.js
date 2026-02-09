@@ -72,13 +72,27 @@ export const verifyAuth = createAsyncThunk(
   },
 );
 
-// ✅ NEW: Update user as async thunk (updates backend + local state)
+// ✅ Update user (supports both FormData and regular JSON)
 export const updateUser = createAsyncThunk(
   "auth/updateUser",
   async (userData, { rejectWithValue }) => {
     try {
-      // Adjust this endpoint based on your backend API
-      const response = await api.patch("/auth/update-profile", userData);
+      // Determine if we're sending FormData (for file uploads) or JSON
+      const isFormData = userData instanceof FormData;
+
+      const config = isFormData
+        ? {
+            headers: {
+              "Content-Type": "multipart/form-data",
+            },
+          }
+        : {};
+
+      const response = await api.patch(
+        "/auth/update-profile",
+        userData,
+        config,
+      );
       return response.data;
     } catch (error) {
       return rejectWithValue(error.response?.data?.message || error.message);
@@ -279,7 +293,7 @@ const authSlice = createSlice({
         localStorage.removeItem("authState");
       })
 
-      // ✅ NEW: updateUser async thunk handlers
+      // ✅ updateUser async thunk handlers
       .addCase(updateUser.pending, (state) => {
         state.loading = true;
         state.error = null;
