@@ -7,7 +7,7 @@ const uploadDirs = {
   resumes: path.join(__dirname, "..", "public", "resumes"),
   profileImages: path.join(__dirname, "..", "public", "profile-images"),
 };
-
+console.log("Upload directories:", uploadDirs);
 Object.values(uploadDirs).forEach((dir) => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });

@@ -29,6 +29,9 @@ app.use(
   }),
 );
 
+app.options("/api/v1/auth/register", cors());
+app.options("/api/v1/auth/update-profile", cors());
+
 app.use(
   express.json({
     limit: "100mb",

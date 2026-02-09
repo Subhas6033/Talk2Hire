@@ -20,15 +20,7 @@ const Signup = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [resumeFile, setResumeFile] = useState(null);
   const [resumeError, setResumeError] = useState("");
-  const {
-    registerUser,
-    loading,
-    error,
-    isAuthenticated,
-    user,
-    checkResumeStatus,
-  } = useAuth();
-  const [showUploadStatus, setShowUploadStatus] = useState(false);
+  const { registerUser, loading, error, isAuthenticated, user } = useAuth();
   const navigate = useNavigate();
 
   const {
@@ -97,68 +89,12 @@ const Signup = () => {
     }
   };
 
-  // ✅ Poll for resume status if uploading
+  // Navigate to home if already authenticated
   useEffect(() => {
-    if (isAuthenticated && user?.resumeStatus === "uploading") {
-      const interval = setInterval(() => {
-        checkResumeStatus();
-      }, 5000); // Check every 5 seconds
-
-      return () => clearInterval(interval);
-    }
-  }, [isAuthenticated, user?.resumeStatus, checkResumeStatus]);
-
-  // ✅ Navigate when upload is complete
-  useEffect(() => {
-    if (isAuthenticated && user?.resumeStatus === "completed") {
+    if (isAuthenticated) {
       navigate("/", { replace: true });
     }
   }, [isAuthenticated, user, navigate]);
-
-  // ✅ Show upload progress screen
-  if (
-    showUploadStatus &&
-    isAuthenticated &&
-    user?.resumeStatus === "uploading"
-  ) {
-    return (
-      <>
-        <title>QuantamHash Corporation | Uploading Resume</title>
-        <section className="min-h-screen flex items-center justify-center px-6">
-          <div className="text-center space-y-6 max-w-md">
-            <div className="relative">
-              <div className="w-24 h-24 mx-auto">
-                <div className="absolute inset-0 border-4 border-purpleGlow/30 rounded-full"></div>
-                <div className="absolute inset-0 border-4 border-transparent border-t-purpleGlow rounded-full animate-spin"></div>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <h2 className="text-2xl font-bold text-white">
-                Registration Successful! 🎉
-              </h2>
-              <p className="text-white/70">Your account has been created</p>
-            </div>
-
-            <div className="bg-white/5 border border-white/10 rounded-lg p-4 space-y-2">
-              <div className="flex items-center justify-center gap-2 text-purpleGlow">
-                <Upload className="w-5 h-5 animate-pulse" />
-                <span className="font-medium">Uploading resume...</span>
-              </div>
-              <p className="text-sm text-white/50">
-                This will only take a moment. You'll be redirected
-                automatically.
-              </p>
-            </div>
-
-            <p className="text-xs text-white/40">
-              Powered by QuantamHash Corporation
-            </p>
-          </div>
-        </section>
-      </>
-    );
-  }
 
   return (
     <>
