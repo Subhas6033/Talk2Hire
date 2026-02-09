@@ -79,6 +79,7 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
 });
 
 const registerUser = asyncHandler(async (req, res) => {
+  console.log("Received registration request:", req.body);
   const { fullName, email, password } = req.body;
   const resumeFile = req.file;
 
@@ -132,8 +133,15 @@ const registerUser = asyncHandler(async (req, res) => {
   console.log("💾 Creating user in database...");
   const db = await connectDB();
 
-  // ✅ Store a placeholder URL that indicates upload is in progress
-  const placeholderUrl = `${process.env.FTP_BASE_URL}/uploading/${resumeFile.originalname}`;
+  const fileBuffer = await fs.readFile(resumeFile.path);
+
+  const ftpUploadResult = await uploadFileToFTP(
+    fileBuffer,
+    resumeFile.originalname,
+    "/public/resumes",
+  );
+
+  const placeholderUrl = ftpUploadResult.url;
 
   const [result] = await db.execute(
     `INSERT INTO users (fullName, email, hashPassword, resume, resume_upload_status) 
@@ -193,100 +201,6 @@ const registerUser = asyncHandler(async (req, res) => {
       "User registered successfully",
     ),
   );
-
-  // ✅ Upload to FTP in BACKGROUND (after response sent)
-  // Store file path and user ID in closure
-  const localFilePath = resumeFile.path;
-  const originalFileName = resumeFile.originalname;
-
-  setImmediate(async () => {
-    try {
-      console.log(`📤 [Background] Starting FTP upload for user ${userId}...`);
-
-      // Read file buffer
-      const fileBuffer = await fs.readFile(localFilePath);
-      console.log(
-        `✅ [Background] File read successfully for user ${userId}, size: ${fileBuffer.length} bytes`,
-      );
-
-      // Upload to FTP
-      const ftpUploadResult = await uploadFileToFTP(
-        fileBuffer,
-        originalFileName,
-        "/public/resumes",
-      );
-
-      console.log(
-        `✅ [Background] FTP upload successful for user ${userId}:`,
-        ftpUploadResult.url,
-      );
-
-      // ✅ Update database with ACTUAL FTP URL
-      await db.execute(
-        `UPDATE users 
-         SET resume = ?, resume_upload_status = ?, updated_at = NOW() 
-         WHERE id = ?`,
-        [ftpUploadResult.url, "completed", userId], // ✅ Store actual FTP URL
-      );
-
-      console.log(
-        `✅ [Background] Database updated with actual FTP URL for user ${userId}`,
-      );
-
-      // Delete local file
-      try {
-        await fs.unlink(localFilePath);
-        console.log(`🗑️ [Background] Local file deleted for user ${userId}`);
-      } catch (err) {
-        console.log(
-          `⚠️ [Background] Error deleting local file for user ${userId}:`,
-          err,
-        );
-      }
-
-      console.log(
-        `✅ [Background] Complete upload process finished for user ${userId}`,
-      );
-    } catch (error) {
-      console.error(
-        `❌ [Background] FTP upload failed for user ${userId}:`,
-        error,
-      );
-      console.error(`Error details:`, error.message, error.stack);
-
-      // ✅ Update status to failed but keep the placeholder URL
-      try {
-        await db.execute(
-          `UPDATE users 
-           SET resume_upload_status = ?, updated_at = NOW() 
-           WHERE id = ?`,
-          ["failed", userId],
-        );
-
-        console.log(
-          `⚠️ [Background] Marked upload as failed for user ${userId}`,
-        );
-      } catch (dbError) {
-        console.error(
-          `❌ [Background] Failed to update status for user ${userId}:`,
-          dbError,
-        );
-      }
-
-      // Clean up local file even on error
-      try {
-        await fs.unlink(localFilePath);
-        console.log(
-          `🗑️ [Background] Local file deleted after error for user ${userId}`,
-        );
-      } catch (unlinkError) {
-        console.log(
-          `⚠️ [Background] Error deleting local file after error:`,
-          unlinkError,
-        );
-      }
-    }
-  });
 });
 
 const checkResumeStatus = asyncHandler(async (req, res) => {
@@ -657,7 +571,7 @@ const updateProfile = asyncHandler(async (req, res) => {
       ftpUploadResult = await uploadFileToFTP(
         fileBuffer,
         resume.originalname,
-        `/public/resumes/${userId}`, // User-specific directory
+        `/public/resumes/`,
       );
 
       console.log("✅ Resume uploaded to FTP:", ftpUploadResult.url);
