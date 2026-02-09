@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS users (
     fullName VARCHAR(255) NOT NULL,
     email VARCHAR(255) NOT NULL UNIQUE,
     hashPassword VARCHAR(255) NOT NULL,
-    skill TEXT NOT NULL,
+    skill VARCHAR(255) NOT NULL DEFAULT '',
     refreshToken TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -220,25 +220,25 @@ const createAllTables = async (pool) => {
     await createTable(
       pool,
       "interview_questions",
-      interviewQuestionsTableQuery
+      interviewQuestionsTableQuery,
     );
 
     await createTable(
       pool,
       "question_evaluations",
-      questionEvaluationsTableQuery
+      questionEvaluationsTableQuery,
     );
     await createTable(
       pool,
       "interview_evaluations",
-      interviewEvaluationsTableQuery
+      interviewEvaluationsTableQuery,
     );
     await createTable(pool, "skill_evaluations", skillEvaluationsTableQuery);
     await createTable(pool, "interview_videos", interviewVideosTableQuery);
     await createTable(
       pool,
       "interview_video_chunks",
-      interviewVideoChunksTableQuery
+      interviewVideoChunksTableQuery,
     );
 
     console.log("✅ All tables created successfully.");

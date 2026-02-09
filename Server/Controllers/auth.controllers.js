@@ -8,6 +8,12 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const User = require("../Models/user.models.js");
 const { connectDB } = require("../Config/database.config.js");
+const fs = require("fs").promises;
+const path = require("path");
+const {
+  uploadFileToFTP,
+  deleteFileFromFTP,
+} = require("../Upload/uploadOnFTP.js");
 
 const generateRefreshAndAccessTokens = async (user) => {
   const refreshToken = jwt.sign(
@@ -18,7 +24,7 @@ const generateRefreshAndAccessTokens = async (user) => {
     process.env.REFRESH_TOKEN_SECRET,
     {
       expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || "15d",
-    }
+    },
   );
 
   const accessToken = jwt.sign(
@@ -29,7 +35,7 @@ const generateRefreshAndAccessTokens = async (user) => {
     process.env.ACCESS_TOKEN_SECRET,
     {
       expiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN || "1d",
-    }
+    },
   );
 
   return { refreshToken, accessToken };
@@ -58,7 +64,7 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
     process.env.ACCESS_TOKEN_SECRET,
     {
       expiresIn: "1d",
-    }
+    },
   );
 
   res.cookie("accessToken", accessToken, {
@@ -73,12 +79,15 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
 });
 
 const registerUser = asyncHandler(async (req, res) => {
-  const { fullName, email, password, skill } = req.body;
-  console.log("Coming from the bdy", fullName, email, password, skill);
+  const { fullName, email, password } = req.body;
+  const resumeFile = req.file;
+
+  console.log("Registration data:", { fullName, email });
+  console.log("Resume file:", resumeFile);
+
+  // Validate required fields
   if (
-    [fullName, email, password, skill].some(
-      (field) => !field || field.trim() === ""
-    )
+    [fullName, email, password].some((field) => !field || field.trim() === "")
   ) {
     throw new APIERR(400, "All fields are required");
   }
@@ -87,19 +96,68 @@ const registerUser = asyncHandler(async (req, res) => {
     throw new APIERR(400, "Password must be at least 6 characters");
   }
 
+  // Validate resume file
+  if (!resumeFile) {
+    throw new APIERR(400, "Resume is required");
+  }
+
+  // Check if user already exists
   const existingUser = await User.findByEmail(email);
   if (existingUser) {
+    // Delete uploaded file if user exists
+    if (resumeFile) {
+      try {
+        await fs.unlink(resumeFile.path);
+      } catch (err) {
+        console.log("Error deleting file:", err);
+      }
+    }
     throw new APIERR(409, "Email is already registered");
+  }
+
+  let ftpUploadResult;
+  try {
+    // ✅ Read file buffer
+    const fileBuffer = await fs.readFile(resumeFile.path);
+
+    // ✅ Upload to FTP
+    console.log("📤 Uploading resume to FTP...");
+    ftpUploadResult = await uploadFileToFTP(
+      fileBuffer,
+      resumeFile.originalname,
+      "/public/resumes", // Directory for resumes
+    );
+
+    console.log("✅ Resume uploaded to FTP:", ftpUploadResult.url);
+
+    // ✅ Delete local file after successful FTP upload
+    try {
+      await fs.unlink(resumeFile.path);
+      console.log("🗑️ Local file deleted");
+    } catch (err) {
+      console.log("Error deleting local file:", err);
+    }
+  } catch (error) {
+    // Clean up local file if FTP upload fails
+    try {
+      await fs.unlink(resumeFile.path);
+    } catch (err) {
+      console.log("Error deleting local file:", err);
+    }
+    throw new APIERR(500, `Failed to upload resume: ${error.message}`);
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
 
-  const userId = await User.create({
-    fullName,
-    email,
-    hashPassword: passwordHash,
-    skill,
-  });
+  // ✅ Create user with FTP URL
+  const db = await connectDB();
+  const [result] = await db.execute(
+    `INSERT INTO users (fullName, email, hashPassword, resume) 
+     VALUES (?, ?, ?, ?)`,
+    [fullName, email, passwordHash, ftpUploadResult.url],
+  );
+
+  const userId = result.insertId;
 
   const { refreshToken, accessToken } = await generateRefreshAndAccessTokens({
     id: userId,
@@ -110,18 +168,18 @@ const registerUser = asyncHandler(async (req, res) => {
 
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production" ? true : false,
+    secure: process.env.NODE_ENV === "production",
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     path: "/",
-    maxAge: 15 * 24 * 60 * 60 * 1000, // 15day
+    maxAge: 15 * 24 * 60 * 60 * 1000,
   });
 
   res.cookie("accessToken", accessToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production" ? true : false,
+    secure: process.env.NODE_ENV === "production",
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     path: "/",
-    maxAge: 24 * 60 * 60 * 1000, //1day
+    maxAge: 24 * 60 * 60 * 1000,
   });
 
   res.status(201).json(
@@ -131,10 +189,10 @@ const registerUser = asyncHandler(async (req, res) => {
         id: userId,
         fullName,
         email,
-        skill,
+        resumeUrl: ftpUploadResult.url,
       },
-      "User registered successfully"
-    )
+      "User registered successfully",
+    ),
   );
 });
 
@@ -150,7 +208,7 @@ const loginUser = asyncHandler(async (req, res) => {
   }
   const isPasswordValid = await bcrypt.compare(
     password,
-    isUserExist.hashPassword
+    isUserExist.hashPassword,
   );
   if (!isPasswordValid) {
     throw new APIERR(401, "Incorrect Password");
@@ -165,18 +223,18 @@ const loginUser = asyncHandler(async (req, res) => {
 
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production" ? true : false,
+    secure: process.env.NODE_ENV === "production",
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     path: "/",
-    maxAge: 15 * 24 * 60 * 60 * 1000, //15 day
+    maxAge: 15 * 24 * 60 * 60 * 1000,
   });
 
   res.cookie("accessToken", accessToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production" ? true : false,
+    secure: process.env.NODE_ENV === "production",
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     path: "/",
-    maxAge: 24 * 60 * 60 * 1000, //1 day
+    maxAge: 24 * 60 * 60 * 1000,
   });
 
   res.status(200).json(
@@ -187,22 +245,22 @@ const loginUser = asyncHandler(async (req, res) => {
         email,
         fullName: isUserExist.fullName,
       },
-      "Successfully logged in"
-    )
+      "Successfully logged in",
+    ),
   );
 });
 
 const logoutUser = asyncHandler(async (req, res) => {
   res.clearCookie("refreshToken", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production" ? true : false,
+    secure: process.env.NODE_ENV === "production",
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     path: "/",
   });
 
   res.clearCookie("accessToken", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production" ? true : false,
+    secure: process.env.NODE_ENV === "production",
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     path: "/",
   });
@@ -249,7 +307,7 @@ const forgotPassword = asyncHandler(async (req, res) => {
         reset_password_otp_expires_at = ?
     WHERE id = ?
     `,
-      [OTP, expiresAt, user.id]
+      [OTP, expiresAt, user.id],
     );
   } catch (error) {
     console.log("Error while generating the otp", error);
@@ -367,7 +425,7 @@ const forgotPassword = asyncHandler(async (req, res) => {
     email,
     "Reset Your Password – OTP Verification",
     `Your password reset OTP is ${OTP}. This code is valid for 10 minutes. Please do not share it with anyone.`,
-    htmlTemplate
+    htmlTemplate,
   );
 
   res.status(200).json(new APIRES(200, true, "Successfully sent the mail"));
@@ -383,7 +441,7 @@ const verifyResetPasswordOtp = asyncHandler(async (req, res) => {
   const [users] = await db.execute(
     `SELECT id FROM users 
      WHERE email = ? AND reset_password_otp = ? AND reset_password_otp_expires_at > NOW()`,
-    [email, otp]
+    [email, otp],
   );
 
   if (users.length === 0) {
@@ -397,7 +455,7 @@ const verifyResetPasswordOtp = asyncHandler(async (req, res) => {
      SET reset_password_otp = NULL,
          reset_password_otp_expires_at = NULL
      WHERE id = ?`,
-    [userId]
+    [userId],
   );
 
   res
@@ -429,10 +487,205 @@ const resetPassword = asyncHandler(async (req, res) => {
   const db = await connectDB();
   await db.execute(
     "UPDATE users SET hashPassword = ?, updated_at = NOW() WHERE id = ?",
-    [hashedPassword, userId]
+    [hashedPassword, userId],
   );
 
   res.status(200).json(new APIRES(200, true, "Password reset successfully"));
+});
+
+const updateProfile = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+
+  // Get current user data
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new APIERR(404, "User not found");
+  }
+
+  const db = await connectDB();
+  const updateFields = [];
+  const updateValues = [];
+
+  // Handle resume upload
+  if (req.files?.resume) {
+    const resume = req.files.resume[0];
+
+    // Validate file type
+    if (resume.mimetype !== "application/pdf") {
+      try {
+        await fs.unlink(resume.path);
+      } catch (err) {
+        console.log("Error deleting file:", err);
+      }
+      throw new APIERR(400, "Only PDF files are allowed for resume");
+    }
+
+    // Validate file size (5MB)
+    if (resume.size > 5 * 1024 * 1024) {
+      try {
+        await fs.unlink(resume.path);
+      } catch (err) {
+        console.log("Error deleting file:", err);
+      }
+      throw new APIERR(400, "Resume file size must be less than 5MB");
+    }
+
+    let ftpUploadResult;
+    try {
+      // ✅ Read file buffer
+      const fileBuffer = await fs.readFile(resume.path);
+
+      // ✅ Upload to FTP
+      console.log("📤 Uploading resume to FTP...");
+      ftpUploadResult = await uploadFileToFTP(
+        fileBuffer,
+        resume.originalname,
+        `/public/resumes/${userId}`, // User-specific directory
+      );
+
+      console.log("✅ Resume uploaded to FTP:", ftpUploadResult.url);
+
+      // ✅ Delete old resume from FTP if exists
+      if (user.resume) {
+        try {
+          // Extract remote path from old URL
+          const oldUrl = user.resume;
+          const remotePath = oldUrl.split("/interview2")[1];
+          if (remotePath) {
+            console.log("🗑️ Deleting old resume from FTP:", remotePath);
+            await deleteFileFromFTP(remotePath);
+          }
+        } catch (err) {
+          console.log("Error deleting old resume from FTP:", err);
+        }
+      }
+
+      // ✅ Delete local file after successful FTP upload
+      try {
+        await fs.unlink(resume.path);
+        console.log("🗑️ Local file deleted");
+      } catch (err) {
+        console.log("Error deleting local file:", err);
+      }
+    } catch (error) {
+      // Clean up local file if FTP upload fails
+      try {
+        await fs.unlink(resume.path);
+      } catch (err) {
+        console.log("Error deleting local file:", err);
+      }
+      throw new APIERR(500, `Failed to upload resume: ${error.message}`);
+    }
+
+    updateFields.push("resume = ?");
+    updateValues.push(ftpUploadResult.url);
+  }
+
+  // Handle profile image upload
+  if (req.files?.profileImage) {
+    const profileImage = req.files.profileImage[0];
+
+    // Validate file type
+    const allowedImageTypes = [
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/webp",
+    ];
+    if (!allowedImageTypes.includes(profileImage.mimetype)) {
+      try {
+        await fs.unlink(profileImage.path);
+      } catch (err) {
+        console.log("Error deleting file:", err);
+      }
+      throw new APIERR(400, "Only JPEG, PNG, and WebP images are allowed");
+    }
+
+    // Validate file size (2MB)
+    if (profileImage.size > 2 * 1024 * 1024) {
+      try {
+        await fs.unlink(profileImage.path);
+      } catch (err) {
+        console.log("Error deleting file:", err);
+      }
+      throw new APIERR(400, "Profile image size must be less than 2MB");
+    }
+
+    let ftpUploadResult;
+    try {
+      // ✅ Read file buffer
+      const fileBuffer = await fs.readFile(profileImage.path);
+
+      // ✅ Upload to FTP
+      console.log("📤 Uploading profile image to FTP...");
+      ftpUploadResult = await uploadFileToFTP(
+        fileBuffer,
+        profileImage.originalname,
+        `/public/profile-images/${userId}`, // User-specific directory
+      );
+
+      console.log("✅ Profile image uploaded to FTP:", ftpUploadResult.url);
+
+      // ✅ Delete old profile image from FTP if exists
+      if (user.profile_image_path) {
+        try {
+          const oldUrl = user.profile_image_path;
+          const remotePath = oldUrl.split("/interview2")[1];
+          if (remotePath) {
+            console.log("🗑️ Deleting old profile image from FTP:", remotePath);
+            await deleteFileFromFTP(remotePath);
+          }
+        } catch (err) {
+          console.log("Error deleting old profile image from FTP:", err);
+        }
+      }
+
+      // ✅ Delete local file
+      try {
+        await fs.unlink(profileImage.path);
+        console.log("🗑️ Local file deleted");
+      } catch (err) {
+        console.log("Error deleting local file:", err);
+      }
+    } catch (error) {
+      try {
+        await fs.unlink(profileImage.path);
+      } catch (err) {
+        console.log("Error deleting local file:", err);
+      }
+      throw new APIERR(500, `Failed to upload profile image: ${error.message}`);
+    }
+
+    updateFields.push("profile_image_path = ?");
+    updateValues.push(ftpUploadResult.url);
+  }
+
+  // If no files to update
+  if (updateFields.length === 0) {
+    throw new APIERR(400, "No files to update");
+  }
+
+  // Update database
+  updateFields.push("updated_at = NOW()");
+  updateValues.push(userId);
+
+  const query = `UPDATE users SET ${updateFields.join(", ")} WHERE id = ?`;
+
+  try {
+    await db.execute(query, updateValues);
+  } catch (error) {
+    console.error("Error updating profile:", error);
+    throw new APIERR(500, "Failed to update profile");
+  }
+
+  // Fetch updated user data
+  const updatedUser = await User.findById(userId);
+  delete updatedUser.hashPassword;
+  delete updatedUser.refreshToken;
+
+  res
+    .status(200)
+    .json(new APIRES(200, updatedUser, "Profile updated successfully"));
 });
 
 module.exports = {
@@ -445,4 +698,5 @@ module.exports = {
   refreshAccessToken,
   verifyResetPasswordOtp,
   resetPassword,
+  updateProfile,
 };

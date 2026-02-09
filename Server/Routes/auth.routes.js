@@ -8,17 +8,25 @@ const {
   refreshAccessToken,
   verifyResetPasswordOtp,
   resetPassword,
+  updateProfile,
 } = require("../Controllers/auth.controllers.js");
 const authMiddleware = require("../Middlewares/auth.middlewares.js");
+const {
+  upload,
+  uploadProfileFiles,
+} = require("../Middlewares/upload.middlewares.js");
+
+const uploadResume = upload.single("resume");
 
 router
-  .post("/register", registerUser)
+  .post("/register", uploadResume, registerUser)
   .post("/login", loginUser)
   .post("/logout", authMiddleware, logoutUser)
   .post("/forgot-password", forgotPassword)
   .post("/verify-password", verifyResetPasswordOtp)
   .put("/update-password", resetPassword)
   .get("/get-current-user", authMiddleware, getCurrentUser)
-  .post("/refresh-access-token", refreshAccessToken);
+  .post("/refresh-access-token", refreshAccessToken)
+  .patch("/update-profile", authMiddleware, uploadProfileFiles, updateProfile);
 
 module.exports = router;

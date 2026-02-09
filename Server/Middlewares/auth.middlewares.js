@@ -23,8 +23,8 @@ const authMiddleware = (req, res, next) => {
       id: decoded.id,
       email: decoded.email,
     };
-    next();
     console.log(req.user?.id);
+    next();
     return req.user?.id;
   } catch (error) {
     if (error.name === "TokenExpiredError") {
