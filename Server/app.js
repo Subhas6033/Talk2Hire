@@ -14,41 +14,12 @@ dotenv.config();
 
 const app = express();
 
-const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or Postman)
-    if (!origin) return callback(null, true);
-
-    const allowedOrigins = process.env.CORS_ORIGIN;
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      console.log("❌ CORS blocked origin:", origin);
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-  exposedHeaders: ["set-cookie"],
-  maxAge: 86400, // 24 hours
-  optionsSuccessStatus: 200,
-};
-
-app.use(cors(corsOptions));
-
-// ✅ Increase timeouts for file upload routes
-app.use("/api/v1/auth/register", (req, res, next) => {
-  req.setTimeout(300000); // 5 minutes
-  res.setTimeout(300000);
-  next();
-});
-
-app.use("/api/v1/auth/update-profile", (req, res, next) => {
-  req.setTimeout(300000);
-  res.setTimeout(300000);
-  next();
-});
+app.use(
+  cors({
+    origin: process.env.CORS_ORIGIN,
+    credentials: true,
+  }),
+);
 
 app.use(
   express.json({
@@ -104,7 +75,7 @@ if (process.env.ENABLE_VIDEO_RETRY === "true") {
       }
     },
     60 * 60 * 1000,
-  );
+  ); // Every hour
 }
 
 // Cleanup old chunks every day
@@ -115,24 +86,21 @@ if (process.env.ENABLE_CHUNK_CLEANUP === "true") {
     async () => {
       try {
         console.log("🧹 Running scheduled cleanup for old video chunks...");
-        const result = await cleanupOldChunks(7);
+        const result = await cleanupOldChunks(7); // Delete chunks older than 7 days
         console.log("✅ Cleanup complete:", result);
       } catch (error) {
         console.error("❌ Scheduled cleanup failed:", error);
       }
     },
     24 * 60 * 60 * 1000,
-  );
+  ); // Every 24 hours
 }
 
 // Global error handler
 app.use((err, req, res, next) => {
   console.error("❌ Unhandled error:", err);
 
-  // ✅ Set CORS headers even in error responses
-  res.header("Access-Control-Allow-Origin", process.env.CORS_ORIGIN);
-  res.header("Access-Control-Allow-Credentials", "true");
-
+  // Handle specific error types
   if (err.type === "entity.too.large") {
     return res.status(413).json({
       success: false,

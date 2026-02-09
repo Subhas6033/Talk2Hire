@@ -9,6 +9,7 @@ const {
   verifyResetPasswordOtp,
   resetPassword,
   updateProfile,
+  checkResumeStatus,
 } = require("../Controllers/auth.controllers.js");
 const authMiddleware = require("../Middlewares/auth.middlewares.js");
 const {
@@ -27,6 +28,7 @@ router
   .put("/update-password", resetPassword)
   .get("/get-current-user", authMiddleware, getCurrentUser)
   .post("/refresh-access-token", refreshAccessToken)
+  .get("/resume-status", authMiddleware, checkResumeStatus)
   .patch("/update-profile", authMiddleware, uploadProfileFiles, updateProfile);
 
 module.exports = router;

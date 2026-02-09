@@ -112,7 +112,6 @@ const registerUser = asyncHandler(async (req, res) => {
   const existingUser = await User.findByEmail(email);
   if (existingUser) {
     console.log("❌ User already exists");
-    // Delete uploaded file if user exists
     if (resumeFile) {
       try {
         await fs.unlink(resumeFile.path);
@@ -125,59 +124,33 @@ const registerUser = asyncHandler(async (req, res) => {
 
   console.log("✅ User doesn't exist, proceeding with registration");
 
-  let ftpUploadResult;
-  try {
-    console.log("📖 Reading file from disk...");
-    console.log("File path:", resumeFile.path);
-
-    // ✅ Read file buffer
-    const fileBuffer = await fs.readFile(resumeFile.path);
-    console.log("✅ File read successfully, size:", fileBuffer.length, "bytes");
-
-    ftpUploadResult = await uploadFileToFTP(
-      fileBuffer,
-      resumeFile.originalname,
-      "/public",
-    );
-
-    console.log("✅ Resume uploaded to FTP:", ftpUploadResult.url);
-
-    // ✅ Delete local file after successful FTP upload
-    try {
-      await fs.unlink(resumeFile.path);
-      console.log("🗑️ Local file deleted");
-    } catch (err) {
-      console.log("⚠️ Error deleting local file:", err);
-    }
-  } catch (error) {
-    console.error("❌ FTP upload error:", error);
-    console.error("Error stack:", error.stack);
-
-    // Clean up local file if FTP upload fails
-    try {
-      await fs.unlink(resumeFile.path);
-      console.log("🗑️ Local file cleaned up after error");
-    } catch (err) {
-      console.log("⚠️ Error deleting local file after error:", err);
-    }
-    throw new APIERR(500, `Failed to upload resume: ${error.message}`);
-  }
-
+  // Hash password
   console.log("🔐 Hashing password...");
   const passwordHash = await bcrypt.hash(password, 10);
 
+  // ✅ Create user IMMEDIATELY with placeholder URL and 'uploading' status
   console.log("💾 Creating user in database...");
-  // ✅ Create user with FTP URL
   const db = await connectDB();
+
+  // ✅ Store a placeholder URL that indicates upload is in progress
+  const placeholderUrl = `${process.env.FTP_BASE_URL}/uploading/${resumeFile.originalname}`;
+
   const [result] = await db.execute(
-    `INSERT INTO users (fullName, email, hashPassword, resume) 
-     VALUES (?, ?, ?, ?)`,
-    [fullName, email, passwordHash, ftpUploadResult.url],
+    `INSERT INTO users (fullName, email, hashPassword, resume, resume_upload_status) 
+     VALUES (?, ?, ?, ?, ?)`,
+    [
+      fullName,
+      email,
+      passwordHash,
+      placeholderUrl, // ✅ Store placeholder URL, not local path
+      "uploading", // Track upload status
+    ],
   );
 
   const userId = result.insertId;
   console.log("✅ User created with ID:", userId);
 
+  // Generate tokens
   console.log("🎟️ Generating tokens...");
   const { refreshToken, accessToken } = await generateRefreshAndAccessTokens({
     id: userId,
@@ -187,6 +160,7 @@ const registerUser = asyncHandler(async (req, res) => {
   await User.updateRefreshToken(userId, refreshToken);
   console.log("✅ Tokens generated and saved");
 
+  // Set cookies
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
@@ -203,8 +177,8 @@ const registerUser = asyncHandler(async (req, res) => {
     maxAge: 24 * 60 * 60 * 1000,
   });
 
+  // ✅ RESPOND IMMEDIATELY - User is registered!
   console.log("✅ Registration complete, sending response");
-
   res.status(201).json(
     new APIRES(
       201,
@@ -212,9 +186,129 @@ const registerUser = asyncHandler(async (req, res) => {
         id: userId,
         fullName,
         email,
-        resumeUrl: ftpUploadResult.url,
+        resumeUploading: true,
+        resumeStatus: "uploading",
+        message: "Resume is being uploaded in the background",
       },
       "User registered successfully",
+    ),
+  );
+
+  // ✅ Upload to FTP in BACKGROUND (after response sent)
+  // Store file path and user ID in closure
+  const localFilePath = resumeFile.path;
+  const originalFileName = resumeFile.originalname;
+
+  setImmediate(async () => {
+    try {
+      console.log(`📤 [Background] Starting FTP upload for user ${userId}...`);
+
+      // Read file buffer
+      const fileBuffer = await fs.readFile(localFilePath);
+      console.log(
+        `✅ [Background] File read successfully for user ${userId}, size: ${fileBuffer.length} bytes`,
+      );
+
+      // Upload to FTP
+      const ftpUploadResult = await uploadFileToFTP(
+        fileBuffer,
+        originalFileName,
+        "/public/resumes",
+      );
+
+      console.log(
+        `✅ [Background] FTP upload successful for user ${userId}:`,
+        ftpUploadResult.url,
+      );
+
+      // ✅ Update database with ACTUAL FTP URL
+      await db.execute(
+        `UPDATE users 
+         SET resume = ?, resume_upload_status = ?, updated_at = NOW() 
+         WHERE id = ?`,
+        [ftpUploadResult.url, "completed", userId], // ✅ Store actual FTP URL
+      );
+
+      console.log(
+        `✅ [Background] Database updated with actual FTP URL for user ${userId}`,
+      );
+
+      // Delete local file
+      try {
+        await fs.unlink(localFilePath);
+        console.log(`🗑️ [Background] Local file deleted for user ${userId}`);
+      } catch (err) {
+        console.log(
+          `⚠️ [Background] Error deleting local file for user ${userId}:`,
+          err,
+        );
+      }
+
+      console.log(
+        `✅ [Background] Complete upload process finished for user ${userId}`,
+      );
+    } catch (error) {
+      console.error(
+        `❌ [Background] FTP upload failed for user ${userId}:`,
+        error,
+      );
+      console.error(`Error details:`, error.message, error.stack);
+
+      // ✅ Update status to failed but keep the placeholder URL
+      try {
+        await db.execute(
+          `UPDATE users 
+           SET resume_upload_status = ?, updated_at = NOW() 
+           WHERE id = ?`,
+          ["failed", userId],
+        );
+
+        console.log(
+          `⚠️ [Background] Marked upload as failed for user ${userId}`,
+        );
+      } catch (dbError) {
+        console.error(
+          `❌ [Background] Failed to update status for user ${userId}:`,
+          dbError,
+        );
+      }
+
+      // Clean up local file even on error
+      try {
+        await fs.unlink(localFilePath);
+        console.log(
+          `🗑️ [Background] Local file deleted after error for user ${userId}`,
+        );
+      } catch (unlinkError) {
+        console.log(
+          `⚠️ [Background] Error deleting local file after error:`,
+          unlinkError,
+        );
+      }
+    }
+  });
+});
+
+const checkResumeStatus = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+
+  const resumeStatus = await User.getResumeStatus(userId);
+
+  if (!resumeStatus) {
+    throw new APIERR(404, "User not found");
+  }
+
+  res.status(200).json(
+    new APIRES(
+      200,
+      {
+        resumeUploadStatus: resumeStatus.resume_upload_status,
+        resumeUrl:
+          resumeStatus.resume_upload_status === "completed"
+            ? resumeStatus.resume
+            : null,
+      },
+      "Resume status fetched successfully",
     ),
   );
 });
@@ -722,4 +816,5 @@ module.exports = {
   verifyResetPasswordOtp,
   resetPassword,
   updateProfile,
+  checkResumeStatus,
 };

@@ -30,6 +30,7 @@ const User = {
     email,
     hashPassword,
     resume,
+    resumeUploadStatus = "uploading", // ✅ NEW
     refreshToken = "",
     skill = "",
   }) {
@@ -38,8 +39,16 @@ const User = {
     }
     const db = await connectDB();
     const [result] = await db.execute(
-      "INSERT INTO users (fullName, email, hashPassword, resume, refreshToken) VALUES (?, ?, ?, ?, ?)",
-      [fullName, email, hashPassword, resume, refreshToken],
+      "INSERT INTO users (fullName, email, hashPassword, resume, resume_upload_status, refreshToken, skill) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        fullName,
+        email,
+        hashPassword,
+        resume,
+        resumeUploadStatus,
+        refreshToken,
+        skill,
+      ],
     );
     return result.insertId;
   },
@@ -52,7 +61,22 @@ const User = {
     ]);
   },
 
-  // ✅ NEW: Update user skills
+  // ✅ NEW: Update resume upload status
+  async updateResumeStatus(userId, status, resumeUrl = null) {
+    const db = await connectDB();
+    if (resumeUrl) {
+      await db.execute(
+        "UPDATE users SET resume = ?, resume_upload_status = ?, updated_at = NOW() WHERE id = ?",
+        [resumeUrl, status, userId],
+      );
+    } else {
+      await db.execute(
+        "UPDATE users SET resume_upload_status = ?, updated_at = NOW() WHERE id = ?",
+        [status, userId],
+      );
+    }
+  },
+
   async updateSkills(userId, skillsString) {
     if (!userId) {
       throw new APIERR(400, "User ID is required");
@@ -61,25 +85,22 @@ const User = {
     const db = await connectDB();
 
     await db.execute(
-      `
-      UPDATE users
-      SET skill = ?, updated_at = NOW()
-      WHERE id = ?
-      `,
+      `UPDATE users
+       SET skill = ?, updated_at = NOW()
+       WHERE id = ?`,
       [skillsString, userId],
     );
   },
 
-  // ✅ NEW: Update resume
-  async updateResume(userId, resumePath, resumeName) {
+  // ✅ UPDATED: Update resume with status
+  async updateResume(userId, resumeUrl, status = "completed") {
     const db = await connectDB();
     await db.execute(
-      "UPDATE users SET resume_path = ?, resume_name = ?, updated_at = NOW() WHERE id = ?",
-      [resumePath, resumeName, userId],
+      "UPDATE users SET resume = ?, resume_upload_status = ?, updated_at = NOW() WHERE id = ?",
+      [resumeUrl, status, userId],
     );
   },
 
-  // ✅ NEW: Update profile image
   async updateProfileImage(userId, profileImagePath) {
     const db = await connectDB();
     await db.execute(
@@ -88,17 +109,24 @@ const User = {
     );
   },
 
-  // ✅ NEW: Get user's resume path
   async getResumePath(userId) {
     const db = await connectDB();
-    const [result] = await db.execute(
-      "SELECT resume_path FROM users WHERE id = ?",
-      [userId],
-    );
-    return result[0]?.resume_path || null;
+    const [result] = await db.execute("SELECT resume FROM users WHERE id = ?", [
+      userId,
+    ]);
+    return result[0]?.resume || null;
   },
 
-  // ✅ NEW: Get user's profile image path
+  // ✅ NEW: Get resume status
+  async getResumeStatus(userId) {
+    const db = await connectDB();
+    const [result] = await db.execute(
+      "SELECT resume, resume_upload_status FROM users WHERE id = ?",
+      [userId],
+    );
+    return result[0] || null;
+  },
+
   async getProfileImagePath(userId) {
     const db = await connectDB();
     const [result] = await db.execute(

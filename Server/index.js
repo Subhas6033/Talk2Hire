@@ -26,7 +26,7 @@ connectDB()
     server.listen(PORT, async () => {
       try {
         await createAllTables(pool);
-        console.log(`🚀 Server running at http://localhost:${PORT}`);
+        console.log(`🚀 Server running at ${PORT}`);
         console.log(`🔌 Socket.IO ready`);
       } catch (error) {
         console.error("❌ Error creating tables:", error);
