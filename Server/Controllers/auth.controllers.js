@@ -83,127 +83,92 @@ const registerUser = asyncHandler(async (req, res) => {
   const { fullName, email, password } = req.body;
   const resumeFile = req.file;
 
-  // Validate required fields
-  if (
-    [fullName, email, password].some((field) => !field || field.trim() === "")
-  ) {
-    console.log("❌ Validation failed: Missing fields");
+  if ([fullName, email, password].some((f) => !f || f.trim() === "")) {
     throw new APIERR(400, "All fields are required");
   }
 
   if (password.length < 6) {
-    console.log("❌ Validation failed: Password too short");
     throw new APIERR(400, "Password must be at least 6 characters");
   }
 
   if (!resumeFile) {
-    console.log("❌ Validation failed: No resume file");
     throw new APIERR(400, "Resume is required");
   }
 
-  console.log("🔍 Checking if user exists...");
-
-  // Check if user already exists
   const existingUser = await User.findByEmail(email);
   if (existingUser) {
-    console.log("❌ User already exists");
-    // Clean up uploaded file
-    try {
-      await fs.unlink(resumeFile.path);
-    } catch (err) {
-      console.log("Error deleting file:", err);
-    }
+    await fs.unlink(resumeFile.path).catch(() => {});
     throw new APIERR(409, "Email is already registered");
   }
 
-  console.log("✅ User doesn't exist, proceeding with registration");
-
-  let ftpUrl = null;
+  let ftpUrl;
 
   try {
-    // 1. Read file buffer
     const fileBuffer = await fs.readFile(resumeFile.path);
 
-    // 2. Upload to FTP
-    console.log("📤 Uploading to FTP...");
-    const ftpUploadResult = await uploadFileToFTP(
-      fileBuffer,
-      resumeFile.originalname,
-      "/public/resumes",
-    );
+    console.log("📤 Uploading to FTP & 🔐 Hashing password in parallel...");
+
+    const [passwordHash, ftpUploadResult] = await Promise.all([
+      bcrypt.hash(password, 8),
+      uploadFileToFTP(fileBuffer, resumeFile.originalname, "/public/resumes"),
+    ]);
+
     ftpUrl = ftpUploadResult.url;
-    console.log("✅ FTP upload successful:", ftpUrl);
 
-    // 3. ✅ IMPORTANT: Delete local file immediately after FTP upload
     await fs.unlink(resumeFile.path);
-    console.log("✅ Local file cleaned up");
-  } catch (uploadError) {
-    console.error("❌ FTP upload failed:", uploadError);
-    // Clean up local file even if upload fails
-    try {
-      await fs.unlink(resumeFile.path);
-    } catch (err) {
-      console.log("Error cleaning up file:", err);
-    }
-    throw new APIERR(500, "Failed to upload resume. Please try again.");
+
+    console.log("✅ FTP upload & password hashing done");
+
+    console.log("💾 Creating user in database...");
+    const db = await connectDB();
+
+    const [result] = await db.execute(
+      `INSERT INTO users (fullName, email, hashPassword, resume, resume_upload_status) 
+       VALUES (?, ?, ?, ?, ?)`,
+      [fullName, email, passwordHash, ftpUrl, "completed"],
+    );
+
+    const userId = result.insertId;
+
+    const { refreshToken, accessToken } = await generateRefreshAndAccessTokens({
+      id: userId,
+      email,
+    });
+
+    await User.updateRefreshToken(userId, refreshToken);
+
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      path: "/",
+      maxAge: 15 * 24 * 60 * 60 * 1000,
+    });
+
+    res.cookie("accessToken", accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      path: "/",
+      maxAge: 24 * 60 * 60 * 1000,
+    });
+
+    res.status(201).json(
+      new APIRES(
+        201,
+        {
+          id: userId,
+          fullName,
+          email,
+          resumeStatus: "completed",
+        },
+        "User registered successfully",
+      ),
+    );
+  } catch (err) {
+    await fs.unlink(resumeFile.path).catch(() => {});
+    throw new APIERR(500, "Failed to register user");
   }
-
-  // Hash password
-  console.log("🔐 Hashing password...");
-  const passwordHash = await bcrypt.hash(password, 10);
-
-  // Create user with FTP URL
-  console.log("💾 Creating user in database...");
-  const db = await connectDB();
-
-  const [result] = await db.execute(
-    `INSERT INTO users (fullName, email, hashPassword, resume, resume_upload_status) 
-     VALUES (?, ?, ?, ?, ?)`,
-    [fullName, email, passwordHash, ftpUrl, "completed"], // ✅ Use "completed" since FTP upload is done
-  );
-
-  const userId = result.insertId;
-  console.log("✅ User created with ID:", userId);
-
-  // Generate tokens
-  console.log("🎟️ Generating tokens...");
-  const { refreshToken, accessToken } = await generateRefreshAndAccessTokens({
-    id: userId,
-    email,
-  });
-
-  await User.updateRefreshToken(userId, refreshToken);
-
-  // Set cookies
-  res.cookie("refreshToken", refreshToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-    path: "/",
-    maxAge: 15 * 24 * 60 * 60 * 1000,
-  });
-
-  res.cookie("accessToken", accessToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-    path: "/",
-    maxAge: 24 * 60 * 60 * 1000,
-  });
-
-  console.log("✅ Registration complete");
-  res.status(201).json(
-    new APIRES(
-      201,
-      {
-        id: userId,
-        fullName,
-        email,
-        resumeStatus: "completed", // ✅ Changed to completed
-      },
-      "User registered successfully",
-    ),
-  );
 });
 
 const checkResumeStatus = asyncHandler(async (req, res) => {
@@ -232,7 +197,8 @@ const checkResumeStatus = asyncHandler(async (req, res) => {
 
 const loginUser = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
-  if ([email, password].some((fields) => !fields || fields.trim() === "")) {
+
+  if ([email, password].some((f) => !f || f.trim() === "")) {
     throw new APIERR(400, "Email and Password are required");
   }
 
@@ -240,6 +206,7 @@ const loginUser = asyncHandler(async (req, res) => {
   if (!isUserExist) {
     throw new APIERR(404, "No account found with this mail");
   }
+
   const isPasswordValid = await bcrypt.compare(
     password,
     isUserExist.hashPassword,
@@ -248,12 +215,13 @@ const loginUser = asyncHandler(async (req, res) => {
     throw new APIERR(401, "Incorrect Password");
   }
 
+  // Parallelize token generation + DB update
   const { refreshToken, accessToken } = await generateRefreshAndAccessTokens({
     id: isUserExist.id,
     email,
   });
 
-  await User.updateRefreshToken(isUserExist.id, refreshToken);
+  await Promise.all([User.updateRefreshToken(isUserExist.id, refreshToken)]);
 
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
