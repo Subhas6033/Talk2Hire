@@ -9,7 +9,7 @@ import {
 import { FormField } from "../Components/Common/Input";
 
 const ProfilePage = () => {
-  const { user, updateUser, checkResumeStatus } = useAuth();
+  const { user, updateUser } = useAuth();
 
   const [isModalOpen, setModalOpen] = useState(false);
   const [isResumeModalOpen, setResumeModalOpen] = useState(false);
@@ -32,50 +32,15 @@ const ProfilePage = () => {
   // ✅ Poll for resume status if uploading
   useEffect(() => {
     if (user?.resume_upload_status === "uploading") {
-      const interval = setInterval(() => {
-        checkResumeStatus();
-      }, 5000);
+      const interval = setInterval(() => {}, 5000);
 
       return () => clearInterval(interval);
     }
-  }, [user?.resume_upload_status, checkResumeStatus]);
+  }, [user?.resume_upload_status]);
 
   if (!user) return null;
 
   const firstLetter = user?.fullName.split(" ")[0];
-
-  // ✅ Get resume status badge
-  const getResumeStatusBadge = () => {
-    switch (user?.resume_upload_status) {
-      case "uploading":
-        return (
-          <div className="flex items-center gap-2 text-yellow-400">
-            <div className="w-3 h-3 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin"></div>
-            <span>Uploading...</span>
-          </div>
-        );
-      case "completed":
-        return user?.resume ? (
-          <a
-            href={user.resume}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-purpleGlow hover:underline flex items-center gap-2"
-          >
-            <span>✅</span>
-            <span>View Resume</span>
-          </a>
-        ) : (
-          <span className="text-green-400">✅ Completed</span>
-        );
-      case "failed":
-        return (
-          <span className="text-red-400">❌ Upload failed - please retry</span>
-        );
-      default:
-        return <span className="text-white/50">Not uploaded</span>;
-    }
-  };
 
   const handleDragOver = (e) => e.preventDefault();
 
@@ -273,9 +238,6 @@ const ProfilePage = () => {
 
               <p className="text-white/50">Overall Performance</p>
               <p className="font-semibold">{user.performance || "N/A"}</p>
-
-              <p className="text-white/50">Resume</p>
-              <div className="font-semibold">{getResumeStatusBadge()}</div>
             </div>
 
             <div className="mt-6 flex justify-center gap-4">

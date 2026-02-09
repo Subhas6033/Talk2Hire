@@ -7,7 +7,6 @@ import {
   updateUser,
   updateUserLocal,
   verifyAuth,
-  checkResumeStatus,
 } from "../API/authApi";
 
 export const useAuth = () => {
@@ -30,7 +29,6 @@ export const useAuth = () => {
     logout: () => dispatch(logoutUser()),
     updateUser: (data) => dispatch(updateUser(data)), // ✅ Now supports .unwrap()
     verifyAuth: () => dispatch(verifyAuth()),
-    checkResumeStatus: () => dispatch(checkResumeStatus()),
 
     // ✅ Synchronous actions - don't support .unwrap()
     clearError: () => dispatch(clearError()),
