@@ -13,11 +13,12 @@ const {
 } = require("../Controllers/auth.controllers.js");
 const authMiddleware = require("../Middlewares/auth.middlewares.js");
 const {
-  upload,
+  uploadSingle,
   uploadProfileFiles,
 } = require("../Middlewares/upload.middlewares.js");
 
-const uploadResume = upload.single("resume");
+// ✅ Use the error-handling wrapper
+const uploadResume = uploadSingle("resume");
 
 router
   .post("/register", uploadResume, registerUser)
