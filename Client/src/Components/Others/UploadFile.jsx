@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../../Hooks/useAuthHook";
-import { Button, SkillsSelector } from "../../Components/index";
+import { Button, SkillsSelector } from "../index";
 
 const ResumeUploadCard = () => {
   const { user, updateUser } = useAuth();

@@ -18,6 +18,21 @@ export const registerUser = createAsyncThunk(
   },
 );
 
+// Check resume upload status
+export const checkResumeStatus = createAsyncThunk(
+  "auth/checkResumeStatus",
+  async (_, { rejectWithValue }) => {
+    try {
+      const response = await api.get("/auth/resume-status");
+      return response.data;
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to check resume status",
+      );
+    }
+  },
+);
+
 export const loginUser = createAsyncThunk(
   "auth/login",
   async ({ email, password }, { rejectWithValue }) => {
@@ -188,6 +203,25 @@ const authSlice = createSlice({
         state.loading = false;
         state.error = action.payload;
         state.hydrated = true;
+      })
+
+      // Resume status check
+      .addCase(checkResumeStatus.fulfilled, (state, action) => {
+        if (state.user) {
+          state.user.resume_upload_status =
+            action.payload.data.resumeUploadStatus;
+          if (action.payload.data.resumeUrl) {
+            state.user.resume = action.payload.data.resumeUrl;
+          }
+          localStorage.setItem(
+            "authState",
+            JSON.stringify({
+              user: state.user,
+              isAuthenticated: state.isAuthenticated,
+              lastVerified: state.lastVerified,
+            }),
+          );
+        }
       })
 
       // login

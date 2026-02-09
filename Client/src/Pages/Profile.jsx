@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useAuth } from "../Hooks/useAuthHook";
 import {
   Button,
@@ -9,7 +9,7 @@ import {
 import { FormField } from "../Components/Common/Input";
 
 const ProfilePage = () => {
-  const { user, updateUser } = useAuth();
+  const { user, updateUser, checkResumeStatus } = useAuth();
 
   const [isModalOpen, setModalOpen] = useState(false);
   const [isResumeModalOpen, setResumeModalOpen] = useState(false);
@@ -20,25 +20,65 @@ const ProfilePage = () => {
   const [resumeError, setResumeError] = useState("");
   const [uploading, setUploading] = useState(false);
 
-  // Image Upload
   const [selectedImage, setSelectedImage] = useState(null);
-  const [previewUrl, setPreviewUrl] = useState(user?.profileImage || null);
+  const [previewUrl, setPreviewUrl] = useState(
+    user?.profile_image_path || null,
+  );
   const fileInputRef = useRef();
 
-  // Resume Upload
   const [selectedResume, setSelectedResume] = useState(null);
-  const [resumeFileName, setResumeFileName] = useState(
-    user?.resumeName || null,
-  );
   const resumeInputRef = useRef();
+
+  // ✅ Poll for resume status if uploading
+  useEffect(() => {
+    if (user?.resume_upload_status === "uploading") {
+      const interval = setInterval(() => {
+        checkResumeStatus();
+      }, 5000);
+
+      return () => clearInterval(interval);
+    }
+  }, [user?.resume_upload_status, checkResumeStatus]);
 
   if (!user) return null;
 
-  // const firstLetter = user.fullName?.charAt(0).toUpperCase();
   const firstLetter = user?.fullName.split(" ")[0];
 
-  // Drag & Drop for Image
+  // ✅ Get resume status badge
+  const getResumeStatusBadge = () => {
+    switch (user?.resume_upload_status) {
+      case "uploading":
+        return (
+          <div className="flex items-center gap-2 text-yellow-400">
+            <div className="w-3 h-3 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin"></div>
+            <span>Uploading...</span>
+          </div>
+        );
+      case "completed":
+        return user?.resume ? (
+          <a
+            href={user.resume}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-purpleGlow hover:underline flex items-center gap-2"
+          >
+            <span>✅</span>
+            <span>View Resume</span>
+          </a>
+        ) : (
+          <span className="text-green-400">✅ Completed</span>
+        );
+      case "failed":
+        return (
+          <span className="text-red-400">❌ Upload failed - please retry</span>
+        );
+      default:
+        return <span className="text-white/50">Not uploaded</span>;
+    }
+  };
+
   const handleDragOver = (e) => e.preventDefault();
+
   const handleDrop = (e) => {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
@@ -76,17 +116,14 @@ const ProfilePage = () => {
     }
   };
 
-  // Resume handlers
   const handleResumeChange = (e) => {
     const file = e.target.files[0];
     if (file) {
-      // Validate file type (PDF only)
       if (file.type !== "application/pdf") {
         setResumeError("Please upload a PDF file");
         return;
       }
 
-      // Validate file size (max 5MB)
       if (file.size > 5 * 1024 * 1024) {
         setResumeError("File size must be less than 5MB");
         return;
@@ -94,7 +131,6 @@ const ProfilePage = () => {
 
       setResumeError("");
       setSelectedResume(file);
-      setResumeFileName(file.name);
     }
   };
 
@@ -155,14 +191,12 @@ const ProfilePage = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-6 w-full overflow-hidden">
           {/* Left Column */}
           <div className="flex flex-col items-center p-6 rounded-2xl shadow-lg border border-white/10 space-y-4 w-full">
-            {/* Profile Avatar Upload */}
             <div
               className="relative w-40 h-40 rounded-full border-4 border-purpleMain/40 overflow-hidden cursor-pointer hover:ring-2 hover:ring-purpleGlow transition"
               onClick={() => fileInputRef.current.click()}
               onDragOver={handleDragOver}
               onDrop={handleDrop}
             >
-              {/* Image */}
               {previewUrl ? (
                 <img
                   src={previewUrl}
@@ -175,7 +209,6 @@ const ProfilePage = () => {
                 </span>
               )}
 
-              {/* Overlay */}
               <div className="absolute inset-x-0 bottom-0 h-16 bg-black/40 flex items-center justify-center text-xs text-white font-medium z-50 pointer-events-none text-center">
                 Drag & Drop or Click to Upload
               </div>
@@ -189,7 +222,6 @@ const ProfilePage = () => {
               onChange={handleImageChange}
             />
 
-            {/* Save and Cancel buttons */}
             {selectedImage && (
               <div className="flex gap-4 mt-2">
                 <Button
@@ -205,7 +237,7 @@ const ProfilePage = () => {
                   variant="secondary"
                   onClick={() => {
                     setSelectedImage(null);
-                    setPreviewUrl(user?.profileImage || null);
+                    setPreviewUrl(user?.profile_image_path || null);
                   }}
                   disabled={uploading}
                 >
@@ -239,13 +271,11 @@ const ProfilePage = () => {
               <p className="text-white/50">Average Time Taken</p>
               <p className="font-semibold">{user.averageTime || "N/A"}</p>
 
-              <p className="text-white/50">Overall Performace</p>
+              <p className="text-white/50">Overall Performance</p>
               <p className="font-semibold">{user.performance || "N/A"}</p>
 
               <p className="text-white/50">Resume</p>
-              <p className="font-semibold">
-                {resumeFileName || user?.resumeName || "Not uploaded"}
-              </p>
+              <div className="font-semibold">{getResumeStatusBadge()}</div>
             </div>
 
             <div className="mt-6 flex justify-center gap-4">
@@ -368,7 +398,9 @@ const ProfilePage = () => {
                         d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
                       />
                     </svg>
-                    <p className="text-white font-medium">{resumeFileName}</p>
+                    <p className="text-white font-medium">
+                      {selectedResume.name}
+                    </p>
                     <p className="text-sm text-white/50">
                       {(selectedResume.size / 1024 / 1024).toFixed(2)} MB
                     </p>
@@ -403,12 +435,16 @@ const ProfilePage = () => {
               <p className="text-red-400 text-sm">{resumeError}</p>
             )}
 
-            {user?.resumeName && !selectedResume && (
-              <div className="bg-white/5 rounded-lg p-3 text-sm">
-                <p className="text-white/70">Current resume:</p>
-                <p className="text-white font-medium">{user.resumeName}</p>
-              </div>
-            )}
+            {user?.resume &&
+              user?.resume_upload_status === "completed" &&
+              !selectedResume && (
+                <div className="bg-white/5 rounded-lg p-3 text-sm">
+                  <p className="text-white/70">Current resume status:</p>
+                  <p className="text-green-400 font-medium">
+                    ✅ Uploaded successfully
+                  </p>
+                </div>
+              )}
           </div>
         </Modal>
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button } from "../Components";
+import { Button } from ".";
 
 const PreviousInterview = () => {
   // Sample data for previous interviews

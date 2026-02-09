@@ -1,6 +1,6 @@
 import React from "react";
 import { motion } from "motion/react";
-import { Card, CardBody } from "../Common/Card";
+import { Card, CardBody } from "./Card";
 import { fadeUp } from "../../Animations/CommonAnimation";
 import { testimonials } from "../../Data/HomePageData";
 

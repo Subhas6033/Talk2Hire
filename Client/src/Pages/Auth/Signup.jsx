@@ -12,7 +12,6 @@ import { Eye, EyeOff, Upload, X } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../../Hooks/useAuthHook";
 
-/* Loader Component */
 const Loader = () => (
   <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
 );
@@ -21,7 +20,15 @@ const Signup = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [resumeFile, setResumeFile] = useState(null);
   const [resumeError, setResumeError] = useState("");
-  const { registerUser, loading, error, isAuthenticated } = useAuth();
+  const {
+    registerUser,
+    loading,
+    error,
+    isAuthenticated,
+    user,
+    checkResumeStatus,
+  } = useAuth();
+  const [showUploadStatus, setShowUploadStatus] = useState(false);
   const navigate = useNavigate();
 
   const {
@@ -47,14 +54,12 @@ const Signup = () => {
       return;
     }
 
-    // Validate file size (max 5MB)
     if (file.size > 5 * 1024 * 1024) {
       setResumeError("File size must be less than 5MB");
       setResumeFile(null);
       return;
     }
 
-    // Validate file type
     const allowedTypes = ["application/pdf"];
     if (!allowedTypes.includes(file.type)) {
       setResumeError("Only PDF files are allowed");
@@ -68,7 +73,6 @@ const Signup = () => {
   const removeResume = () => {
     setResumeFile(null);
     setResumeError("");
-    // Reset file input
     const fileInput = document.getElementById("resume-upload");
     if (fileInput) fileInput.value = "";
   };
@@ -85,15 +89,76 @@ const Signup = () => {
     formData.append("password", data.password);
     formData.append("resume", resumeFile);
 
-    await registerUser(formData);
+    try {
+      await registerUser(formData).unwrap();
+      setShowUploadStatus(true);
+    } catch (err) {
+      console.error("Registration failed:", err);
+    }
   };
 
+  // ✅ Poll for resume status if uploading
   useEffect(() => {
-    if (isAuthenticated) {
-      navigate("/", { replace: true });
-      console.log("Successfully signed up");
+    if (isAuthenticated && user?.resumeStatus === "uploading") {
+      const interval = setInterval(() => {
+        checkResumeStatus();
+      }, 5000); // Check every 5 seconds
+
+      return () => clearInterval(interval);
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, user?.resumeStatus, checkResumeStatus]);
+
+  // ✅ Navigate when upload is complete
+  useEffect(() => {
+    if (isAuthenticated && user?.resumeStatus === "completed") {
+      navigate("/", { replace: true });
+    }
+  }, [isAuthenticated, user, navigate]);
+
+  // ✅ Show upload progress screen
+  if (
+    showUploadStatus &&
+    isAuthenticated &&
+    user?.resumeStatus === "uploading"
+  ) {
+    return (
+      <>
+        <title>QuantamHash Corporation | Uploading Resume</title>
+        <section className="min-h-screen flex items-center justify-center px-6">
+          <div className="text-center space-y-6 max-w-md">
+            <div className="relative">
+              <div className="w-24 h-24 mx-auto">
+                <div className="absolute inset-0 border-4 border-purpleGlow/30 rounded-full"></div>
+                <div className="absolute inset-0 border-4 border-transparent border-t-purpleGlow rounded-full animate-spin"></div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <h2 className="text-2xl font-bold text-white">
+                Registration Successful! 🎉
+              </h2>
+              <p className="text-white/70">Your account has been created</p>
+            </div>
+
+            <div className="bg-white/5 border border-white/10 rounded-lg p-4 space-y-2">
+              <div className="flex items-center justify-center gap-2 text-purpleGlow">
+                <Upload className="w-5 h-5 animate-pulse" />
+                <span className="font-medium">Uploading resume...</span>
+              </div>
+              <p className="text-sm text-white/50">
+                This will only take a moment. You'll be redirected
+                automatically.
+              </p>
+            </div>
+
+            <p className="text-xs text-white/40">
+              Powered by QuantamHash Corporation
+            </p>
+          </div>
+        </section>
+      </>
+    );
+  }
 
   return (
     <>
@@ -114,7 +179,6 @@ const Signup = () => {
 
             <CardBody>
               <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
-                {/* Full Name */}
                 <FormField
                   label="Full Name"
                   placeholder="John Doe"
@@ -128,7 +192,6 @@ const Signup = () => {
                   })}
                 />
 
-                {/* Email */}
                 <FormField
                   label="Email Address"
                   type="email"
@@ -143,7 +206,6 @@ const Signup = () => {
                   })}
                 />
 
-                {/* Password */}
                 <div className="space-y-1">
                   <label className="text-sm font-medium text-white/80">
                     Password
@@ -172,7 +234,6 @@ const Signup = () => {
                   </div>
                 </div>
 
-                {/* Resume Upload */}
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-white/80">
                     Resume (PDF - Max 5MB)
@@ -188,12 +249,12 @@ const Signup = () => {
                         Click to upload resume
                       </span>
                       <span className="text-xs text-white/40 mt-1">
-                        PDF, PNG, or JPEG (max 5MB)
+                        PDF only (max 5MB)
                       </span>
                       <input
                         id="resume-upload"
                         type="file"
-                        accept=".pdf,.png,.jpeg,.jpg"
+                        accept=".pdf"
                         onChange={handleResumeChange}
                         className="hidden"
                       />
@@ -224,7 +285,6 @@ const Signup = () => {
                   )}
                 </div>
 
-                {/* Terms */}
                 <label className="flex items-start gap-2 text-sm text-white/60">
                   <input
                     type="checkbox"
@@ -240,12 +300,10 @@ const Signup = () => {
                   <p className="text-xs text-red-400">{errors.terms.message}</p>
                 )}
 
-                {/* Backend Error */}
                 {error && (
                   <p className="text-sm text-red-400 text-center">{error}</p>
                 )}
 
-                {/* Submit */}
                 <Button
                   type="submit"
                   size="lg"

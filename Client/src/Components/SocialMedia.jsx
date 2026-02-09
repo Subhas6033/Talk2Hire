@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Modal, Button } from "../Components"; // Assuming you have these components
+import { Modal, Button } from "."; // Assuming you have these components
 
 // Predefined social media logos (you can add more or use SVGs)
 const SOCIAL_LOGOS = {
