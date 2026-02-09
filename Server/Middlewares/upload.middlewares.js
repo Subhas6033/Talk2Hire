@@ -4,8 +4,8 @@ const fs = require("fs");
 
 // Ensure upload directories exist
 const uploadDirs = {
-  resumes: path.join(__dirname, "..", "uploads", "resumes"),
-  profileImages: path.join(__dirname, "..", "uploads", "profile-images"),
+  resumes: path.join(__dirname, "..", "public", "resumes"),
+  profileImages: path.join(__dirname, "..", "public", "profile-images"),
 };
 
 Object.values(uploadDirs).forEach((dir) => {

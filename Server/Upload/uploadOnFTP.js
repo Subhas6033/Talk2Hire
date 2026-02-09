@@ -1,17 +1,10 @@
 const ftp = require("basic-ftp");
 const path = require("path");
 
-/**
- * Upload file to FTP with support for custom directories
- * @param {Buffer} fileBuffer - File buffer to upload
- * @param {string} originalName - Original filename
- * @param {string} remoteDir - Remote directory (e.g., '/public/interview-videos/123')
- * @returns {Promise<Object>} Upload result with URL and path
- */
 async function uploadFileToFTP(
   fileBuffer,
   originalName,
-  remoteDir = "/public"
+  remoteDir = "/public",
 ) {
   const client = new ftp.Client();
   client.ftp.timeout = 120000; // 2 minutes timeout for large video files

@@ -30,13 +30,13 @@ const ProfilePage = () => {
   const resumeInputRef = useRef();
 
   // ✅ Poll for resume status if uploading
-  useEffect(() => {
+  /* useEffect(() => {
     if (user?.resume_upload_status === "uploading") {
       const interval = setInterval(() => {}, 5000);
 
       return () => clearInterval(interval);
     }
-  }, [user?.resume_upload_status]);
+  }, [user?.resume_upload_status]); */
 
   if (!user) return null;
 
