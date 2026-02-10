@@ -1,4 +1,4 @@
-const { connectDB } = require("../Config/database.config");
+const { pool } = require("../Config/database.config");
 const { APIERR } = require("../Utils/index.utils.js");
 
 const InterviewVideo = {
@@ -20,7 +20,7 @@ const InterviewVideo = {
   }) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       console.log("💾 Creating video record:", {
         interviewId,
@@ -65,7 +65,6 @@ const InterviewVideo = {
       console.error("❌ Error creating video record:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
@@ -78,7 +77,7 @@ const InterviewVideo = {
   }) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       console.log("📤 Updating video after upload:", videoId);
 
@@ -101,14 +100,13 @@ const InterviewVideo = {
       console.error("❌ Error updating video record:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
   async updateAfterMerge({ videoId, ftpUrl, fileSize, duration, checksum }) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       console.log("🎬 Updating video after merge:", videoId);
 
@@ -131,14 +129,13 @@ const InterviewVideo = {
       console.error("❌ Error updating after merge:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
   async updateUploadStatus(videoId, status, errorMessage = null) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       console.log(`📊 Updating upload status to: ${status}`);
 
@@ -156,14 +153,13 @@ const InterviewVideo = {
       console.error("❌ Error updating upload status:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
   async updateProgress(videoId, progress) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       const validProgress = Math.min(100, Math.max(0, Math.round(progress)));
 
@@ -179,14 +175,13 @@ const InterviewVideo = {
       console.error("❌ Error updating progress:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
   async updateChecksum(videoId, checksum) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       await db.execute(
         `UPDATE interview_videos 
@@ -201,14 +196,13 @@ const InterviewVideo = {
       console.error("❌ Error updating checksum:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
   async getById(videoId) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       const [rows] = await db.execute(
         `SELECT * FROM interview_videos WHERE id = ? LIMIT 1`,
@@ -220,14 +214,13 @@ const InterviewVideo = {
       console.error("❌ Error getting video:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
   async getByInterviewId(interviewId) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       const [rows] = await db.execute(
         `SELECT * FROM interview_videos 
@@ -241,14 +234,13 @@ const InterviewVideo = {
       console.error("❌ Error getting interview videos:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
   async getByInterviewAndType(interviewId, videoType) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       const [rows] = await db.execute(
         `SELECT * FROM interview_videos 
@@ -262,14 +254,13 @@ const InterviewVideo = {
       console.error("❌ Error getting video by type:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
   async getPendingUploads() {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       const [rows] = await db.execute(
         `SELECT * FROM interview_videos 
@@ -283,14 +274,13 @@ const InterviewVideo = {
       console.error("❌ Error getting pending uploads:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
   async markAsFailed(videoId, errorMessage) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       await db.execute(
         `UPDATE interview_videos 
@@ -306,7 +296,6 @@ const InterviewVideo = {
       console.error("❌ Error marking as failed:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
@@ -319,7 +308,7 @@ const InterviewVideo = {
   }) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       await db.execute(
         `INSERT INTO interview_video_chunks 
@@ -347,14 +336,13 @@ const InterviewVideo = {
       console.error("❌ Error saving chunk:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
   async getChunks(videoId) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       const [rows] = await db.execute(
         `SELECT * FROM interview_video_chunks 
@@ -369,14 +357,13 @@ const InterviewVideo = {
       console.error("❌ Error getting chunks:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
   async markChunksDeleted(videoId) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       console.log(`🗑️  Marking chunks as deleted for video ${videoId}...`);
 
@@ -425,14 +412,13 @@ const InterviewVideo = {
       console.warn("⚠️ Continuing despite chunk cleanup error");
       return false;
     } finally {
-      if (db) db.release();
     }
   },
 
   async getUploadStats(interviewId) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       const [rows] = await db.execute(
         `SELECT 
@@ -455,14 +441,13 @@ const InterviewVideo = {
       console.error("❌ Error getting upload stats:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
   async getDetailedStats(interviewId) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       // Get video stats
       const [videoStats] = await db.execute(
@@ -504,14 +489,13 @@ const InterviewVideo = {
       console.error("❌ Error getting detailed stats:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
   async delete(videoId) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       // Delete chunks first
       await db.execute(
@@ -528,14 +512,13 @@ const InterviewVideo = {
       console.error("❌ Error deleting video:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
   async cleanupOldFailedUploads(daysOld = 7) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       const [result] = await db.execute(
         `DELETE FROM interview_videos 
@@ -550,14 +533,13 @@ const InterviewVideo = {
       console.error("❌ Error cleaning up old uploads:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
   async getFailedUploads() {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       const [rows] = await db.execute(
         `SELECT * FROM interview_videos 
@@ -571,7 +553,6 @@ const InterviewVideo = {
       console.error("❌ Error getting failed uploads:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 };

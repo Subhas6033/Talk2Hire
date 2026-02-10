@@ -107,8 +107,8 @@ class VideoProcessingJobs {
    */
   async getCompletedInterviewsNeedingMerge() {
     try {
-      const { connectDB } = require("../Config/database.config");
-      const db = await connectDB();
+      const { pool } = require("../Config/database.config");
+      const db = await pool;
 
       const [interviews] = await db.execute(
         `SELECT DISTINCT i.id, i.user_id, i.created_at,
@@ -126,8 +126,6 @@ class VideoProcessingJobs {
        ORDER BY i.created_at DESC
        LIMIT 10`,
       );
-
-      db.release();
 
       console.log(
         `📊 Found ${interviews.length} interviews with unmerged chunks`,
@@ -517,8 +515,8 @@ class VideoProcessingJobs {
     try {
       console.log(`🧹 Cleaning up video chunks older than ${daysOld} days...`);
 
-      const { connectDB } = require("../Config/database.config");
-      const db = await connectDB();
+      const { pool } = require("../Config/database.config");
+      const db = await pool;
 
       // Get old chunks to delete from FTP
       const [oldChunks] = await db.execute(
@@ -557,8 +555,6 @@ class VideoProcessingJobs {
          AND upload_status != 'deleted'`,
         [daysOld],
       );
-
-      db.release();
 
       console.log(
         `✅ Cleaned up ${deletedCount} chunks from FTP, ${result.affectedRows} records updated`,
@@ -612,8 +608,8 @@ class VideoProcessingJobs {
         `🔍 Verifying integrity of videos uploaded in last ${hoursAgo} hours...`,
       );
 
-      const { connectDB } = require("../Config/database.config");
-      const db = await connectDB();
+      const { pool } = require("../Config/database.config");
+      const db = await pool;
 
       const [recentVideos] = await db.execute(
         `SELECT id, checksum FROM interview_videos 
@@ -623,8 +619,6 @@ class VideoProcessingJobs {
          ORDER BY completed_at DESC`,
         [hoursAgo],
       );
-
-      db.release();
 
       if (recentVideos.length === 0) {
         console.log("✅ No recent videos to verify");

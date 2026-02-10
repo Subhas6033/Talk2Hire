@@ -1,6 +1,6 @@
 const http = require("http");
 const app = require("./app.js");
-const { connectDB, pool } = require("./Config/database.config.js");
+const { pool } = require("./Config/database.config.js");
 const createAllTables = require("./Utils/db.utils.js");
 const {
   initInterviewSocket,
@@ -11,8 +11,11 @@ const PORT = process.env.PORT;
 // Create HTTP server
 const server = http.createServer(app);
 
-connectDB()
-  .then(async () => {
+pool
+  .getConnection()
+  .then(async (connection) => {
+    connection.release();
+    console.log("✅ Connected to DB");
     app.get("/", (req, res) => {
       res.send(
         "Welcome to the Quantamhash Corporation AI Interview Platform Server",

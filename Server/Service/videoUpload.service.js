@@ -9,7 +9,7 @@ async function triggerAutoVideoUpload(interviewId) {
   try {
     console.log(
       "🎬 Interview ended - triggering automatic video upload:",
-      interviewId
+      interviewId,
     );
 
     // Small delay to ensure all video chunks have been received
@@ -28,7 +28,7 @@ async function triggerAutoVideoUpload(interviewId) {
     }
 
     console.log(
-      `📹 Found ${videos.length} videos for interview ${interviewId}`
+      `📹 Found ${videos.length} videos for interview ${interviewId}`,
     );
 
     // Trigger automatic upload
@@ -84,7 +84,7 @@ async function retryFailedUploads() {
         } else {
           await InterviewVideo.markAsFailed(
             video.id,
-            "No video buffer available for retry"
+            "No video buffer available for retry",
           );
           results.push({ videoId: video.id, success: false });
         }
@@ -97,7 +97,7 @@ async function retryFailedUploads() {
 
     const successCount = results.filter((r) => r.success).length;
     console.log(
-      `✅ Retry complete: ${successCount}/${pendingVideos.length} successful`
+      `✅ Retry complete: ${successCount}/${pendingVideos.length} successful`,
     );
 
     return {
@@ -120,17 +120,15 @@ async function cleanupOldChunks(daysOld = 7) {
   try {
     console.log(`🧹 Cleaning up video chunks older than ${daysOld} days...`);
 
-    const { connectDB } = require("../Config/database.config");
-    const db = await connectDB();
+    const { pool } = require("../Config/database.config");
+    const db = pool;
 
     const [result] = await db.execute(
       `DELETE FROM interview_video_chunks 
        WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)
        AND upload_status = 'uploaded'`,
-      [daysOld]
+      [daysOld],
     );
-
-    db.release();
 
     console.log(`✅ Cleaned up ${result.affectedRows} old chunks`);
 
@@ -161,13 +159,13 @@ async function getUploadQueueStatus() {
       },
       byType: {
         primary_camera: pendingVideos.filter(
-          (v) => v.video_type === "primary_camera"
+          (v) => v.video_type === "primary_camera",
         ).length,
         security_camera: pendingVideos.filter(
-          (v) => v.video_type === "security_camera"
+          (v) => v.video_type === "security_camera",
         ).length,
         screen_recording: pendingVideos.filter(
-          (v) => v.video_type === "screen_recording"
+          (v) => v.video_type === "screen_recording",
         ).length,
       },
       oldestPending:

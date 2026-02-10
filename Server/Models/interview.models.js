@@ -1,4 +1,4 @@
-const { connectDB } = require("../Config/database.config");
+const { pool } = require("../Config/database.config");
 const { APIERR } = require("../Utils/index.utils.js");
 
 const Interview = {
@@ -7,7 +7,7 @@ const Interview = {
 
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
       const [result] = await db.execute(
         "INSERT INTO interviews (user_id) VALUES (?)",
         [userId],
@@ -17,14 +17,13 @@ const Interview = {
       console.error("❌ Database error in createSession:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
   async getSessionById(interviewId) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
       const [rows] = await db.execute(
         `SELECT id, user_id, created_at
          FROM interviews
@@ -42,7 +41,6 @@ const Interview = {
       console.error("❌ Database error in getSessionById:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
@@ -61,7 +59,7 @@ const Interview = {
 
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       console.log("💾 Attempting to save question:", {
         interviewId,
@@ -101,7 +99,6 @@ const Interview = {
 
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
@@ -112,7 +109,7 @@ const Interview = {
 
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       console.log("💾 Attempting to save answer:", {
         interviewId,
@@ -144,14 +141,13 @@ const Interview = {
       });
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
   async getSessionHistory(interviewId) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
       const [rows] = await db.execute(
         `SELECT id,
                 question,
@@ -171,14 +167,13 @@ const Interview = {
       console.error("❌ Database error in getSessionHistory:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
   async getQuestionByOrder(interviewId, questionOrder) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
       const [rows] = await db.execute(
         `SELECT id,
                 question,
@@ -197,14 +192,14 @@ const Interview = {
       console.error("❌ Database error in getQuestionByOrder:", error);
       throw error;
     } finally {
-      if (db) db.release(); // ✅ Changed from db.end()
+      // ✅ Changed from db.end()
     }
   },
 
   async getLastAnsweredQuestion(interviewId) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
       const [rows] = await db.execute(
         `SELECT id,
                 question,
@@ -225,14 +220,13 @@ const Interview = {
       console.error("❌ Database error in getLastAnsweredQuestion:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
   async getNextQuestionOrder(interviewId) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
       const [rows] = await db.execute(
         `SELECT COALESCE(MAX(question_order), 0) + 1 AS nextOrder
          FROM interview_questions
@@ -245,7 +239,6 @@ const Interview = {
       console.error("❌ Database error in getNextQuestionOrder:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 };

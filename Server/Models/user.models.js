@@ -1,4 +1,4 @@
-const { connectDB } = require("../Config/database.config");
+const { pool } = require("../Config/database.config.js");
 const APIERR = require("../Utils/apierr.utils");
 
 const isValidEmail = (email) => {
@@ -8,7 +8,7 @@ const isValidEmail = (email) => {
 
 const User = {
   async findByEmail(email) {
-    const db = await connectDB();
+    const db = pool;
     const [rows] = await db.execute(
       "SELECT * FROM users WHERE email = ? LIMIT 1",
       [email],
@@ -17,7 +17,7 @@ const User = {
   },
 
   async findById(userId) {
-    const db = await connectDB();
+    const db = pool;
     const [rows] = await db.execute(
       "SELECT * FROM users WHERE id = ? LIMIT 1",
       [userId],
@@ -37,7 +37,7 @@ const User = {
     if (!isValidEmail(email)) {
       throw new APIERR(400, "Please enter a valid mail");
     }
-    const db = await connectDB();
+    const db = pool;
     const [result] = await db.execute(
       "INSERT INTO users (fullName, email, hashPassword, resume, resume_upload_status, refreshToken, skill) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [
@@ -54,7 +54,7 @@ const User = {
   },
 
   async updateRefreshToken(userId, refreshToken) {
-    const db = await connectDB();
+    const db = pool;
     await db.execute("UPDATE users SET refreshToken = ? WHERE id = ?", [
       refreshToken,
       userId,
@@ -63,7 +63,7 @@ const User = {
 
   // ✅ NEW: Update resume upload status
   async updateResumeStatus(userId, status, resumeUrl = null) {
-    const db = await connectDB();
+    const db = pool;
     if (resumeUrl) {
       await db.execute(
         "UPDATE users SET resume = ?, resume_upload_status = ?, updated_at = NOW() WHERE id = ?",
@@ -82,7 +82,7 @@ const User = {
       throw new APIERR(400, "User ID is required");
     }
 
-    const db = await connectDB();
+    const db = pool;
 
     await db.execute(
       `UPDATE users
@@ -94,7 +94,7 @@ const User = {
 
   // ✅ UPDATED: Update resume with status
   async updateResume(userId, resumeUrl, status = "completed") {
-    const db = await connectDB();
+    const db = pool;
     await db.execute(
       "UPDATE users SET resume = ?, resume_upload_status = ?, updated_at = NOW() WHERE id = ?",
       [resumeUrl, status, userId],
@@ -102,7 +102,7 @@ const User = {
   },
 
   async updateProfileImage(userId, profileImagePath) {
-    const db = await connectDB();
+    const db = pool;
     await db.execute(
       "UPDATE users SET profile_image_path = ?, updated_at = NOW() WHERE id = ?",
       [profileImagePath, userId],
@@ -110,7 +110,7 @@ const User = {
   },
 
   async getResumePath(userId) {
-    const db = await connectDB();
+    const db = pool;
     const [result] = await db.execute("SELECT resume FROM users WHERE id = ?", [
       userId,
     ]);
@@ -119,7 +119,7 @@ const User = {
 
   // ✅ NEW: Get resume status
   async getResumeStatus(userId) {
-    const db = await connectDB();
+    const db = pool;
     const [result] = await db.execute(
       "SELECT resume, resume_upload_status FROM users WHERE id = ?",
       [userId],
@@ -128,7 +128,7 @@ const User = {
   },
 
   async getProfileImagePath(userId) {
-    const db = await connectDB();
+    const db = pool;
     const [result] = await db.execute(
       "SELECT profile_image_path FROM users WHERE id = ?",
       [userId],

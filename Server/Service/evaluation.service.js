@@ -1,5 +1,5 @@
 const { openai } = require("../Config/openai.config.js");
-const { connectDB } = require("../Config/database.config.js");
+const { pool } = require("../Config/database.config.js");
 const { Interview } = require("../Models/interview.models.js");
 const { Evaluation } = require("../Models/answer.models.js");
 const { APIERR } = require("../Utils/index.utils.js");
@@ -375,7 +375,7 @@ Return ONLY a JSON object:
  */
 async function getEvaluationResults(interviewId) {
   try {
-    const db = await connectDB();
+    const db = pool;
 
     // Get interview evaluation
     const [interviewEval] = await db.execute(

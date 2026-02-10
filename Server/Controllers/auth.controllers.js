@@ -7,7 +7,7 @@ const {
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const User = require("../Models/user.models.js");
-const { connectDB } = require("../Config/database.config.js");
+const { pool } = require("../Config/database.config.js");
 const fs = require("fs").promises;
 const path = require("path");
 const {
@@ -101,74 +101,79 @@ const registerUser = asyncHandler(async (req, res) => {
     throw new APIERR(409, "Email is already registered");
   }
 
-  let ftpUrl;
+  //  Read the file buffer BEFORE hashing so both can run in parallel
+  const fileBuffer = await fs.readFile(resumeFile.path);
 
-  try {
-    const fileBuffer = await fs.readFile(resumeFile.path);
+  // Hash password while we have the buffer ready
+  const passwordHash = await bcrypt.hash(password, 10);
 
-    console.log("📤 Uploading to FTP & 🔐 Hashing password in parallel...");
+  // Clean up temp file — we have the buffer, we don't need the disk copy anymore
+  await fs.unlink(resumeFile.path).catch(() => {});
 
-    const [passwordHash, ftpUploadResult] = await Promise.all([
-      bcrypt.hash(password, 8),
-      uploadFileToFTP(fileBuffer, resumeFile.originalname, "/public/resumes"),
-    ]);
+  console.log("💾 Creating user in database...");
 
-    ftpUrl = ftpUploadResult.url;
+  // Insert user immediately with status "pending" — don't wait for FTP
+  const [result] = await pool.execute(
+    `INSERT INTO users (fullName, email, hashPassword, resume, resume_upload_status) 
+     VALUES (?, ?, ?, ?, ?)`,
+    [fullName, email, passwordHash, null, "pending"],
+  );
 
-    await fs.unlink(resumeFile.path);
+  const userId = result.insertId;
 
-    console.log("✅ FTP upload & password hashing done");
+  const { refreshToken, accessToken } = await generateRefreshAndAccessTokens({
+    id: userId,
+    email,
+  });
 
-    console.log("💾 Creating user in database...");
-    const db = await connectDB();
+  await User.updateRefreshToken(userId, refreshToken);
 
-    const [result] = await db.execute(
-      `INSERT INTO users (fullName, email, hashPassword, resume, resume_upload_status) 
-       VALUES (?, ?, ?, ?, ?)`,
-      [fullName, email, passwordHash, ftpUrl, "completed"],
-    );
+  res.cookie("refreshToken", refreshToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    path: "/",
+    maxAge: 15 * 24 * 60 * 60 * 1000,
+  });
 
-    const userId = result.insertId;
+  res.cookie("accessToken", accessToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    path: "/",
+    maxAge: 24 * 60 * 60 * 1000,
+  });
 
-    const { refreshToken, accessToken } = await generateRefreshAndAccessTokens({
-      id: userId,
-      email,
+  // ✅ Respond immediately — user is registered, resume uploads in background
+  res.status(201).json(
+    new APIRES(
+      201,
+      {
+        id: userId,
+        fullName,
+        email,
+        resumeStatus: "pending",
+      },
+      "User registered successfully",
+    ),
+  );
+
+  // FTP upload runs AFTER the response is sent — doesn't block the user
+  uploadFileToFTP(fileBuffer, resumeFile.originalname, "/public/resumes")
+    .then(async (ftpResult) => {
+      await pool.execute(
+        `UPDATE users SET resume = ?, resume_upload_status = ? WHERE id = ?`,
+        [ftpResult.url, "completed", userId],
+      );
+      console.log("✅ Background FTP upload complete for user:", userId);
+    })
+    .catch(async (err) => {
+      console.error("❌ Background FTP upload failed for user:", userId, err);
+      await pool.execute(
+        `UPDATE users SET resume_upload_status = ? WHERE id = ?`,
+        ["failed", userId],
+      );
     });
-
-    await User.updateRefreshToken(userId, refreshToken);
-
-    res.cookie("refreshToken", refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      path: "/",
-      maxAge: 15 * 24 * 60 * 60 * 1000,
-    });
-
-    res.cookie("accessToken", accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      path: "/",
-      maxAge: 24 * 60 * 60 * 1000,
-    });
-
-    res.status(201).json(
-      new APIRES(
-        201,
-        {
-          id: userId,
-          fullName,
-          email,
-          resumeStatus: "completed",
-        },
-        "User registered successfully",
-      ),
-    );
-  } catch (err) {
-    await fs.unlink(resumeFile.path).catch(() => {});
-    throw new APIERR(500, "Failed to register user");
-  }
 });
 
 const checkResumeStatus = asyncHandler(async (req, res) => {
@@ -215,13 +220,12 @@ const loginUser = asyncHandler(async (req, res) => {
     throw new APIERR(401, "Incorrect Password");
   }
 
-  // Parallelize token generation + DB update
   const { refreshToken, accessToken } = await generateRefreshAndAccessTokens({
     id: isUserExist.id,
     email,
   });
 
-  await Promise.all([User.updateRefreshToken(isUserExist.id, refreshToken)]);
+  await User.updateRefreshToken(isUserExist.id, refreshToken);
 
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
@@ -277,7 +281,6 @@ const getCurrentUser = asyncHandler(async (req, res) => {
     throw new APIERR(404, "User not found");
   }
 
-  // Delete the sensitive data from the response
   delete user.hashPassword;
   delete user.refreshToken;
 
@@ -298,17 +301,14 @@ const forgotPassword = asyncHandler(async (req, res) => {
 
   const OTP = Math.floor(1000 + Math.random() * 9000);
   const OTP_EXPIRY_MINUTES = 2;
-
   const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
-  const db = await connectDB();
+
   try {
-    await db.execute(
-      `
-    UPDATE users
-    SET reset_password_otp = ?,
-        reset_password_otp_expires_at = ?
-    WHERE id = ?
-    `,
+    await pool.execute(
+      `UPDATE users
+       SET reset_password_otp = ?,
+           reset_password_otp_expires_at = ?
+       WHERE id = ?`,
       [OTP, expiresAt, user.id],
     );
   } catch (error) {
@@ -439,8 +439,8 @@ const verifyResetPasswordOtp = asyncHandler(async (req, res) => {
   if (!email || !otp) {
     throw new APIERR(400, "Email and OTP are required");
   }
-  const db = await connectDB();
-  const [users] = await db.execute(
+
+  const [users] = await pool.execute(
     `SELECT id FROM users 
      WHERE email = ? AND reset_password_otp = ? AND reset_password_otp_expires_at > NOW()`,
     [email, otp],
@@ -452,7 +452,7 @@ const verifyResetPasswordOtp = asyncHandler(async (req, res) => {
 
   const userId = users[0].id;
 
-  await db.execute(
+  await pool.execute(
     `UPDATE users
      SET reset_password_otp = NULL,
          reset_password_otp_expires_at = NULL
@@ -481,13 +481,11 @@ const resetPassword = asyncHandler(async (req, res) => {
   }
 
   const users = await User.findByEmail(email);
-
   const userId = users.id;
 
-  const saltRounds = 10;
-  const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
-  const db = await connectDB();
-  await db.execute(
+  const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+  await pool.execute(
     "UPDATE users SET hashPassword = ?, updated_at = NOW() WHERE id = ?",
     [hashedPassword, userId],
   );
@@ -498,13 +496,11 @@ const resetPassword = asyncHandler(async (req, res) => {
 const updateProfile = asyncHandler(async (req, res) => {
   const userId = req.user.id;
 
-  // Get current user data
   const user = await User.findById(userId);
   if (!user) {
     throw new APIERR(404, "User not found");
   }
 
-  const db = await connectDB();
   const updateFields = [];
   const updateValues = [];
 
@@ -512,7 +508,6 @@ const updateProfile = asyncHandler(async (req, res) => {
   if (req.files?.resume) {
     const resume = req.files.resume[0];
 
-    // Validate file type
     if (resume.mimetype !== "application/pdf") {
       try {
         await fs.unlink(resume.path);
@@ -522,7 +517,6 @@ const updateProfile = asyncHandler(async (req, res) => {
       throw new APIERR(400, "Only PDF files are allowed for resume");
     }
 
-    // Validate file size (5MB)
     if (resume.size > 5 * 1024 * 1024) {
       try {
         await fs.unlink(resume.path);
@@ -534,10 +528,8 @@ const updateProfile = asyncHandler(async (req, res) => {
 
     let ftpUploadResult;
     try {
-      // ✅ Read file buffer
       const fileBuffer = await fs.readFile(resume.path);
 
-      // ✅ Upload to FTP
       console.log("📤 Uploading resume to FTP...");
       ftpUploadResult = await uploadFileToFTP(
         fileBuffer,
@@ -547,10 +539,8 @@ const updateProfile = asyncHandler(async (req, res) => {
 
       console.log("✅ Resume uploaded to FTP:", ftpUploadResult.url);
 
-      // ✅ Delete old resume from FTP if exists
       if (user.resume) {
         try {
-          // Extract remote path from old URL
           const oldUrl = user.resume;
           const remotePath = oldUrl.split("/interview2")[1];
           if (remotePath) {
@@ -562,7 +552,6 @@ const updateProfile = asyncHandler(async (req, res) => {
         }
       }
 
-      // ✅ Delete local file after successful FTP upload
       try {
         await fs.unlink(resume.path);
         console.log("🗑️ Local file deleted");
@@ -570,7 +559,6 @@ const updateProfile = asyncHandler(async (req, res) => {
         console.log("Error deleting local file:", err);
       }
     } catch (error) {
-      // Clean up local file if FTP upload fails
       try {
         await fs.unlink(resume.path);
       } catch (err) {
@@ -587,7 +575,6 @@ const updateProfile = asyncHandler(async (req, res) => {
   if (req.files?.profileImage) {
     const profileImage = req.files.profileImage[0];
 
-    // Validate file type
     const allowedImageTypes = [
       "image/jpeg",
       "image/jpg",
@@ -603,7 +590,6 @@ const updateProfile = asyncHandler(async (req, res) => {
       throw new APIERR(400, "Only JPEG, PNG, and WebP images are allowed");
     }
 
-    // Validate file size (2MB)
     if (profileImage.size > 2 * 1024 * 1024) {
       try {
         await fs.unlink(profileImage.path);
@@ -615,20 +601,17 @@ const updateProfile = asyncHandler(async (req, res) => {
 
     let ftpUploadResult;
     try {
-      // ✅ Read file buffer
       const fileBuffer = await fs.readFile(profileImage.path);
 
-      // ✅ Upload to FTP
       console.log("📤 Uploading profile image to FTP...");
       ftpUploadResult = await uploadFileToFTP(
         fileBuffer,
         profileImage.originalname,
-        `/public/profile-images/${userId}`, // User-specific directory
+        `/public/profile-images/${userId}`,
       );
 
       console.log("✅ Profile image uploaded to FTP:", ftpUploadResult.url);
 
-      // ✅ Delete old profile image from FTP if exists
       if (user.profile_image_path) {
         try {
           const oldUrl = user.profile_image_path;
@@ -642,7 +625,6 @@ const updateProfile = asyncHandler(async (req, res) => {
         }
       }
 
-      // ✅ Delete local file
       try {
         await fs.unlink(profileImage.path);
         console.log("🗑️ Local file deleted");
@@ -662,25 +644,22 @@ const updateProfile = asyncHandler(async (req, res) => {
     updateValues.push(ftpUploadResult.url);
   }
 
-  // If no files to update
   if (updateFields.length === 0) {
     throw new APIERR(400, "No files to update");
   }
 
-  // Update database
   updateFields.push("updated_at = NOW()");
   updateValues.push(userId);
 
   const query = `UPDATE users SET ${updateFields.join(", ")} WHERE id = ?`;
 
   try {
-    await db.execute(query, updateValues);
+    await pool.execute(query, updateValues);
   } catch (error) {
     console.error("Error updating profile:", error);
     throw new APIERR(500, "Failed to update profile");
   }
 
-  // Fetch updated user data
   const updatedUser = await User.findById(userId);
   delete updatedUser.hashPassword;
   delete updatedUser.refreshToken;

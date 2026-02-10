@@ -4,7 +4,7 @@ const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const authRoutes = require("./Routes/auth.routes.js");
 const questionRoutes = require("./Middlewares/multer.middlewares.js");
-const speechRoutes = require("./Middlewares/multer.middlewares.js");
+// const speechRoutes = require("./Middlewares/multer.middlewares.js");
 const resultRouter = require("./Routes/result.routes.js");
 const videoUploadRoutes = require("./Routes/videoUpload.routes.js");
 const VideoProcessingJobs = require("./Jobs/videoProcessing.jobs.js");
@@ -55,7 +55,7 @@ app.use((req, res, next) => {
 
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/questions", questionRoutes);
-app.use("/api/v1/speech", speechRoutes);
+// app.use("/api/v1/speech", speechRoutes);
 app.use("/api/v1/result", resultRouter);
 app.use("/api/v1/interview", videoUploadRoutes);
 app.use("/api/v1/hiring", hiringRoutes);

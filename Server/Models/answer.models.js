@@ -1,4 +1,4 @@
-const { connectDB } = require("../Config/database.config");
+const { pool } = require("../Config/database.config");
 
 const Evaluation = {
   async saveQuestionEvaluation({
@@ -11,7 +11,7 @@ const Evaluation = {
     feedback,
     level,
   }) {
-    const db = await connectDB();
+    const db = await pool;
     try {
       await db.execute(
         `INSERT INTO question_evaluations
@@ -26,12 +26,11 @@ const Evaluation = {
           clarity,
           feedback,
           level,
-        ]
+        ],
       );
     } catch (err) {
       console.log("Error While saving the questions evaluations", err);
     } finally {
-      db.release();
     }
   },
 
@@ -45,7 +44,7 @@ const Evaluation = {
     summary,
     modelVersion,
   }) {
-    const db = await connectDB();
+    const db = pool;
     try {
       await db.execute(
         `INSERT INTO interview_evaluations
@@ -61,28 +60,26 @@ const Evaluation = {
           weaknesses,
           summary,
           modelVersion,
-        ]
+        ],
       );
     } catch (err) {
       console.log("Error While saving the interview evaluations", err);
     } finally {
-      db.release();
     }
   },
 
   async saveSkillEvaluation({ interviewId, technology, score, level }) {
-    const db = await connectDB();
+    const db = pool;
     try {
       await db.execute(
         `INSERT INTO skill_evaluations
          (interview_id, technology, average_score, level)
          VALUES (?, ?, ?, ?)`,
-        [interviewId, technology, score, level]
+        [interviewId, technology, score, level],
       );
     } catch (err) {
       console.log("Error While saving the skill eveluations", err);
     } finally {
-      db.release();
     }
   },
 };

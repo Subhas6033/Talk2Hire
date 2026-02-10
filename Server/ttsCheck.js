@@ -1,18 +1,22 @@
-const { connectDB } = require("./Config/database.config.js");
+const { pool } = require("./Config/database.config.js");
 
 async function migrateUserTable() {
-  const db = await connectDB();
-
   try {
     console.log("🔄 Starting user table migration...");
 
-    // Check if columns exist first
-    const [columns] = await db.execute(`
+    // Check which columns already exist
+    const [columns] = await pool.execute(`
       SELECT COLUMN_NAME 
       FROM INFORMATION_SCHEMA.COLUMNS 
       WHERE TABLE_SCHEMA = DATABASE() 
       AND TABLE_NAME = 'users' 
-      AND COLUMN_NAME IN ('resume', 'resume_upload_status', 'profile_image_path', 'reset_password_otp', 'reset_password_otp_expires_at')
+      AND COLUMN_NAME IN (
+        'resume', 
+        'resume_upload_status', 
+        'profile_image_path', 
+        'reset_password_otp', 
+        'reset_password_otp_expires_at'
+      )
     `);
 
     const existingColumns = columns.map((col) => col.COLUMN_NAME);
@@ -21,7 +25,7 @@ async function migrateUserTable() {
     // Add resume column if not exists
     if (!existingColumns.includes("resume")) {
       console.log("➕ Adding 'resume' column...");
-      await db.execute(`
+      await pool.execute(`
         ALTER TABLE users 
         ADD COLUMN resume TEXT AFTER skill
       `);
@@ -30,24 +34,35 @@ async function migrateUserTable() {
       console.log("⏭️  'resume' column already exists");
     }
 
-    // Add resume_upload_status column if not exists
+    // ✅ FIX: Added 'pending' to ENUM — this was causing the truncation error
     if (!existingColumns.includes("resume_upload_status")) {
       console.log("➕ Adding 'resume_upload_status' column...");
-      await db.execute(`
+      await pool.execute(`
         ALTER TABLE users 
-        ADD COLUMN resume_upload_status ENUM('uploading', 'completed', 'failed') 
-        DEFAULT 'completed' 
+        ADD COLUMN resume_upload_status 
+          ENUM('pending', 'uploading', 'completed', 'failed') 
+          DEFAULT 'pending' 
         AFTER resume
       `);
       console.log("✅ Added 'resume_upload_status' column");
     } else {
-      console.log("⏭️  'resume_upload_status' column already exists");
+      // ✅ FIX: If column exists but was created without 'pending', patch the ENUM
+      console.log(
+        "🔧 Ensuring 'resume_upload_status' ENUM includes 'pending'...",
+      );
+      await pool.execute(`
+        ALTER TABLE users 
+        MODIFY COLUMN resume_upload_status 
+          ENUM('pending', 'uploading', 'completed', 'failed') 
+          DEFAULT 'pending'
+      `);
+      console.log("✅ 'resume_upload_status' ENUM updated");
     }
 
     // Add profile_image_path column if not exists
     if (!existingColumns.includes("profile_image_path")) {
       console.log("➕ Adding 'profile_image_path' column...");
-      await db.execute(`
+      await pool.execute(`
         ALTER TABLE users 
         ADD COLUMN profile_image_path TEXT AFTER resume_upload_status
       `);
@@ -59,7 +74,7 @@ async function migrateUserTable() {
     // Add reset_password_otp column if not exists
     if (!existingColumns.includes("reset_password_otp")) {
       console.log("➕ Adding 'reset_password_otp' column...");
-      await db.execute(`
+      await pool.execute(`
         ALTER TABLE users 
         ADD COLUMN reset_password_otp VARCHAR(6) AFTER profile_image_path
       `);
@@ -71,7 +86,7 @@ async function migrateUserTable() {
     // Add reset_password_otp_expires_at column if not exists
     if (!existingColumns.includes("reset_password_otp_expires_at")) {
       console.log("➕ Adding 'reset_password_otp_expires_at' column...");
-      await db.execute(`
+      await pool.execute(`
         ALTER TABLE users 
         ADD COLUMN reset_password_otp_expires_at DATETIME AFTER reset_password_otp
       `);
@@ -80,34 +95,45 @@ async function migrateUserTable() {
       console.log("⏭️  'reset_password_otp_expires_at' column already exists");
     }
 
-    // Add indexes for better performance
+    // Add indexes safely
     console.log("🔍 Adding indexes...");
 
-    try {
-      await db.execute(`
-        CREATE INDEX idx_resume_upload_status 
-        ON users(resume_upload_status)
-      `);
-      console.log("✅ Added index on resume_upload_status");
-    } catch (err) {
-      if (err.code === "ER_DUP_KEYNAME") {
-        console.log("⏭️  Index idx_resume_upload_status already exists");
-      } else {
-        throw err;
+    const indexes = [
+      {
+        name: "idx_email",
+        sql: "CREATE INDEX idx_email ON users(email)",
+      },
+      {
+        name: "idx_resume_upload_status",
+        sql: "CREATE INDEX idx_resume_upload_status ON users(resume_upload_status)",
+      },
+    ];
+
+    for (const index of indexes) {
+      try {
+        await pool.execute(index.sql);
+        console.log(`✅ Added index: ${index.name}`);
+      } catch (err) {
+        if (err.code === "ER_DUP_KEYNAME") {
+          console.log(`⏭️  Index '${index.name}' already exists`);
+        } else {
+          throw err;
+        }
       }
     }
 
-    console.log("✅ Migration completed successfully!");
+    console.log("\n✅ Migration completed successfully!");
 
     // Show final table structure
-    const [tableInfo] = await db.execute(`DESCRIBE users`);
+    const [tableInfo] = await pool.execute(`DESCRIBE users`);
     console.log("\n📊 Final table structure:");
     console.table(tableInfo);
+
+    // ✅ FIX: Removed db.end() — never destroy the pool,
+    // it kills all DB connections for the entire running server
   } catch (error) {
     console.error("❌ Migration failed:", error);
     throw error;
-  } finally {
-    await db.end();
   }
 }
 

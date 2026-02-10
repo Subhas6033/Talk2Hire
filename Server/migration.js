@@ -1,7 +1,7 @@
 const { connectDB } = require("./Config/database.config.js");
 
 module.exports.up = async () => {
-  const db = await connectDB();
+  const db = pool;
 
   console.log("🚀 Running migration: make skill default");
 
@@ -14,7 +14,7 @@ module.exports.up = async () => {
 };
 
 module.exports.down = async () => {
-  const db = await connectDB();
+  const db = pool;
 
   console.log("↩️ Reverting migration: remove skill default");
 

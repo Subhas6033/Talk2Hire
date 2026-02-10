@@ -1,4 +1,4 @@
-const { connectDB } = require("../Config/database.config");
+const { pool } = require("../Config/database.config");
 const { APIERR } = require("../Utils/index.utils");
 
 const Hiring = {
@@ -8,7 +8,7 @@ const Hiring = {
   async getCandidates(filters) {
     let db;
     try {
-      db = await connectDB();
+      db = await pool;
 
       const { search, role, location, minScore, page, limit } = filters;
       const offset = (page - 1) * limit;
@@ -195,7 +195,6 @@ const Hiring = {
       console.error("❌ Error getting candidates:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
@@ -205,7 +204,7 @@ const Hiring = {
   async getCandidateById(interviewId) {
     let db;
     try {
-      db = await connectDB();
+      db = pool;
 
       const [candidates] = await db.execute(
         `SELECT 
@@ -333,7 +332,6 @@ const Hiring = {
       console.error("❌ Error getting candidate by ID:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 
@@ -343,7 +341,7 @@ const Hiring = {
   async getHiringStats() {
     let db;
     try {
-      db = await connectDB();
+      db = pool;
 
       const [stats] = await db.execute(
         `SELECT 
@@ -360,7 +358,6 @@ const Hiring = {
       console.error("❌ Error getting hiring stats:", error);
       throw error;
     } finally {
-      if (db) db.release();
     }
   },
 };

@@ -8,7 +8,7 @@ const pool = mysql.createPool({
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   waitForConnections: true,
-  connectionLimit: 10, // Maximum number of connections
+  connectionLimit: 100, // Maximum number of connections
   queueLimit: 0,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
@@ -26,15 +26,6 @@ pool
   });
 
 // Export function to get connection from pool
-const connectDB = async () => {
-  try {
-    const connection = await pool.getConnection();
-    console.log("Connected to the MySQL database successfully.");
-    return connection;
-  } catch (error) {
-    console.error("❌ Database connection error:", error);
-    throw error;
-  }
-};
+const connectDB = async () => pool;
 
 module.exports = { connectDB, pool };
