@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import {
   Card,
@@ -20,7 +20,7 @@ const Signup = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [resumeFile, setResumeFile] = useState(null);
   const [resumeError, setResumeError] = useState("");
-  const { registerUser, loading, error, isAuthenticated, user } = useAuth();
+  const { registerUser, loading, error } = useAuth();
   const navigate = useNavigate();
 
   const {
@@ -82,19 +82,15 @@ const Signup = () => {
     formData.append("resume", resumeFile);
 
     try {
+      // Register and wait for success
       await registerUser(formData).unwrap();
-      setShowUploadStatus(true);
+
+      // Navigate to home after successful registration
+      navigate("/", { replace: true });
     } catch (err) {
       console.error("Registration failed:", err);
     }
   };
-
-  // Navigate to home if already authenticated
-  useEffect(() => {
-    if (isAuthenticated) {
-      navigate("/", { replace: true });
-    }
-  }, [isAuthenticated, user, navigate]);
 
   return (
     <>

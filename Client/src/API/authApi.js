@@ -1,6 +1,7 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import api from "./api";
 
+// Register User
 export const registerUser = createAsyncThunk(
   "auth/register",
   async (formData, { rejectWithValue }) => {
@@ -9,8 +10,9 @@ export const registerUser = createAsyncThunk(
         headers: {
           "Content-Type": "multipart/form-data",
         },
+        withCredentials: true,
       });
-
+      console.log("Register response:", response.data);
       return response.data;
     } catch (error) {
       return rejectWithValue(error.response?.data?.message || error.message);
@@ -18,14 +20,17 @@ export const registerUser = createAsyncThunk(
   },
 );
 
+// Login User
 export const loginUser = createAsyncThunk(
   "auth/login",
   async ({ email, password }, { rejectWithValue }) => {
     try {
-      const response = await api.post("/auth/login", {
-        email,
-        password,
-      });
+      const response = await api.post(
+        "/auth/login",
+        { email, password },
+        { withCredentials: true },
+      );
+      console.log("Login response:", response.data);
       return response.data;
     } catch (error) {
       return rejectWithValue(error.response?.data?.message || error.message);
@@ -33,22 +38,27 @@ export const loginUser = createAsyncThunk(
   },
 );
 
+//  Logout User
 export const logoutUser = createAsyncThunk(
   "auth/logout",
   async (_, { rejectWithValue }) => {
     try {
-      await api.post("/auth/logout");
+      await api.post("/auth/logout", {}, { withCredentials: true });
+      return null;
     } catch (error) {
       return rejectWithValue(error.response?.data?.message || error.message);
     }
   },
 );
 
+// Get Current User (verify session)
 export const getCurrentUser = createAsyncThunk(
   "auth/getCurrentUser",
   async (_, { rejectWithValue }) => {
     try {
-      const response = await api.get("/auth/get-current-user");
+      const response = await api.get("/auth/get-current-user", {
+        withCredentials: true,
+      });
       return response.data;
     } catch (error) {
       return rejectWithValue(
@@ -58,35 +68,21 @@ export const getCurrentUser = createAsyncThunk(
   },
 );
 
-export const verifyAuth = createAsyncThunk(
-  "auth/verify",
-  async (_, { rejectWithValue }) => {
-    try {
-      const response = await api.get("/auth/get-current-user");
-      return response.data;
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Not authenticated",
-      );
-    }
-  },
-);
-
-// ✅ Update user (supports both FormData and regular JSON)
+//  Update User Profile
 export const updateUser = createAsyncThunk(
   "auth/updateUser",
   async (userData, { rejectWithValue }) => {
     try {
-      // Determine if we're sending FormData (for file uploads) or JSON
       const isFormData = userData instanceof FormData;
 
-      const config = isFormData
-        ? {
-            headers: {
-              "Content-Type": "multipart/form-data",
-            },
-          }
-        : {};
+      const config = {
+        withCredentials: true,
+        ...(isFormData && {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          },
+        }),
+      };
 
       const response = await api.patch(
         "/auth/update-profile",
@@ -100,11 +96,25 @@ export const updateUser = createAsyncThunk(
   },
 );
 
-// Load initial state from localStorage
+// Save to localStorage (user data only, NO tokens)
+const saveAuthState = (user, isAuthenticated) => {
+  try {
+    const authState = {
+      user,
+      isAuthenticated,
+      lastVerified: Date.now(),
+    };
+    localStorage.setItem("authState", JSON.stringify(authState));
+  } catch (err) {
+    console.error("Failed to save auth state:", err);
+  }
+};
+
+// Load from localStorage
 const loadStateFromStorage = () => {
   try {
     const serializedState = localStorage.getItem("authState");
-    if (serializedState === null) {
+    if (!serializedState) {
       return {
         user: null,
         isAuthenticated: false,
@@ -114,15 +124,20 @@ const loadStateFromStorage = () => {
         lastVerified: null,
       };
     }
+
     const parsedState = JSON.parse(serializedState);
+
     return {
-      ...parsedState,
+      user: parsedState.user || null,
+      isAuthenticated: parsedState.isAuthenticated || false,
       loading: false,
       error: null,
       hydrated: false,
+      lastVerified: parsedState.lastVerified || null,
     };
   } catch (err) {
     console.error("Failed to load auth state:", err);
+    localStorage.removeItem("authState");
     return {
       user: null,
       isAuthenticated: false,
@@ -140,74 +155,73 @@ const authSlice = createSlice({
   name: "auth",
   initialState,
   reducers: {
+    // Mark state as hydrated
     setAuthHydrated: (state) => {
       state.hydrated = true;
     },
+
+    //  Clear any errors
     clearError: (state) => {
       state.error = null;
     },
-    // ✅ OPTIONAL: Keep this for local-only updates (no backend call)
+
+    //  Update user locally without API call
     updateUserLocal: (state, action) => {
       if (state.user) {
         state.user = { ...state.user, ...action.payload };
-        localStorage.setItem(
-          "authState",
-          JSON.stringify({
-            user: state.user,
-            isAuthenticated: state.isAuthenticated,
-            lastVerified: state.lastVerified,
-          }),
-        );
+        saveAuthState(state.user, state.isAuthenticated);
       }
+    },
+
+    //  Clear session (force logout)
+    clearSession: (state) => {
+      state.user = null;
+      state.isAuthenticated = false;
+      state.lastVerified = null;
+      state.error = null;
+      localStorage.removeItem("authState");
     },
   },
 
   extraReducers: (builder) => {
     builder
-      // registerUser
+      // ========== REGISTER ==========
       .addCase(registerUser.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
       .addCase(registerUser.fulfilled, (state, action) => {
         state.loading = false;
+        //  Backend returns user data (tokens are in httpOnly cookies)
         state.user = action.payload.data;
         state.isAuthenticated = true;
         state.hydrated = true;
         state.lastVerified = Date.now();
-        localStorage.setItem(
-          "authState",
-          JSON.stringify({
-            user: state.user,
-            isAuthenticated: state.isAuthenticated,
-            lastVerified: state.lastVerified,
-          }),
-        );
+
+        //  Save user data to localStorage (NO tokens)
+        saveAuthState(state.user, state.isAuthenticated);
       })
       .addCase(registerUser.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
         state.hydrated = true;
       })
-      // login
+
+      // ========== LOGIN ==========
       .addCase(loginUser.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
       .addCase(loginUser.fulfilled, (state, action) => {
         state.loading = false;
+        //  Backend returns user data (tokens are in httpOnly cookies)
         state.user = action.payload.data;
         state.isAuthenticated = true;
         state.hydrated = true;
         state.lastVerified = Date.now();
-        localStorage.setItem(
-          "authState",
-          JSON.stringify({
-            user: state.user,
-            isAuthenticated: state.isAuthenticated,
-            lastVerified: state.lastVerified,
-          }),
-        );
+
+        // ✅ Save user data to localStorage (NO tokens)
+        saveAuthState(state.user, state.isAuthenticated);
       })
       .addCase(loginUser.rejected, (state, action) => {
         state.loading = false;
@@ -215,7 +229,7 @@ const authSlice = createSlice({
         state.hydrated = true;
       })
 
-      // logout
+      // ========== LOGOUT ==========
       .addCase(logoutUser.pending, (state) => {
         state.loading = true;
       })
@@ -225,18 +239,22 @@ const authSlice = createSlice({
         state.isAuthenticated = false;
         state.hydrated = true;
         state.lastVerified = null;
+
+        // ✅ Clear localStorage
         localStorage.removeItem("authState");
       })
-      .addCase(logoutUser.rejected, (state, action) => {
+      .addCase(logoutUser.rejected, (state) => {
+        // ✅ Even if API fails, logout locally
         state.loading = false;
-        state.error = action.payload;
         state.user = null;
         state.isAuthenticated = false;
         state.lastVerified = null;
+
+        // ✅ Clear localStorage
         localStorage.removeItem("authState");
       })
 
-      // get current user
+      // ========== GET CURRENT USER ==========
       .addCase(getCurrentUser.pending, (state) => {
         state.loading = true;
       })
@@ -246,16 +264,12 @@ const authSlice = createSlice({
         state.isAuthenticated = true;
         state.hydrated = true;
         state.lastVerified = Date.now();
-        localStorage.setItem(
-          "authState",
-          JSON.stringify({
-            user: state.user,
-            isAuthenticated: state.isAuthenticated,
-            lastVerified: state.lastVerified,
-          }),
-        );
+
+        // ✅ Update localStorage with fresh data
+        saveAuthState(state.user, state.isAuthenticated);
       })
       .addCase(getCurrentUser.rejected, (state) => {
+        // ✅ Session invalid - clear everything
         state.loading = false;
         state.user = null;
         state.isAuthenticated = false;
@@ -264,35 +278,7 @@ const authSlice = createSlice({
         localStorage.removeItem("authState");
       })
 
-      // verify auth
-      .addCase(verifyAuth.pending, (state) => {
-        state.loading = true;
-      })
-      .addCase(verifyAuth.fulfilled, (state, action) => {
-        state.loading = false;
-        state.user = action.payload.data;
-        state.isAuthenticated = true;
-        state.hydrated = true;
-        state.lastVerified = Date.now();
-        localStorage.setItem(
-          "authState",
-          JSON.stringify({
-            user: state.user,
-            isAuthenticated: state.isAuthenticated,
-            lastVerified: state.lastVerified,
-          }),
-        );
-      })
-      .addCase(verifyAuth.rejected, (state) => {
-        state.loading = false;
-        state.user = null;
-        state.isAuthenticated = false;
-        state.hydrated = true;
-        state.lastVerified = null;
-        localStorage.removeItem("authState");
-      })
-
-      // ✅ updateUser async thunk handlers
+      // ========== UPDATE USER ==========
       .addCase(updateUser.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -300,16 +286,10 @@ const authSlice = createSlice({
       .addCase(updateUser.fulfilled, (state, action) => {
         state.loading = false;
         if (state.user) {
-          // Update user with response from backend
           state.user = { ...state.user, ...action.payload.data };
-          localStorage.setItem(
-            "authState",
-            JSON.stringify({
-              user: state.user,
-              isAuthenticated: state.isAuthenticated,
-              lastVerified: state.lastVerified,
-            }),
-          );
+
+          // ✅ Update localStorage
+          saveAuthState(state.user, state.isAuthenticated);
         }
       })
       .addCase(updateUser.rejected, (state, action) => {
@@ -319,7 +299,7 @@ const authSlice = createSlice({
   },
 });
 
-export const { setAuthHydrated, clearError, updateUserLocal } =
+export const { setAuthHydrated, clearError, updateUserLocal, clearSession } =
   authSlice.actions;
 
 export default authSlice.reducer;

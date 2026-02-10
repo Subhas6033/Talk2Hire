@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
   Card,
   CardHeader,
@@ -8,10 +8,9 @@ import {
 import { Button, Modal } from "../../Components/index";
 import { FormField } from "../../Components/Common/Input";
 import { Eye, EyeOff } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { useAuth } from "../../Hooks/useAuthHook";
-import { useNavigate } from "react-router-dom";
 import { usePassword } from "../../Hooks/usePassHook";
 
 const Loader = () => (
@@ -22,7 +21,7 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isMailSending, setIsMailSending] = useState(false);
-  const { login, loading, error, isAuthenticated } = useAuth();
+  const { login, loading, error } = useAuth();
   const {
     sendForgotPasswordEmail,
     loading: forgotLoading,
@@ -43,18 +42,21 @@ const Login = () => {
     },
   });
 
-  const onSubmit = (data) => {
-    login({
-      email: data.email,
-      password: data.password,
-    });
-  };
+  const onSubmit = async (data) => {
+    try {
+      // Login and wait for success
+      await login({
+        email: data.email,
+        password: data.password,
+      }).unwrap();
 
-  useEffect(() => {
-    if (isAuthenticated) {
+      // Navigate to home after successful login
       navigate("/", { replace: true });
+    } catch (err) {
+      //  Error is already in Redux state, just log it
+      console.error("Login failed:", err);
     }
-  }, [isAuthenticated, navigate]);
+  };
 
   // Forgot password form
   const {
@@ -72,7 +74,6 @@ const Login = () => {
   const onResetSubmit = async (data) => {
     try {
       setIsMailSending(true);
-
       await sendForgotPasswordEmail(data.resetEmail).unwrap();
       setIsModalOpen(false);
       navigate("/verify-password");
@@ -85,7 +86,7 @@ const Login = () => {
 
   return (
     <>
-      <title>QuantamHash Corporation | login</title>
+      <title>QuantamHash Corporation | Login</title>
 
       <section className="min-h-screen flex items-center justify-center px-6 py-20 relative overflow-hidden bg-linear-to-br from-bgDark via-[#11162a] to-bgDark">
         {/* Background glows */}
@@ -180,7 +181,7 @@ const Login = () => {
 
             <CardFooter>
               <p className="text-sm text-white/60">
-                Don’t have an account?{" "}
+                Don't have an account?{" "}
                 <Link
                   to="/signup"
                   className="text-purpleSoft hover:text-purpleGlow font-medium"
@@ -234,7 +235,7 @@ const Login = () => {
             className="space-y-4"
           >
             <p className="text-sm text-white/60">
-              Enter your email address and we’ll send you a password reset link.
+              Enter your email address and we'll send you a password reset link.
             </p>
 
             <FormField

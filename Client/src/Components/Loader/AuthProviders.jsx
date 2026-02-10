@@ -1,25 +1,59 @@
 import { useEffect } from "react";
 import { useDispatch, useSelector } from "react-redux";
-import { setAuthHydrated } from "../../API/authApi";
-import Loader from "./Loader";
+import { getCurrentUser, setAuthHydrated } from "../../API/authApi";
 
 const AuthProvider = ({ children }) => {
   const dispatch = useDispatch();
-  const { hydrated } = useSelector((state) => state.auth);
+  const { user, hydrated } = useSelector((state) => state.auth);
 
   useEffect(() => {
+    const initAuth = async () => {
+      // Check if  user data in localStorage
+      const savedState = localStorage.getItem("authState");
+
+      if (savedState) {
+        try {
+          const parsedState = JSON.parse(savedState);
+
+          //  If user data exists, verify session with backend
+          if (parsedState.user && parsedState.isAuthenticated) {
+            console.log("✅ Found saved session, verifying with backend...");
+            await dispatch(getCurrentUser()).unwrap();
+            console.log("✅ Session verified successfully");
+          } else {
+            // No valid user data, just mark as hydrated
+            dispatch(setAuthHydrated());
+          }
+        } catch (error) {
+          // Session verification failed
+          console.log("❌ Session verification failed:", error);
+          dispatch(setAuthHydrated());
+        }
+      } else {
+        // No saved state, mark as hydrated immediately
+        console.log("ℹ️ No saved session found");
+        dispatch(setAuthHydrated());
+      }
+    };
+
     if (!hydrated) {
-      // ✅ Just mark as hydrated - NO API call, trust localStorage
-      console.log("✅ Loading auth from localStorage (no API call)");
-      dispatch(setAuthHydrated());
+      initAuth();
     }
   }, [dispatch, hydrated]);
 
+  // Show loading screen while hydrating
   if (!hydrated) {
-    return <Loader label="Loading" />;
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-bgDark">
+        <div className="text-center">
+          <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-purpleGlow/30 border-t-purpleGlow"></div>
+          <p className="mt-4 text-white/60">Loading...</p>
+        </div>
+      </div>
+    );
   }
 
-  return children;
+  return <>{children}</>;
 };
 
 export default AuthProvider;
