@@ -105,7 +105,7 @@ const registerUser = asyncHandler(async (req, res) => {
   const fileBuffer = await fs.readFile(resumeFile.path);
 
   // Hash password while we have the buffer ready
-  const passwordHash = await bcrypt.hash(password, 10);
+  const passwordHash = await bcrypt.hash(password, 8);
 
   // Clean up temp file — we have the buffer, we don't need the disk copy anymore
   await fs.unlink(resumeFile.path).catch(() => {});
@@ -144,7 +144,7 @@ const registerUser = asyncHandler(async (req, res) => {
     maxAge: 24 * 60 * 60 * 1000,
   });
 
-  // ✅ Respond immediately — user is registered, resume uploads in background
+  // Respond immediately — user is registered, resume uploads in background
   res.status(201).json(
     new APIRES(
       201,
@@ -201,6 +201,7 @@ const checkResumeStatus = asyncHandler(async (req, res) => {
 });
 
 const loginUser = asyncHandler(async (req, res) => {
+  console.log("Login controllers Called");
   const { email, password } = req.body;
 
   if ([email, password].some((f) => !f || f.trim() === "")) {
@@ -253,6 +254,7 @@ const loginUser = asyncHandler(async (req, res) => {
       },
       "Successfully logged in",
     ),
+    console.log("Login controllers end"),
   );
 });
 
@@ -483,7 +485,7 @@ const resetPassword = asyncHandler(async (req, res) => {
   const users = await User.findByEmail(email);
   const userId = users.id;
 
-  const hashedPassword = await bcrypt.hash(newPassword, 10);
+  const hashedPassword = await bcrypt.hash(newPassword, 8);
 
   await pool.execute(
     "UPDATE users SET hashPassword = ?, updated_at = NOW() WHERE id = ?",

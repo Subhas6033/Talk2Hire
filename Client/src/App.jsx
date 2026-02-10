@@ -33,13 +33,8 @@ const App = () => {
   const { hydrated } = useSelector((state) => state.auth);
 
   useEffect(() => {
-    // Wait for auth hydration and artificial delay
     if (hydrated) {
-      const timer = setTimeout(() => {
-        setIsLoading(false);
-      }, 2000);
-
-      return () => clearTimeout(timer);
+      setIsLoading(false);
     }
   }, [hydrated]);
 

@@ -17,12 +17,16 @@ const AuthProvider = ({ children }) => {
 
           //  If user data exists, verify session with backend
           if (parsedState.user && parsedState.isAuthenticated) {
-            console.log("✅ Found saved session, verifying with backend...");
-            await dispatch(getCurrentUser()).unwrap();
-            console.log("✅ Session verified successfully");
-          } else {
-            // No valid user data, just mark as hydrated
-            dispatch(setAuthHydrated());
+            const isStale =
+              Date.now() - (parsedState.lastVerified || 0) > 30 * 60 * 1000;
+
+            if (isStale) {
+              // Only hit backend if session is older than 30 minutes
+              await dispatch(getCurrentUser()).unwrap();
+            } else {
+              // Trust the cached data, mark as hydrated immediately
+              dispatch(setAuthHydrated());
+            }
           }
         } catch (error) {
           // Session verification failed

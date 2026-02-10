@@ -1,5 +1,5 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
-import axios from "axios";
+import api from "./api";
 
 const API_URL = import.meta.env.VITE_BACKEND_URL;
 
@@ -16,7 +16,7 @@ export const fetchCandidates = createAsyncThunk(
       params.append("page", filters.page || 1);
       params.append("limit", filters.limit || 50);
 
-      const response = await axios.get(
+      const response = await api.get(
         `${API_URL}/api/v1/hiring/candidates?${params}`,
         {
           headers: {
@@ -38,7 +38,7 @@ export const fetchCandidateDetails = createAsyncThunk(
   "hiring/fetchCandidateDetails",
   async (interviewId, { rejectWithValue }) => {
     try {
-      const response = await axios.get(
+      const response = await api.get(
         `${API_URL}/api/v1/hiring/candidates/${interviewId}`,
         {
           headers: {
@@ -60,7 +60,7 @@ export const fetchHiringStats = createAsyncThunk(
   "hiring/fetchStats",
   async (_, { rejectWithValue }) => {
     try {
-      const response = await axios.get(`${API_URL}/api/v1/hiring/stats`, {
+      const response = await api.get(`${API_URL}/api/v1/hiring/stats`, {
         headers: {
           Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
         },
