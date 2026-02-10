@@ -8,7 +8,6 @@ const asyncHandler = (requestHandler) => async (req, res, next) => {
       message: error.message || "Internal Server Error",
     });
     next(error);
-    process.exit(1);
   }
 };
 

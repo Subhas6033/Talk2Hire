@@ -47,12 +47,61 @@ app.use(
 
 app.use(cookieParser());
 
-// Requests logs
+// Request timeout middleware - Add BEFORE routes
 app.use((req, res, next) => {
-  console.log(`📥 ${new Date().toISOString()} - ${req.method} ${req.path}`);
+  // Set timeout for all requests (2 minutes)
+  req.setTimeout(120000);
+  res.setTimeout(120000);
+
+  // Handle timeout event
+  req.on("timeout", () => {
+    console.error("⏱️ Request timeout");
+    if (!res.headersSent) {
+      res.status(408).json({
+        success: false,
+        message: "Request timeout. Please try again.",
+      });
+    }
+  });
+
   next();
 });
 
+// Request tracking middleware - UPDATED
+app.use((req, res, next) => {
+  const startTime = Date.now();
+  const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+  req.requestId = requestId;
+
+  console.log(
+    `📥 [${requestId}] ${new Date().toISOString()} - ${req.method} ${req.path}`,
+  );
+
+  // Track response completion
+  res.on("finish", () => {
+    const duration = Date.now() - startTime;
+    console.log(
+      `✅ [${requestId}] ${req.method} ${req.path} - ${res.statusCode} (${duration}ms)`,
+    );
+  });
+
+  // Detect hanging requests (warning after 30s)
+  const hangTimeout = setTimeout(() => {
+    if (!res.headersSent) {
+      console.error(
+        `⚠️ [${requestId}] Request hanging: ${req.method} ${req.path} (>30s)`,
+      );
+    }
+  }, 30000);
+
+  res.on("finish", () => clearTimeout(hangTimeout));
+  res.on("close", () => clearTimeout(hangTimeout));
+
+  next();
+});
+
+// Routes
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/questions", questionRoutes);
 // app.use("/api/v1/speech", speechRoutes);
@@ -66,6 +115,7 @@ app.get("/health", (req, res) => {
     status: "ok",
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
+    memory: process.memoryUsage(),
   });
 });
 
@@ -112,10 +162,28 @@ if (process.env.ENABLE_CHUNK_CLEANUP === "true") {
     24 * 60 * 60 * 1000,
   ); // Every 24 hours
 }
- */
-// Global error handler
+*/
+
+// 404 Handler - Must be AFTER all routes but BEFORE error handler
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: `Route ${req.method} ${req.path} not found`,
+  });
+});
+
+// Global error handler - UPDATED
 app.use((err, req, res, next) => {
-  console.error("❌ Unhandled error:", err);
+  const requestId = req.requestId || "unknown";
+  console.error(`❌ [${requestId}] Unhandled error:`, err);
+
+  // Prevent sending response if headers already sent
+  if (res.headersSent) {
+    console.error(
+      `⚠️ [${requestId}] Headers already sent, delegating to default error handler`,
+    );
+    return next(err);
+  }
 
   // Handle specific error types
   if (err.type === "entity.too.large") {
@@ -134,11 +202,55 @@ app.use((err, req, res, next) => {
     });
   }
 
-  res.status(err.status || 500).json({
+  if (err.message === "Not allowed by CORS") {
+    return res.status(403).json({
+      success: false,
+      message: "CORS policy: Origin not allowed",
+      error: err.message,
+    });
+  }
+
+  // Handle validation errors
+  if (err.name === "ValidationError") {
+    return res.status(400).json({
+      success: false,
+      message: "Validation error",
+      error: err.message,
+    });
+  }
+
+  // Generic error response
+  const statusCode = err.status || err.statusCode || 500;
+
+  res.status(statusCode).json({
     success: false,
     message: err.message || "Internal server error",
-    error: process.env.NODE_ENV === "development" ? err : undefined,
+    ...(process.env.NODE_ENV === "development" && {
+      stack: err.stack,
+      requestId: requestId,
+    }),
   });
+});
+
+// Graceful shutdown handlers
+process.on("uncaughtException", (error) => {
+  console.error("💥 Uncaught Exception:", error);
+  // Log but don't exit in production - this keeps server running
+  if (process.env.NODE_ENV !== "production") {
+    console.error("Exiting due to uncaught exception (development mode)");
+    process.exit(1);
+  }
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("💥 Unhandled Rejection at:", promise, "reason:", reason);
+  // Just log - don't exit
+});
+
+// Handle SIGTERM for graceful shutdown
+process.on("SIGTERM", () => {
+  console.log("👋 SIGTERM received, shutting down gracefully...");
+  process.exit(0);
 });
 
 module.exports = app;
