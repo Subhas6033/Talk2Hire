@@ -30,16 +30,16 @@ const User = {
     email,
     hashPassword,
     resume,
-    resumeUploadStatus = "uploading", // ✅ NEW
+    resumeUploadStatus = "pending",
     refreshToken = "",
-    skill = "",
+    skills = "",
   }) {
     if (!isValidEmail(email)) {
       throw new APIERR(400, "Please enter a valid mail");
     }
     const db = pool;
     const [result] = await db.execute(
-      "INSERT INTO users (fullName, email, hashPassword, resume, resume_upload_status, refreshToken, skill) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO users (fullName, email, hashPassword, resume, resume_upload_status, refreshToken, skills) VALUES (?, ?, ?, ?, ?, ?, ?)",
       [
         fullName,
         email,
@@ -47,7 +47,7 @@ const User = {
         resume,
         resumeUploadStatus,
         refreshToken,
-        skill,
+        skills,
       ],
     );
     return result.insertId;
@@ -61,7 +61,6 @@ const User = {
     ]);
   },
 
-  // ✅ NEW: Update resume upload status
   async updateResumeStatus(userId, status, resumeUrl = null) {
     const db = pool;
     if (resumeUrl) {
@@ -86,13 +85,71 @@ const User = {
 
     await db.execute(
       `UPDATE users
-       SET skill = ?, updated_at = NOW()
+       SET skills = ?, updated_at = NOW()
        WHERE id = ?`,
       [skillsString, userId],
     );
   },
 
-  // ✅ UPDATED: Update resume with status
+  async updateInterviewSkills(userId, skillsArray) {
+    if (!userId) {
+      throw new APIERR(400, "User ID is required");
+    }
+
+    if (!Array.isArray(skillsArray)) {
+      throw new APIERR(400, "Skills must be an array");
+    }
+
+    const db = pool;
+
+    // Store as JSON
+    await db.execute(
+      `UPDATE users
+       SET interview_selected_skills = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [JSON.stringify(skillsArray), userId],
+    );
+  },
+
+  async getSkills(userId) {
+    if (!userId) {
+      throw new APIERR(400, "User ID is required");
+    }
+
+    const db = pool;
+    const [rows] = await db.execute("SELECT skills FROM users WHERE id = ?", [
+      userId,
+    ]);
+
+    return rows[0]?.skills || "";
+  },
+
+  async getInterviewSkills(userId) {
+    if (!userId) {
+      throw new APIERR(400, "User ID is required");
+    }
+
+    const db = pool;
+    const [rows] = await db.execute(
+      "SELECT interview_selected_skills FROM users WHERE id = ?",
+      [userId],
+    );
+
+    const skillsData = rows[0]?.interview_selected_skills;
+
+    if (!skillsData) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(skillsData);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      console.error("Error parsing interview skills:", error);
+      return [];
+    }
+  },
+
   async updateResume(userId, resumeUrl, status = "completed") {
     const db = pool;
     await db.execute(
@@ -117,7 +174,6 @@ const User = {
     return result[0]?.resume || null;
   },
 
-  // ✅ NEW: Get resume status
   async getResumeStatus(userId) {
     const db = pool;
     const [result] = await db.execute(

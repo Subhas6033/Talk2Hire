@@ -162,4 +162,122 @@ ${extractedText}
   return parsed;
 }
 
-module.exports = { mistralResponse };
+async function extractSkills({ ftpUrl, mimeType, originalFileName }) {
+  if (!ftpUrl || !mimeType || !originalFileName) {
+    throw new Error("ftpUrl, mimeType and originalFileName are required");
+  }
+
+  console.log("🎯 Starting Skills Extraction...");
+  console.log("📄 File:", originalFileName);
+  console.log("📦 Mime:", mimeType);
+  console.log("🌐 FTP URL:", ftpUrl);
+
+  let extractedText = "";
+
+  // --- PDF → OCR ---
+  if (mimeType === "application/pdf") {
+    console.log("🔎 PDF detected → Using Mistral OCR");
+
+    const ocrResponse = await fetch("https://api.mistral.ai/v1/ocr", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "mistral-ocr-latest",
+        document: { type: "document_url", document_url: ftpUrl },
+        include_image_base64: false,
+      }),
+    });
+
+    const ocrData = await ocrResponse.json();
+    extractedText =
+      ocrData.pages?.map((p) => p.markdown || "").join("\n\n") || "";
+  }
+  // --- Other file types ---
+  else {
+    const response = await fetch(ftpUrl);
+    if (!response.ok)
+      throw new Error(`Failed to fetch file: ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+
+    if (mimeType === "text/plain") {
+      extractedText = buffer.toString("utf-8");
+    } else if (mimeType.includes("wordprocessingml.document")) {
+      const result = await mammoth.extractRawText({ buffer });
+      extractedText = result.value;
+    } else if (mimeType.includes("excel") || mimeType.includes("spreadsheet")) {
+      const workbook = xlsx.read(buffer, { type: "buffer" });
+      workbook.SheetNames.forEach((sheet) => {
+        extractedText += xlsx.utils.sheet_to_csv(workbook.Sheets[sheet]);
+      });
+    } else if (mimeType.includes("presentation")) {
+      const zip = await JSZip.loadAsync(buffer);
+      for (const file of Object.values(zip.files)) {
+        if (file.name.includes("slide")) {
+          extractedText += (await file.async("text")).replace(/<[^>]*>/g, " ");
+        }
+      }
+    }
+  }
+
+  // --- Clean text ---
+  extractedText = extractedText.replace(/\s+/g, " ").trim();
+  if (!extractedText || extractedText.length < 50) {
+    throw new Error("Extracted text is too short");
+  }
+
+  console.log("✅ Text extracted. Length:", extractedText.length);
+
+  // --- Extract skills using Mistral ---
+  const skillsResponse = await mistral.chat.complete({
+    model: "mistral-small-latest",
+    messages: [
+      {
+        role: "system",
+        content: `
+Extract all skills from the resume/document.
+Return STRICTLY valid JSON only.
+Do NOT use markdown.
+Do NOT use backticks.
+
+Categorize skills into:
+- technical_skills (programming languages, frameworks, tools, technologies)
+- soft_skills (communication, leadership, teamwork, etc.)
+- certifications (any certifications mentioned)
+- languages (spoken/written languages)
+        `,
+      },
+      {
+        role: "user",
+        content: `
+Extract skills from this document and return ONLY valid JSON:
+{
+  "technical_skills": [],
+  "soft_skills": [],
+  "certifications": [],
+  "languages": [],
+  "all_skills": []
+}
+
+Document text:
+${extractedText}
+        `,
+      },
+    ],
+  });
+
+  const cleanJson = skillsResponse.choices[0].message.content
+    .replace(/```json|```/gi, "")
+    .trim();
+
+  const parsed = JSON.parse(cleanJson);
+
+  console.log("✅ Skills extracted successfully");
+  console.log(parsed);
+
+  return parsed;
+}
+
+module.exports = { mistralResponse, extractSkills };

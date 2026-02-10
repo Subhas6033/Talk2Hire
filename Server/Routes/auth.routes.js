@@ -10,6 +10,7 @@ const {
   resetPassword,
   updateProfile,
   checkResumeStatus,
+  getCVSkills,
 } = require("../Controllers/auth.controllers.js");
 const authMiddleware = require("../Middlewares/auth.middlewares.js");
 const {
@@ -23,6 +24,7 @@ const uploadResume = uploadSingle("resume");
 router
   .post("/register", uploadResume, registerUser)
   .post("/login", loginUser)
+  .get("/cv-skills", authMiddleware, getCVSkills)
   .post("/logout", authMiddleware, logoutUser)
   .post("/forgot-password", forgotPassword)
   .post("/verify-password", verifyResetPasswordOtp)

@@ -20,6 +20,23 @@ export const registerUser = createAsyncThunk(
   },
 );
 
+// Get CV Skills
+export const getCVSkills = createAsyncThunk(
+  "auth/getCVSkills",
+  async (_, { rejectWithValue }) => {
+    try {
+      const response = await api.get("/auth/cv-skills", {
+        withCredentials: true,
+      });
+      return response.data;
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch CV skills",
+      );
+    }
+  },
+);
+
 // Login User
 export const loginUser = createAsyncThunk(
   "auth/login",
@@ -38,7 +55,7 @@ export const loginUser = createAsyncThunk(
   },
 );
 
-//  Logout User
+// Logout User
 export const logoutUser = createAsyncThunk(
   "auth/logout",
   async (_, { rejectWithValue }) => {
@@ -68,7 +85,7 @@ export const getCurrentUser = createAsyncThunk(
   },
 );
 
-//  Update User Profile
+// Update User Profile
 export const updateUser = createAsyncThunk(
   "auth/updateUser",
   async (userData, { rejectWithValue }) => {
@@ -160,12 +177,12 @@ const authSlice = createSlice({
       state.hydrated = true;
     },
 
-    //  Clear any errors
+    // Clear any errors
     clearError: (state) => {
       state.error = null;
     },
 
-    //  Update user locally without API call
+    // Update user locally without API call
     updateUserLocal: (state, action) => {
       if (state.user) {
         state.user = { ...state.user, ...action.payload };
@@ -173,7 +190,7 @@ const authSlice = createSlice({
       }
     },
 
-    //  Clear session (force logout)
+    // Clear session (force logout)
     clearSession: (state) => {
       state.user = null;
       state.isAuthenticated = false;
@@ -192,19 +209,39 @@ const authSlice = createSlice({
       })
       .addCase(registerUser.fulfilled, (state, action) => {
         state.loading = false;
-        //  Backend returns user data (tokens are in httpOnly cookies)
+        // Backend returns user data (tokens are in httpOnly cookies)
         state.user = action.payload.data;
         state.isAuthenticated = true;
         state.hydrated = true;
         state.lastVerified = Date.now();
 
-        //  Save user data to localStorage (NO tokens)
+        // Save user data to localStorage (NO tokens)
         saveAuthState(state.user, state.isAuthenticated);
       })
       .addCase(registerUser.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
         state.hydrated = true;
+      })
+
+      // ========== GET CV SKILLS ==========
+      .addCase(getCVSkills.pending, (state) => {
+        state.loading = true;
+      })
+      .addCase(getCVSkills.fulfilled, (state, action) => {
+        state.loading = false;
+        // Update user object with CV skills
+        if (state.user) {
+          state.user = {
+            ...state.user,
+            cvSkills: action.payload.data.cvSkills || [],
+          };
+          saveAuthState(state.user, state.isAuthenticated);
+        }
+      })
+      .addCase(getCVSkills.rejected, (state) => {
+        state.loading = false;
+        // Keep existing user data, just don't update CV skills
       })
 
       // ========== LOGIN ==========
@@ -214,13 +251,13 @@ const authSlice = createSlice({
       })
       .addCase(loginUser.fulfilled, (state, action) => {
         state.loading = false;
-        //  Backend returns user data (tokens are in httpOnly cookies)
+        // Backend returns user data (tokens are in httpOnly cookies)
         state.user = action.payload.data;
         state.isAuthenticated = true;
         state.hydrated = true;
         state.lastVerified = Date.now();
 
-        // ✅ Save user data to localStorage (NO tokens)
+        // Save user data to localStorage (NO tokens)
         saveAuthState(state.user, state.isAuthenticated);
       })
       .addCase(loginUser.rejected, (state, action) => {
@@ -240,17 +277,17 @@ const authSlice = createSlice({
         state.hydrated = true;
         state.lastVerified = null;
 
-        // ✅ Clear localStorage
+        // Clear localStorage
         localStorage.removeItem("authState");
       })
       .addCase(logoutUser.rejected, (state) => {
-        // ✅ Even if API fails, logout locally
+        // Even if API fails, logout locally
         state.loading = false;
         state.user = null;
         state.isAuthenticated = false;
         state.lastVerified = null;
 
-        // ✅ Clear localStorage
+        // Clear localStorage
         localStorage.removeItem("authState");
       })
 
@@ -265,11 +302,11 @@ const authSlice = createSlice({
         state.hydrated = true;
         state.lastVerified = Date.now();
 
-        // ✅ Update localStorage with fresh data
+        // Update localStorage with fresh data
         saveAuthState(state.user, state.isAuthenticated);
       })
       .addCase(getCurrentUser.rejected, (state) => {
-        // ✅ Session invalid - clear everything
+        // Session invalid - clear everything
         state.loading = false;
         state.user = null;
         state.isAuthenticated = false;
@@ -288,7 +325,7 @@ const authSlice = createSlice({
         if (state.user) {
           state.user = { ...state.user, ...action.payload.data };
 
-          // ✅ Update localStorage
+          // Update localStorage
           saveAuthState(state.user, state.isAuthenticated);
         }
       })

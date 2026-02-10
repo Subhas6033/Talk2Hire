@@ -68,13 +68,11 @@ const generateQuestions = asyncHandler(async (req, res) => {
   let resumeUrl;
   let rawText;
 
-  // ✅ STEP 2: Save skills if provided and user doesn't have them
-  if (skills && Array.isArray(skills) && skills.length > 0 && !user.skill) {
-    console.log("💾 Saving user skills:", skills);
-    const skillsString = skills.join(", ");
-
-    await User.updateSkills(userId, skillsString);
-    console.log("✅ Skills saved to user profile");
+  // ✅ STEP 2: Save interview skills if provided
+  if (skills && Array.isArray(skills) && skills.length > 0) {
+    console.log("💾 Saving interview-selected skills:", skills);
+    await User.updateInterviewSkills(userId, skills);
+    console.log("✅ Interview skills saved to user profile");
   }
 
   // ✅ STEP 3: Check if resume exists in DB
@@ -159,37 +157,36 @@ const generateQuestions = asyncHandler(async (req, res) => {
   // ✅ STEP 6: Generate first question using AI
   console.log("🤖 Generating first interview question...");
 
+  // Include selected skills in the prompt if available
+  const skillsContext =
+    skills && skills.length > 0
+      ? `\n\nCandidate has selected these skills for the interview: ${skills.join(", ")}\nFocus the question on one of these skills if relevant to their resume.`
+      : "";
+
   const prompt = `
-You are an expert technical interviewer analyzing a candidate's resume.
+You are an expert interviewer analyzing a candidate's resume for ANY profession or domain.
 
 Resume Content:
-${rawText}
+${rawText}${skillsContext}
 
 TASK:
-Generate ONE opening technical interview question based on the resume.
+Generate ONE opening interview question based on the candidate's field and resume.
 
 RULES:
-1. Choose ONE specific technology, project, or skill explicitly mentioned in the resume
-2. Ask a clear, focused technical question about it
-3. Make it appropriate for starting an interview (not too complex)
-4. Do NOT use placeholders like [technology], [project], etc.
-5. Use EXACT names from the resume
-6. Output ONLY valid JSON, no markdown, no explanations
+1. First identify the candidate's profession/domain from the resume (e.g., Software Developer, Nurse, Teacher, Marketing Manager, Chef, Accountant, Construction Worker, Sales Representative, etc.)
+2. Choose ONE specific skill, project, experience, or responsibility explicitly mentioned in their resume
+3. Ask a clear, focused question appropriate for their field
+4. Make it suitable for starting an interview (not too complex)
+5. Do NOT use placeholders like [technology], [project], [skill], [experience], etc.
+6. Use EXACT names, tools, experiences, or job titles from the resume
+7. Output ONLY valid JSON, no markdown, no explanations
 
 FORMAT:
 {
   "question": "Your complete question here?"
 }
 
-EXAMPLES OF GOOD QUESTIONS:
-- "In your housing price prediction project, you used Random Forest regression. Can you explain how Random Forest reduces overfitting?"
-- "I see you worked with React hooks in your e-commerce project. Can you explain when you'd use useEffect versus useLayoutEffect?"
-- "Your resume mentions experience with Docker. Can you explain the difference between a Docker image and a container?"
-
-BAD EXAMPLES (DO NOT DO THIS):
-- "Can you tell me about [specific project] on your resume?" ❌ (uses placeholder)
-- "What is your experience with [technology]?" ❌ (uses placeholder)
-- "Tell me about yourself." ❌ (too generic, not based on resume)
+// ... rest of the examples ...
 `;
 
   let completion;
@@ -317,7 +314,7 @@ const generateNextQuestion = asyncHandler(async (req, res) => {
   console.log("📊 Current history length:", history.length);
 
   const prompt = `
-You are conducting a technical interview.
+You are conducting an interview for a professional candidate across ANY industry or domain.
 
 Resume:
 ${resumeText || "Not provided"}
@@ -328,23 +325,48 @@ ${history
   .join("\n\n")}
 
 TASK:
-- Analyze the candidate's latest answer
-- Identify strengths, weaknesses, or knowledge gaps
-- Ask ONE follow-up technical interview question
+- Analyze the candidate's profession/domain from the resume and previous answers
+- Identify strengths, weaknesses, or knowledge gaps in their latest answer
+- Ask ONE relevant follow-up interview question appropriate for their field
 - Adjust difficulty based on their performance
 - Avoid repeating topics already covered
 
 MANDATORY RULES:
 
-1. Select ONE real technology explicitly mentioned in the resume or previous answers
-2. Use the EXACT technology name directly in the question
-3. DO NOT use placeholders of any kind:
+1. Identify the candidate's field (Software, Healthcare, Marketing, Finance, Education, Sales, Hospitality, Construction, Design, Manufacturing, etc.)
+2. Select ONE real skill, tool, experience, or concept explicitly mentioned in the resume or previous answers
+3. Use the EXACT name/term directly in the question
+4. DO NOT use placeholders of any kind:
    ❌ [technology]
-   ❌ [specific technology from resume]
-   ❌ (technology)
-   ❌ <technology>
-4. NEVER use square brackets [] or angle brackets <>
-5. If no specific technology is available, ask a general technical question WITHOUT placeholders
+   ❌ [specific skill from resume]
+   ❌ [tool]
+   ❌ [experience]
+   ❌ (any placeholder)
+   ❌ <any placeholder>
+5. NEVER use square brackets [] or angle brackets <>
+6. If no specific item is available, ask a general professional question relevant to their field WITHOUT placeholders
+
+EXAMPLES BY DOMAIN:
+
+SOFTWARE:
+✅ "You mentioned using React in your previous answer. How do you handle state management in large-scale applications?"
+❌ "Can you explain how you use [framework] in your projects?"
+
+HEALTHCARE:
+✅ "You mentioned working with ventilator settings. What parameters do you monitor most closely for a patient with ARDS?"
+❌ "How do you handle [medical equipment] in critical situations?"
+
+MARKETING:
+✅ "Since you've worked with email campaigns, how do you optimize subject lines for better open rates?"
+❌ "What strategies do you use for [marketing channel]?"
+
+FINANCE:
+✅ "You mentioned analyzing balance sheets. What red flags do you look for when assessing a company's liquidity?"
+❌ "How do you evaluate [financial metric]?"
+
+EDUCATION:
+✅ "You teach high school science. How do you make abstract concepts like molecular bonding engaging for students?"
+❌ "How do you teach [subject] to different learning styles?"
 
 STRICT OUTPUT RULES:
 - Return ONLY valid JSON

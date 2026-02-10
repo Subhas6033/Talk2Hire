@@ -4,7 +4,10 @@ CREATE TABLE IF NOT EXISTS users (
     fullName VARCHAR(255) NOT NULL,
     email VARCHAR(255) NOT NULL UNIQUE,
     hashPassword VARCHAR(255) NOT NULL,
-    skill VARCHAR(255) NOT NULL DEFAULT '',
+    resume VARCHAR(500),
+    resume_upload_status ENUM('pending', 'completed', 'failed') DEFAULT 'pending',
+    cv_extracted_skills JSON,
+    interview_selected_skills JSON,
     refreshToken TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP

@@ -104,7 +104,6 @@ app.use((req, res, next) => {
 // Routes
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/questions", questionRoutes);
-// app.use("/api/v1/speech", speechRoutes);
 app.use("/api/v1/result", resultRouter);
 app.use("/api/v1/interview", videoUploadRoutes);
 app.use("/api/v1/hiring", hiringRoutes);
@@ -119,8 +118,8 @@ app.get("/health", (req, res) => {
   });
 });
 
-/* VideoProcessingJobs.startScheduledJobs();
-
+VideoProcessingJobs.startScheduledJobs();
+/*
 // Background jobs for video processing
 const {
   retryFailedUploads,

@@ -1,153 +1,72 @@
 const { pool } = require("./Config/database.config.js");
 
-async function migrateUserTable() {
+async function migrateSkillsColumn() {
   try {
-    console.log("🔄 Starting user table migration...");
+    console.log("🔄 Starting migration: Setting up skills columns...");
 
-    // Check which columns already exist
-    const [columns] = await pool.execute(`
-      SELECT COLUMN_NAME 
-      FROM INFORMATION_SCHEMA.COLUMNS 
-      WHERE TABLE_SCHEMA = DATABASE() 
-      AND TABLE_NAME = 'users' 
-      AND COLUMN_NAME IN (
-        'resume', 
-        'resume_upload_status', 
-        'profile_image_path', 
-        'reset_password_otp', 
-        'reset_password_otp_expires_at'
-      )
-    `);
-
-    const existingColumns = columns.map((col) => col.COLUMN_NAME);
-    console.log("📋 Existing columns:", existingColumns);
-
-    // Add resume column if not exists
-    if (!existingColumns.includes("resume")) {
-      console.log("➕ Adding 'resume' column...");
+    // Step 1: Drop cv_extracted_skills column if it exists
+    try {
       await pool.execute(`
         ALTER TABLE users 
-        ADD COLUMN resume TEXT AFTER skill
+        DROP COLUMN cv_extracted_skills;
       `);
-      console.log("✅ Added 'resume' column");
-    } else {
-      console.log("⏭️  'resume' column already exists");
-    }
-
-    // ✅ FIX: Added 'pending' to ENUM — this was causing the truncation error
-    if (!existingColumns.includes("resume_upload_status")) {
-      console.log("➕ Adding 'resume_upload_status' column...");
-      await pool.execute(`
-        ALTER TABLE users 
-        ADD COLUMN resume_upload_status 
-          ENUM('pending', 'uploading', 'completed', 'failed') 
-          DEFAULT 'pending' 
-        AFTER resume
-      `);
-      console.log("✅ Added 'resume_upload_status' column");
-    } else {
-      // ✅ FIX: If column exists but was created without 'pending', patch the ENUM
-      console.log(
-        "🔧 Ensuring 'resume_upload_status' ENUM includes 'pending'...",
-      );
-      await pool.execute(`
-        ALTER TABLE users 
-        MODIFY COLUMN resume_upload_status 
-          ENUM('pending', 'uploading', 'completed', 'failed') 
-          DEFAULT 'pending'
-      `);
-      console.log("✅ 'resume_upload_status' ENUM updated");
-    }
-
-    // Add profile_image_path column if not exists
-    if (!existingColumns.includes("profile_image_path")) {
-      console.log("➕ Adding 'profile_image_path' column...");
-      await pool.execute(`
-        ALTER TABLE users 
-        ADD COLUMN profile_image_path TEXT AFTER resume_upload_status
-      `);
-      console.log("✅ Added 'profile_image_path' column");
-    } else {
-      console.log("⏭️  'profile_image_path' column already exists");
-    }
-
-    // Add reset_password_otp column if not exists
-    if (!existingColumns.includes("reset_password_otp")) {
-      console.log("➕ Adding 'reset_password_otp' column...");
-      await pool.execute(`
-        ALTER TABLE users 
-        ADD COLUMN reset_password_otp VARCHAR(6) AFTER profile_image_path
-      `);
-      console.log("✅ Added 'reset_password_otp' column");
-    } else {
-      console.log("⏭️  'reset_password_otp' column already exists");
-    }
-
-    // Add reset_password_otp_expires_at column if not exists
-    if (!existingColumns.includes("reset_password_otp_expires_at")) {
-      console.log("➕ Adding 'reset_password_otp_expires_at' column...");
-      await pool.execute(`
-        ALTER TABLE users 
-        ADD COLUMN reset_password_otp_expires_at DATETIME AFTER reset_password_otp
-      `);
-      console.log("✅ Added 'reset_password_otp_expires_at' column");
-    } else {
-      console.log("⏭️  'reset_password_otp_expires_at' column already exists");
-    }
-
-    // Add indexes safely
-    console.log("🔍 Adding indexes...");
-
-    const indexes = [
-      {
-        name: "idx_email",
-        sql: "CREATE INDEX idx_email ON users(email)",
-      },
-      {
-        name: "idx_resume_upload_status",
-        sql: "CREATE INDEX idx_resume_upload_status ON users(resume_upload_status)",
-      },
-    ];
-
-    for (const index of indexes) {
-      try {
-        await pool.execute(index.sql);
-        console.log(`✅ Added index: ${index.name}`);
-      } catch (err) {
-        if (err.code === "ER_DUP_KEYNAME") {
-          console.log(`⏭️  Index '${index.name}' already exists`);
-        } else {
-          throw err;
-        }
+      console.log("✅ Removed cv_extracted_skills column");
+    } catch (err) {
+      if (err.code === "ER_CANT_DROP_FIELD_OR_KEY") {
+        console.log("⚠️ cv_extracted_skills column doesn't exist, skipping...");
+      } else {
+        throw err;
       }
     }
 
-    console.log("\n✅ Migration completed successfully!");
+    // Step 2: Check if 'skill' column exists and rename to 'skills' if needed
+    const [columns] = await pool.execute(`
+      SHOW COLUMNS FROM users LIKE 'skill';
+    `);
 
-    // Show final table structure
-    const [tableInfo] = await pool.execute(`DESCRIBE users`);
-    console.log("\n📊 Final table structure:");
-    console.table(tableInfo);
+    if (columns.length > 0) {
+      // Rename 'skill' to 'skills'
+      await pool.execute(`
+        ALTER TABLE users 
+        CHANGE COLUMN skill skills TEXT;
+      `);
+      console.log("✅ Renamed 'skill' to 'skills' and changed to TEXT");
+    } else {
+      // Check if 'skills' already exists
+      const [skillsColumns] = await pool.execute(`
+        SHOW COLUMNS FROM users LIKE 'skills';
+      `);
 
-    // ✅ FIX: Removed db.end() — never destroy the pool,
-    // it kills all DB connections for the entire running server
+      if (skillsColumns.length === 0) {
+        // Add new 'skills' column
+        await pool.execute(`
+          ALTER TABLE users 
+          ADD COLUMN skills TEXT AFTER resume_upload_status;
+        `);
+        console.log("✅ Added new 'skills' column as TEXT");
+      } else {
+        // Just modify to TEXT if it exists but is too small
+        await pool.execute(`
+          ALTER TABLE users 
+          MODIFY COLUMN skills TEXT;
+        `);
+        console.log("✅ Modified 'skills' column to TEXT");
+      }
+    }
+
+    console.log("✅ Migration completed successfully!");
+    console.log("📝 Final schema:");
+    console.log("   - cv_extracted_skills: REMOVED");
+    console.log(
+      "   - skills: TEXT (can store large comma-separated skill lists)",
+    );
+
+    process.exit(0);
   } catch (error) {
     console.error("❌ Migration failed:", error);
-    throw error;
+    process.exit(1);
   }
 }
 
-// Run migration if called directly
-if (require.main === module) {
-  migrateUserTable()
-    .then(() => {
-      console.log("✅ Migration script completed");
-      process.exit(0);
-    })
-    .catch((error) => {
-      console.error("❌ Migration script failed:", error);
-      process.exit(1);
-    });
-}
-
-module.exports = { migrateUserTable };
+// Run migration
+migrateSkillsColumn();

@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 
-const CHUNK_DURATION = 2000;
+const CHUNK_DURATION = 20000;
 
 const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
   const [isRecording, setIsRecording] = useState(false);

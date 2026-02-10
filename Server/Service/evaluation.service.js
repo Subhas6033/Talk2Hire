@@ -1,4 +1,4 @@
-const { openai } = require("../Config/openai.config.js");
+const { ollama } = require("../Config/openai.config.js");
 const { pool } = require("../Config/database.config.js");
 const { Interview } = require("../Models/interview.models.js");
 const { Evaluation } = require("../Models/answer.models.js");

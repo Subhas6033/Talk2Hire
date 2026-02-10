@@ -4,6 +4,7 @@ const {
   APIRES,
   sendMail,
 } = require("../Utils/index.utils.js");
+const { extractSkills } = require("./mistral.controllers.js");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const User = require("../Models/user.models.js");
@@ -83,6 +84,7 @@ const registerUser = asyncHandler(async (req, res) => {
   const { fullName, email, password } = req.body;
   const resumeFile = req.file;
 
+  // Validation
   if ([fullName, email, password].some((f) => !f || f.trim() === "")) {
     throw new APIERR(400, "All fields are required");
   }
@@ -101,22 +103,71 @@ const registerUser = asyncHandler(async (req, res) => {
     throw new APIERR(409, "Email is already registered");
   }
 
-  //  Read the file buffer BEFORE hashing so both can run in parallel
-  const fileBuffer = await fs.readFile(resumeFile.path);
+  // Read file buffer and hash password in parallel
+  const [fileBuffer, passwordHash] = await Promise.all([
+    fs.readFile(resumeFile.path),
+    bcrypt.hash(password, 8),
+  ]);
 
-  // Hash password while we have the buffer ready
-  const passwordHash = await bcrypt.hash(password, 8);
-
-  // Clean up temp file — we have the buffer, we don't need the disk copy anymore
+  // Clean up temp file
   await fs.unlink(resumeFile.path).catch(() => {});
 
+  console.log("📤 Uploading resume to FTP...");
+
+  // Upload file to FTP BEFORE creating user
+  const ftpResult = await uploadFileToFTP(
+    fileBuffer,
+    resumeFile.originalname,
+    "/public/resumes",
+  );
+  console.log("✅ FTP upload complete");
+
+  console.log("🎯 Extracting skills from resume...");
+
+  // Extract skills using the new extractSkills function
+  const skillsData = await extractSkills({
+    ftpUrl: ftpResult.url,
+    mimeType: resumeFile.mimetype,
+    originalFileName: resumeFile.originalname,
+  });
+
+  // Combine all skills from different categories
+  const extractedSkills = [
+    ...(Array.isArray(skillsData.technical_skills)
+      ? skillsData.technical_skills
+      : []),
+    ...(Array.isArray(skillsData.soft_skills) ? skillsData.soft_skills : []),
+    ...(Array.isArray(skillsData.certifications)
+      ? skillsData.certifications
+      : []),
+    ...(Array.isArray(skillsData.languages) ? skillsData.languages : []),
+  ].filter((skill) => skill && skill.trim());
+
+  // Remove duplicates
+  const uniqueSkills = [...new Set(extractedSkills)];
+
+  console.log(
+    `📊 Extracted ${uniqueSkills.length} unique skills:`,
+    uniqueSkills,
+  );
   console.log("💾 Creating user in database...");
 
-  // Insert user immediately with status "pending" — don't wait for FTP
+  // ✅ Convert to comma-separated string for TEXT column
+  const skillsString = uniqueSkills.join(", ");
+
+  // Insert user with complete data (resume URL and extracted skills)
   const [result] = await pool.execute(
-    `INSERT INTO users (fullName, email, hashPassword, resume, resume_upload_status) 
-     VALUES (?, ?, ?, ?, ?)`,
-    [fullName, email, passwordHash, null, "pending"],
+    `INSERT INTO users (fullName, email, hashPassword, resume, resume_upload_status, skills, interview_selected_skills) 
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      fullName,
+      email,
+      passwordHash,
+      ftpResult.url,
+      "completed",
+      skillsString, // ✅ Store as comma-separated string
+      null,
+    ],
   );
 
   const userId = result.insertId;
@@ -144,7 +195,7 @@ const registerUser = asyncHandler(async (req, res) => {
     maxAge: 24 * 60 * 60 * 1000,
   });
 
-  // Respond immediately — user is registered, resume uploads in background
+  // Respond with complete data
   res.status(201).json(
     new APIRES(
       201,
@@ -152,28 +203,43 @@ const registerUser = asyncHandler(async (req, res) => {
         id: userId,
         fullName,
         email,
-        resumeStatus: "pending",
+        resumeStatus: "completed",
+        cvSkills: uniqueSkills, // ✅ Send as array to frontend
+        skillsBreakdown: {
+          technical: skillsData.technical_skills || [],
+          soft: skillsData.soft_skills || [],
+          certifications: skillsData.certifications || [],
+          languages: skillsData.languages || [],
+        },
       },
       "User registered successfully",
     ),
   );
+});
 
-  // FTP upload runs AFTER the response is sent — doesn't block the user
-  uploadFileToFTP(fileBuffer, resumeFile.originalname, "/public/resumes")
-    .then(async (ftpResult) => {
-      await pool.execute(
-        `UPDATE users SET resume = ?, resume_upload_status = ? WHERE id = ?`,
-        [ftpResult.url, "completed", userId],
-      );
-      console.log("✅ Background FTP upload complete for user:", userId);
-    })
-    .catch(async (err) => {
-      console.error("❌ Background FTP upload failed for user:", userId, err);
-      await pool.execute(
-        `UPDATE users SET resume_upload_status = ? WHERE id = ?`,
-        ["failed", userId],
-      );
-    });
+const getCVSkills = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+
+  const [rows] = await pool.execute(`SELECT skills FROM users WHERE id = ?`, [
+    userId,
+  ]);
+
+  if (!rows[0]) {
+    throw new APIERR(404, "User not found");
+  }
+
+  // Parse skills from comma-separated string to array
+  const skillsString = rows[0].skills || "";
+  const cvSkills = skillsString
+    ? skillsString
+        .split(",")
+        .map((skill) => skill.trim())
+        .filter(Boolean)
+    : [];
+
+  res
+    .status(200)
+    .json(new APIRES(200, { cvSkills }, "CV skills retrieved successfully"));
 });
 
 const checkResumeStatus = asyncHandler(async (req, res) => {
@@ -277,16 +343,48 @@ const logoutUser = asyncHandler(async (req, res) => {
 });
 
 const getCurrentUser = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user.id);
+  const userId = req.user.id;
 
-  if (!user) {
+  const [rows] = await pool.execute(
+    `SELECT id, fullName, email, resume, resume_upload_status, skills, interview_selected_skills 
+     FROM users WHERE id = ?`,
+    [userId],
+  );
+
+  if (!rows[0]) {
     throw new APIERR(404, "User not found");
   }
 
-  delete user.hashPassword;
-  delete user.refreshToken;
+  const user = rows[0];
 
-  res.status(200).json(new APIRES(200, user, "User fetched"));
+  // Parse skills from comma-separated string to array
+  const skillsString = user.skills || "";
+  const cvSkills = skillsString
+    ? skillsString
+        .split(",")
+        .map((skill) => skill.trim())
+        .filter(Boolean)
+    : [];
+
+  const interviewSkills = user.interview_selected_skills
+    ? JSON.parse(user.interview_selected_skills)
+    : [];
+
+  res.status(200).json(
+    new APIRES(
+      200,
+      {
+        id: user.id,
+        fullName: user.fullName,
+        email: user.email,
+        resume: user.resume,
+        resumeStatus: user.resume_upload_status,
+        cvSkills, // ✅ Now includes parsed skills array
+        interviewSkills,
+      },
+      "User retrieved successfully",
+    ),
+  );
 });
 
 const forgotPassword = asyncHandler(async (req, res) => {
@@ -505,6 +603,7 @@ const updateProfile = asyncHandler(async (req, res) => {
 
   const updateFields = [];
   const updateValues = [];
+  let resumeUploadData = null; // Store resume data for background processing
 
   // Handle resume upload
   if (req.files?.resume) {
@@ -544,8 +643,10 @@ const updateProfile = asyncHandler(async (req, res) => {
       if (user.resume) {
         try {
           const oldUrl = user.resume;
-          const remotePath = oldUrl.split("/interview2")[1];
-          if (remotePath) {
+          const urlObj = new URL(oldUrl);
+          const remotePath = urlObj.pathname;
+
+          if (remotePath && remotePath.includes("/public/resumes/")) {
             console.log("🗑️ Deleting old resume from FTP:", remotePath);
             await deleteFileFromFTP(remotePath);
           }
@@ -560,6 +661,14 @@ const updateProfile = asyncHandler(async (req, res) => {
       } catch (err) {
         console.log("Error deleting local file:", err);
       }
+
+      // Store resume data for background skill extraction
+      resumeUploadData = {
+        ftpUrl: ftpUploadResult.url,
+        mimeType: resume.mimetype,
+        originalFileName: resume.originalname,
+        userId: userId,
+      };
     } catch (error) {
       try {
         await fs.unlink(resume.path);
@@ -571,6 +680,10 @@ const updateProfile = asyncHandler(async (req, res) => {
 
     updateFields.push("resume = ?");
     updateValues.push(ftpUploadResult.url);
+
+    // Set resume upload status to 'processing' initially
+    updateFields.push("resume_upload_status = ?");
+    updateValues.push("processing");
   }
 
   // Handle profile image upload
@@ -662,6 +775,13 @@ const updateProfile = asyncHandler(async (req, res) => {
     throw new APIERR(500, "Failed to update profile");
   }
 
+  // Start background skill extraction if resume was uploaded
+  if (resumeUploadData) {
+    processSkillExtraction(resumeUploadData).catch((error) => {
+      console.error("❌ Background skill extraction failed:", error);
+    });
+  }
+
   const updatedUser = await User.findById(userId);
   delete updatedUser.hashPassword;
   delete updatedUser.refreshToken;
@@ -670,6 +790,53 @@ const updateProfile = asyncHandler(async (req, res) => {
     .status(200)
     .json(new APIRES(200, updatedUser, "Profile updated successfully"));
 });
+
+// Background skill extraction function
+async function processSkillExtraction({
+  ftpUrl,
+  mimeType,
+  originalFileName,
+  userId,
+}) {
+  try {
+    console.log(`🔄 Starting background skill extraction for user ${userId}`);
+
+    // Extract skills using the existing extractSkills function
+    const skillsData = await extractSkills({
+      ftpUrl,
+      mimeType,
+      originalFileName,
+    });
+
+    // Combine all skills into a comma-separated string for the cv_skill field
+    const allSkills = [
+      ...(skillsData.technical_skills || []),
+      ...(skillsData.soft_skills || []),
+      ...(skillsData.certifications || []),
+      ...(skillsData.languages || []),
+    ].filter(Boolean);
+
+    const skillsString = allSkills.join(", ");
+
+    // Update user skills in database
+    await User.updateSkills(userId, skillsString);
+
+    // Update resume status to 'completed'
+    await User.updateResumeStatus(userId, "completed");
+
+    console.log(`✅ Skills extraction completed for user ${userId}`);
+    console.log(`📝 Extracted ${allSkills.length} skills`);
+  } catch (error) {
+    console.error(`❌ Skill extraction failed for user ${userId}:`, error);
+
+    // Update status to 'failed' if extraction fails
+    try {
+      await User.updateResumeStatus(userId, "failed");
+    } catch (statusError) {
+      console.error("Failed to update resume status:", statusError);
+    }
+  }
+}
 
 module.exports = {
   generateRefreshAndAccessTokens,
@@ -683,4 +850,5 @@ module.exports = {
   resetPassword,
   updateProfile,
   checkResumeStatus,
+  getCVSkills,
 };

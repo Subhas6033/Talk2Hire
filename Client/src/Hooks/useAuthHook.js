@@ -8,31 +8,33 @@ import {
   updateUserLocal,
   getCurrentUser,
   clearSession,
+  getCVSkills,
 } from "../API/authApi";
 
 export const useAuth = () => {
   const dispatch = useDispatch();
 
-  const { user, isAuthenticated, accessToken, loading, error, hydrated } =
-    useSelector((state) => state.auth);
+  const { user, isAuthenticated, loading, error, hydrated } = useSelector(
+    (state) => state.auth,
+  );
 
   return {
     // State
     user,
     isAuthenticated,
-    accessToken,
     loading,
     error,
     hydrated,
 
-    //  Async actions
+    // Async actions
     registerUser: (data) => dispatch(registerUser(data)),
     login: (data) => dispatch(loginUser(data)),
     logout: () => dispatch(logoutUser()),
     updateUser: (data) => dispatch(updateUser(data)),
     getCurrentUser: () => dispatch(getCurrentUser()),
+    getCVSkills: () => dispatch(getCVSkills()),
 
-    //  Sync actions
+    // Sync actions
     clearError: () => dispatch(clearError()),
     updateUserLocal: (data) => dispatch(updateUserLocal(data)),
     clearSession: () => dispatch(clearSession()),

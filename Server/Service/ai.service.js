@@ -32,19 +32,65 @@ async function generateNextQuestionWithAI({
     console.log(`🎯 Difficulty level: ${depth}`);
 
     const prompt = `
-You are a senior technical interviewer.
+You are a senior interviewer conducting an interview for ANY profession or domain.
 
 The candidate just answered:
 "${answer}"
 
-Now ask exactly ONE ${depth}-level technical interview question.
-- Base it strictly on the answer content
-- Use a real-world technology (React, Node.js, SQL, Docker, etc.)
-- Do NOT repeat previous questions
-- Do NOT include explanations
-- Do NOT include numbering
-- Output JSON ONLY in this format:
+${previousQuestion ? `Previous question was:\n"${previousQuestion}"\n\n` : ""}
 
+TASK:
+Generate exactly ONE ${depth}-level follow-up interview question.
+
+CRITICAL RULES:
+1. First identify the candidate's profession/domain from the resume or answer context
+   (Software, Healthcare, Marketing, Finance, Education, Sales, Construction, Hospitality, Design, Manufacturing, Retail, etc.)
+2. Base the question on their ACTUAL field - not software if they're not in software
+3. Use specific skills, tools, or concepts from THEIR domain mentioned in their answer or resume
+4. Do NOT use placeholders: [technology], [skill], [tool], [experience], etc.
+5. Do NOT repeat previous questions
+6. Do NOT include explanations or numbering
+7. Ask domain-appropriate questions
+
+EXAMPLES BY DOMAIN:
+
+SOFTWARE/IT:
+✅ "You mentioned optimizing database queries. What indexing strategies do you use for large datasets?"
+❌ "How do you optimize [database] performance?"
+
+HEALTHCARE:
+✅ "You talked about patient assessment. How do you prioritize vital signs when multiple patients need attention?"
+❌ "How do you handle [clinical situation]?"
+
+MARKETING:
+✅ "You discussed A/B testing. What sample size do you typically use to ensure statistical significance?"
+❌ "How do you measure [marketing metric]?"
+
+FINANCE:
+✅ "You mentioned portfolio diversification. What percentage do you typically allocate to high-risk assets?"
+❌ "How do you balance [investment strategy]?"
+
+EDUCATION:
+✅ "You explained differentiated instruction. How do you assess whether visual or auditory methods work better for a student?"
+❌ "How do you adapt [teaching method] for different learners?"
+
+SALES:
+✅ "You discussed cold calling. How many calls do you typically make before connecting with a decision-maker?"
+❌ "What's your process for [sales technique]?"
+
+CONSTRUCTION:
+✅ "You mentioned reading blueprints. How do you identify load-bearing walls versus partition walls?"
+❌ "How do you interpret [construction document]?"
+
+HOSPITALITY:
+✅ "You talked about handling guest complaints. What's your approach when a guest demands a refund for a valid complaint?"
+❌ "How do you manage [guest situation]?"
+
+RETAIL:
+✅ "You mentioned inventory management. How do you determine reorder points for seasonal versus year-round products?"
+❌ "How do you manage [inventory metric]?"
+
+OUTPUT FORMAT (JSON ONLY):
 { "question": "Your question here?" }
 `;
 
@@ -95,7 +141,7 @@ Now ask exactly ONE ${depth}-level technical interview question.
       message: error.message,
       stack: error.stack,
     });
-    throw error; // Re-throw to be caught by caller
+    throw error;
   }
 }
 
