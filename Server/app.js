@@ -69,7 +69,7 @@ app.get("/health", (req, res) => {
   });
 });
 
-VideoProcessingJobs.startScheduledJobs();
+/* VideoProcessingJobs.startScheduledJobs();
 
 // Background jobs for video processing
 const {
@@ -112,7 +112,7 @@ if (process.env.ENABLE_CHUNK_CLEANUP === "true") {
     24 * 60 * 60 * 1000,
   ); // Every 24 hours
 }
-
+ */
 // Global error handler
 app.use((err, req, res, next) => {
   console.error("❌ Unhandled error:", err);
