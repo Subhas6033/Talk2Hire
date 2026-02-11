@@ -4,7 +4,7 @@ const {
   APIRES,
   sendMail,
 } = require("../Utils/index.utils.js");
-const { extractSkills } = require("./mistral.controllers.js");
+const { extractSkills, mistral } = require("./mistral.controllers.js");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const User = require("../Models/user.models.js");
@@ -114,7 +114,6 @@ const registerUser = asyncHandler(async (req, res) => {
 
   console.log("📤 Uploading resume to FTP...");
 
-  // Upload file to FTP BEFORE creating user
   const ftpResult = await uploadFileToFTP(
     fileBuffer,
     resumeFile.originalname,
@@ -122,16 +121,33 @@ const registerUser = asyncHandler(async (req, res) => {
   );
   console.log("✅ FTP upload complete");
 
-  console.log("🎯 Extracting skills from resume...");
-
-  // Extract skills using the new extractSkills function
-  const skillsData = await extractSkills({
+  console.log("🔍 Detecting domain from resume...");
+  // Detect domain first to provide better context for skill extraction and filtering
+  const detectedDomain = await detectResumeDomain({
     ftpUrl: ftpResult.url,
     mimeType: resumeFile.mimetype,
     originalFileName: resumeFile.originalname,
   });
+  console.log(`🎯 Detected domain: "${detectedDomain}"`);
+  console.log("🎯 Extracting skills from resume...");
+  const skillsData = await extractSkills({
+    ftpUrl: ftpResult.url,
+    mimeType: resumeFile.mimetype,
+    originalFileName: resumeFile.originalname,
+    targetDomain: detectedDomain,
+    matchThreshold: 6,
+  });
 
-  // Combine all skills from different categories
+  // Normalise both plain strings and { skill, relevance_score } objects
+  const normaliseSkill = (item) => {
+    if (!item) return null;
+    if (typeof item === "string") return item.trim() || null;
+    if (typeof item === "object" && typeof item.skill === "string")
+      return item.skill.trim() || null;
+    return null;
+  };
+
+  // Combine all relevant skill categories and normalise
   const extractedSkills = [
     ...(Array.isArray(skillsData.technical_skills)
       ? skillsData.technical_skills
@@ -141,21 +157,27 @@ const registerUser = asyncHandler(async (req, res) => {
       ? skillsData.certifications
       : []),
     ...(Array.isArray(skillsData.languages) ? skillsData.languages : []),
-  ].filter((skill) => skill && skill.trim());
+  ]
+    .map(normaliseSkill)
+    .filter(Boolean);
 
-  // Remove duplicates
-  const uniqueSkills = [...new Set(extractedSkills)];
+  // Remove duplicates (case-insensitive)
+  const seen = new Set();
+  const uniqueSkills = extractedSkills.filter((skill) => {
+    const key = skill.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 
   console.log(
-    `📊 Extracted ${uniqueSkills.length} unique skills:`,
+    `📊 Extracted ${uniqueSkills.length} relevant skills for domain "${detectedDomain}":`,
     uniqueSkills,
   );
   console.log("💾 Creating user in database...");
 
-  // ✅ Convert to comma-separated string for TEXT column
   const skillsString = uniqueSkills.join(", ");
 
-  // Insert user with complete data (resume URL and extracted skills)
   const [result] = await pool.execute(
     `INSERT INTO users (fullName, email, hashPassword, resume, resume_upload_status, skills, interview_selected_skills) 
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -165,7 +187,7 @@ const registerUser = asyncHandler(async (req, res) => {
       passwordHash,
       ftpResult.url,
       "completed",
-      skillsString, // ✅ Store as comma-separated string
+      skillsString,
       null,
     ],
   );
@@ -195,7 +217,6 @@ const registerUser = asyncHandler(async (req, res) => {
     maxAge: 24 * 60 * 60 * 1000,
   });
 
-  // Respond with complete data
   res.status(201).json(
     new APIRES(
       201,
@@ -204,18 +225,97 @@ const registerUser = asyncHandler(async (req, res) => {
         fullName,
         email,
         resumeStatus: "completed",
-        cvSkills: uniqueSkills, // ✅ Send as array to frontend
+        detectedDomain,
+        cvSkills: uniqueSkills,
         skillsBreakdown: {
-          technical: skillsData.technical_skills || [],
-          soft: skillsData.soft_skills || [],
-          certifications: skillsData.certifications || [],
-          languages: skillsData.languages || [],
+          technical: (skillsData.technical_skills || [])
+            .map(normaliseSkill)
+            .filter(Boolean),
+          soft: (skillsData.soft_skills || [])
+            .map(normaliseSkill)
+            .filter(Boolean),
+          certifications: (skillsData.certifications || [])
+            .map(normaliseSkill)
+            .filter(Boolean),
+          languages: (skillsData.languages || [])
+            .map(normaliseSkill)
+            .filter(Boolean),
         },
+        metadata: skillsData.metadata || null,
       },
       "User registered successfully",
     ),
   );
 });
+
+// Helper function to detect professional domain from resume text using Mistral OCR
+async function detectResumeDomain({ ftpUrl, mimeType, originalFileName }) {
+  let extractedText = "";
+
+  if (mimeType === "application/pdf") {
+    const ocrResponse = await fetch("https://api.mistral.ai/v1/ocr", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "mistral-ocr-latest",
+        document: { type: "document_url", document_url: ftpUrl },
+        include_image_base64: false,
+      }),
+    });
+
+    const ocrData = await ocrResponse.json();
+    extractedText =
+      ocrData.pages?.map((p) => p.markdown || "").join("\n\n") || "";
+  } else {
+    const response = await fetch(ftpUrl);
+    if (!response.ok)
+      throw new Error(`Failed to fetch file: ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+
+    if (mimeType === "text/plain") {
+      extractedText = buffer.toString("utf-8");
+    } else if (mimeType.includes("wordprocessingml.document")) {
+      const result = await mammoth.extractRawText({ buffer });
+      extractedText = result.value;
+    }
+  }
+
+  extractedText = extractedText.replace(/\s+/g, " ").trim();
+
+  // Truncate to first 5000 chars — enough context for domain detection
+  const snippet = extractedText.slice(0, 5000);
+
+  const domainResponse = await mistral.chat.complete({
+    model: "mistral-small-latest",
+    messages: [
+      {
+        role: "system",
+        content: `You are a resume analyser. Based on the resume text provided, determine the single most specific professional domain or job role the candidate belongs to.
+
+Examples of domains: "Full Stack Web Developer", "Data Scientist", "DevOps Engineer", "UI/UX Designer", "Android Developer", "Machine Learning Engineer", "Cybersecurity Analyst", "Product Manager", "Backend Engineer", "Cloud Architect".
+
+Rules:
+- Return ONLY the domain/role as a short phrase (2-5 words).
+- No explanation, no punctuation, no extra text.
+- Be as specific as possible — prefer "React Frontend Developer" over "Software Engineer".`,
+      },
+      {
+        role: "user",
+        content: `Determine the professional domain of this resume:\n\n${snippet}`,
+      },
+    ],
+  });
+
+  const domain =
+    domainResponse.choices[0].message.content
+      .trim()
+      .replace(/^["']|["']$/g, "") || "Software Engineer";
+
+  return domain;
+}
 
 const getCVSkills = asyncHandler(async (req, res) => {
   const userId = req.user.id;
@@ -642,10 +742,7 @@ const updateProfile = asyncHandler(async (req, res) => {
 
       if (user.resume) {
         try {
-          const oldUrl = user.resume;
-          const urlObj = new URL(oldUrl);
-          const remotePath = urlObj.pathname;
-
+          const remotePath = user.resume.split("/interview2")[1];
           if (remotePath && remotePath.includes("/public/resumes/")) {
             console.log("🗑️ Deleting old resume from FTP:", remotePath);
             await deleteFileFromFTP(remotePath);
@@ -801,35 +898,64 @@ async function processSkillExtraction({
   try {
     console.log(`🔄 Starting background skill extraction for user ${userId}`);
 
-    // Extract skills using the existing extractSkills function
-    const skillsData = await extractSkills({
+    // Step 1: Detect domain from resume
+    console.log("🔍 Detecting domain from resume...");
+    const detectedDomain = await detectResumeDomain({
       ftpUrl,
       mimeType,
       originalFileName,
     });
+    console.log(`🎯 Detected domain: "${detectedDomain}"`);
 
-    // Combine all skills into a comma-separated string for the cv_skill field
+    // Step 2: Extract skills filtered by detected domain
+    const skillsData = await extractSkills({
+      ftpUrl,
+      mimeType,
+      originalFileName,
+      targetDomain: detectedDomain,
+      matchThreshold: 6,
+    });
+
+    // Normalise both plain strings and { skill, relevance_score } objects
+    const normaliseSkill = (item) => {
+      if (!item) return null;
+      if (typeof item === "string") return item.trim() || null;
+      if (typeof item === "object" && typeof item.skill === "string")
+        return item.skill.trim() || null;
+      return null;
+    };
+
     const allSkills = [
       ...(skillsData.technical_skills || []),
       ...(skillsData.soft_skills || []),
       ...(skillsData.certifications || []),
       ...(skillsData.languages || []),
-    ].filter(Boolean);
+    ]
+      .map(normaliseSkill)
+      .filter(Boolean);
 
-    const skillsString = allSkills.join(", ");
+    // Remove duplicates (case-insensitive)
+    const seen = new Set();
+    const uniqueSkills = allSkills.filter((skill) => {
+      const key = skill.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 
-    // Update user skills in database
+    const skillsString = uniqueSkills.join(", ");
+
+    // Update user skills and resume status in database
     await User.updateSkills(userId, skillsString);
-
-    // Update resume status to 'completed'
     await User.updateResumeStatus(userId, "completed");
 
     console.log(`✅ Skills extraction completed for user ${userId}`);
-    console.log(`📝 Extracted ${allSkills.length} skills`);
+    console.log(
+      `📝 Extracted ${uniqueSkills.length} relevant skills for domain "${detectedDomain}"`,
+    );
   } catch (error) {
     console.error(`❌ Skill extraction failed for user ${userId}:`, error);
 
-    // Update status to 'failed' if extraction fails
     try {
       await User.updateResumeStatus(userId, "failed");
     } catch (statusError) {

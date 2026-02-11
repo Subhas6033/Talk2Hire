@@ -33,14 +33,14 @@ const Interview = () => {
       return;
     }
 
-    console.log("✅ Stream verified:", {
+    /*  console.log("✅ Stream verified:", {
       active: data.cameraStream.active,
       videoTrack: {
         label: videoTrack.label,
         readyState: videoTrack.readyState,
         enabled: videoTrack.enabled,
       },
-    });
+    }); */
 
     // ✅ Store in both state and ref
     cameraStreamRef.current = data.cameraStream;

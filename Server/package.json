@@ -18,6 +18,7 @@
   "dependencies": {
     "@ai-sdk/deepseek": "^2.0.11",
     "@deepgram/sdk": "^4.11.3",
+    "@mediapipe/tasks-vision": "^0.10.32",
     "@mistralai/mistralai": "^1.13.0",
     "basic-ftp": "^5.1.0",
     "bcrypt": "^6.0.0",

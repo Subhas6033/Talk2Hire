@@ -48,7 +48,7 @@ const Avatar = () => {
 
       {/* Dropdown */}
       <div
-        className={`absolute right-0 top-full mt-1 min-w-45
+        className={`absolute right-0 top-full min-w-45
         rounded-xl bg-white shadow-xl border border-gray-100
         transition-all duration-200 origin-top-right
         ${

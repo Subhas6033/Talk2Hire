@@ -162,7 +162,13 @@ ${extractedText}
   return parsed;
 }
 
-async function extractSkills({ ftpUrl, mimeType, originalFileName }) {
+async function extractSkills({
+  ftpUrl,
+  mimeType,
+  originalFileName,
+  targetDomain = null,
+  matchThreshold = 6,
+}) {
   if (!ftpUrl || !mimeType || !originalFileName) {
     throw new Error("ftpUrl, mimeType and originalFileName are required");
   }
@@ -171,6 +177,10 @@ async function extractSkills({ ftpUrl, mimeType, originalFileName }) {
   console.log("📄 File:", originalFileName);
   console.log("📦 Mime:", mimeType);
   console.log("🌐 FTP URL:", ftpUrl);
+  if (targetDomain) {
+    console.log("🎯 Target Domain:", targetDomain);
+    console.log("📊 Match Threshold:", matchThreshold);
+  }
 
   let extractedText = "";
 
@@ -230,14 +240,26 @@ async function extractSkills({ ftpUrl, mimeType, originalFileName }) {
 
   console.log("✅ Text extracted. Length:", extractedText.length);
 
-  // --- Extract skills using Mistral ---
-  const skillsResponse = await mistral.chat.complete({
-    model: "mistral-small-latest",
-    messages: [
-      {
-        role: "system",
-        content: `
-Extract all skills from the resume/document.
+  // --- Extract and filter skills using Mistral ---
+  const systemPrompt = targetDomain
+    ? `Extract all skills from the resume/document and score their relevance to the role: "${targetDomain}".
+
+For each skill, assign a relevance score from 1-10:
+- 10 = Absolutely critical for this role
+- 7-9 = Highly relevant
+- 4-6 = Somewhat relevant
+- 1-3 = Minimally relevant
+
+Return STRICTLY valid JSON only. Do NOT use markdown. Do NOT use backticks.
+
+Categorize skills into:
+- technical_skills (programming languages, frameworks, tools, technologies)
+- soft_skills (communication, leadership, teamwork, etc.)
+- certifications (any certifications mentioned)
+- languages (spoken/written languages)
+
+Each skill should include: skill name and relevance_score (1-10).`
+    : `Extract all skills from the resume/document.
 Return STRICTLY valid JSON only.
 Do NOT use markdown.
 Do NOT use backticks.
@@ -246,13 +268,29 @@ Categorize skills into:
 - technical_skills (programming languages, frameworks, tools, technologies)
 - soft_skills (communication, leadership, teamwork, etc.)
 - certifications (any certifications mentioned)
-- languages (spoken/written languages)
-        `,
-      },
-      {
-        role: "user",
-        content: `
-Extract skills from this document and return ONLY valid JSON:
+- languages (spoken/written languages)`;
+
+  const userPrompt = targetDomain
+    ? `Extract skills from this document, score each skill's relevance to the "${targetDomain}" role (1-10), and return ONLY valid JSON:
+
+{
+  "technical_skills": [
+    { "skill": "skill name", "relevance_score": 8 }
+  ],
+  "soft_skills": [
+    { "skill": "skill name", "relevance_score": 7 }
+  ],
+  "certifications": [
+    { "skill": "certification name", "relevance_score": 9 }
+  ],
+  "languages": [
+    { "skill": "language name", "relevance_score": 5 }
+  ]
+}
+
+Document text:
+${extractedText}`
+    : `Extract skills from this document and return ONLY valid JSON:
 {
   "technical_skills": [],
   "soft_skills": [],
@@ -262,8 +300,18 @@ Extract skills from this document and return ONLY valid JSON:
 }
 
 Document text:
-${extractedText}
-        `,
+${extractedText}`;
+
+  const skillsResponse = await mistral.chat.complete({
+    model: "mistral-small-latest",
+    messages: [
+      {
+        role: "system",
+        content: systemPrompt,
+      },
+      {
+        role: "user",
+        content: userPrompt,
       },
     ],
   });
@@ -272,12 +320,82 @@ ${extractedText}
     .replace(/```json|```/gi, "")
     .trim();
 
-  const parsed = JSON.parse(cleanJson);
+  let parsed = JSON.parse(cleanJson);
 
-  console.log("✅ Skills extracted successfully");
-  console.log(parsed);
+  // --- Filter by domain if specified ---
+  if (targetDomain) {
+    console.log(`🔍 Filtering skills for domain: ${targetDomain}`);
+    console.log(`📊 Using threshold: ${matchThreshold}/10`);
 
-  return parsed;
+    const filterSkills = (skillsArray) => {
+      if (!Array.isArray(skillsArray)) return [];
+
+      return skillsArray
+        .filter((item) => {
+          const score = typeof item === "object" ? item.relevance_score : null;
+          return score !== null && score >= matchThreshold;
+        })
+        .sort((a, b) => b.relevance_score - a.relevance_score);
+    };
+
+    const filtered = {
+      technical_skills: filterSkills(parsed.technical_skills || []),
+      soft_skills: filterSkills(parsed.soft_skills || []),
+      certifications: filterSkills(parsed.certifications || []),
+      languages: filterSkills(parsed.languages || []),
+    };
+
+    // Create summary
+    const totalExtracted =
+      (parsed.technical_skills?.length || 0) +
+      (parsed.soft_skills?.length || 0) +
+      (parsed.certifications?.length || 0) +
+      (parsed.languages?.length || 0);
+
+    const totalRelevant =
+      filtered.technical_skills.length +
+      filtered.soft_skills.length +
+      filtered.certifications.length +
+      filtered.languages.length;
+
+    // Flatten all relevant skills
+    const all_relevant_skills = [
+      ...filtered.technical_skills,
+      ...filtered.soft_skills,
+      ...filtered.certifications,
+      ...filtered.languages,
+    ];
+
+    const result = {
+      ...filtered,
+      all_relevant_skills,
+      metadata: {
+        target_domain: targetDomain,
+        match_threshold: matchThreshold,
+        total_skills_extracted: totalExtracted,
+        total_relevant_skills: totalRelevant,
+        match_percentage:
+          ((totalRelevant / totalExtracted) * 100).toFixed(1) + "%",
+      },
+    };
+
+    console.log("✅ Skills filtered successfully");
+    console.log(`📊 Extracted: ${totalExtracted} skills`);
+    console.log(
+      `✅ Relevant: ${totalRelevant} skills (${result.metadata.match_percentage} match)`,
+    );
+    console.log("🏆 Top Skills:");
+    all_relevant_skills.slice(0, 5).forEach((s, i) => {
+      console.log(`   ${i + 1}. ${s.skill} (${s.relevance_score}/10)`);
+    });
+
+    return result;
+  } else {
+    // No domain filtering - return all skills
+    console.log("✅ Skills extracted successfully (no filtering)");
+    console.log(parsed);
+    return parsed;
+  }
 }
 
-module.exports = { mistralResponse, extractSkills };
+module.exports = { mistralResponse, extractSkills, mistral };

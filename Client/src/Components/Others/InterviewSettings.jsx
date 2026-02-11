@@ -87,13 +87,11 @@ const InterviewSettings = ({ onInterviewReady }) => {
         userId: user?.id,
       };
 
-      console.log("✅ Setting session data:", newSessionData);
       setSessionData(newSessionData);
 
       setTimeout(() => {
         setQuestionsReady(true);
         setIsGeneratingQuestions(false);
-        console.log("✅ Questions ready, sessionId:", result.sessionId);
       }, 100);
     } catch (err) {
       console.error("❌ Question generation error:", err);
@@ -182,7 +180,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
       !isGeneratingQuestions &&
       !hasStartedInterviewRef.current;
 
-    console.log("🔍 tryStartInterview check:", {
+    /* console.log("🔍 tryStartInterview check:", {
       questionsReady,
       hasSessionData: !!sessionData,
       hasStream: !!cameraStreamRef.current,
@@ -190,7 +188,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
       isGenerating: isGeneratingQuestions,
       hasStarted: hasStartedInterviewRef.current,
       canStart,
-    });
+    }); */
 
     if (!canStart) {
       return;
@@ -198,8 +196,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
 
     // Mark as started
     hasStartedInterviewRef.current = true;
-
-    console.log("🎯 All conditions met - starting interview NOW!");
 
     // Get stream from ref
     const stream = cameraStreamRef.current;

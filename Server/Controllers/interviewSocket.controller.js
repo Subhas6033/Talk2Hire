@@ -11,6 +11,12 @@ const {
 } = require("../Upload/uploadVideoOnFTP.js");
 const { InterviewVideo } = require("../Models/interviewVideo.models.js");
 
+let faceViolationCount = 0;
+const MAX_FACE_VIOLATIONS = 3;
+const FACE_VIOLATION_RESET_TIME = 5000;
+let lastFaceViolationTime = null;
+let faceViolationTimeout = null;
+
 function initInterviewSocket(httpServer) {
   const io = new Server(httpServer, {
     cors: {
@@ -480,7 +486,6 @@ function initInterviewSocket(httpServer) {
             deepgramConnection = null;
           }
 
-          // ✅ START EVALUATION ONLY
           socket.emit("evaluation_started", {
             message: "Evaluating your interview responses...",
           });
@@ -503,7 +508,6 @@ function initInterviewSocket(httpServer) {
                 },
               });
 
-              // ✅ VIDEO MERGE WILL HAPPEN AUTOMATICALLY VIA BACKGROUND JOB
               console.log(
                 "🎬 Videos will be merged automatically by background job",
               );
@@ -879,6 +883,118 @@ function initInterviewSocket(httpServer) {
         }
       });
 
+      // ✅ NEW: Holistic Detection Handler
+      socket.on("holistic_detection_result", async (data) => {
+        const {
+          hasFace,
+          hasPose,
+          hasLeftHand,
+          hasRightHand,
+          faceCount,
+          timestamp,
+        } = data;
+
+        console.log(
+          `🧍 Holistic detection result at ${new Date(timestamp).toISOString()}:`,
+          { hasFace, hasPose, hasLeftHand, hasRightHand, faceCount },
+        );
+
+        try {
+          // OPTION 1: Simple face-only validation (recommended)
+          if (faceCount === 0) {
+            faceViolationCount++;
+            lastFaceViolationTime = Date.now();
+
+            console.log(
+              `⚠️ NO FACE DETECTED - Violation ${faceViolationCount}/${MAX_FACE_VIOLATIONS}`,
+            );
+
+            socket.emit("face_violation", {
+              type: "NO_FACE",
+              count: faceViolationCount,
+              max: MAX_FACE_VIOLATIONS,
+              message: "No face detected in frame",
+            });
+
+            if (faceViolationTimeout) {
+              clearTimeout(faceViolationTimeout);
+              faceViolationTimeout = null;
+            }
+
+            if (faceViolationCount >= MAX_FACE_VIOLATIONS) {
+              console.log(
+                "❌ TERMINATING INTERVIEW: No face detected for too long",
+              );
+
+              socket.emit("interview_terminated", {
+                reason: "NO_FACE_DETECTED",
+                message:
+                  "Interview terminated: Your face was not visible in the camera",
+                violationCount: faceViolationCount,
+              });
+
+              await endInterview();
+              return;
+            }
+          } else if (faceCount > 1) {
+            console.log(
+              `❌ TERMINATING INTERVIEW: Multiple faces detected (${faceCount})`,
+            );
+
+            socket.emit("interview_terminated", {
+              reason: "MULTIPLE_FACES",
+              message: `Interview terminated: ${faceCount} people detected in frame. Only the candidate should be visible.`,
+              faceCount: faceCount,
+            });
+
+            await Interview.saveViolation({
+              interviewId,
+              violationType: "MULTIPLE_FACES",
+              details: `${faceCount} faces detected`,
+              timestamp: new Date(timestamp),
+            });
+
+            await endInterview();
+            return;
+          } else if (faceCount === 1) {
+            const wasInViolation = faceViolationCount > 0;
+
+            if (wasInViolation) {
+              console.log(
+                `✅ Face violation cleared (was ${faceViolationCount}/${MAX_FACE_VIOLATIONS})`,
+              );
+
+              if (faceViolationTimeout) {
+                clearTimeout(faceViolationTimeout);
+              }
+
+              faceViolationTimeout = setTimeout(() => {
+                faceViolationCount = 0;
+                lastFaceViolationTime = null;
+                socket.emit("face_violation_cleared");
+                console.log("✅ Face violation count reset to 0");
+              }, 2000);
+            }
+
+            socket.emit("face_status_ok", {
+              faceCount: 1,
+              hasPose,
+              hasLeftHand,
+              hasRightHand,
+              message: "Detection OK",
+            });
+          }
+        } catch (error) {
+          console.error(
+            "❌ Error processing holistic detection result:",
+            error,
+          );
+          socket.emit("error", {
+            message: "Error processing detection",
+          });
+        }
+      });
+
       socket.on("user_audio_chunk", (audioData) => {
         if (!isListeningActive) {
           return;
@@ -912,6 +1028,13 @@ function initInterviewSocket(httpServer) {
           }
           deepgramConnection = null;
         }
+
+        if (faceViolationTimeout) {
+          clearTimeout(faceViolationTimeout);
+          faceViolationTimeout = null;
+        }
+        faceViolationCount = 0;
+        lastFaceViolationTime = null;
 
         isProcessing = false;
         isListeningActive = false;

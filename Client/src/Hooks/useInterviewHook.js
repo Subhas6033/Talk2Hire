@@ -272,7 +272,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       };
 
       source.start(0);
-      console.log("▶️ Chunk started");
     } catch (error) {
       console.error("❌ Audio playback error:", error);
       dispatch(setIsPlaying(false));
@@ -437,8 +436,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         console.log("⚠️ Empty buffer");
         return;
       }
-
-      console.log("🔊 Audio chunk:", arrayBuffer.byteLength, "bytes");
 
       lastChunkReceivedTimeRef.current = Date.now();
 

@@ -11,6 +11,8 @@ import {
   Sparkles,
   Loader2,
   RefreshCw,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 
 // Skill categories with related skills
@@ -103,21 +105,27 @@ const PREDEFINED_SKILLS = [
   "QA Engineer",
 ];
 
-const MAX_SKILLS_PER_CATEGORY = 40;
+const PAGE_SIZE = 15;
 
 const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
   const [inputValue, setInputValue] = useState("");
   const [skillsRefreshKey, setSkillsRefreshKey] = useState(0);
+  // Pagination state for CV skills
+  const [cvPage, setCvPage] = useState(1);
   const dispatch = useDispatch();
   const { user, loading: authLoading } = useAuth();
 
+  // Reset CV pagination whenever CV skills change (refresh / new user)
+  useEffect(() => {
+    setCvPage(1);
+  }, [user?.id, skillsRefreshKey]);
+
   // Fetch CV skills from API on component mount and when user updates
   useEffect(() => {
-    // Always fetch CV skills when component mounts if user is authenticated
     if (user) {
       dispatch(getCVSkills());
     }
-  }, [dispatch, user?.id, skillsRefreshKey]); // Refetch when user.id changes or refresh triggered
+  }, [dispatch, user?.id, skillsRefreshKey]);
 
   // Get CV skills from user object
   const cvSkills = useMemo(() => {
@@ -134,29 +142,22 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
   // Generate related skills based on CV skills
   const suggestedSkills = useMemo(() => {
     const suggested = new Set();
-
     cvSkills.forEach((cvSkill) => {
-      // Find matching category
       const category = Object.keys(SKILL_CATEGORIES).find(
         (cat) => cat.toLowerCase() === cvSkill.toLowerCase(),
       );
-
       if (category) {
         SKILL_CATEGORIES[category].forEach((skill) => suggested.add(skill));
       }
     });
-
     return Array.from(suggested);
   }, [cvSkills]);
 
   // Combine all available skills
   const allAvailableSkills = useMemo(() => {
     const combined = [...cvSkills, ...PREDEFINED_SKILLS, ...suggestedSkills];
-
-    // Remove duplicates (case-insensitive)
     const unique = [];
     const seen = new Set();
-
     combined.forEach((skill) => {
       const lower = skill.toLowerCase();
       if (!seen.has(lower)) {
@@ -164,7 +165,6 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
         unique.push(skill);
       }
     });
-
     return unique;
   }, [cvSkills, suggestedSkills]);
 
@@ -172,7 +172,6 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
   const findMatchingSkill = () => {
     const trimmedInput = inputValue.trim();
     if (!trimmedInput) return null;
-
     return allAvailableSkills.find(
       (skill) =>
         skill.toLowerCase() === trimmedInput.toLowerCase() &&
@@ -190,7 +189,6 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
   // Separate CV skills from other skills in search results
   const cvSkillsInSearch = useMemo(() => {
     if (!inputValue.trim()) return [];
-    // Search through ALL CV skills, not just the displayed ones
     return cvSkills.filter(
       (skill) =>
         skill.toLowerCase().includes(inputValue.toLowerCase().trim()) &&
@@ -217,7 +215,6 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
       (s) => s.toLowerCase() === inputValue.trim().toLowerCase(),
     );
 
-  // Add skill
   const addSkill = (skill) => {
     if (!selectedSkills.includes(skill)) {
       onSkillsChange([...selectedSkills, skill]);
@@ -225,12 +222,10 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
     }
   };
 
-  // Remove skill
   const removeSkill = (skillToRemove) => {
     onSkillsChange(selectedSkills.filter((skill) => skill !== skillToRemove));
   };
 
-  // Handle primary button click
   const handlePrimaryAction = () => {
     if (isExactMatch) {
       addSkill(matchingSkill);
@@ -247,7 +242,6 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
     }
   };
 
-  // Determine button state
   const getButtonConfig = () => {
     if (isExactMatch) {
       return {
@@ -277,33 +271,33 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
 
   const buttonConfig = getButtonConfig();
 
-  // ✅ Categorize skills for display with 20 skill limit
-  const cvSkillsToShow = cvSkills
-    .filter((skill) => !selectedSkills.includes(skill))
-    .slice(0, MAX_SKILLS_PER_CATEGORY);
+  // ── CV skills pagination ──────────────────────────────────────────────────
+  // All unselected CV skills (no slice — pagination handles the limiting)
+  const unselectedCvSkills = cvSkills.filter(
+    (skill) => !selectedSkills.includes(skill),
+  );
+  const totalCvSkills = unselectedCvSkills.length;
+  const totalCvPages = Math.max(1, Math.ceil(totalCvSkills / PAGE_SIZE));
+  const visibleCvSkills = unselectedCvSkills.slice(
+    (cvPage - 1) * PAGE_SIZE,
+    cvPage * PAGE_SIZE,
+  );
 
   const suggestedSkillsToShow = suggestedSkills
     .filter(
       (skill) => !selectedSkills.includes(skill) && !cvSkills.includes(skill),
     )
-    .slice(0, MAX_SKILLS_PER_CATEGORY);
+    .slice(0, PAGE_SIZE);
 
   const popularSkillsToShow = PREDEFINED_SKILLS.filter(
     (skill) => !selectedSkills.includes(skill) && !cvSkills.includes(skill),
-  ).slice(0, MAX_SKILLS_PER_CATEGORY);
-
-  // ✅ Calculate how many skills are hidden in each category
-  const hiddenCvSkillsCount = Math.max(
-    0,
-    cvSkills.filter((skill) => !selectedSkills.includes(skill)).length -
-      MAX_SKILLS_PER_CATEGORY,
-  );
+  ).slice(0, PAGE_SIZE);
 
   const hiddenSuggestedSkillsCount = Math.max(
     0,
     suggestedSkills.filter(
       (skill) => !selectedSkills.includes(skill) && !cvSkills.includes(skill),
-    ).length - MAX_SKILLS_PER_CATEGORY,
+    ).length - PAGE_SIZE,
   );
 
   return (
@@ -464,36 +458,31 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
                 <div>
                   <p className="text-xs font-semibold text-white/90 mb-2">
                     Other Matching Skills (
-                    {
-                      otherSkillsInSearch.slice(0, MAX_SKILLS_PER_CATEGORY)
-                        .length
-                    }
-                    {otherSkillsInSearch.length > MAX_SKILLS_PER_CATEGORY &&
+                    {otherSkillsInSearch.slice(0, PAGE_SIZE).length}
+                    {otherSkillsInSearch.length > PAGE_SIZE &&
                       ` of ${otherSkillsInSearch.length}`}
                     )
                   </p>
                   <div className="flex flex-wrap gap-2 max-h-64 overflow-y-auto p-3 bg-white/5 rounded-xl border border-white/10 shadow-sm">
-                    {otherSkillsInSearch
-                      .slice(0, MAX_SKILLS_PER_CATEGORY)
-                      .map((skill) => (
-                        <button
-                          key={skill}
-                          type="button"
-                          onClick={() => addSkill(skill)}
-                          className="group inline-flex items-center gap-2 px-3.5 py-2 bg-white/5 border border-white/20 rounded-lg text-white/80 text-xs font-semibold hover:bg-linear-to-r hover:from-purple-500/10 hover:to-pink-500/10 hover:border-purple-400/40 hover:text-purple-200 hover:shadow-lg hover:shadow-purple-500/10 transition-all duration-200"
-                        >
-                          <span>{skill}</span>
-                          <Plus
-                            size={14}
-                            className="group-hover:rotate-90 transition-transform duration-200"
-                          />
-                        </button>
-                      ))}
+                    {otherSkillsInSearch.slice(0, PAGE_SIZE).map((skill) => (
+                      <button
+                        key={skill}
+                        type="button"
+                        onClick={() => addSkill(skill)}
+                        className="group inline-flex items-center gap-2 px-3.5 py-2 bg-white/5 border border-white/20 rounded-lg text-white/80 text-xs font-semibold hover:bg-linear-to-r hover:from-purple-500/10 hover:to-pink-500/10 hover:border-purple-400/40 hover:text-purple-200 hover:shadow-lg hover:shadow-purple-500/10 transition-all duration-200"
+                      >
+                        <span>{skill}</span>
+                        <Plus
+                          size={14}
+                          className="group-hover:rotate-90 transition-transform duration-200"
+                        />
+                      </button>
+                    ))}
                   </div>
-                  {otherSkillsInSearch.length > MAX_SKILLS_PER_CATEGORY && (
+                  {otherSkillsInSearch.length > PAGE_SIZE && (
                     <p className="text-xs text-white/40 mt-2 text-center">
-                      Showing top {MAX_SKILLS_PER_CATEGORY} results. Refine your
-                      search to see more.
+                      Showing top {PAGE_SIZE} results. Refine your search to see
+                      more.
                     </p>
                   )}
                 </div>
@@ -504,33 +493,61 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
         {/* Show categorized skills when NOT searching */}
         {!inputValue.trim() && (
           <>
-            {/* CV Skills */}
-            {cvSkillsToShow.length > 0 && (
+            {/* CV Skills with pagination */}
+            {visibleCvSkills.length > 0 && (
               <div className="mb-4">
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-xs font-semibold text-white/90 flex items-center gap-2">
                     <div className="p-1 bg-linear-to-br from-slate-400 to-slate-600 rounded-md">
                       <Sparkles size={12} className="text-white" />
                     </div>
-                    From Your CV ({cvSkillsToShow.length}
-                    {hiddenCvSkillsCount > 0 &&
-                      ` of ${cvSkills.filter((skill) => !selectedSkills.includes(skill)).length}`}
-                    )
+                    From Your CV ({totalCvSkills})
                   </p>
-                  <button
-                    type="button"
-                    onClick={handleRefreshSkills}
-                    className="p-1.5 rounded-lg bg-slate-500/10 border border-slate-400/30 text-slate-400 hover:bg-slate-500/20 hover:border-slate-400/50 hover:text-slate-300 transition-all duration-200"
-                    title="Refresh CV skills"
-                  >
-                    <RefreshCw
-                      size={12}
-                      className={authLoading ? "animate-spin" : ""}
-                    />
-                  </button>
+
+                  {/* Right side: page controls + refresh */}
+                  <div className="flex items-center gap-1.5">
+                    {totalCvPages > 1 && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setCvPage((p) => Math.max(1, p - 1))}
+                          disabled={cvPage === 1}
+                          className="p-1.5 rounded-lg bg-slate-500/10 border border-slate-400/30 text-slate-400 hover:bg-slate-500/20 hover:border-slate-400/50 hover:text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200"
+                        >
+                          <ChevronLeft size={12} />
+                        </button>
+                        <span className="text-xs font-semibold text-slate-400 px-1.5">
+                          {cvPage} / {totalCvPages}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setCvPage((p) => Math.min(totalCvPages, p + 1))
+                          }
+                          disabled={cvPage === totalCvPages}
+                          className="p-1.5 rounded-lg bg-slate-500/10 border border-slate-400/30 text-slate-400 hover:bg-slate-500/20 hover:border-slate-400/50 hover:text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200"
+                        >
+                          <ChevronRight size={12} />
+                        </button>
+                        <div className="w-px h-4 bg-slate-400/20 mx-0.5" />
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleRefreshSkills}
+                      className="p-1.5 rounded-lg bg-slate-500/10 border border-slate-400/30 text-slate-400 hover:bg-slate-500/20 hover:border-slate-400/50 hover:text-slate-300 transition-all duration-200"
+                      title="Refresh CV skills"
+                    >
+                      <RefreshCw
+                        size={12}
+                        className={authLoading ? "animate-spin" : ""}
+                      />
+                    </button>
+                  </div>
                 </div>
+
                 <div className="flex flex-wrap gap-2 p-4 bg-linear-to-br from-slate-500/5 via-slate-600/5 to-slate-500/5 rounded-xl border border-slate-400/20 shadow-sm">
-                  {cvSkillsToShow.map((skill) => (
+                  {visibleCvSkills.map((skill) => (
                     <button
                       key={skill}
                       type="button"
@@ -545,13 +562,6 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
                     </button>
                   ))}
                 </div>
-                {hiddenCvSkillsCount > 0 && (
-                  <p className="text-xs text-white/40 mt-2 text-center">
-                    + {hiddenCvSkillsCount} more skill
-                    {hiddenCvSkillsCount > 1 ? "s" : ""} available. Use search
-                    to find them.
-                  </p>
-                )}
               </div>
             )}
 

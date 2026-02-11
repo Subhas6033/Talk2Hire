@@ -4,6 +4,7 @@ import { Button } from "../index";
 import { Card } from "../Common/Card";
 import { useInterview } from "../../Hooks/useInterviewHook";
 import useVideoRecording from "../../Hooks/useVideoRecordingHook";
+import useHolisticDetection from "../../Hooks/useHolisticDetectionHook";
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
@@ -26,14 +27,29 @@ const InterviewQuestions = ({
   const videoRef = useRef(null);
   const isCleaningUpRef = useRef(false);
 
+  const {
+    detectionData,
+    isInitialized: isHolisticDetectionReady,
+    hasFace,
+    hasPose,
+    hasLeftHand,
+    hasRightHand,
+  } = useHolisticDetection(
+    videoRef.current,
+    interview.socketRef.current,
+    interview.status === "live" && !interview.isInitializing,
+  );
+
   const [waitingForQuestions, setWaitingForQuestions] = useState(false);
   const [evaluationStatus, setEvaluationStatus] = useState(null);
   const [evaluationResults, setEvaluationResults] = useState(null);
+  const [faceViolationWarning, setFaceViolationWarning] = useState(null);
+  const [isInterviewTerminated, setIsInterviewTerminated] = useState(false);
 
   // ✅ ADD: Track if we've sent ready_for_question
   const readyForQuestionSentRef = useRef(false);
 
-  // Video element setup (unchanged)
+  // Video element setup
   useEffect(() => {
     console.log("📹 Video element setup START:", {
       hasVideoRef: !!videoRef.current,
@@ -207,7 +223,7 @@ const InterviewQuestions = ({
     };
   }, [cameraStream]);
 
-  // Stream health monitor (unchanged)
+  // Stream health monitor
   useEffect(() => {
     if (!cameraStream) {
       console.log("⚠️ No camera stream to monitor");
@@ -395,6 +411,41 @@ const InterviewQuestions = ({
     socket.on("interim_transcript", (data) => {
       console.log("💬 Interim transcript:", data.text);
       interview.setLiveTranscript(data.text);
+    });
+
+    // Face Detection Socket Listeners
+    socket.on("face_violation", (data) => {
+      console.warn("⚠️ Face violation:", data);
+      setFaceViolationWarning(data);
+    });
+
+    socket.on("face_violation_cleared", () => {
+      console.log("✅ Face violation cleared");
+      setFaceViolationWarning(null);
+    });
+
+    socket.on("face_status_ok", () => {
+      console.log("✅ Face status OK");
+      setFaceViolationWarning(null);
+    });
+
+    socket.on("interview_terminated", (data) => {
+      console.error("❌ Interview terminated:", data);
+      setIsInterviewTerminated(true);
+
+      alert(`Interview Terminated: ${data.message}`);
+
+      // Stop video recording
+      if (isVideoRecording) {
+        stopVideoRecording();
+      }
+
+      // Call onFinish or onCancel
+      if (onFinish) {
+        onFinish();
+      } else if (onCancel) {
+        onCancel();
+      }
     });
 
     socket.on("video_chunk_uploaded", (data) => {
@@ -696,27 +747,28 @@ Your videos have been processed and evaluation is complete.`;
   }, [cameraStream]);
 
   return (
-    <section className="p-4 md:p-6">
-      <div className="max-w-350 mx-auto h-full">
-        <div className="grid grid-cols-1 gap-4 md:gap-6 h-full">
-          <div className="flex flex-col gap-4">
-            <Card className="flex-1 flex flex-col overflow-hidden shadow-sm border border-gray-200 dark:border-gray-800">
+    <section className="min-h-screen bg-linear-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 p-4 md:p-6">
+      <div className="max-w-7xl mx-auto">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
+          {/* Left Column - Interview Card */}
+          <div className="lg:col-span-2">
+            <Card className="flex flex-col overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
               {/* Header */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-linear-to-r from-indigo-50 to-purple-50 dark:from-gray-800 dark:to-gray-700">
                 <div className="flex items-center gap-3">
                   <div className="relative">
                     <div
-                      className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
+                      className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all shadow-lg ${
                         interview.isPlaying
-                          ? "bg-blue-600"
+                          ? "bg-linear-to-br from-blue-500 to-blue-600 shadow-blue-500/50"
                           : interview.isListening
-                            ? "bg-emerald-600"
-                            : "bg-gray-700"
+                            ? "bg-linear-to-br from-emerald-500 to-emerald-600 shadow-emerald-500/50"
+                            : "bg-linear-to-br from-gray-600 to-gray-700"
                       }`}
                     >
                       {interview.isPlaying ? (
                         <svg
-                          className="w-5 h-5 text-white"
+                          className="w-6 h-6 text-white"
                           fill="currentColor"
                           viewBox="0 0 20 20"
                         >
@@ -724,7 +776,7 @@ Your videos have been processed and evaluation is complete.`;
                         </svg>
                       ) : interview.isListening ? (
                         <svg
-                          className="w-5 h-5 text-white"
+                          className="w-6 h-6 text-white"
                           fill="currentColor"
                           viewBox="0 0 20 20"
                         >
@@ -736,7 +788,7 @@ Your videos have been processed and evaluation is complete.`;
                         </svg>
                       ) : (
                         <svg
-                          className="w-5 h-5 text-white"
+                          className="w-6 h-6 text-white"
                           fill="none"
                           viewBox="0 0 24 24"
                           stroke="currentColor"
@@ -752,105 +804,108 @@ Your videos have been processed and evaluation is complete.`;
                     </div>
                   </div>
                   <div>
-                    <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                      Interview Assistant
+                    <h2 className="text-base font-bold text-gray-900 dark:text-gray-100">
+                      AI Interview Assistant
                     </h2>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                    <p className="text-xs text-gray-600 dark:text-gray-400 font-medium">
                       {interview.isPlaying
-                        ? "Speaking"
+                        ? "Speaking..."
                         : interview.isListening
-                          ? "Listening"
-                          : "Standby"}
+                          ? "Listening..."
+                          : "Ready"}
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <div
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                      interview.isPlaying
-                        ? "bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300"
-                        : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400"
-                    }`}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${interview.isPlaying ? "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 shadow-sm" : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400"}`}
                   >
                     <div
-                      className={`w-1.5 h-1.5 rounded-full ${
-                        interview.isPlaying
-                          ? "bg-blue-600 animate-pulse"
-                          : "bg-gray-400"
-                      }`}
+                      className={`w-2 h-2 rounded-full ${interview.isPlaying ? "bg-blue-600 animate-pulse" : "bg-gray-400"}`}
                     />
                     Audio
                   </div>
                   <div
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                      interview.isListening
-                        ? "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300"
-                        : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400"
-                    }`}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${interview.isListening ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 shadow-sm" : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400"}`}
                   >
                     <div
-                      className={`w-1.5 h-1.5 rounded-full ${
-                        interview.isListening
-                          ? "bg-emerald-600 animate-pulse"
-                          : "bg-gray-400"
-                      }`}
+                      className={`w-2 h-2 rounded-full ${interview.isListening ? "bg-emerald-600 animate-pulse" : "bg-gray-400"}`}
                     />
                     Mic
                   </div>
                   <div
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                      isVideoRecording
-                        ? "bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300"
-                        : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400"
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${isVideoRecording ? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 shadow-sm" : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400"}`}
+                  >
+                    <div
+                      className={`w-2 h-2 rounded-full ${isVideoRecording ? "bg-red-600 animate-pulse" : "bg-gray-400"}`}
+                    />
+                    Video
+                  </div>
+                  <div
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      isHolisticDetectionReady && hasFace
+                        ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 shadow-sm"
+                        : !hasFace
+                          ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 shadow-sm"
+                          : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
                     }`}
                   >
                     <div
-                      className={`w-1.5 h-1.5 rounded-full ${
-                        isVideoRecording
-                          ? "bg-red-600 animate-pulse"
-                          : "bg-gray-400"
+                      className={`w-2 h-2 rounded-full ${
+                        isHolisticDetectionReady && hasFace
+                          ? "bg-green-600"
+                          : !hasFace
+                            ? "bg-red-600 animate-pulse"
+                            : "bg-gray-400"
                       }`}
                     />
-                    {isVideoRecording ? "Recording" : "Video"}
+                    Detection:{" "}
+                    {isHolisticDetectionReady ? (hasFace ? "✓" : "✗") : "..."}
                   </div>
-                  {evaluationStatus && (
-                    <div
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                        evaluationStatus === "complete"
-                          ? "bg-green-50 dark:bg-green-950/50 text-green-700 dark:text-green-300"
-                          : evaluationStatus === "error"
-                            ? "bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300"
-                            : "bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300"
-                      }`}
-                    >
-                      <div
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          evaluationStatus === "complete"
-                            ? "bg-green-600"
-                            : evaluationStatus === "error"
-                              ? "bg-red-600"
-                              : "bg-blue-600 animate-pulse"
-                        }`}
-                      />
-                      {evaluationStatus === "complete"
-                        ? "Evaluated"
-                        : evaluationStatus === "error"
-                          ? "Eval Error"
-                          : "Evaluating"}
-                    </div>
-                  )}
                 </div>
               </div>
 
+              {/* Face Violation Warning Banner */}
+              {faceViolationWarning && !isInterviewTerminated && (
+                <div className="px-6 py-4 bg-red-50 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800">
+                  <div className="flex items-center gap-3">
+                    <svg
+                      className="w-6 h-6 text-red-600 dark:text-red-400 animate-pulse"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                      />
+                    </svg>
+                    <div className="flex-1">
+                      <p className="text-sm font-bold text-red-900 dark:text-red-300">
+                        {faceViolationWarning.type === "NO_FACE"
+                          ? "⚠️ No Face Detected"
+                          : "⚠️ Multiple Faces Detected"}
+                      </p>
+                      <p className="text-xs text-red-800 dark:text-red-200 mt-1">
+                        {faceViolationWarning.message} (
+                        {faceViolationWarning.count}/{faceViolationWarning.max})
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Main Content Area */}
-              <div className="flex-1 flex flex-col p-6 bg-white dark:bg-gray-900">
+              <div className="flex-1 p-6 bg-white dark:bg-gray-800 min-h-100">
                 {evaluationStatus === "started" && (
-                  <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg">
+                  <div className="mb-4 p-4 bg-linear-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-800 rounded-xl shadow-sm">
                     <div className="flex items-center gap-3">
-                      <div className="animate-spin w-5 h-5 border-3 border-blue-600 border-t-transparent rounded-full" />
+                      <div className="animate-spin w-6 h-6 border-3 border-blue-600 border-t-transparent rounded-full" />
                       <div>
-                        <p className="text-sm font-semibold text-blue-900 dark:text-blue-300">
+                        <p className="text-sm font-bold text-blue-900 dark:text-blue-300">
                           Evaluating Your Interview
                         </p>
                         <p className="text-xs text-blue-800 dark:text-blue-200 mt-1">
@@ -861,46 +916,11 @@ Your videos have been processed and evaluation is complete.`;
                   </div>
                 )}
 
-                {interview.status === "connecting" && (
-                  <div className="flex-1 flex flex-col items-center justify-center">
-                    <div className="w-12 h-12 border-3 border-gray-200 dark:border-gray-700 border-t-blue-600 rounded-full animate-spin mb-4" />
-                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                      Connecting to server
-                    </p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      Please wait...
-                    </p>
-                  </div>
-                )}
-
-                {interview.status === "live" && interview.isInitializing && (
-                  <div className="flex-1 flex flex-col items-center justify-center">
-                    <div className="w-12 h-12 border-3 border-gray-200 dark:border-gray-700 border-t-indigo-600 rounded-full animate-spin mb-4" />
-                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                      Starting interview
-                    </p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      Setting up your session...
-                    </p>
-                  </div>
-                )}
-
-                {interview.status === "live" &&
-                  !interview.currentQuestion &&
-                  !interview.isInitializing && (
-                    <div className="flex-1 flex flex-col items-center justify-center">
-                      <div className="w-12 h-12 border-3 border-gray-200 dark:border-gray-700 border-t-purple-600 rounded-full animate-spin mb-4" />
-                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                        Loading question
-                      </p>
-                    </div>
-                  )}
-
                 {interview.status === "live" && interview.currentQuestion && (
-                  <div className="flex-1 flex flex-col justify-center space-y-6">
+                  <div className="flex flex-col justify-center space-y-6 h-full">
                     {interview.idlePrompt && (
-                      <div className="mb-4 p-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg">
-                        <div className="flex items-center gap-2 mb-2">
+                      <div className="p-4 bg-linear-to-r from-amber-50 to-orange-50 dark:from-amber-900/20 dark:to-orange-900/20 border border-amber-200 dark:border-amber-800 rounded-xl shadow-sm">
+                        <div className="flex items-center gap-3 mb-2">
                           <svg
                             className="w-5 h-5 text-amber-600 dark:text-amber-400"
                             fill="none"
@@ -914,7 +934,7 @@ Your videos have been processed and evaluation is complete.`;
                               d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
                             />
                           </svg>
-                          <span className="text-sm font-semibold text-amber-900 dark:text-amber-300">
+                          <span className="text-sm font-bold text-amber-900 dark:text-amber-300">
                             Waiting for Response
                           </span>
                         </div>
@@ -924,18 +944,18 @@ Your videos have been processed and evaluation is complete.`;
                       </div>
                     )}
 
-                    <div className="space-y-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 rounded bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center shrink-0">
-                          <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-linear-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shrink-0">
+                          <span className="text-sm font-bold text-white">
                             Q
                           </span>
                         </div>
-                        <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                        <span className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
                           Question {interview.questionOrder}
                         </span>
                       </div>
-                      <p className="text-lg md:text-xl text-gray-900 dark:text-gray-100 leading-relaxed">
+                      <p className="text-xl md:text-2xl text-gray-900 dark:text-gray-100 leading-relaxed font-medium">
                         {interview.currentQuestion}
                       </p>
                     </div>
@@ -946,20 +966,20 @@ Your videos have been processed and evaluation is complete.`;
                           {[...Array(3)].map((_, i) => (
                             <div
                               key={i}
-                              className="w-1.5 h-1.5 bg-emerald-600 dark:bg-emerald-500 rounded-full animate-bounce"
+                              className="w-2 h-2 bg-emerald-600 dark:bg-emerald-500 rounded-full animate-bounce"
                               style={{ animationDelay: `${i * 0.1}s` }}
                             />
                           ))}
                         </div>
-                        <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
-                          Listening to your response
+                        <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+                          Listening to your response...
                         </span>
                       </div>
                     )}
 
                     {interview.liveTranscript && (
-                      <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
-                        <p className="text-sm text-gray-600 dark:text-gray-400 italic">
+                      <div className="p-4 bg-linear-to-r from-gray-50 to-gray-100 dark:from-gray-700 dark:to-gray-600 rounded-xl border border-gray-200 dark:border-gray-600 shadow-sm">
+                        <p className="text-sm text-gray-700 dark:text-gray-300 italic leading-relaxed">
                           {interview.liveTranscript}
                         </p>
                       </div>
@@ -967,73 +987,30 @@ Your videos have been processed and evaluation is complete.`;
                   </div>
                 )}
 
-                {interview.status === "error" && (
-                  <div className="flex-1 flex flex-col items-center justify-center">
-                    <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-950/50 flex items-center justify-center mb-4">
-                      <svg
-                        className="w-6 h-6 text-red-600 dark:text-red-400"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M6 18L18 6M6 6l12 12"
-                        />
-                      </svg>
+                {!interview.currentQuestion &&
+                  interview.status === "live" &&
+                  !interview.isInitializing && (
+                    <div className="flex flex-col items-center justify-center h-full">
+                      <div className="w-16 h-16 border-4 border-gray-200 dark:border-gray-700 border-t-purple-600 rounded-full animate-spin mb-4" />
+                      <p className="text-base font-semibold text-gray-900 dark:text-gray-100">
+                        Loading question...
+                      </p>
                     </div>
-                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                      Connection error
-                    </p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      Please refresh and try again
-                    </p>
-                  </div>
-                )}
-
-                {interview.status === "disconnected" && (
-                  <div className="flex-1 flex flex-col items-center justify-center">
-                    <div className="w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-950/50 flex items-center justify-center mb-4">
-                      <svg
-                        className="w-6 h-6 text-amber-600 dark:text-amber-400"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                        />
-                      </svg>
-                    </div>
-                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                      Disconnected
-                    </p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      Reconnecting...
-                    </p>
-                  </div>
-                )}
+                  )}
               </div>
 
               {!interview.isInitializing && interview.userText && (
-                <div className="border-t border-gray-200 dark:border-gray-800 p-6 bg-gray-50 dark:bg-gray-900/50">
+                <div className="border-t border-gray-200 dark:border-gray-700 p-6 bg-linear-to-r from-emerald-50 to-teal-50 dark:from-gray-800 dark:to-gray-700">
                   <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center shrink-0">
-                        <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                          A
-                        </span>
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-linear-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg shrink-0">
+                        <span className="text-sm font-bold text-white">A</span>
                       </div>
-                      <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                      <span className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
                         Your Answer
                       </span>
                     </div>
-                    <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed pl-8">
+                    <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed pl-11">
                       {interview.userText}
                     </p>
                   </div>
@@ -1041,16 +1018,16 @@ Your videos have been processed and evaluation is complete.`;
               )}
 
               {!interview.isInitializing && (
-                <div className="border-t border-gray-200 dark:border-gray-800 px-6 py-4 bg-white dark:bg-gray-900">
+                <div className="border-t border-gray-200 dark:border-gray-700 px-6 py-4 bg-gray-50 dark:bg-gray-800">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                      <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                    <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 font-medium">
+                      <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shadow-lg shadow-emerald-500/50" />
                       Interview active • {interview.recordingDuration}
                     </div>
                     <Button
                       variant="secondary"
                       onClick={onCancel}
-                      className="text-xs px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-800"
+                      className="text-sm px-5 py-2 font-semibold hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-all shadow-sm"
                     >
                       End Interview
                     </Button>
@@ -1058,33 +1035,64 @@ Your videos have been processed and evaluation is complete.`;
                 </div>
               )}
             </Card>
+          </div>
 
+          {/* Right Column - Cameras */}
+          <div className="lg:col-span-1 space-y-4">
             {/* Primary Camera */}
             {cameraStream && (
-              <Card className="flex flex-col overflow-hidden shadow-sm border border-gray-200 dark:border-gray-800">
-                <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-                  <div className="flex items-center gap-2">
-                    <svg
-                      className="w-4 h-4 text-gray-400"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
-                      />
-                    </svg>
-                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                      Primary Camera
-                    </h3>
+              <Card className="overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+                <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-linear-to-r from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-700">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <svg
+                        className="w-5 h-5 text-indigo-500"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+                        />
+                      </svg>
+                      <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                        Primary Camera
+                      </h3>
+                    </div>
+
+                    {/* Detection status indicators */}
+                    {isHolisticDetectionReady && (
+                      <div className="flex gap-1">
+                        <span
+                          className={`text-xs px-1.5 py-0.5 rounded ${hasFace ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-400"}`}
+                        >
+                          F
+                        </span>
+                        <span
+                          className={`text-xs px-1.5 py-0.5 rounded ${hasPose ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-400"}`}
+                        >
+                          P
+                        </span>
+                        <span
+                          className={`text-xs px-1.5 py-0.5 rounded ${hasLeftHand ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-400"}`}
+                        >
+                          L
+                        </span>
+                        <span
+                          className={`text-xs px-1.5 py-0.5 rounded ${hasRightHand ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-400"}`}
+                        >
+                          R
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                <div className="p-4 bg-white dark:bg-gray-900">
-                  <div className="relative w-full aspect-4/3 bg-gray-900 rounded-lg overflow-hidden">
+                <div className="p-3 bg-white dark:bg-gray-800">
+                  <div className="relative w-full aspect-video bg-gray-900 rounded-xl overflow-hidden shadow-lg">
                     <video
                       ref={videoRef}
                       autoPlay
@@ -1094,11 +1102,11 @@ Your videos have been processed and evaluation is complete.`;
                       style={{ transform: "scaleX(-1)" }}
                     />
                     <div className="absolute top-3 left-3">
-                      <div className="flex items-center gap-2 px-3 py-1.5 bg-black/80 backdrop-blur-sm rounded-md">
+                      <div className="flex items-center gap-2 px-3 py-1.5 bg-black/80 backdrop-blur-sm rounded-lg shadow-xl">
                         <div
-                          className={`w-2 h-2 rounded-full ${isVideoRecording ? "bg-red-500 animate-pulse" : "bg-gray-500"}`}
+                          className={`w-2 h-2 rounded-full ${isVideoRecording ? "bg-red-500 animate-pulse shadow-lg shadow-red-500/50" : "bg-gray-500"}`}
                         />
-                        <span className="text-xs font-medium text-white">
+                        <span className="text-xs font-bold text-white">
                           {isVideoRecording ? "REC" : "STANDBY"}
                         </span>
                         <span className="text-xs font-mono text-white/80">
@@ -1110,8 +1118,92 @@ Your videos have been processed and evaluation is complete.`;
                 </div>
               </Card>
             )}
+
+            {/* Secondary Camera (Mobile) - Placeholder */}
+            <Card className="overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+              <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-linear-to-r from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-700">
+                <div className="flex items-center gap-2">
+                  <svg
+                    className="w-5 h-5 text-purple-500"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"
+                    />
+                  </svg>
+                  <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                    Security Camera
+                  </h3>
+                </div>
+              </div>
+
+              <div className="p-3 bg-white dark:bg-gray-800">
+                <div className="relative w-full aspect-video bg-linear-to-br from-gray-900 to-gray-800 rounded-xl overflow-hidden shadow-lg flex items-center justify-center">
+                  <div className="text-center space-y-3">
+                    <svg
+                      className="w-12 h-12 text-gray-600 mx-auto"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"
+                      />
+                    </svg>
+                    <p className="text-xs text-gray-500 font-semibold">
+                      Waiting for mobile connection...
+                    </p>
+                  </div>
+                  <div className="absolute top-3 left-3">
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-black/80 backdrop-blur-sm rounded-lg shadow-xl">
+                      <div className="w-2 h-2 rounded-full bg-gray-500" />
+                      <span className="text-xs font-bold text-white">
+                        OFFLINE
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </Card>
           </div>
         </div>
+
+        {/* Interview Terminated Overlay */}
+        {isInterviewTerminated && (
+          <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-50">
+            <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 max-w-md mx-4 text-center shadow-2xl">
+              <div className="w-20 h-20 rounded-full bg-linear-to-br from-red-500 to-red-600 flex items-center justify-center mx-auto mb-6 shadow-xl shadow-red-500/50">
+                <svg
+                  className="w-10 h-10 text-white"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-3">
+                Interview Terminated
+              </h3>
+              <p className="text-base text-gray-600 dark:text-gray-400">
+                Your interview has been terminated due to a policy violation.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );
