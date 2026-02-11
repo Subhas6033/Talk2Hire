@@ -11,12 +11,6 @@ const {
 } = require("../Upload/uploadVideoOnFTP.js");
 const { InterviewVideo } = require("../Models/interviewVideo.models.js");
 
-let faceViolationCount = 0;
-const MAX_FACE_VIOLATIONS = 3;
-const FACE_VIOLATION_RESET_TIME = 5000;
-let lastFaceViolationTime = null;
-let faceViolationTimeout = null;
-
 function initInterviewSocket(httpServer) {
   const io = new Server(httpServer, {
     cors: {
@@ -95,6 +89,14 @@ function initInterviewSocket(httpServer) {
     let idleCount = 0;
 
     const MAX_QUESTIONS = 10;
+
+    // Face detection constants and state
+    const MAX_FACE_VIOLATIONS = 1;
+    const FACE_DETECTION_THROTTLE_MS = 250; // Minimum time between processing detection events
+    let lastHolisticTime = 0;
+    let faceViolationCount = 0;
+    let lastFaceViolationTime = null;
+    let faceViolationTimeout = null;
 
     console.log("📥 Starting IMMEDIATE initialization...");
 
@@ -485,6 +487,14 @@ function initInterviewSocket(httpServer) {
             }
             deepgramConnection = null;
           }
+
+          //Clear face violation timeout on interview end
+          if (faceViolationTimeout) {
+            clearTimeout(faceViolationTimeout);
+            faceViolationTimeout = null;
+          }
+          faceViolationCount = 0;
+          lastFaceViolationTime = null;
 
           socket.emit("evaluation_started", {
             message: "Evaluating your interview responses...",
@@ -883,7 +893,7 @@ function initInterviewSocket(httpServer) {
         }
       });
 
-      // ✅ NEW: Holistic Detection Handler
+      // Optimized Holistic Detection Handler
       socket.on("holistic_detection_result", async (data) => {
         const {
           hasFace,
@@ -894,16 +904,27 @@ function initInterviewSocket(httpServer) {
           timestamp,
         } = data;
 
-        console.log(
-          `🧍 Holistic detection result at ${new Date(timestamp).toISOString()}:`,
-          { hasFace, hasPose, hasLeftHand, hasRightHand, faceCount },
-        );
+        // Throttle: Drop events faster than FACE_DETECTION_THROTTLE_MS
+        const now = Date.now();
+        if (now - lastHolisticTime < FACE_DETECTION_THROTTLE_MS) {
+          return; // Skip processing this event
+        }
+        lastHolisticTime = now;
+
+        // Only log periodically to reduce console spam
+        if (Math.random() < 0.1) {
+          // Log ~10% of events
+          console.log(
+            `🧍 Holistic detection: ${new Date(timestamp).toISOString()}`,
+            { hasFace, hasPose, hasLeftHand, hasRightHand, faceCount },
+          );
+        }
 
         try {
-          // OPTION 1: Simple face-only validation (recommended)
+          // CASE 1: No face detected
           if (faceCount === 0) {
             faceViolationCount++;
-            lastFaceViolationTime = Date.now();
+            lastFaceViolationTime = now;
 
             console.log(
               `⚠️ NO FACE DETECTED - Violation ${faceViolationCount}/${MAX_FACE_VIOLATIONS}`,
@@ -916,11 +937,13 @@ function initInterviewSocket(httpServer) {
               message: "No face detected in frame",
             });
 
+            // Clear any existing timeout
             if (faceViolationTimeout) {
               clearTimeout(faceViolationTimeout);
               faceViolationTimeout = null;
             }
 
+            // Terminate if threshold exceeded
             if (faceViolationCount >= MAX_FACE_VIOLATIONS) {
               console.log(
                 "❌ TERMINATING INTERVIEW: No face detected for too long",
@@ -933,10 +956,19 @@ function initInterviewSocket(httpServer) {
                 violationCount: faceViolationCount,
               });
 
+              await Interview.saveViolation({
+                interviewId,
+                violationType: "NO_FACE",
+                details: `Face not detected for ${faceViolationCount} consecutive checks`,
+                timestamp: new Date(timestamp),
+              });
+
               await endInterview();
               return;
             }
-          } else if (faceCount > 1) {
+          }
+          // CASE 2: Multiple faces detected - IMMEDIATE termination
+          else if (faceCount > 1) {
             console.log(
               `❌ TERMINATING INTERVIEW: Multiple faces detected (${faceCount})`,
             );
@@ -956,33 +988,44 @@ function initInterviewSocket(httpServer) {
 
             await endInterview();
             return;
-          } else if (faceCount === 1) {
-            const wasInViolation = faceViolationCount > 0;
-
-            if (wasInViolation) {
+          }
+          // CASE 3: Exactly one face - all clear
+          else if (faceCount === 1) {
+            // Only take action if we were in violation state
+            if (faceViolationCount > 0) {
               console.log(
-                `✅ Face violation cleared (was ${faceViolationCount}/${MAX_FACE_VIOLATIONS})`,
+                `✅ Face detected again (was ${faceViolationCount}/${MAX_FACE_VIOLATIONS})`,
               );
 
+              // Clear any existing timeout
               if (faceViolationTimeout) {
                 clearTimeout(faceViolationTimeout);
               }
 
+              // Reset violation count after 2 seconds of good behavior
               faceViolationTimeout = setTimeout(() => {
-                faceViolationCount = 0;
-                lastFaceViolationTime = null;
-                socket.emit("face_violation_cleared");
-                console.log("✅ Face violation count reset to 0");
+                if (faceViolationCount > 0) {
+                  console.log(
+                    `✅ Face violation count reset (was ${faceViolationCount})`,
+                  );
+                  faceViolationCount = 0;
+                  lastFaceViolationTime = null;
+                  socket.emit("face_violation_cleared");
+                }
               }, 2000);
             }
 
-            socket.emit("face_status_ok", {
-              faceCount: 1,
-              hasPose,
-              hasLeftHand,
-              hasRightHand,
-              message: "Detection OK",
-            });
+            // Only emit status_ok when transitioning from violation to OK
+            // This prevents the 3Hz re-render issue
+            if (faceViolationCount > 0 || lastFaceViolationTime !== null) {
+              socket.emit("face_status_ok", {
+                faceCount: 1,
+                hasPose,
+                hasLeftHand,
+                hasRightHand,
+                message: "Detection OK",
+              });
+            }
           }
         } catch (error) {
           console.error(
@@ -1029,6 +1072,7 @@ function initInterviewSocket(httpServer) {
           deepgramConnection = null;
         }
 
+        //  Clean up face detection state on disconnect
         if (faceViolationTimeout) {
           clearTimeout(faceViolationTimeout);
           faceViolationTimeout = null;

@@ -1,8 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { HolisticLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 
-const useHolisticDetection = (videoElement, socket, isEnabled = true) => {
+// Run ML inference at ~3fps — enough for violation detection, cheap on CPU
+const DETECTION_INTERVAL_MS = 300;
+
+const SOCKET_EMIT_INTERVAL_MS = 1000;
+
+const useHolisticDetection = (videoRef, socketRef, isEnabled = true) => {
   const holisticLandmarkerRef = useRef(null);
+  const detectionTimerRef = useRef(null);
+  const lastSocketEmitRef = useRef(0);
+  const lastResultRef = useRef(null);
+  const isDetectingRef = useRef(false);
+
   const [isInitialized, setIsInitialized] = useState(false);
   const [detectionData, setDetectionData] = useState({
     faceLandmarks: null,
@@ -10,13 +20,12 @@ const useHolisticDetection = (videoElement, socket, isEnabled = true) => {
     leftHandLandmarks: null,
     rightHandLandmarks: null,
   });
-  const lastVideoTimeRef = useRef(-1);
 
-  // Initialize MediaPipe Holistic Landmarker
+  // ── 1. Initialize MediaPipe once on mount ───────────────────────────────
   useEffect(() => {
     let mounted = true;
 
-    const initializeHolisticLandmarker = async () => {
+    const init = async () => {
       try {
         console.log("🔧 Initializing MediaPipe Holistic Landmarker...");
 
@@ -52,7 +61,7 @@ const useHolisticDetection = (videoElement, socket, isEnabled = true) => {
       }
     };
 
-    initializeHolisticLandmarker();
+    init();
 
     return () => {
       mounted = false;
@@ -61,92 +70,126 @@ const useHolisticDetection = (videoElement, socket, isEnabled = true) => {
         holisticLandmarkerRef.current = null;
       }
     };
-  }, []);
+  }, []); // runs once — no deps needed
 
-  // Start/Stop Detection Loop
-  useEffect(() => {
+  // ── 2. Smart socket emitter — only emits on change or heartbeat ─────────
+  const emitToSocket = useCallback(
+    (payload) => {
+      // Always read .current so we get the live socket even if it connected
+      // after this callback was created
+      const socket = socketRef?.current;
+      if (!socket?.connected) return;
+
+      const now = Date.now();
+      const last = lastResultRef.current;
+
+      const changed =
+        !last ||
+        last.faceCount !== payload.faceCount ||
+        last.hasFace !== payload.hasFace ||
+        last.hasPose !== payload.hasPose;
+
+      const heartbeatDue =
+        now - lastSocketEmitRef.current >= SOCKET_EMIT_INTERVAL_MS;
+
+      if (changed || heartbeatDue) {
+        socket.emit("holistic_detection_result", payload);
+        lastSocketEmitRef.current = now;
+        lastResultRef.current = payload;
+      }
+    },
+    [socketRef], // socketRef object is stable — this never re-creates
+  );
+
+  // ── 3. Single detection tick
+  const runDetection = useCallback(() => {
+    // Always read .current here — captures the live element even if it
+    // mounted after the interval started
+    const videoElement = videoRef?.current;
+
     if (
-      !isEnabled ||
-      !isInitialized ||
-      !holisticLandmarkerRef.current ||
+      isDetectingRef.current ||
       !videoElement ||
-      !socket
+      !holisticLandmarkerRef.current ||
+      videoElement.readyState < 2 || // HAVE_CURRENT_DATA
+      videoElement.paused
     ) {
       return;
     }
 
-    console.log("👁️ Starting holistic detection loop...");
+    isDetectingRef.current = true;
 
-    const detectHolistic = async () => {
-      try {
-        if (!videoElement || !holisticLandmarkerRef.current) return;
+    try {
+      const timestamp = performance.now();
+      const result = holisticLandmarkerRef.current.detectForVideo(
+        videoElement,
+        timestamp,
+      );
 
-        // Only process new frames
-        if (videoElement.currentTime === lastVideoTimeRef.current) {
-          return;
-        }
+      const faceCount = result.faceLandmarks.length;
 
-        lastVideoTimeRef.current = videoElement.currentTime;
+      const data = {
+        faceLandmarks: faceCount > 0 ? result.faceLandmarks[0] : null,
+        poseLandmarks:
+          result.poseLandmarks.length > 0 ? result.poseLandmarks[0] : null,
+        leftHandLandmarks:
+          result.leftHandLandmarks.length > 0
+            ? result.leftHandLandmarks[0]
+            : null,
+        rightHandLandmarks:
+          result.rightHandLandmarks.length > 0
+            ? result.rightHandLandmarks[0]
+            : null,
+      };
 
-        // Detect holistic landmarks
-        const timestamp = performance.now();
-        const result = holisticLandmarkerRef.current.detectForVideo(
-          videoElement,
-          timestamp,
-        );
-
-        const data = {
-          faceLandmarks:
-            result.faceLandmarks.length > 0 ? result.faceLandmarks[0] : null,
-          poseLandmarks:
-            result.poseLandmarks.length > 0 ? result.poseLandmarks[0] : null,
-          leftHandLandmarks:
-            result.leftHandLandmarks.length > 0
-              ? result.leftHandLandmarks[0]
-              : null,
-          rightHandLandmarks:
-            result.rightHandLandmarks.length > 0
-              ? result.rightHandLandmarks[0]
-              : null,
-        };
-
+      // Only re-render React state when faceCount actually changed
+      const prev = lastResultRef.current;
+      if (!prev || prev.faceCount !== faceCount) {
         setDetectionData(data);
-
-        // Send result to server
-        if (socket.connected) {
-          socket.emit("holistic_detection_result", {
-            hasFace: data.faceLandmarks !== null,
-            hasPose: data.poseLandmarks !== null,
-            hasLeftHand: data.leftHandLandmarks !== null,
-            hasRightHand: data.rightHandLandmarks !== null,
-            faceCount: result.faceLandmarks.length,
-            timestamp: Date.now(),
-            // Optionally send landmark data (be careful with data size)
-            // landmarks: data,
-          });
-        }
-      } catch (error) {
-        console.error("❌ Holistic detection error:", error);
       }
-    };
 
-    // Run detection every frame (using requestAnimationFrame)
-    let animationFrameId;
+      emitToSocket({
+        hasFace: faceCount > 0,
+        hasPose: data.poseLandmarks !== null,
+        hasLeftHand: data.leftHandLandmarks !== null,
+        hasRightHand: data.rightHandLandmarks !== null,
+        faceCount,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      console.error("❌ Holistic detection error:", error);
+    } finally {
+      isDetectingRef.current = false;
+    }
+  }, [videoRef, emitToSocket]); // refs are stable — this rarely re-creates
 
-    const detectionLoop = () => {
-      detectHolistic();
-      animationFrameId = requestAnimationFrame(detectionLoop);
-    };
+  // ── 4. Start / stop the interval ─────────────────────────────────────────
+  useEffect(() => {
+    if (!isEnabled || !isInitialized) {
+      return;
+    }
 
-    detectionLoop();
+    console.log(
+      `👁️ Starting holistic detection (${DETECTION_INTERVAL_MS}ms interval)`,
+    );
+
+    // setInterval instead of requestAnimationFrame: decoupled from the paint
+    // cycle, so audio processing callbacks get uncontested CPU time between
+    // detection ticks.
+    detectionTimerRef.current = setInterval(
+      runDetection,
+      DETECTION_INTERVAL_MS,
+    );
 
     return () => {
-      if (animationFrameId) {
-        cancelAnimationFrame(animationFrameId);
+      if (detectionTimerRef.current) {
+        clearInterval(detectionTimerRef.current);
+        detectionTimerRef.current = null;
       }
-      console.log("🛑 Holistic detection loop stopped");
+      isDetectingRef.current = false;
+      console.log("🛑 Holistic detection stopped");
     };
-  }, [isEnabled, isInitialized, videoElement, socket]);
+  }, [isEnabled, isInitialized, runDetection]);
 
   return {
     detectionData,
