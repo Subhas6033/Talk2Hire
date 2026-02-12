@@ -1,72 +1,94 @@
-const { pool } = require("./Config/database.config.js");
+const { pool } = require("./Config/database.config");
 
-async function migrateSkillsColumn() {
+async function runMigration() {
+  const connection = await pool.getConnection();
+
   try {
-    console.log("🔄 Starting migration: Setting up skills columns...");
+    console.log("🚀 Starting screen recording migration...");
 
-    // Step 1: Drop cv_extracted_skills column if it exists
-    try {
-      await pool.execute(`
-        ALTER TABLE users 
-        DROP COLUMN cv_extracted_skills;
-      `);
-      console.log("✅ Removed cv_extracted_skills column");
-    } catch (err) {
-      if (err.code === "ER_CANT_DROP_FIELD_OR_KEY") {
-        console.log("⚠️ cv_extracted_skills column doesn't exist, skipping...");
-      } else {
-        throw err;
-      }
-    }
+    await connection.beginTransaction();
 
-    // Step 2: Check if 'skill' column exists and rename to 'skills' if needed
-    const [columns] = await pool.execute(`
-      SHOW COLUMNS FROM users LIKE 'skill';
+    // =====================================================
+    // Create interview_screen_recordings table
+    // =====================================================
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS interview_screen_recordings (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        interview_id VARCHAR(255) NOT NULL,
+        user_id VARCHAR(255) NOT NULL,
+        original_filename VARCHAR(500) NOT NULL,
+        ftp_path VARCHAR(1000) DEFAULT NULL,
+        ftp_url VARCHAR(1000) DEFAULT NULL,
+        file_size BIGINT DEFAULT 0,
+        duration DECIMAL(10,2) DEFAULT NULL,
+        video_codec VARCHAR(50) DEFAULT NULL,
+        video_bitrate INT DEFAULT NULL,
+        resolution VARCHAR(20) DEFAULT NULL,
+        frame_rate DECIMAL(5,2) DEFAULT NULL,
+        upload_status ENUM('pending','uploading','completed','failed') DEFAULT 'pending',
+        upload_progress INT DEFAULT 0,
+        total_chunks INT DEFAULT 0,
+        checksum VARCHAR(64) DEFAULT NULL,
+        error_message TEXT DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_interview_id (interview_id),
+        INDEX idx_user_id (user_id),
+        INDEX idx_upload_status (upload_status),
+        INDEX idx_created_at (created_at),
+        INDEX idx_interview_status (interview_id, upload_status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
-    if (columns.length > 0) {
-      // Rename 'skill' to 'skills'
-      await pool.execute(`
-        ALTER TABLE users 
-        CHANGE COLUMN skill skills TEXT;
-      `);
-      console.log("✅ Renamed 'skill' to 'skills' and changed to TEXT");
-    } else {
-      // Check if 'skills' already exists
-      const [skillsColumns] = await pool.execute(`
-        SHOW COLUMNS FROM users LIKE 'skills';
-      `);
+    console.log("✅ interview_screen_recordings table ready");
 
-      if (skillsColumns.length === 0) {
-        // Add new 'skills' column
-        await pool.execute(`
-          ALTER TABLE users 
-          ADD COLUMN skills TEXT AFTER resume_upload_status;
-        `);
-        console.log("✅ Added new 'skills' column as TEXT");
-      } else {
-        // Just modify to TEXT if it exists but is too small
-        await pool.execute(`
-          ALTER TABLE users 
-          MODIFY COLUMN skills TEXT;
-        `);
-        console.log("✅ Modified 'skills' column to TEXT");
-      }
-    }
+    // =====================================================
+    // Create screen_recording_chunks table
+    // =====================================================
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS screen_recording_chunks (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        screen_recording_id INT NOT NULL,
+        chunk_number INT NOT NULL,
+        chunk_size BIGINT NOT NULL,
+        temp_ftp_path VARCHAR(1000) DEFAULT NULL,
+        checksum VARCHAR(64) DEFAULT NULL,
+        is_uploaded BOOLEAN DEFAULT TRUE,
+        deleted_at TIMESTAMP NULL DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_screen_recording_id (screen_recording_id),
+        INDEX idx_chunk_number (chunk_number),
+        INDEX idx_deleted_at (deleted_at),
+        UNIQUE KEY unique_screen_chunk (screen_recording_id, chunk_number),
+        CONSTRAINT fk_screen_recording
+          FOREIGN KEY (screen_recording_id)
+          REFERENCES interview_screen_recordings(id)
+          ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
 
-    console.log("✅ Migration completed successfully!");
-    console.log("📝 Final schema:");
-    console.log("   - cv_extracted_skills: REMOVED");
-    console.log(
-      "   - skills: TEXT (can store large comma-separated skill lists)",
-    );
+    console.log("✅ screen_recording_chunks table ready");
 
-    process.exit(0);
+    // =====================================================
+    // Additional index
+    // =====================================================
+    await connection.execute(`
+      CREATE INDEX idx_failed_uploads
+      ON interview_screen_recordings (upload_status, created_at);
+    `);
+
+    console.log("✅ Index created");
+
+    await connection.commit();
+    console.log("🎉 Migration completed successfully!");
   } catch (error) {
+    await connection.rollback();
     console.error("❌ Migration failed:", error);
-    process.exit(1);
+  } finally {
+    connection.release();
+    process.exit();
   }
 }
 
-// Run migration
-migrateSkillsColumn();
+runMigration();

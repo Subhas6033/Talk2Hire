@@ -25,6 +25,7 @@ import {
   completeInterview,
   initializeInterview,
 } from "../API/interviewApi";
+import useAudioRecording from "./useAudioRecording";
 
 const AUDIO_CONFIG = {
   MIN_BUFFER_SIZE: 3,
@@ -40,12 +41,12 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   // Refs
   const socketRef = useRef(null);
   const audioCtxRef = useRef(null);
+  const audioRecording = useAudioRecording(socketRef, interviewId, userId);
   const micStreamRef = useRef(null);
   const micProcessorRef = useRef(null);
   const currentSourceRef = useRef(null);
   const recognitionTimeoutRef = useRef(null);
   const recordingTimerRef = useRef(null);
-  const isCleaningUpRef = useRef(false);
 
   // Audio queue stored ONLY in ref
   const audioQueueRef = useRef([]);
@@ -74,17 +75,32 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     micStreamingActiveRef.current = interview.micStreamingActive;
   }, [interview]);
 
-  // Initialize AudioContext
+  // ✅ FIX: Initialize AudioContext with user gesture
   useEffect(() => {
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)({
-      sampleRate: AUDIO_CONFIG.SAMPLE_RATE,
-    });
-    audioCtxRef.current = audioCtx;
-    console.log(`🔊 AudioContext initialized at ${AUDIO_CONFIG.SAMPLE_RATE}Hz`);
+    const initAudioContext = () => {
+      if (!audioCtxRef.current) {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)(
+          {
+            sampleRate: AUDIO_CONFIG.SAMPLE_RATE,
+          },
+        );
+        audioCtxRef.current = audioCtx;
+        console.log(
+          `🔊 AudioContext initialized at ${AUDIO_CONFIG.SAMPLE_RATE}Hz`,
+        );
+      }
+    };
+
+    // Initialize on user interaction
+    const handleInteraction = () => {
+      initAudioContext();
+      document.removeEventListener("click", handleInteraction);
+    };
+    document.addEventListener("click", handleInteraction, { once: true });
 
     return () => {
-      if (audioCtx.state !== "closed") {
-        audioCtx.close();
+      if (audioCtxRef.current?.state !== "closed") {
+        audioCtxRef.current?.close();
       }
     };
   }, []);
@@ -107,7 +123,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }
   }, [interview.isInitializing, interview.status, dispatch]);
 
-  // ✅ NEW: Auto-start when server is ready
+  // Auto-start when server is ready
   useEffect(() => {
     if (
       interview.serverReady &&
@@ -190,281 +206,194 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }, AUDIO_CONFIG.RECOGNITION_DELAY);
   }, [clearRecognitionTimeout, shouldEnableRecognition, dispatch]);
 
+  // Safe base64 → ArrayBuffer converter
+  const base64ToArrayBuffer = (base64) => {
+    // Replace URL-safe chars
+    base64 = base64.replace(/-/g, "+").replace(/_/g, "/");
+
+    // Pad with '='
+    while (base64.length % 4) {
+      base64 += "=";
+    }
+
+    const binaryString = window.atob(base64);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes.buffer;
+  };
+
+  // ✅ FIXED: Play the next chunk in the queue
   const playNextChunk = useCallback(async () => {
+    if (audioQueueRef.current.length === 0 || !audioCtxRef.current) {
+      isPlayingRef.current = false;
+      dispatch(setIsPlaying(false));
+      console.log("⏹️ No more audio to play");
+      return;
+    }
+
     const audioCtx = audioCtxRef.current;
-    if (!audioCtx) {
-      console.error("❌ No AudioContext");
-      dispatch(setIsPlaying(false));
-      return;
+
+    // Resume AudioContext if suspended
+    if (audioCtx.state === "suspended") {
+      await audioCtx.resume();
+      console.log("🔊 AudioContext resumed for playback");
     }
 
-    if (audioQueueRef.current.length === 0) {
-      if (ttsStreamActiveRef.current) {
-        console.log("⏳ Queue empty but TTS active - waiting for more chunks");
-        waitingForMoreChunksRef.current = true;
+    isPlayingRef.current = true;
+    dispatch(setIsPlaying(true));
 
-        setTimeout(() => {
-          if (audioQueueRef.current.length > 0) {
-            console.log("✅ Received more chunks - continuing playback");
-            playNextChunk();
-          } else {
-            console.log("⏳ No more chunks received - ending playback");
-            waitingForMoreChunksRef.current = false;
-            dispatch(setIsPlaying(false));
+    const buffer = audioQueueRef.current.shift();
 
-            if (!ttsStreamActiveRef.current) {
-              enableRecognitionAfterDelay();
-            }
-          }
-        }, 2000);
-        return;
+    // ✅ FIX: Stop previous source if still playing
+    if (currentSourceRef.current) {
+      try {
+        currentSourceRef.current.stop();
+      } catch (e) {
+        // Already stopped
       }
-
-      console.log("✅ Audio queue empty and TTS complete");
-      dispatch(setIsPlaying(false));
-      waitingForMoreChunksRef.current = false;
-      enableRecognitionAfterDelay();
-      return;
     }
 
-    try {
-      dispatch(setIsPlaying(true));
-      dispatch(disableListening());
-      waitingForMoreChunksRef.current = false;
+    const source = audioCtx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audioCtx.destination);
 
-      if (audioCtx.state === "suspended") {
-        await audioCtx.resume();
+    // ✅ FIX: Store current source
+    currentSourceRef.current = source;
+
+    // ✅ FIX: Connect to audio recording for mixed audio
+    if (audioRecording.connectTTSAudio) {
+      try {
+        audioRecording.connectTTSAudio(buffer);
+      } catch (err) {
+        console.warn("⚠️ Could not connect TTS to recording:", err);
       }
+    }
 
-      const buffer = audioQueueRef.current.shift();
-      dispatch(decrementAudioQueue());
-
-      console.log("🔊 Playing chunk, queue:", audioQueueRef.current.length);
-
-      const byteLength = buffer.byteLength - (buffer.byteLength % 2);
-      const alignedBuffer = buffer.slice(0, byteLength);
-
-      const pcm16 = new Int16Array(alignedBuffer);
-      const pcm32 = new Float32Array(pcm16.length);
-      for (let i = 0; i < pcm16.length; i++) {
-        pcm32[i] = pcm16[i] / 32768.0;
-      }
-
-      const audioBuffer = audioCtx.createBuffer(
-        1,
-        pcm32.length,
-        AUDIO_CONFIG.SAMPLE_RATE,
-      );
-      audioBuffer.copyToChannel(pcm32, 0);
-
-      const source = audioCtx.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(audioCtx.destination);
-      currentSourceRef.current = source;
-
-      source.onended = () => {
-        currentSourceRef.current = null;
-        console.log(
-          "🔊 Chunk finished, remaining:",
-          audioQueueRef.current.length,
-        );
-        playNextChunk();
-      };
-
-      source.start(0);
-    } catch (error) {
-      console.error("❌ Audio playback error:", error);
+    source.onended = () => {
+      isPlayingRef.current = false;
       dispatch(setIsPlaying(false));
       currentSourceRef.current = null;
-      waitingForMoreChunksRef.current = false;
+
+      console.log(
+        `✅ Audio chunk finished (${audioQueueRef.current.length} remaining)`,
+      );
 
       if (audioQueueRef.current.length > 0) {
-        setTimeout(() => playNextChunk(), 100);
-      } else if (!ttsStreamActiveRef.current) {
+        playNextChunk(); // Play next queued chunk
+      } else {
+        console.log("✅ All audio played, enabling recognition");
+        // Enable recognition after TTS ends
         enableRecognitionAfterDelay();
       }
-    }
-  }, [dispatch, enableRecognitionAfterDelay]);
+    };
 
-  const startMicStreaming = useCallback(async () => {
-    if (micStreamRef.current) {
-      console.log("🎤 Mic already streaming");
-      return;
-    }
+    source.start(0);
+    console.log(
+      `🔊 Playing TTS audio chunk (${audioQueueRef.current.length} remaining in queue)`,
+    );
+  }, [dispatch, enableRecognitionAfterDelay, audioRecording]);
 
-    try {
-      console.log("🎤 Requesting microphone...");
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          sampleRate: AUDIO_CONFIG.SAMPLE_RATE,
-          channelCount: 1,
-        },
+  const getAudioContext = async () => {
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (
+        window.AudioContext || window.webkitAudioContext
+      )({
+        sampleRate: AUDIO_CONFIG.SAMPLE_RATE,
       });
-
-      micStreamRef.current = stream;
-      dispatch(setMicPermissionGranted(true));
-      console.log("✅ Microphone granted");
-
-      const audioCtx = audioCtxRef.current;
-      const source = audioCtx.createMediaStreamSource(stream);
-      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-      micProcessorRef.current = processor;
-
-      source.connect(processor);
-      processor.connect(audioCtx.destination);
-
-      dispatch(setMicStreamingActive(true));
-
-      processor.onaudioprocess = (e) => {
-        if (!micStreamingActiveRef.current) return;
-
-        const input = e.inputBuffer.getChannelData(0);
-        const pcm16 = new Int16Array(input.length);
-
-        for (let i = 0; i < input.length; i++) {
-          const s = Math.max(-1, Math.min(1, input[i]));
-          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-        }
-
-        if (
-          socketRef.current?.connected &&
-          isListeningRef.current &&
-          canListenRef.current
-        ) {
-          socketRef.current.emit("user_audio_chunk", pcm16.buffer);
-        }
-      };
-
-      console.log("🎤 Streaming started");
-    } catch (error) {
-      console.error("❌ Microphone error:", error);
-      alert("Microphone access denied. Please allow and try again.");
+      console.log("🔊 AudioContext created");
     }
-  }, [dispatch]);
 
-  // Event Handlers
-  const handleQuestion = useCallback(
-    (payload) => {
-      const questionText =
-        typeof payload === "string" ? payload : payload?.question || "";
+    if (audioCtxRef.current.state === "suspended") {
+      await audioCtxRef.current.resume();
+      console.log("🔊 AudioContext resumed");
+    }
 
-      console.log("❓ Question:", questionText);
-      dispatch(setCurrentQuestion(questionText));
-      dispatch(setTtsStreamActive(true));
-      dispatch(disableListening());
-      dispatch(clearAudioQueue());
-      clearRecognitionTimeout();
-      audioQueueRef.current = [];
-      waitingForMoreChunksRef.current = false;
-    },
-    [dispatch, clearRecognitionTimeout],
-  );
+    return audioCtxRef.current;
+  };
 
-  const handleNextQuestion = useCallback(
-    (payload) => {
-      console.log("📨 Next question:", payload);
-      dispatch(receiveNextQuestion(payload));
-      dispatch(setTtsStreamActive(true));
-      dispatch(disableListening());
-      dispatch(clearAudioQueue());
-      clearRecognitionTimeout();
-      audioQueueRef.current = [];
-      waitingForMoreChunksRef.current = false;
-    },
-    [dispatch, clearRecognitionTimeout],
-  );
-
-  const handleIdlePrompt = useCallback(
-    ({ text }) => {
-      console.log("⏰ Idle prompt:", text);
-      dispatch(setIdlePrompt(text));
-      dispatch(setTtsStreamActive(true));
-      dispatch(disableListening());
-      dispatch(clearAudioQueue());
-      clearRecognitionTimeout();
-      audioQueueRef.current = [];
-      waitingForMoreChunksRef.current = false;
-    },
-    [dispatch, clearRecognitionTimeout],
-  );
-
-  const handleTranscriptReceived = useCallback(
-    ({ text }) => {
-      console.log("📝 Transcript:", text);
-      dispatch(setUserText(text));
-      dispatch(disableListening());
-    },
-    [dispatch],
-  );
-
-  const handleFinalAnswer = useCallback(
-    (text) => {
-      console.log("✅ Final answer:", text);
-      dispatch(receiveFinalAnswer(text));
-    },
-    [dispatch],
-  );
-
+  // ✅ FIXED: Handle incoming TTS audio with better error handling
   const handleTtsAudio = useCallback(
-    (chunk) => {
-      if (!chunk) {
-        console.log("⚠️ Empty chunk");
-        return;
-      }
+    async (data) => {
+      try {
+        console.log("🔊 Received TTS audio data:", {
+          hasAudio: !!data?.audio,
+          dataType: typeof data,
+          audioType: typeof data?.audio,
+          audioLength: data?.audio?.length,
+        });
 
-      let arrayBuffer;
-      if (chunk instanceof ArrayBuffer) {
-        arrayBuffer = chunk;
-      } else if (chunk instanceof Uint8Array || chunk instanceof Buffer) {
-        arrayBuffer = chunk.buffer.slice(
-          chunk.byteOffset,
-          chunk.byteOffset + chunk.byteLength,
+        // ✅ FIX: Handle both formats (object with audio property OR direct string)
+        let base64Audio;
+        if (typeof data === "string") {
+          // Direct base64 string
+          base64Audio = data;
+          console.log("📦 TTS data is direct base64 string");
+        } else if (data && data.audio) {
+          // Object with audio property
+          base64Audio = data.audio;
+          console.log("📦 TTS data has audio property");
+        } else {
+          console.warn("⚠️ Invalid TTS audio data format:", data);
+          return;
+        }
+
+        if (!base64Audio || base64Audio.length === 0) {
+          console.warn("⚠️ Empty audio data received");
+          return;
+        }
+
+        // ✅ FIX: Update last chunk received time
+        lastChunkReceivedTimeRef.current = Date.now();
+
+        const audioCtx = await getAudioContext();
+
+        // Convert Base64 → ArrayBuffer
+        const arrayBuffer = base64ToArrayBuffer(base64Audio);
+        console.log(`✅ Decoded ${arrayBuffer.byteLength} bytes from base64`);
+
+        // Decode raw PCM 16-bit LE into Float32Array
+        const numSamples = arrayBuffer.byteLength / 2;
+        const audioBuffer = audioCtx.createBuffer(
+          1,
+          numSamples,
+          AUDIO_CONFIG.SAMPLE_RATE,
         );
-      } else if (chunk.buffer) {
-        arrayBuffer = chunk.buffer.slice(
-          chunk.byteOffset,
-          chunk.byteOffset + chunk.byteLength,
+
+        const channelData = audioBuffer.getChannelData(0);
+        const dataView = new DataView(arrayBuffer);
+
+        for (let i = 0; i < numSamples; i++) {
+          channelData[i] = dataView.getInt16(i * 2, true) / 32768;
+        }
+
+        // Push to queue
+        audioQueueRef.current.push(audioBuffer);
+        console.log(
+          `📦 TTS audio queued (queue size: ${audioQueueRef.current.length}, duration: ${audioBuffer.duration.toFixed(2)}s)`,
         );
-      } else {
-        console.error("❌ Unknown chunk format:", typeof chunk);
-        return;
-      }
 
-      if (arrayBuffer.byteLength === 0) {
-        console.log("⚠️ Empty buffer");
-        return;
-      }
+        // ✅ FIX: Disable listening while TTS is active
+        dispatch(disableListening());
 
-      lastChunkReceivedTimeRef.current = Date.now();
-
-      dispatch(setTtsStreamActive(true));
-      dispatch(disableListening());
-      clearRecognitionTimeout();
-
-      audioQueueRef.current.push(arrayBuffer);
-      dispatch(incrementAudioQueue());
-
-      console.log(`📦 Queue: ${audioQueueRef.current.length}`);
-
-      if (!isPlayingRef.current) {
-        if (
-          audioQueueRef.current.length >= AUDIO_CONFIG.MIN_BUFFER_SIZE ||
-          audioQueueRef.current.length === 1
-        ) {
-          console.log("✅ Starting playback");
+        // Play immediately if not already playing
+        if (!isPlayingRef.current) {
+          console.log("▶️ Starting playback immediately");
           playNextChunk();
         } else {
-          console.log(
-            `⏳ Buffering (${audioQueueRef.current.length}/${AUDIO_CONFIG.MIN_BUFFER_SIZE})`,
-          );
+          console.log("⏸️ Audio already playing, chunk queued");
         }
+      } catch (err) {
+        console.error("❌ TTS playback error:", err);
+        console.error("Error stack:", err.stack);
       }
     },
-    [dispatch, clearRecognitionTimeout, playNextChunk],
+    [dispatch, playNextChunk],
   );
 
+  // Handle TTS stream end
   const handleTtsEnd = useCallback(() => {
     console.log("🔔 TTS stream ended");
     dispatch(setTtsStreamActive(false));
@@ -485,13 +414,170 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       console.log("✅ No audio, enabling recognition");
       enableRecognitionAfterDelay();
     } else {
-      console.log("⏳ Audio playing, will enable when done");
+      console.log("⏳ Audio playing, will enable recognition when done");
     }
   }, [dispatch, playNextChunk, enableRecognitionAfterDelay]);
 
+  // ✅ FIXED: Start microphone streaming with audio recording connection
+  const startMicStreaming = useCallback(async () => {
+    if (micStreamRef.current) {
+      console.log("🎤 Mic already streaming");
+      return;
+    }
+
+    if (!socketRef.current?.connected) {
+      console.error("❌ Socket not connected, cannot start mic streaming");
+      return;
+    }
+
+    try {
+      console.log("🎤 Requesting microphone...");
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          sampleRate: AUDIO_CONFIG.SAMPLE_RATE,
+          channelCount: 1,
+        },
+      });
+
+      micStreamRef.current = stream;
+      dispatch(setMicPermissionGranted(true));
+      console.log("✅ Microphone granted");
+
+      const audioCtx = await getAudioContext();
+
+      const source = audioCtx.createMediaStreamSource(stream);
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      micProcessorRef.current = processor;
+
+      source.connect(processor);
+      processor.connect(audioCtx.destination);
+
+      // ✅ FIX: Connect microphone to audio recording
+      if (audioRecording.connectMicrophoneAudio) {
+        await audioRecording.connectMicrophoneAudio(stream);
+        console.log("✅ Microphone connected to audio recording");
+      }
+
+      dispatch(setMicStreamingActive(true));
+
+      let audioChunksSent = 0;
+      processor.onaudioprocess = (e) => {
+        if (!micStreamingActiveRef.current) return;
+
+        const input = e.inputBuffer.getChannelData(0);
+        const pcm16 = new Int16Array(input.length);
+
+        for (let i = 0; i < input.length; i++) {
+          const s = Math.max(-1, Math.min(1, input[i]));
+          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        }
+
+        // ✅ FIX: Only send audio when listening is enabled
+        if (
+          socketRef.current?.connected &&
+          isListeningRef.current &&
+          canListenRef.current
+        ) {
+          socketRef.current.emit("user_audio_chunk", pcm16.buffer);
+          audioChunksSent++;
+
+          if (audioChunksSent % 50 === 0) {
+            console.log(`🎤 Sent ${audioChunksSent} audio chunks to STT`);
+          }
+        }
+      };
+
+      console.log("🎤 Mic streaming started");
+    } catch (err) {
+      console.error("❌ Microphone error:", err);
+      alert(
+        "Microphone access denied or unavailable. Please allow access and try again.",
+      );
+    }
+  }, [dispatch, audioRecording]);
+
+  // Event Handlers
+  const handleQuestion = useCallback(
+    (payload) => {
+      const questionText =
+        typeof payload === "string" ? payload : payload?.question || "";
+
+      console.log("❓ Question received:", questionText.substring(0, 100));
+      dispatch(setCurrentQuestion(questionText));
+      dispatch(setTtsStreamActive(true));
+      dispatch(disableListening());
+      dispatch(clearAudioQueue());
+      clearRecognitionTimeout();
+      audioQueueRef.current = [];
+      waitingForMoreChunksRef.current = false;
+    },
+    [dispatch, clearRecognitionTimeout],
+  );
+
+  const handleNextQuestion = useCallback(
+    (payload) => {
+      console.log("📨 Next question received:", payload);
+      dispatch(receiveNextQuestion(payload));
+      dispatch(setTtsStreamActive(true));
+      dispatch(disableListening());
+      dispatch(clearAudioQueue());
+      clearRecognitionTimeout();
+      audioQueueRef.current = [];
+      waitingForMoreChunksRef.current = false;
+    },
+    [dispatch, clearRecognitionTimeout],
+  );
+
+  const handleIdlePrompt = useCallback(
+    ({ text }) => {
+      console.log("⏰ Idle prompt received:", text);
+      dispatch(setIdlePrompt(text));
+      dispatch(setTtsStreamActive(true));
+      dispatch(disableListening());
+      dispatch(clearAudioQueue());
+      clearRecognitionTimeout();
+      audioQueueRef.current = [];
+      waitingForMoreChunksRef.current = false;
+    },
+    [dispatch, clearRecognitionTimeout],
+  );
+
+  const handleTranscriptReceived = useCallback(
+    ({ text }) => {
+      console.log("📝 Final transcript received:", text);
+      dispatch(setUserText(text));
+      dispatch(disableListening());
+    },
+    [dispatch],
+  );
+
+  const handleFinalAnswer = useCallback(
+    (text) => {
+      console.log("✅ Final answer:", text);
+      dispatch(receiveFinalAnswer(text));
+    },
+    [dispatch],
+  );
+
+  // Initialize audio recording on mount
+  useEffect(() => {
+    const initAudio = async () => {
+      try {
+        await audioRecording.initializeAudioRecording();
+        console.log("✅ Audio recording initialized");
+      } catch (error) {
+        console.error("❌ Failed to init audio recording:", error);
+      }
+    };
+
+    initAudio();
+  }, [audioRecording]);
+
   const handleInterviewComplete = useCallback(
     (data) => {
-      console.log("🎉 Complete:", data);
+      console.log("🎉 Interview complete:", data);
       dispatch(completeInterview({ totalQuestions: data.totalQuestions }));
       dispatch(setMicStreamingActive(false));
     },
@@ -566,6 +652,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     handleFinalAnswer,
     handleTtsAudio,
     handleTtsEnd,
+    audioRecording,
     handleInterviewComplete,
     playNextChunk,
     startMicStreaming,

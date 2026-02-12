@@ -29,15 +29,6 @@ const ProfilePage = () => {
   const [selectedResume, setSelectedResume] = useState(null);
   const resumeInputRef = useRef();
 
-  // ✅ Poll for resume status if uploading
-  /* useEffect(() => {
-    if (user?.resume_upload_status === "uploading") {
-      const interval = setInterval(() => {}, 5000);
-
-      return () => clearInterval(interval);
-    }
-  }, [user?.resume_upload_status]); */
-
   if (!user) return null;
 
   const firstLetter = user?.fullName.split(" ")[0];

@@ -155,7 +155,6 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
       if (uniqueSkills.length > 0) {
         onSkillsChange(uniqueSkills);
         setHasAutoSelected(true);
-        console.log("✅ Auto-selected skills:", uniqueSkills);
       }
     }
   }, [cvSkills, suggestedSkills, hasAutoSelected, authLoading, onSkillsChange]);

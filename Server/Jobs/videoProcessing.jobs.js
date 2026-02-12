@@ -7,12 +7,6 @@ const {
 const VideoChunkMerger = require("../Service/videoMerger.service");
 const config = require("../Config/videoProcessing.config");
 
-/**
- * Background Video Processing Jobs
- * Handles automated video upload, retry, cleanup, verification AND AUTO-MERGE
- * with timeout handling and retry logic
- */
-
 class VideoProcessingJobs {
   constructor() {
     this.isProcessing = false;
@@ -20,10 +14,6 @@ class VideoProcessingJobs {
     this.mergeQueue = new Set();
   }
 
-  /**
-   * ✅ Auto-merge videos for completed interviews with timeout protection
-   * Run every 2 minutes to check for completed interviews
-   */
   async autoMergeCompletedInterviews() {
     try {
       console.log(

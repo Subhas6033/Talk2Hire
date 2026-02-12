@@ -30,9 +30,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
   const [isCameraOpen, setIsCameraOpen] = useState(false);
 
   const [sessionData, setSessionData] = useState(null);
-  // ✅ REMOVE STATE - use only ref
-  // const [primaryCameraStream, setPrimaryCameraStream] = useState(null);
-
   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
   const [questionsReady, setQuestionsReady] = useState(false);
 
@@ -65,7 +62,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
 
     try {
-      console.log("🚀 Starting question generation in background...");
       setIsGeneratingQuestions(true);
       setQuestionsReady(false);
 
@@ -75,8 +71,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
           skills: !hasExistingSkills ? selectedSkillsRef.current : undefined,
         }),
       ).unwrap();
-
-      console.log("✅ Questions generated:", result);
 
       if (!result?.sessionId) {
         throw new Error("Session ID not returned from server");
@@ -117,8 +111,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
       setError(null);
 
       selectedSkillsRef.current = skills;
-
-      console.log("📋 Opening guidelines modal...");
 
       setOpenGuideLines(true);
       setStatus("succeeded");
@@ -241,7 +233,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
         ...sessionData,
         cameraStream: stream,
       });
-      console.log("✅ Interview started successfully!");
     } catch (err) {
       console.error("❌ Error starting interview:", err);
       alert("Failed to start interview: " + err.message);
@@ -252,7 +243,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
   // ✅ Watch for questions ready - but use ref for stream
   useEffect(() => {
     if (questionsReady && !isGeneratingQuestions) {
-      console.log("✅ Questions ready, attempting to start interview...");
       tryStartInterview();
     }
   }, [questionsReady, isGeneratingQuestions]);
@@ -260,16 +250,11 @@ const InterviewSettings = ({ onInterviewReady }) => {
   // ✅ Cleanup on unmount
   useEffect(() => {
     return () => {
-      console.log("🧹 InterviewSettings cleanup");
-
       // Only stop if we haven't started the interview yet
       if (!hasStartedInterviewRef.current && cameraStreamRef.current) {
         console.log("🛑 Stopping camera (interview never started)");
         cameraStreamRef.current.getTracks().forEach((track) => track.stop());
       } else if (hasStartedInterviewRef.current) {
-        console.log(
-          "✅ Interview started - NOT stopping camera (owned by Interview.jsx now)",
-        );
       }
 
       cameraStreamRef.current = null;

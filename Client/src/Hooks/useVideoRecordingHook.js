@@ -356,7 +356,7 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
         },
       });
 
-      // ✅ Wait for server response with promise
+      // ✅ FIXED: Accept ANY video_recording_ready response
       const serverResponsePromise = new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
           socketRef.current.off("video_recording_ready", handler);
@@ -365,6 +365,11 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
         }, 10000);
 
         const handler = (response) => {
+          // ✅ FIX: Accept if it's for primary_camera OR if no videoType specified
+          if (response?.videoType && response.videoType !== "primary_camera") {
+            return; // Ignore other video types
+          }
+
           clearTimeout(timeout);
           socketRef.current.off("video_recording_error", errorHandler);
           console.log("✅ Server confirmed ready:", response);
@@ -372,14 +377,19 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
         };
 
         const errorHandler = (error) => {
+          // ✅ FIX: Accept error if it's for this type OR unspecified
+          if (error?.videoType && error.videoType !== "primary_camera") {
+            return;
+          }
+
           clearTimeout(timeout);
           socketRef.current.off("video_recording_ready", handler);
           console.error("❌ Server error:", error);
           reject(new Error(error.error || error.message || "Server error"));
         };
 
-        socketRef.current.once("video_recording_ready", handler);
-        socketRef.current.once("video_recording_error", errorHandler);
+        socketRef.current.on("video_recording_ready", handler);
+        socketRef.current.on("video_recording_error", errorHandler);
       });
 
       try {
