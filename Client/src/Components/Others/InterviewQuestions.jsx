@@ -121,10 +121,13 @@ const InterviewQuestions = ({
   ]);
 
   // ── PRIMARY camera — callback ref fires on mount AND when cameraStream changes
-  const primaryCallbackRef = useCallback((el) => {
-    videoRef.current = el;
-    if (el && cameraStream) attachStream(el, cameraStream);
-  }, []); // intentionally empty — cameraStream handled by effect below
+  const primaryCallbackRef = useCallback(
+    (el) => {
+      videoRef.current = el;
+      if (el && cameraStream) attachStream(el, cameraStream);
+    },
+    [cameraStream],
+  ); // ✅ FIXED: Added cameraStream as dependency
 
   useEffect(() => {
     if (videoRef.current && cameraStream)
@@ -135,10 +138,13 @@ const InterviewQuestions = ({
   const secondaryStream =
     secondaryCameraStream || secondaryCamera.secondaryCameraStream;
 
-  const secondaryCallbackRef = useCallback((el) => {
-    secondaryVideoRef.current = el;
-    if (el && secondaryStream) attachStream(el, secondaryStream);
-  }, []); // effect below handles updates
+  const secondaryCallbackRef = useCallback(
+    (el) => {
+      secondaryVideoRef.current = el;
+      if (el && secondaryStream) attachStream(el, secondaryStream);
+    },
+    [secondaryStream],
+  ); // ✅ FIXED: Added secondaryStream as dependency
 
   useEffect(() => {
     if (secondaryVideoRef.current && secondaryStream)
@@ -146,11 +152,14 @@ const InterviewQuestions = ({
   }, [secondaryStream]);
 
   // ── SCREEN recording
-  const screenCallbackRef = useCallback((el) => {
-    screenVideoRef.current = el;
-    if (el && screenRecording.screenStream)
-      attachStream(el, screenRecording.screenStream);
-  }, []); // effect below handles updates
+  const screenCallbackRef = useCallback(
+    (el) => {
+      screenVideoRef.current = el;
+      if (el && screenRecording.screenStream)
+        attachStream(el, screenRecording.screenStream);
+    },
+    [screenRecording.screenStream],
+  ); // ✅ FIXED: Added screenStream as dependency
 
   useEffect(() => {
     if (screenVideoRef.current && screenRecording.screenStream)
@@ -411,7 +420,7 @@ const InterviewQuestions = ({
   );
 
   return (
-    <section className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 p-4 md:p-6">
+    <section className="min-h-screen bg-linear-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 p-4 md:p-6">
       {/* ── Screen share sticky prompt ──────────────────────────────────── */}
       {showScreenSharePrompt && !screenRecording.isRecording && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-purple-600 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-4 max-w-lg w-[calc(100%-2rem)]">
@@ -455,15 +464,15 @@ const InterviewQuestions = ({
           <div className="lg:col-span-2">
             <Card className="flex flex-col overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
               {/* Header */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-indigo-50 to-purple-50 dark:from-gray-800 dark:to-gray-700 flex-wrap gap-3">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-linear-to-r from-indigo-50 to-purple-50 dark:from-gray-800 dark:to-gray-700 flex-wrap gap-3">
                 <div className="flex items-center gap-3">
                   <div
                     className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all shadow-lg ${
                       interview.isPlaying
-                        ? "bg-gradient-to-br from-blue-500 to-blue-600 shadow-blue-500/50"
+                        ? "bg-linear-to-br from-blue-500 to-blue-600 shadow-blue-500/50"
                         : interview.isListening
-                          ? "bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-emerald-500/50"
-                          : "bg-gradient-to-br from-gray-600 to-gray-700"
+                          ? "bg-linear-to-br from-emerald-500 to-emerald-600 shadow-emerald-500/50"
+                          : "bg-linear-to-br from-gray-600 to-gray-700"
                     }`}
                   >
                     {interview.isPlaying ? (
@@ -595,7 +604,7 @@ const InterviewQuestions = ({
               {/* Main Content */}
               <div className="flex-1 p-6 bg-white dark:bg-gray-800 min-h-96">
                 {evaluationStatus === "started" && (
-                  <div className="mb-4 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-800 rounded-xl">
+                  <div className="mb-4 p-4 bg-linear-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-800 rounded-xl">
                     <div className="flex items-center gap-3">
                       <div className="animate-spin w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full" />
                       <div>
@@ -613,7 +622,7 @@ const InterviewQuestions = ({
                 {interview.status === "live" && interview.currentQuestion && (
                   <div className="flex flex-col justify-center space-y-6 h-full">
                     {interview.idlePrompt && (
-                      <div className="p-4 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-900/20 dark:to-orange-900/20 border border-amber-200 dark:border-amber-800 rounded-xl">
+                      <div className="p-4 bg-linear-to-r from-amber-50 to-orange-50 dark:from-amber-900/20 dark:to-orange-900/20 border border-amber-200 dark:border-amber-800 rounded-xl">
                         <div className="flex items-center gap-3 mb-2">
                           <svg
                             className="w-5 h-5 text-amber-600"
@@ -639,7 +648,7 @@ const InterviewQuestions = ({
                     )}
                     <div className="space-y-4">
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shrink-0">
+                        <div className="w-8 h-8 rounded-lg bg-linear-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shrink-0">
                           <span className="text-sm font-bold text-white">
                             Q
                           </span>
@@ -669,7 +678,7 @@ const InterviewQuestions = ({
                       </div>
                     )}
                     {interview.liveTranscript && (
-                      <div className="p-4 bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-700 dark:to-gray-600 rounded-xl border border-gray-200 dark:border-gray-600">
+                      <div className="p-4 bg-linear-to-r from-gray-50 to-gray-100 dark:from-gray-700 dark:to-gray-600 rounded-xl border border-gray-200 dark:border-gray-600">
                         <p className="text-sm text-gray-700 dark:text-gray-300 italic leading-relaxed">
                           {interview.liveTranscript}
                         </p>
@@ -691,10 +700,10 @@ const InterviewQuestions = ({
               </div>
 
               {!interview.isInitializing && interview.userText && (
-                <div className="border-t border-gray-200 dark:border-gray-700 p-6 bg-gradient-to-r from-emerald-50 to-teal-50 dark:from-gray-800 dark:to-gray-700">
+                <div className="border-t border-gray-200 dark:border-gray-700 p-6 bg-linear-to-r from-emerald-50 to-teal-50 dark:from-gray-800 dark:to-gray-700">
                   <div className="space-y-3">
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg shrink-0">
+                      <div className="w-8 h-8 rounded-lg bg-linear-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg shrink-0">
                         <span className="text-sm font-bold text-white">A</span>
                       </div>
                       <span className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
@@ -732,7 +741,7 @@ const InterviewQuestions = ({
           <div className="lg:col-span-1 space-y-4">
             {/* 1. Primary Camera */}
             <Card className="overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-              <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-700">
+              <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-linear-to-r from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-700">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <svg
@@ -806,7 +815,7 @@ const InterviewQuestions = ({
 
             {/* 2. Mobile Camera */}
             <Card className="overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-              <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-orange-50 to-red-50 dark:from-orange-900/20 dark:to-red-900/20">
+              <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-linear-to-r from-orange-50 to-red-50 dark:from-orange-900/20 dark:to-red-900/20">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <svg
@@ -856,7 +865,7 @@ const InterviewQuestions = ({
                     style={{ transform: "scaleX(-1)" }}
                   />
                   {!hasSecondaryStream && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-orange-950/60 to-gray-900 gap-3">
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-linear-to-br from-orange-950/60 to-gray-900 gap-3">
                       {secondaryIsActive ? (
                         <>
                           <div className="w-14 h-14 rounded-full bg-orange-500/20 border-2 border-orange-500 flex items-center justify-center">
@@ -917,7 +926,7 @@ const InterviewQuestions = ({
 
             {/* 3. Screen Recording */}
             <Card className="overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-              <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-700">
+              <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-linear-to-r from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-700">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <svg
@@ -956,7 +965,7 @@ const InterviewQuestions = ({
                     className={`w-full h-full object-contain ${screenRecording.screenStream ? "block" : "hidden"}`}
                   />
                   {!screenRecording.screenStream && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-purple-950 to-gray-900 gap-3">
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-linear-to-br from-purple-950 to-gray-900 gap-3">
                       <svg
                         className="w-10 h-10 text-gray-600"
                         fill="none"
@@ -997,7 +1006,7 @@ const InterviewQuestions = ({
         {isInterviewTerminated && (
           <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-50">
             <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 max-w-md mx-4 text-center shadow-2xl">
-              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-red-500 to-red-600 flex items-center justify-center mx-auto mb-6 shadow-xl shadow-red-500/50">
+              <div className="w-20 h-20 rounded-full bg-linear-to-br from-red-500 to-red-600 flex items-center justify-center mx-auto mb-6 shadow-xl shadow-red-500/50">
                 <svg
                   className="w-10 h-10 text-white"
                   fill="none"
