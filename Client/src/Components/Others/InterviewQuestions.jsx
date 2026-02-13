@@ -13,12 +13,29 @@ const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
 // ── Safe stream attachment helper ─────────────────────────────────────────────
 function attachStream(videoEl, stream) {
-  if (!videoEl || !stream) return;
-  if (videoEl.srcObject === stream) return;
+  if (!videoEl || !stream) {
+    console.warn("⚠️ attachStream called with missing params:", {
+      videoEl: !!videoEl,
+      stream: !!stream,
+    });
+    return;
+  }
+  if (videoEl.srcObject === stream) {
+    console.log("✅ Stream already attached to this element");
+    return;
+  }
+
+  console.log("📹 Attaching stream to video element:", {
+    streamId: stream.id,
+    active: stream.active,
+    tracks: stream.getTracks().length,
+  });
+
   videoEl.srcObject = stream;
   videoEl.muted = true;
   videoEl.playsInline = true;
   videoEl.onloadedmetadata = () => {
+    console.log("✅ Video metadata loaded, attempting play...");
     videoEl.play().catch((err) => {
       if (err.name !== "AbortError") console.error("▶️ Video play error:", err);
     });
@@ -83,6 +100,24 @@ const InterviewQuestions = ({
   const [mobileCameraConnected, setMobileCameraConnected] = useState(false);
   const [showScreenSharePrompt, setShowScreenSharePrompt] = useState(false);
 
+  // ✅ ADD: Debug state to track stream availability
+  useEffect(() => {
+    console.log("📊 Stream Status Update:", {
+      primaryStream: !!cameraStream,
+      primaryActive: cameraStream?.active,
+      primaryTracks: cameraStream?.getTracks().length,
+      secondaryProp: !!secondaryCameraStream,
+      secondaryHook: !!secondaryCamera.secondaryCameraStream,
+      screenStream: !!screenRecording.screenStream,
+      screenActive: screenRecording.screenStream?.active,
+    });
+  }, [
+    cameraStream,
+    secondaryCameraStream,
+    secondaryCamera.secondaryCameraStream,
+    screenRecording.screenStream,
+  ]);
+
   // ── Cleanup ───────────────────────────────────────────────────────────────
   const cleanupAllRecordings = useCallback(async () => {
     console.log("🧹 Cleaning up all recordings...");
@@ -120,50 +155,49 @@ const InterviewQuestions = ({
     stopVideoRecording,
   ]);
 
-  // ── PRIMARY camera — callback ref fires on mount AND when cameraStream changes
-  const primaryCallbackRef = useCallback(
-    (el) => {
-      videoRef.current = el;
-      if (el && cameraStream) attachStream(el, cameraStream);
-    },
-    [cameraStream],
-  ); // ✅ FIXED: Added cameraStream as dependency
-
+  // ── PRIMARY camera - ALWAYS attach when stream is available
   useEffect(() => {
-    if (videoRef.current && cameraStream)
+    console.log("🎥 Primary camera effect triggered:", {
+      hasVideoRef: !!videoRef.current,
+      hasStream: !!cameraStream,
+      streamActive: cameraStream?.active,
+    });
+
+    if (videoRef.current && cameraStream) {
+      console.log("✅ Attaching primary camera stream");
       attachStream(videoRef.current, cameraStream);
+    }
   }, [cameraStream]);
 
   // ── SECONDARY camera
   const secondaryStream =
     secondaryCameraStream || secondaryCamera.secondaryCameraStream;
 
-  const secondaryCallbackRef = useCallback(
-    (el) => {
-      secondaryVideoRef.current = el;
-      if (el && secondaryStream) attachStream(el, secondaryStream);
-    },
-    [secondaryStream],
-  ); // ✅ FIXED: Added secondaryStream as dependency
-
   useEffect(() => {
-    if (secondaryVideoRef.current && secondaryStream)
+    console.log("📱 Secondary camera effect triggered:", {
+      hasVideoRef: !!secondaryVideoRef.current,
+      hasStream: !!secondaryStream,
+      streamActive: secondaryStream?.active,
+    });
+
+    if (secondaryVideoRef.current && secondaryStream) {
+      console.log("✅ Attaching secondary camera stream");
       attachStream(secondaryVideoRef.current, secondaryStream);
+    }
   }, [secondaryStream]);
 
   // ── SCREEN recording
-  const screenCallbackRef = useCallback(
-    (el) => {
-      screenVideoRef.current = el;
-      if (el && screenRecording.screenStream)
-        attachStream(el, screenRecording.screenStream);
-    },
-    [screenRecording.screenStream],
-  ); // ✅ FIXED: Added screenStream as dependency
-
   useEffect(() => {
-    if (screenVideoRef.current && screenRecording.screenStream)
+    console.log("🖥️ Screen recording effect triggered:", {
+      hasVideoRef: !!screenVideoRef.current,
+      hasStream: !!screenRecording.screenStream,
+      streamActive: screenRecording.screenStream?.active,
+    });
+
+    if (screenVideoRef.current && screenRecording.screenStream) {
+      console.log("✅ Attaching screen recording stream");
       attachStream(screenVideoRef.current, screenRecording.screenStream);
+    }
   }, [screenRecording.screenStream]);
 
   // ── Main socket ───────────────────────────────────────────────────────────
@@ -782,9 +816,9 @@ const InterviewQuestions = ({
               </div>
               <div className="p-3">
                 <div className="relative w-full aspect-video bg-gray-900 rounded-xl overflow-hidden shadow-lg">
-                  {/* ✅ Always in DOM — callback ref attaches stream on mount */}
+                  {/* ✅ Always in DOM */}
                   <video
-                    ref={primaryCallbackRef}
+                    ref={videoRef}
                     autoPlay
                     muted
                     playsInline
@@ -857,7 +891,7 @@ const InterviewQuestions = ({
                 <div className="relative w-full aspect-video bg-gray-900 rounded-xl overflow-hidden shadow-lg">
                   {/* ✅ Always in DOM, hidden via CSS when no stream */}
                   <video
-                    ref={secondaryCallbackRef}
+                    ref={secondaryVideoRef}
                     autoPlay
                     muted
                     playsInline
@@ -958,7 +992,7 @@ const InterviewQuestions = ({
                 <div className="relative w-full aspect-video bg-gray-900 rounded-xl overflow-hidden shadow-lg">
                   {/* ✅ Always in DOM, hidden via CSS when no stream */}
                   <video
-                    ref={screenCallbackRef}
+                    ref={screenVideoRef}
                     autoPlay
                     muted
                     playsInline
