@@ -194,8 +194,9 @@ const InterviewSettings = ({ onInterviewReady }) => {
       console.log("✅ Session data created:", newSessionData);
       setSessionData(newSessionData);
 
-      setIsCameraOpen(false);
+      // ✅ IMPORTANT: Close camera modal AFTER generating QR code
       await generateQRCode(newSessionData);
+      setIsCameraOpen(false); // ✅ Move this AFTER QR code generation
       setShowQRModal(true);
 
       console.log("✅ QR modal shown, waiting for mobile connection...");
@@ -210,7 +211,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
       }
     }
   };
-
   // Start interview — no local secondary stream needed (it lives on mobile)
   const tryStartInterview = () => {
     const canStart =

@@ -14,6 +14,7 @@ const CameraCheck = ({
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const videoRef = useRef(null);
+  const streamHandedOffRef = useRef(false);
 
   const requestCamera = async () => {
     setIsLoading(true);
@@ -69,18 +70,23 @@ const CameraCheck = ({
   const handleContinue = () => {
     if (stream) {
       console.log(`✅ Passing ${facingMode} camera stream to parent`);
+      streamHandedOffRef.current = true;
       onSuccess(stream);
       // Don't close modal or stop stream here - parent will handle it
     }
   };
 
   const handleClose = () => {
-    if (stream) {
+    // ✅ FIXED: Only stop stream if it wasn't handed off to parent
+    if (stream && !streamHandedOffRef.current) {
       console.log(`🛑 Stopping ${facingMode} camera stream`);
       stream.getTracks().forEach((track) => track.stop());
       setStream(null);
+    } else if (streamHandedOffRef.current) {
+      console.log(`✅ Stream handed off to parent, not stopping`);
     }
     setError(null);
+    streamHandedOffRef.current = false; // Reset for next time
     onClose();
   };
 
@@ -92,9 +98,11 @@ const CameraCheck = ({
 
   useEffect(() => {
     return () => {
-      if (stream) {
+      if (stream && !streamHandedOffRef.current) {
         console.log(`🧹 Cleanup: Stopping ${facingMode} camera stream`);
         stream.getTracks().forEach((track) => track.stop());
+      } else if (streamHandedOffRef.current) {
+        console.log(`✅ Cleanup: Stream was handed off, not stopping`);
       }
     };
   }, [stream, facingMode]);

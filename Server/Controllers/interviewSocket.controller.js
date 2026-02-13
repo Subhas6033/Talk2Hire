@@ -68,13 +68,31 @@ function initInterviewSocket(httpServer) {
       return socket.disconnect();
     }
 
-    // ✅ Every socket joins the interview room immediately on connect
     // This ensures both desktop and mobile receive room broadcasts
     socket.join(`interview_${interviewId}`);
     console.log(`✅ Socket ${socket.id} joined room: interview_${interviewId}`);
 
     const session = getOrCreateSession(interviewId);
     const { videoUploads, audioUploads } = session;
+
+    // If secondary camera is already connected, notify this new client
+    if (session.secondaryCameraConnected) {
+      console.log(
+        "📱 Secondary camera already connected, notifying new client",
+      );
+      setTimeout(() => {
+        socket.emit("secondary_camera_ready", {
+          interviewId: interviewId,
+          timestamp: Date.now(),
+          message: "Mobile camera already connected and ready",
+        });
+
+        socket.emit("secondary_camera_status", {
+          connected: true,
+          metadata: session.secondaryCameraMetadata,
+        });
+      }, 500); // Small delay to ensure client is ready to receive
+    }
 
     // Interview state
     let currentOrder = 1;
