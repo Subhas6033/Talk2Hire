@@ -11,7 +11,7 @@ import {
 import { Card } from "../Common/Card";
 import { useDispatch, useSelector } from "react-redux";
 import { startInterview } from "../../API/interviewApi";
-import QRCode from "qrcode"; // ✅ ADD: npm install qrcode
+import QRCode from "qrcode";
 
 const InterviewSettings = ({ onInterviewReady }) => {
   const dispatch = useDispatch();
@@ -27,16 +27,18 @@ const InterviewSettings = ({ onInterviewReady }) => {
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState(null);
 
-  // ✅ Modal states - control flow properly
+  // Modal states
   const [openGuideLines, setOpenGuideLines] = useState(false);
   const [isMicOpen, setIsMicOpen] = useState(false);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
-  const [showQRModal, setShowQRModal] = useState(false); // ✅ NEW: QR modal state
+  const [showQRModal, setShowQRModal] = useState(false);
 
   const [sessionData, setSessionData] = useState(null);
   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
   const [questionsReady, setQuestionsReady] = useState(false);
-  const [qrCodeDataUrl, setQrCodeDataUrl] = useState(""); // ✅ NEW: QR code image
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState("");
+  const [secondaryCameraConnected, setSecondaryCameraConnected] =
+    useState(false);
 
   const hasExistingSkills = user?.skill && user.skill.trim() !== "";
 
@@ -72,15 +74,49 @@ const InterviewSettings = ({ onInterviewReady }) => {
 
       selectedSkillsRef.current = skills;
 
-      // ✅ DON'T start generating questions yet - wait until both cameras connected
-
-      // ✅ Open guidelines modal (first step)
       setOpenGuideLines(true);
       setStatus("succeeded");
     } catch (err) {
       console.error("❌ Submit error:", err);
       setError(err?.message || "Failed to start interview");
       setStatus("failed");
+    }
+  };
+
+  // ✅ FIXED: Generate QR code with passed session data
+  const generateQRCode = async (sessionInfo) => {
+    try {
+      if (!sessionInfo?.interviewId || !user?.id) {
+        console.error(
+          "❌ Cannot generate QR code: missing session or user data",
+          {
+            hasSessionInfo: !!sessionInfo,
+            interviewId: sessionInfo?.interviewId,
+            userId: user?.id,
+          },
+        );
+        setError("Session not ready. Please try again.");
+        return;
+      }
+
+      const mobileUrl = `${window.location.origin}/mobile-camera?mobile=true&session=${sessionInfo.interviewId}&userId=${user.id}`;
+
+      console.log("📱 Generating QR code for:", mobileUrl);
+
+      const qrDataUrl = await QRCode.toDataURL(mobileUrl, {
+        width: 300,
+        margin: 2,
+        color: {
+          dark: "#000000",
+          light: "#FFFFFF",
+        },
+      });
+
+      setQrCodeDataUrl(qrDataUrl);
+      console.log("✅ QR code generated successfully");
+    } catch (err) {
+      console.error("❌ QR code generation error:", err);
+      setError("Failed to generate QR code");
     }
   };
 
@@ -112,10 +148,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
       );
     }
 
-    // ✅ Close primary camera modal
-    setIsCameraOpen(false);
-
-    // ✅ UPDATED: Generate session FIRST, then show QR code
+    // ✅ DON'T close modal yet - show loading state
     console.log("🔄 Generating interview session...");
     setIsGeneratingQuestions(true);
 
@@ -138,8 +171,13 @@ const InterviewSettings = ({ onInterviewReady }) => {
       setSessionData(newSessionData);
       console.log("✅ Session created:", newSessionData);
 
-      // Now generate QR code with the session ID
-      await generateQRCode();
+      // ✅ Close primary camera modal NOW
+      setIsCameraOpen(false);
+
+      // ✅ FIXED: Pass session data directly to generateQRCode
+      await generateQRCode(newSessionData);
+
+      // ✅ Show QR modal
       setShowQRModal(true);
 
       console.log(
@@ -150,7 +188,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
       setError(err?.message || "Failed to create interview session");
       setIsGeneratingQuestions(false);
 
-      // Stop the camera if session creation failed
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
         cameraStreamRef.current = null;
@@ -158,46 +195,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
   };
 
-  // ✅ NEW: Generate QR code for mobile camera connection
-  const generateQRCode = async () => {
-    try {
-      if (!sessionData?.interviewId || !user?.id) {
-        console.error(
-          "❌ Cannot generate QR code: missing session or user data",
-          {
-            hasSessionData: !!sessionData,
-            interviewId: sessionData?.interviewId,
-            userId: user?.id,
-          },
-        );
-        setError("Session not ready. Please try again.");
-        return;
-      }
-
-      // ✅ FIXED: Use actual session ID from API response
-      const mobileUrl = `${window.location.origin}/mobile-camera?mobile=true&session=${sessionData.interviewId}&userId=${user.id}`;
-
-      console.log("📱 Generating QR code for:", mobileUrl);
-
-      // Generate QR code as data URL
-      const qrDataUrl = await QRCode.toDataURL(mobileUrl, {
-        width: 300,
-        margin: 2,
-        color: {
-          dark: "#000000",
-          light: "#FFFFFF",
-        },
-      });
-
-      setQrCodeDataUrl(qrDataUrl);
-      console.log("✅ QR code generated successfully");
-    } catch (err) {
-      console.error("❌ QR code generation error:", err);
-      setError("Failed to generate QR code");
-    }
-  };
-
-  // ✅ NEW: Handle secondary camera success (from mobile phone)
+  // ✅ Handle secondary camera success (from mobile phone)
   const handleSecondaryCameraSuccess = (stream) => {
     console.log("📱 Secondary camera stream received (from mobile)");
 
@@ -225,22 +223,23 @@ const InterviewSettings = ({ onInterviewReady }) => {
       );
     }
 
-    // ✅ Close QR modal
-    setShowQRModal(false);
+    // ✅ Mark secondary camera as connected
+    setSecondaryCameraConnected(true);
 
-    // ✅ UPDATED: Session already created, just mark questions as ready
-    console.log("✅ Both cameras ready, marking session as ready...");
+    // ✅ DON'T close modal yet - wait for all conditions
+    console.log("✅ Secondary camera connected, marking session as ready...");
     setQuestionsReady(true);
     setIsGeneratingQuestions(false);
   };
 
-  // ✅ UPDATED: Start interview only when BOTH cameras + questions ready
+  // ✅ Start interview only when ALL conditions met
   const tryStartInterview = () => {
     const canStart =
       questionsReady &&
       sessionData &&
       cameraStreamRef.current &&
-      secondaryCameraStreamRef.current && // ✅ Require secondary camera
+      secondaryCameraStreamRef.current &&
+      secondaryCameraConnected &&
       !isGeneratingQuestions &&
       !hasStartedInterviewRef.current;
 
@@ -249,6 +248,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
       hasSessionData: !!sessionData,
       hasPrimaryStream: !!cameraStreamRef.current,
       hasSecondaryStream: !!secondaryCameraStreamRef.current,
+      secondaryCameraConnected,
       primaryStreamActive: cameraStreamRef.current?.active,
       secondaryStreamActive: secondaryCameraStreamRef.current?.active,
       isGenerating: isGeneratingQuestions,
@@ -262,6 +262,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
         needSession: !sessionData,
         needPrimaryCamera: !cameraStreamRef.current,
         needSecondaryCamera: !secondaryCameraStreamRef.current,
+        needSecondaryCameraConnected: !secondaryCameraConnected,
       });
       return;
     }
@@ -271,7 +272,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
     const primaryStream = cameraStreamRef.current;
     const secondaryStream = secondaryCameraStreamRef.current;
 
-    // ✅ Verify primary camera
+    // Verify primary camera
     const primaryVideoTrack = primaryStream.getVideoTracks()[0];
     if (!primaryVideoTrack) {
       console.error("❌ No primary video track!");
@@ -301,7 +302,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
       return;
     }
 
-    // ✅ Verify secondary camera
+    // Verify secondary camera
     const secondaryVideoTrack = secondaryStream.getVideoTracks()[0];
     if (!secondaryVideoTrack) {
       console.error("❌ No secondary video track!");
@@ -341,6 +342,9 @@ const InterviewSettings = ({ onInterviewReady }) => {
 
     setError(null);
 
+    // ✅ Close QR modal NOW
+    setShowQRModal(false);
+
     // ✅ Start interview with both camera streams
     try {
       onInterviewReady({
@@ -355,13 +359,13 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
   };
 
-  // ✅ Watch for questions ready
+  // ✅ Watch for all conditions to start interview
   useEffect(() => {
-    if (questionsReady && !isGeneratingQuestions) {
-      console.log("✅ Questions ready, attempting to start interview...");
+    if (questionsReady && secondaryCameraConnected && !isGeneratingQuestions) {
+      console.log("✅ All conditions met, attempting to start interview...");
       tryStartInterview();
     }
-  }, [questionsReady, isGeneratingQuestions]);
+  }, [questionsReady, secondaryCameraConnected, isGeneratingQuestions]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -472,7 +476,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
         <Guidlines
           onClick={() => {
             setOpenGuideLines(false);
-            setIsMicOpen(true); // Go to mic check
+            setIsMicOpen(true);
           }}
         />
       </Modal>
@@ -483,7 +487,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
         onClose={() => setIsMicOpen(false)}
         onSuccess={() => {
           setIsMicOpen(false);
-          setIsCameraOpen(true); // Go to camera check
+          setIsCameraOpen(true);
         }}
       />
 
@@ -492,12 +496,12 @@ const InterviewSettings = ({ onInterviewReady }) => {
         isOpen={isCameraOpen}
         onClose={() => setIsCameraOpen(false)}
         onSuccess={handleCameraSuccess}
-        facingMode="environment" // Back/primary camera
+        facingMode="environment"
         title="Primary Camera Setup"
         description="Please allow access to your camera. After this, you'll need to connect your mobile phone's front camera."
       />
 
-      {/* ✅ NEW: QR Code Modal - Step 4 */}
+      {/* ✅ QR Code Modal - Step 4 - STAYS OPEN until interview starts */}
       <Modal
         isOpen={showQRModal}
         onClose={() => {}}
@@ -530,76 +534,88 @@ const InterviewSettings = ({ onInterviewReady }) => {
             </p>
           </div>
 
-          {/* QR Code Display */}
-          {qrCodeDataUrl && (
-            <div className="flex justify-center">
-              <div className="p-6 bg-white rounded-2xl shadow-2xl border-4 border-gray-200">
-                <img
-                  src={qrCodeDataUrl}
-                  alt="QR Code for Mobile Camera"
-                  className="w-64 h-64"
-                />
-              </div>
-            </div>
-          )}
-
-          <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-6">
-            <h4 className="font-bold text-blue-900 dark:text-blue-300 mb-4">
-              Instructions:
-            </h4>
-            <ol className="space-y-3 text-sm text-blue-800 dark:text-blue-200">
-              <li className="flex items-start gap-3">
-                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
-                  1
-                </span>
-                <span>Open your phone's camera app</span>
-              </li>
-              <li className="flex items-start gap-3">
-                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
-                  2
-                </span>
-                <span>Point your camera at the QR code above</span>
-              </li>
-              <li className="flex items-start gap-3">
-                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
-                  3
-                </span>
-                <span>Tap the notification to open the link</span>
-              </li>
-              <li className="flex items-start gap-3">
-                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
-                  4
-                </span>
-                <span>Grant camera permission when prompted</span>
-              </li>
-              <li className="flex items-start gap-3">
-                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
-                  5
-                </span>
-                <span>
-                  Keep your phone steady with the front camera facing you
-                </span>
-              </li>
-            </ol>
-          </div>
-
-          {isGeneratingQuestions && (
-            <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-lg p-4">
+          {/* Session Creation Loading */}
+          {isGeneratingQuestions && !qrCodeDataUrl && (
+            <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
               <div className="flex items-center gap-3">
-                <div className="animate-spin w-5 h-5 border-3 border-green-600 border-t-transparent rounded-full" />
+                <div className="animate-spin w-5 h-5 border-3 border-blue-600 border-t-transparent rounded-full" />
                 <div>
-                  <p className="text-sm font-semibold text-green-900 dark:text-green-300">
-                    Generating Interview Questions...
+                  <p className="text-sm font-semibold text-blue-900 dark:text-blue-300">
+                    Creating Interview Session...
                   </p>
-                  <p className="text-xs text-green-800 dark:text-green-200 mt-1">
-                    Please wait while we prepare your questions
+                  <p className="text-xs text-blue-800 dark:text-blue-200 mt-1">
+                    Please wait while we set up your interview
                   </p>
                 </div>
               </div>
             </div>
           )}
 
-          {questionsReady && (
+          {/* QR Code Display */}
+          {qrCodeDataUrl && (
+            <>
+              <div className="flex justify-center">
+                <div className="p-6 bg-white rounded-2xl shadow-2xl border-4 border-gray-200">
+                  <img
+                    src={qrCodeDataUrl}
+                    alt="QR Code for Mobile Camera"
+                    className="w-64 h-64"
+                  />
+                </div>
+              </div>
+
+              <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-6">
+                <h4 className="font-bold text-blue-900 dark:text-blue-300 mb-4">
+                  Instructions:
+                </h4>
+                <ol className="space-y-3 text-sm text-blue-800 dark:text-blue-200">
+                  <li className="flex items-start gap-3">
+                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
+                      1
+                    </span>
+                    <span>Open your phone's camera app</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
+                      2
+                    </span>
+                    <span>Point your camera at the QR code above</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
+                      3
+                    </span>
+                    <span>Tap the notification to open the link</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
+                      4
+                    </span>
+                    <span>Grant camera permission when prompted</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
+                      5
+                    </span>
+                    <span>
+                      Keep your phone steady with the front camera facing you
+                    </span>
+                  </li>
+                </ol>
+              </div>
+
+              {/* Waiting for connection */}
+              {!secondaryCameraConnected && (
+                <div className="flex items-center justify-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                  <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                  <span>Waiting for mobile camera connection...</span>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Secondary Camera Connected */}
+          {secondaryCameraConnected && (
             <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-lg p-4">
               <div className="flex items-center gap-3">
                 <svg
@@ -617,20 +633,17 @@ const InterviewSettings = ({ onInterviewReady }) => {
                 </svg>
                 <div>
                   <p className="text-sm font-semibold text-green-900 dark:text-green-300">
-                    ✅ Questions Ready!
+                    ✅ Mobile Camera Connected!
                   </p>
                   <p className="text-xs text-green-800 dark:text-green-200 mt-1">
-                    Starting interview...
+                    {questionsReady
+                      ? "Starting interview..."
+                      : "Preparing interview questions..."}
                   </p>
                 </div>
               </div>
             </div>
           )}
-
-          <div className="flex items-center justify-center gap-2 text-sm text-gray-500">
-            <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-            <span>Waiting for mobile connection...</span>
-          </div>
         </div>
       </Modal>
     </>
