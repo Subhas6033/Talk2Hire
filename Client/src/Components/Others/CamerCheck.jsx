@@ -1,227 +1,204 @@
-import { useEffect, useRef, useState } from "react";
-import { Modal, Button } from "../index";
+import { useState, useEffect, useRef } from "react";
+import { Modal } from "../index";
+import { Button } from "../index";
 
-const CameraCheck = ({ isOpen, onClose, onSuccess }) => {
+const CameraCheck = ({
+  isOpen,
+  onClose,
+  onSuccess,
+  facingMode = "environment", // ✅ NEW: "environment" (back) or "user" (front)
+  title = "Camera Setup", // ✅ NEW: Customizable title
+  description = "Please allow camera access to continue with the interview.", // ✅ NEW: Customizable description
+}) => {
+  const [stream, setStream] = useState(null);
+  const [error, setError] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
   const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const stoppedRef = useRef(false);
-  const streamTransferredRef = useRef(false);
 
-  const [status, setStatus] = useState("idle");
-  const [error, setError] = useState("");
-
-  const startCameraTest = async () => {
-    setStatus("checking");
-    setError("");
-    stoppedRef.current = false;
-    streamTransferredRef.current = false;
+  const requestCamera = async () => {
+    setIsLoading(true);
+    setError(null);
 
     try {
-      console.log("📹 Requesting camera access...");
-      const stream = await navigator.mediaDevices.getUserMedia({
+      console.log(`📹 Requesting ${facingMode} camera...`);
+
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: "user",
+          facingMode: facingMode,
           width: { ideal: 1280 },
           height: { ideal: 720 },
         },
+        audio: false,
       });
 
-      if (stoppedRef.current) {
-        stream.getTracks().forEach((t) => t.stop());
-        return;
-      }
-
-      console.log("✅ Camera access granted");
-      console.log("📹 Stream details:", {
-        id: stream.id,
-        active: stream.active,
-        tracks: stream.getTracks().map((t) => ({
-          kind: t.kind,
-          label: t.label,
-          enabled: t.enabled,
-          readyState: t.readyState,
-          settings: t.getSettings(),
-        })),
-      });
-
-      streamRef.current = stream;
+      setStream(mediaStream);
 
       if (videoRef.current) {
-        videoRef.current.srcObject = stream;
+        videoRef.current.srcObject = mediaStream;
+        videoRef.current.muted = true;
+        videoRef.current.playsInline = true;
 
-        videoRef.current.onloadedmetadata = async () => {
-          console.log("✅ Video metadata loaded in CameraCheck");
-          try {
-            await videoRef.current.play();
-            console.log("✅ Video preview playing");
-          } catch (err) {
-            console.error("❌ Preview play error:", err);
-          }
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current?.play().catch((err) => {
+            console.error("❌ Video play error:", err);
+          });
         };
       }
 
-      setStatus("success");
+      console.log(`✅ ${facingMode} camera access granted`);
     } catch (err) {
-      console.error("❌ Camera error:", err);
-      setStatus("failed");
-      setError("Camera access denied or camera not available.");
-      stopCamera();
+      console.error(`❌ ${facingMode} camera access error:`, err);
+
+      let errorMessage = "Unable to access camera. ";
+      if (err.name === "NotAllowedError") {
+        errorMessage += "Please grant camera permissions.";
+      } else if (err.name === "NotFoundError") {
+        errorMessage += `No ${facingMode === "user" ? "front" : "back"} camera found on this device.`;
+      } else if (err.name === "NotReadableError") {
+        errorMessage += "Camera is in use by another application.";
+      } else {
+        errorMessage += err.message;
+      }
+
+      setError(errorMessage);
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const stopCamera = () => {
-    if (stoppedRef.current) return;
-    stoppedRef.current = true;
-
-    if (streamRef.current) {
-      console.log("🛑 Stopping camera in CameraCheck");
-      streamRef.current.getTracks().forEach((t) => {
-        console.log(`🛑 Stopping track: ${t.kind} (${t.label})`);
-        t.stop();
-      });
-      streamRef.current = null;
+  const handleContinue = () => {
+    if (stream) {
+      console.log(`✅ Passing ${facingMode} camera stream to parent`);
+      onSuccess(stream);
+      // Don't close modal or stop stream here - parent will handle it
     }
   };
 
-  const handleStartInterview = () => {
-    if (!streamRef.current) {
-      console.error("❌ No stream to transfer!");
-      alert("Camera stream not available. Please try again.");
-      return;
+  const handleClose = () => {
+    if (stream) {
+      console.log(`🛑 Stopping ${facingMode} camera stream`);
+      stream.getTracks().forEach((track) => track.stop());
+      setStream(null);
     }
-
-    // ✅ CRITICAL: Verify stream is active before transfer
-    const videoTrack = streamRef.current.getVideoTracks()[0];
-
-    console.log("📹 Verifying stream before transfer:", {
-      streamActive: streamRef.current.active,
-      trackExists: !!videoTrack,
-      trackState: videoTrack?.readyState,
-      trackEnabled: videoTrack?.enabled,
-    });
-
-    if (!streamRef.current.active) {
-      console.error("❌ Stream is not active!");
-      alert("Camera stream is not active. Please try again.");
-      return;
-    }
-
-    if (!videoTrack || videoTrack.readyState !== "live") {
-      console.error("❌ Video track is not live!");
-      alert("Camera is not ready. Please try again.");
-      return;
-    }
-
-    console.log("✅ Stream verified - transferring to parent");
-    console.log("📹 Transferring camera stream to parent");
-
-    // Mark that we've transferred the stream
-    streamTransferredRef.current = true;
-
-    // Pass the stream to parent component
-    if (onSuccess) {
-      onSuccess(streamRef.current);
-    }
-
-    // Remove our reference but DON'T stop the stream
-    streamRef.current = null;
+    setError(null);
+    onClose();
   };
 
   useEffect(() => {
-    if (isOpen) {
-      startCameraTest();
+    if (isOpen && !stream && !isLoading) {
+      requestCamera();
     }
-
-    return () => {
-      console.log("🧹 CameraCheck cleanup", {
-        hasStream: !!streamRef.current,
-        transferred: streamTransferredRef.current,
-      });
-
-      // ✅ CRITICAL: Only stop camera if we still own it AND it wasn't transferred
-      if (streamRef.current && !streamTransferredRef.current) {
-        console.log("🛑 Stopping camera stream in cleanup (not transferred)");
-        stopCamera();
-      } else if (streamTransferredRef.current) {
-        console.log("✅ Stream transferred - not stopping in cleanup");
-      }
-
-      setStatus("idle");
-      setError("");
-    };
   }, [isOpen]);
 
+  useEffect(() => {
+    return () => {
+      if (stream) {
+        console.log(`🧹 Cleanup: Stopping ${facingMode} camera stream`);
+        stream.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, [stream, facingMode]);
+
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title="Camera Check"
-      size="md"
-      footer={null}
-    >
-      <div className="space-y-6 text-center">
-        {/* Video Preview */}
-        <div className="w-full h-64 bg-black/60 rounded-lg overflow-hidden relative">
+    <Modal isOpen={isOpen} onClose={handleClose} title={title} size="lg">
+      <div className="space-y-6">
+        <div className="text-center">
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            {description}
+          </p>
+        </div>
+
+        <div className="relative w-full aspect-video bg-gray-900 rounded-xl overflow-hidden shadow-lg">
+          {isLoading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+              <div className="text-center">
+                <div className="animate-spin w-12 h-12 border-4 border-gray-600 border-t-blue-500 rounded-full mx-auto mb-4" />
+                <p className="text-sm text-white">Accessing camera...</p>
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+              <div className="text-center px-6">
+                <svg
+                  className="w-12 h-12 text-red-500 mx-auto mb-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                  />
+                </svg>
+                <p className="text-sm text-white mb-4">{error}</p>
+                <Button onClick={requestCamera} variant="secondary" size="sm">
+                  Try Again
+                </Button>
+              </div>
+            </div>
+          )}
+
           <video
             ref={videoRef}
             autoPlay
             muted
             playsInline
-            className="w-full h-full object-cover mirror"
+            className="w-full h-full object-cover"
             style={{ transform: "scaleX(-1)" }}
           />
-          {status === "checking" && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-              <div className="text-white">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-2"></div>
-                <p className="text-sm">Accessing camera...</p>
+
+          {stream && !error && (
+            <div className="absolute top-3 left-3">
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-green-600/90 backdrop-blur-sm rounded-lg shadow-xl">
+                <div className="w-2 h-2 rounded-full bg-green-300 animate-pulse" />
+                <span className="text-xs font-bold text-white">
+                  CAMERA ACTIVE
+                </span>
               </div>
             </div>
           )}
         </div>
 
-        {status === "checking" && (
-          <p className="text-sm text-gray-600 dark:text-gray-400">
-            Please allow camera access when prompted
-          </p>
-        )}
-
-        {status === "success" && (
-          <>
-            <p className="text-green-600 dark:text-green-400 font-medium">
-              ✅ Camera is working properly
-            </p>
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              Your camera will be visible during the interview
-            </p>
-
-            <Button onClick={handleStartInterview} className="w-full">
-              Start Interview
-            </Button>
-          </>
-        )}
-
-        {status === "failed" && (
-          <>
-            <p className="text-red-500 text-center font-medium">{error}</p>
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              Make sure you've granted camera permissions in your browser
-            </p>
-
-            <div className="flex gap-3">
-              <Button
-                variant="secondary"
-                onClick={startCameraTest}
-                className="flex-1"
+        {stream && !error && (
+          <div className="p-4 bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-lg">
+            <div className="flex items-start gap-2">
+              <svg
+                className="w-5 h-5 text-green-600 dark:text-green-400 shrink-0 mt-0.5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
               >
-                Try Again
-              </Button>
-              <Button variant="secondary" onClick={onClose} className="flex-1">
-                Cancel
-              </Button>
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              <div>
+                <p className="text-sm font-semibold text-green-900 dark:text-green-300">
+                  {facingMode === "user" ? "Front" : "Back"} Camera Ready
+                </p>
+                <p className="text-xs text-green-800 dark:text-green-200 mt-1">
+                  Your camera is working properly. Click continue to proceed.
+                </p>
+              </div>
             </div>
-          </>
+          </div>
         )}
+
+        <div className="flex gap-3 justify-end">
+          <Button onClick={handleClose} variant="secondary">
+            Cancel
+          </Button>
+          <Button onClick={handleContinue} disabled={!stream || !!error}>
+            Continue
+          </Button>
+        </div>
       </div>
     </Modal>
   );

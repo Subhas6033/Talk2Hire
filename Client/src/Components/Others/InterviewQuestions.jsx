@@ -7,6 +7,7 @@ import useVideoRecording from "../../Hooks/useVideoRecordingHook";
 import useHolisticDetection from "../../Hooks/useHolisticDetectionHook";
 import useAudioRecording from "../../Hooks/useAudioRecording";
 import useScreenRecording from "../../Hooks/useScreenRecording";
+import useSecondaryCamera from "../../Hooks/useSecondaryCameraHook"; // ✅ NEW
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
@@ -14,6 +15,7 @@ const InterviewQuestions = ({
   interviewId,
   userId,
   cameraStream,
+  secondaryCameraStream, // ✅ NEW: Secondary camera prop
   onCancel,
   onFinish,
 }) => {
@@ -37,7 +39,15 @@ const InterviewQuestions = ({
     interview.socketRef,
   );
 
+  // ✅ NEW: Secondary camera hook
+  const secondaryCamera = useSecondaryCamera(
+    interviewId,
+    userId,
+    interview.socketRef,
+  );
+
   const videoRef = useRef(null);
+  const secondaryVideoRef = useRef(null); // ✅ NEW: Secondary camera video ref
   const screenVideoRef = useRef(null);
   const isCleaningUpRef = useRef(false);
 
@@ -62,7 +72,7 @@ const InterviewQuestions = ({
 
   const readyForQuestionSentRef = useRef(false);
 
-  // ✅ FIX: Memoized cleanup function
+  // ✅ FIX: Memoized cleanup function with secondary camera
   const cleanupAllRecordings = useCallback(async () => {
     console.log("🧹 Cleaning up all recordings...");
 
@@ -94,11 +104,58 @@ const InterviewQuestions = ({
       );
     }
 
+    // ✅ NEW: Stop secondary camera recording
+    if (secondaryCamera.isRecording) {
+      cleanupPromises.push(
+        secondaryCamera
+          .stopRecording()
+          .catch((err) =>
+            console.error("❌ Error stopping secondary camera:", err),
+          ),
+      );
+    }
+
     await Promise.allSettled(cleanupPromises);
     console.log("✅ All recordings cleaned up");
-  }, [isVideoRecording, audioRecording, screenRecording, stopVideoRecording]);
+  }, [
+    isVideoRecording,
+    audioRecording,
+    screenRecording,
+    secondaryCamera,
+    stopVideoRecording,
+  ]);
 
-  // ✅ Setup screen recording preview
+  // ✅ Setup secondary camera preview
+  useEffect(() => {
+    if (!secondaryVideoRef.current || !secondaryCameraStream) return;
+
+    console.log("📱 Setting up secondary camera preview");
+
+    const videoTrack = secondaryCameraStream.getVideoTracks()[0];
+    if (!videoTrack || videoTrack.readyState !== "live") {
+      return;
+    }
+
+    if (secondaryVideoRef.current.srcObject !== secondaryCameraStream) {
+      secondaryVideoRef.current.srcObject = secondaryCameraStream;
+      secondaryVideoRef.current.muted = true;
+      secondaryVideoRef.current.playsInline = true;
+
+      secondaryVideoRef.current.onloadedmetadata = () => {
+        secondaryVideoRef.current?.play().catch((err) => {
+          console.error("❌ Secondary camera video play error:", err);
+        });
+      };
+    }
+
+    return () => {
+      if (secondaryVideoRef.current) {
+        secondaryVideoRef.current.srcObject = null;
+      }
+    };
+  }, [secondaryCameraStream]);
+
+  // Setup screen recording preview
   useEffect(() => {
     if (!screenVideoRef.current || !screenRecording.screenStream) return;
 
@@ -173,7 +230,6 @@ const InterviewQuestions = ({
 
     interview.socketRef.current = socket;
 
-    // ✅ Reduced logging frequency
     socket.onAny((eventName, ...args) => {
       if (
         eventName !== "user_audio_chunk" &&
@@ -239,7 +295,7 @@ const InterviewQuestions = ({
       else if (onCancel) onCancel();
     });
 
-    // ✅ Audio recording events
+    // Audio recording events
     socket.on("audio_recording_ready", (data) => {
       console.log("✅ Server confirmed audio session ready:", data);
     });
@@ -264,7 +320,7 @@ const InterviewQuestions = ({
       console.error("❌ Audio processing error:", data);
     });
 
-    // ✅ Video recording events
+    // Video recording events
     socket.on("video_recording_ready", (data) => {
       console.log("✅ Server confirmed video session ready:", data);
     });
@@ -293,7 +349,7 @@ const InterviewQuestions = ({
       alert(`Video processing failed for ${data.videoType}: ${data.error}`);
     });
 
-    // ✅ Evaluation events
+    // Evaluation events
     socket.on("evaluation_started", (data) => {
       console.log("🔄 Evaluation started:", data.message);
       setEvaluationStatus("started");
@@ -311,7 +367,7 @@ const InterviewQuestions = ({
       alert(`Evaluation failed: ${data.message}`);
     });
 
-    // ✅ FIX: Question events with proper handling
+    // Question events
     socket.on("question", (data) => {
       console.log("📨 Received 'question' event:", data);
       setWaitingForQuestions(false);
@@ -415,7 +471,7 @@ const InterviewQuestions = ({
     };
   }, [interviewId, userId]);
 
-  // Start all recording together
+  // ✅ UPDATED: Start all recordings including secondary camera
   useEffect(() => {
     const shouldStartRecording =
       interview.status === "live" &&
@@ -423,20 +479,27 @@ const InterviewQuestions = ({
       interview.serverReady &&
       interview.hasStarted &&
       cameraStream &&
+      secondaryCameraStream && // ✅ NEW: Wait for secondary camera
       !isVideoRecording;
 
     if (shouldStartRecording) {
       const startAllRecording = async () => {
         try {
-          console.log("🎬 Starting ALL recordings...");
+          console.log(
+            "🎬 Starting ALL recordings (including secondary camera)...",
+          );
 
           // Start audio recording
           await interview.audioRecording.startRecording();
           console.log("✅ Audio recording started");
 
-          // ✅ FIX: use startVideoRecording
+          // Start primary camera recording
           await startVideoRecording();
-          console.log("✅ Video recording started");
+          console.log("✅ Primary camera recording started");
+
+          // ✅ NEW: Start secondary camera recording
+          await secondaryCamera.startRecording();
+          console.log("✅ Secondary camera recording started");
 
           // Start screen recording
           await screenRecording.startRecording();
@@ -456,9 +519,11 @@ const InterviewQuestions = ({
     interview.serverReady,
     interview.hasStarted,
     cameraStream,
+    secondaryCameraStream, // ✅ NEW: Dependency
     isVideoRecording,
     interview.audioRecording,
-    startVideoRecording, // ✅ FIXED
+    startVideoRecording,
+    secondaryCamera, // ✅ NEW: Dependency
     screenRecording,
   ]);
 
@@ -565,6 +630,15 @@ const InterviewQuestions = ({
                     />
                     Video
                   </div>
+                  {/* ✅ NEW: Secondary camera status indicator */}
+                  <div
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${secondaryCamera.isRecording ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 shadow-sm" : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400"}`}
+                  >
+                    <div
+                      className={`w-2 h-2 rounded-full ${secondaryCamera.isRecording ? "bg-orange-600 animate-pulse" : "bg-gray-400"}`}
+                    />
+                    2nd Cam
+                  </div>
                   <div
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${screenRecording.isRecording ? "bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 shadow-sm" : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400"}`}
                   >
@@ -647,7 +721,6 @@ const InterviewQuestions = ({
                   </div>
                 )}
 
-                {/* ✅ FIX: Proper question display logic */}
                 {interview.status === "live" && interview.currentQuestion && (
                   <div className="flex flex-col justify-center space-y-6 h-full">
                     {interview.idlePrompt && (
@@ -834,6 +907,67 @@ const InterviewQuestions = ({
                         </span>
                         <span className="text-xs font-mono text-white/80">
                           {interview.recordingDuration}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            )}
+
+            {/* ✅ NEW: Secondary Camera Card */}
+            {secondaryCameraStream && (
+              <Card className="overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+                <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-linear-to-r from-orange-50 to-red-50 dark:from-orange-900/20 dark:to-red-900/20">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <svg
+                        className="w-5 h-5 text-orange-500"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"
+                        />
+                      </svg>
+                      <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                        Secondary Camera
+                      </h3>
+                    </div>
+                    {secondaryCamera.isRecording && (
+                      <span className="flex items-center gap-1 text-xs font-semibold text-orange-700 dark:text-orange-300 bg-orange-100 dark:bg-orange-900/30 px-2 py-1 rounded-lg">
+                        <span className="w-1.5 h-1.5 rounded-full bg-orange-600 animate-pulse" />
+                        LIVE
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="p-3 bg-white dark:bg-gray-800">
+                  <div className="relative w-full aspect-video bg-gray-900 rounded-xl overflow-hidden shadow-lg">
+                    <video
+                      ref={secondaryVideoRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      className="w-full h-full object-cover"
+                      style={{ transform: "scaleX(-1)" }}
+                    />
+                    <div className="absolute top-3 left-3 z-10">
+                      <div className="flex items-center gap-2 px-3 py-1.5 bg-black/80 backdrop-blur-sm rounded-lg shadow-xl">
+                        <div
+                          className={`w-2 h-2 rounded-full ${
+                            secondaryCamera.isRecording
+                              ? "bg-orange-500 animate-pulse shadow-lg shadow-orange-500/50"
+                              : "bg-gray-500"
+                          }`}
+                        />
+                        <span className="text-xs font-bold text-white">
+                          {secondaryCamera.isRecording ? "REC" : "STANDBY"}
                         </span>
                       </div>
                     </div>

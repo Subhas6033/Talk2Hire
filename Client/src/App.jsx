@@ -21,6 +21,7 @@ import {
   Profile,
   VerifyPassword,
   Hire,
+  MobileCameraPage,
 } from "./Pages/index.pages.js";
 
 import { Guidlines, MobileSecurityCamera } from "./Components/index.js";
@@ -93,6 +94,7 @@ const App = () => {
                     </ProtectedRoute>
                   }
                 />
+                <Route path="/mobile-camera" element={<MobileCameraPage />} />
                 <Route
                   path="/dashboard"
                   element={

@@ -10,81 +10,133 @@ const Interview = () => {
   const [session, setSession] = useState(null);
   const [showSubmissionModal, setShowSubmissionModal] = useState(false);
 
-  // ✅ Track stream in ref to prevent loss during re-renders
+  // ✅ Track BOTH streams in refs
   const cameraStreamRef = useRef(null);
+  const secondaryCameraStreamRef = useRef(null); // ✅ NEW
 
   const handleInterviewReady = (data) => {
     console.log("✅ Interview session ready:", data);
 
-    // ✅ Verify stream is actually alive
+    // ✅ Verify PRIMARY stream
     const videoTrack = data.cameraStream?.getVideoTracks()[0];
-
     if (!videoTrack) {
-      console.error("❌ No video track in stream!");
-      alert("Camera stream invalid. Please refresh and try again.");
+      console.error("❌ No primary video track!");
+      alert("Primary camera stream invalid. Please refresh and try again.");
       return;
     }
 
     if (videoTrack.readyState !== "live") {
-      console.error("❌ Video track not live:", videoTrack.readyState);
+      console.error("❌ Primary video track not live:", videoTrack.readyState);
       alert(
-        `Camera track is ${videoTrack.readyState}. Please refresh and try again.`,
+        `Primary camera is ${videoTrack.readyState}. Please refresh and try again.`,
       );
       return;
     }
 
-    /*  console.log("✅ Stream verified:", {
-      active: data.cameraStream.active,
-      videoTrack: {
-        label: videoTrack.label,
-        readyState: videoTrack.readyState,
-        enabled: videoTrack.enabled,
-      },
-    }); */
+    // ✅ Verify SECONDARY stream
+    const secondaryVideoTrack = data.secondaryCameraStream?.getVideoTracks()[0];
+    if (!secondaryVideoTrack) {
+      console.error("❌ No secondary video track!");
+      alert("Secondary camera stream invalid. Please refresh and try again.");
+      return;
+    }
 
-    // ✅ Store in both state and ref
+    if (secondaryVideoTrack.readyState !== "live") {
+      console.error(
+        "❌ Secondary video track not live:",
+        secondaryVideoTrack.readyState,
+      );
+      alert(
+        `Secondary camera is ${secondaryVideoTrack.readyState}. Please refresh and try again.`,
+      );
+      return;
+    }
+
+    console.log("✅ Both streams verified:", {
+      primary: {
+        active: data.cameraStream.active,
+        trackState: videoTrack.readyState,
+      },
+      secondary: {
+        active: data.secondaryCameraStream.active,
+        trackState: secondaryVideoTrack.readyState,
+      },
+    });
+
+    // ✅ Store BOTH streams in refs
     cameraStreamRef.current = data.cameraStream;
+    secondaryCameraStreamRef.current = data.secondaryCameraStream; // ✅ NEW
     setSession(data);
   };
 
   const handleCancelInterview = () => {
     console.log("🛑 Canceling interview");
 
-    // ✅ Stop camera stream
-    const stream = session?.cameraStream || cameraStreamRef.current;
-    if (stream) {
-      console.log("🛑 Stopping camera stream");
-      stream.getTracks().forEach((track) => {
-        console.log(`🛑 Stopping ${track.kind} track (${track.readyState})`);
+    // ✅ Stop PRIMARY camera
+    const primaryStream = session?.cameraStream || cameraStreamRef.current;
+    if (primaryStream) {
+      console.log("🛑 Stopping primary camera stream");
+      primaryStream.getTracks().forEach((track) => {
+        console.log(
+          `🛑 Stopping primary ${track.kind} track (${track.readyState})`,
+        );
+        track.stop();
+      });
+    }
+
+    // ✅ Stop SECONDARY camera
+    const secondaryStream =
+      session?.secondaryCameraStream || secondaryCameraStreamRef.current;
+    if (secondaryStream) {
+      console.log("🛑 Stopping secondary camera stream");
+      secondaryStream.getTracks().forEach((track) => {
+        console.log(
+          `🛑 Stopping secondary ${track.kind} track (${track.readyState})`,
+        );
         track.stop();
       });
     }
 
     cameraStreamRef.current = null;
+    secondaryCameraStreamRef.current = null;
     setSession(null);
   };
 
   const handleFinish = () => {
     console.log("✅ Interview finished");
 
-    // ✅ Stop camera stream on completion
-    const stream = session?.cameraStream || cameraStreamRef.current;
-    if (stream) {
-      console.log("🛑 Stopping camera after interview");
-      stream.getTracks().forEach((track) => track.stop());
+    // ✅ Stop both cameras on completion
+    const primaryStream = session?.cameraStream || cameraStreamRef.current;
+    if (primaryStream) {
+      console.log("🛑 Stopping primary camera after interview");
+      primaryStream.getTracks().forEach((track) => track.stop());
+    }
+
+    const secondaryStream =
+      session?.secondaryCameraStream || secondaryCameraStreamRef.current;
+    if (secondaryStream) {
+      console.log("🛑 Stopping secondary camera after interview");
+      secondaryStream.getTracks().forEach((track) => track.stop());
     }
 
     cameraStreamRef.current = null;
+    secondaryCameraStreamRef.current = null;
     setShowSubmissionModal(true);
   };
 
   // ✅ Cleanup on unmount
   useEffect(() => {
     return () => {
-      const stream = cameraStreamRef.current;
-      if (stream) {
-        console.log("🧹 Cleaning up camera stream on unmount");
-        stream.getTracks().forEach((track) => track.stop());
+      const primaryStream = cameraStreamRef.current;
+      if (primaryStream) {
+        console.log("🧹 Cleaning up primary camera on unmount");
+        primaryStream.getTracks().forEach((track) => track.stop());
+      }
+
+      const secondaryStream = secondaryCameraStreamRef.current;
+      if (secondaryStream) {
+        console.log("🧹 Cleaning up secondary camera on unmount");
+        secondaryStream.getTracks().forEach((track) => track.stop());
       }
     };
   }, []);
@@ -110,6 +162,7 @@ const Interview = () => {
             interviewId={session.interviewId}
             userId={session.userId}
             cameraStream={session.cameraStream}
+            secondaryCameraStream={session.secondaryCameraStream} // ✅ Pass secondary camera
             onCancel={handleCancelInterview}
             onFinish={handleFinish}
           />

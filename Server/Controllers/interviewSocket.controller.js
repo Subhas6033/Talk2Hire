@@ -37,16 +37,20 @@ function initInterviewSocket(httpServer) {
     if (!interviewSessions.has(interviewId)) {
       console.log(`🆕 Creating new session for interview: ${interviewId}`);
       interviewSessions.set(interviewId, {
-        // ✅ UPDATED: Unified video uploads structure for camera and screen
+        // ✅ UPDATED: Added secondary_camera to video uploads
         videoUploads: {
           primary_camera: null,
-          screen_recording: null, // ✅ Now handled in videoUploads
+          secondary_camera: null, // ✅ NEW: Secondary camera support
+          screen_recording: null,
         },
         audioUploads: {
           mixed_audio: null,
           user_audio: null,
           interviewer_audio: null,
         },
+        // ✅ NEW: Track secondary camera connection status
+        secondaryCameraConnected: false,
+        secondaryCameraMetadata: null,
       });
     }
     return interviewSessions.get(interviewId);
@@ -128,6 +132,47 @@ function initInterviewSocket(httpServer) {
 
       console.log("📝 Registering all socket event handlers...");
 
+      // ✅ NEW: Secondary camera connection event
+      socket.on("secondary_camera_connected", (data) => {
+        console.log("📱 Secondary camera connected:", {
+          interviewId: data.interviewId,
+          userId: data.userId,
+          timestamp: data.timestamp,
+        });
+
+        session.secondaryCameraConnected = true;
+        session.secondaryCameraMetadata = {
+          connectedAt: new Date(data.timestamp),
+          angle: data.angle || null,
+          angleQuality: data.angleQuality || null,
+        };
+
+        // Broadcast to all clients in this interview room
+        io.to(`interview_${interviewId}`).emit("secondary_camera_status", {
+          connected: true,
+          metadata: session.secondaryCameraMetadata,
+        });
+
+        console.log("✅ Secondary camera status updated in session");
+      });
+
+      // ✅ NEW: Secondary camera disconnection event
+      socket.on("secondary_camera_disconnected", (data) => {
+        console.log("📱 Secondary camera disconnected:", {
+          interviewId: data.interviewId,
+          userId: data.userId,
+          timestamp: data.timestamp,
+        });
+
+        session.secondaryCameraConnected = false;
+
+        io.to(`interview_${interviewId}`).emit("secondary_camera_status", {
+          connected: false,
+        });
+
+        console.log("⚠️ Secondary camera disconnected from session");
+      });
+
       socket.on("video_recording_start", async (data) => {
         const { videoType, totalChunks, metadata } = data;
 
@@ -142,6 +187,19 @@ function initInterviewSocket(httpServer) {
         });
 
         try {
+          // ✅ Validate video type
+          const validVideoTypes = [
+            "primary_camera",
+            "secondary_camera", // ✅ NEW
+            "screen_recording",
+          ];
+
+          if (!validVideoTypes.includes(videoType)) {
+            throw new Error(
+              `Invalid video type: ${videoType}. Valid types: ${validVideoTypes.join(", ")}`,
+            );
+          }
+
           if (videoUploads[videoType]) {
             console.log(
               `♻️ Video session already exists for ${videoType}, reusing:`,
@@ -178,6 +236,7 @@ function initInterviewSocket(httpServer) {
             videoId,
             chunks: 0,
             totalChunks: totalChunks || 0,
+            metadata: metadata || {},
           };
 
           console.log(
@@ -193,6 +252,15 @@ function initInterviewSocket(httpServer) {
           socket.emit("video_recording_ready", responseData);
 
           console.log(`✅ Emitted video_recording_ready:`, responseData);
+
+          // ✅ NEW: Log secondary camera session creation
+          if (videoType === "secondary_camera") {
+            console.log("📱 Secondary camera recording session created:", {
+              videoId,
+              interviewId,
+              userId,
+            });
+          }
         } catch (error) {
           console.error("❌ Error starting video recording:", error);
           console.error("Error stack:", error.stack);
@@ -320,6 +388,16 @@ function initInterviewSocket(httpServer) {
           console.log(
             `🎬 ${videoType} will be automatically merged by background job`,
           );
+
+          // ✅ NEW: Log secondary camera finalization
+          if (videoType === "secondary_camera") {
+            console.log("📱 Secondary camera recording finalized:", {
+              videoId: videoInfo.videoId,
+              ftpUrl: result.ftpUrl,
+              fileSize: result.fileSize,
+              duration: result.duration,
+            });
+          }
         } catch (error) {
           console.error(`❌ Error finalizing ${videoType}:`, error);
           socket.emit("video_processing_error", {
@@ -685,21 +763,25 @@ function initInterviewSocket(httpServer) {
                 "🎬 Videos will be merged automatically by background job",
               );
 
-              // ✅ ADDED: Trigger global media merger after evaluation
-              console.log("🎬 Triggering global media merger...");
+              // ✅ UPDATED: Trigger global media merger with secondary camera support
+              console.log(
+                "🎬 Triggering global media merger (with secondary camera)...",
+              );
 
               mergeInterviewMedia(interviewId, {
-                layout: "picture-in-picture",
+                layout: "picture-in-picture", // Can be: 'picture-in-picture', 'side-by-side', 'grid', 'screen-only'
                 screenPosition: "bottom-right",
                 screenSize: 0.25,
                 deleteChunksAfter: true,
                 generatePreview: true,
+                // ✅ NEW: Secondary camera will be automatically detected and included
               })
                 .then((mergeResult) => {
                   console.log("✅ Media merge complete:", {
                     finalVideoUrl: mergeResult.finalVideoUrl,
                     fileSize: mergeResult.fileSize,
                     duration: mergeResult.duration,
+                    videosIncluded: Object.keys(mergeResult.videos || {}),
                   });
 
                   socket.emit("media_merge_complete", {
@@ -707,6 +789,7 @@ function initInterviewSocket(httpServer) {
                     finalVideoUrl: mergeResult.finalVideoUrl,
                     previewUrl: mergeResult.previewUrl,
                     duration: mergeResult.duration,
+                    videosIncluded: Object.keys(mergeResult.videos || {}),
                   });
                 })
                 .catch((mergeError) => {
@@ -926,7 +1009,6 @@ function initInterviewSocket(httpServer) {
         isListeningActive = false;
         socket.emit("listening_disabled");
 
-        // ✅ FIX: Add flag to prevent duplicate processing
         const processingStartTime = Date.now();
 
         try {
@@ -955,7 +1037,6 @@ function initInterviewSocket(httpServer) {
 
           const nextOrder = currentOrder + 1;
 
-          // ✅ FIX: Check if next question already exists (prevents duplicate generation)
           let nextQuestion = await Interview.getQuestionByOrder(
             interviewId,
             nextOrder,
@@ -989,7 +1070,6 @@ function initInterviewSocket(httpServer) {
           currentOrder = nextOrder;
           currentQuestionText = nextQuestion.question;
 
-          // ✅ FIX: Use ONLY next_question event, not both
           socket.emit("next_question", { question: nextQuestion.question });
 
           await new Promise((resolve) => setTimeout(resolve, 200));
@@ -1072,7 +1152,6 @@ function initInterviewSocket(httpServer) {
         }
       });
 
-      // Optimized Holistic Detection Handler
       socket.on("holistic_detection_result", async (data) => {
         const {
           hasFace,
