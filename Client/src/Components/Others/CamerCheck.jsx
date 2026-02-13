@@ -6,15 +6,16 @@ const CameraCheck = ({
   isOpen,
   onClose,
   onSuccess,
-  facingMode = "environment", // ✅ NEW: "environment" (back) or "user" (front)
-  title = "Camera Setup", // ✅ NEW: Customizable title
-  description = "Please allow camera access to continue with the interview.", // ✅ NEW: Customizable description
+  facingMode = "environment", // "environment" (back) or "user" (front)
+  title = "Camera Setup",
+  description = "Please allow camera access to continue with the interview.",
 }) => {
   const [stream, setStream] = useState(null);
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const videoRef = useRef(null);
   const streamHandedOffRef = useRef(false);
+  const streamRef = useRef(null); // Store stream in ref for cleanup
 
   const requestCamera = async () => {
     setIsLoading(true);
@@ -32,7 +33,19 @@ const CameraCheck = ({
         audio: false,
       });
 
+      console.log(`✅ ${facingMode} camera access granted:`, {
+        streamId: mediaStream.id,
+        active: mediaStream.active,
+        tracks: mediaStream.getTracks().map((t) => ({
+          kind: t.kind,
+          readyState: t.readyState,
+          enabled: t.enabled,
+        })),
+      });
+
+      // Store in both state and ref
       setStream(mediaStream);
+      streamRef.current = mediaStream;
 
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
@@ -46,7 +59,7 @@ const CameraCheck = ({
         };
       }
 
-      console.log(`✅ ${facingMode} camera access granted`);
+      console.log(`✅ ${facingMode} camera stream ready for handoff`);
     } catch (err) {
       console.error(`❌ ${facingMode} camera access error:`, err);
 
@@ -69,22 +82,54 @@ const CameraCheck = ({
 
   const handleContinue = () => {
     if (stream) {
-      console.log(`✅ Passing ${facingMode} camera stream to parent`);
+      console.log(`🎥 HANDOFF STARTING for ${facingMode} camera:`, {
+        streamId: stream.id,
+        active: stream.active,
+        tracks: stream.getTracks().map((t) => ({
+          kind: t.kind,
+          readyState: t.readyState,
+          enabled: t.enabled,
+        })),
+      });
+
+      // ✅ CRITICAL: Set handoff flag BEFORE calling onSuccess
       streamHandedOffRef.current = true;
+
+      console.log(`✅ Handoff flag set to TRUE for ${facingMode} camera`);
+      console.log(`📤 Passing stream to parent component...`);
+
+      // Pass stream to parent
       onSuccess(stream);
+
+      console.log(
+        `✅ Stream handed off successfully - will NOT be cleaned up on unmount`,
+      );
+
       // Don't close modal or stop stream here - parent will handle it
+    } else {
+      console.warn("⚠️ No stream available for handoff");
     }
   };
 
   const handleClose = () => {
-    // ✅ FIXED: Only stop stream if it wasn't handed off to parent
-    if (stream && !streamHandedOffRef.current) {
-      console.log(`🛑 Stopping ${facingMode} camera stream`);
-      stream.getTracks().forEach((track) => track.stop());
+    console.log(`🚪 Modal closing for ${facingMode} camera:`, {
+      hasStream: !!streamRef.current,
+      handedOff: streamHandedOffRef.current,
+    });
+
+    // Only stop stream if it wasn't handed off to parent
+    if (streamRef.current && !streamHandedOffRef.current) {
+      console.log(`🛑 Stopping ${facingMode} camera stream (not handed off)`);
+      streamRef.current.getTracks().forEach((track) => {
+        track.stop();
+        console.log(`  - Stopped ${track.kind} track:`, track.label);
+      });
       setStream(null);
+      streamRef.current = null;
     } else if (streamHandedOffRef.current) {
-      console.log(`✅ Stream handed off to parent, not stopping`);
+      console.log(`✅ Stream was handed off to parent, NOT stopping`);
     }
+
     setError(null);
     streamHandedOffRef.current = false; // Reset for next time
     onClose();
@@ -96,16 +141,26 @@ const CameraCheck = ({
     }
   }, [isOpen]);
 
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (stream && !streamHandedOffRef.current) {
-        console.log(`🧹 Cleanup: Stopping ${facingMode} camera stream`);
-        stream.getTracks().forEach((track) => track.stop());
+      console.log(`🧹 CameraCheck cleanup for ${facingMode} camera:`, {
+        hasStream: !!streamRef.current,
+        handedOff: streamHandedOffRef.current,
+      });
+
+      // Only cleanup if stream wasn't handed off
+      if (streamRef.current && !streamHandedOffRef.current) {
+        console.log(`🛑 Cleanup: Stopping ${facingMode} camera stream`);
+        streamRef.current.getTracks().forEach((track) => {
+          track.stop();
+          console.log(`  - Stopped ${track.kind} track:`, track.label);
+        });
       } else if (streamHandedOffRef.current) {
         console.log(`✅ Cleanup: Stream was handed off, not stopping`);
       }
     };
-  }, [stream, facingMode]);
+  }, [facingMode]);
 
   return (
     <Modal isOpen={isOpen} onClose={handleClose} title={title} size="lg">
@@ -118,7 +173,7 @@ const CameraCheck = ({
 
         <div className="relative w-full aspect-video bg-gray-900 rounded-xl overflow-hidden shadow-lg">
           {isLoading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+            <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-10">
               <div className="text-center">
                 <div className="animate-spin w-12 h-12 border-4 border-gray-600 border-t-blue-500 rounded-full mx-auto mb-4" />
                 <p className="text-sm text-white">Accessing camera...</p>
@@ -127,7 +182,7 @@ const CameraCheck = ({
           )}
 
           {error && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+            <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-10">
               <div className="text-center px-6">
                 <svg
                   className="w-12 h-12 text-red-500 mx-auto mb-4"
@@ -160,7 +215,7 @@ const CameraCheck = ({
           />
 
           {stream && !error && (
-            <div className="absolute top-3 left-3">
+            <div className="absolute top-3 left-3 z-20">
               <div className="flex items-center gap-2 px-3 py-1.5 bg-green-600/90 backdrop-blur-sm rounded-lg shadow-xl">
                 <div className="w-2 h-2 rounded-full bg-green-300 animate-pulse" />
                 <span className="text-xs font-bold text-white">

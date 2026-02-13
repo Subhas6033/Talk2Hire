@@ -14,9 +14,12 @@ const MobileCameraPage = () => {
   const [error, setError] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [cameraGranted, setCameraGranted] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
 
   const socketRef = useRef(null);
   const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const frameIntervalRef = useRef(null);
 
   const secondaryCamera = useSecondaryCamera(sessionId, userId, socketRef);
 
@@ -61,19 +64,81 @@ const MobileCameraPage = () => {
     socket.on("disconnect", (reason) => {
       console.log("⚠️ Mobile socket disconnected:", reason);
       setIsConnected(false);
+      setIsStreaming(false);
     });
 
     return () => {
+      if (frameIntervalRef.current) {
+        clearInterval(frameIntervalRef.current);
+      }
       socket.disconnect();
     };
   }, [isMobile, sessionId, userId]);
 
-  // Request camera permission and start recording
+  // Stream frames to desktop for preview
+  const startFrameStreaming = (stream) => {
+    if (!canvasRef.current || !videoRef.current || !socketRef.current) return;
+
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    const ctx = canvas.getContext("2d");
+
+    // Set canvas size to match video
+    canvas.width = 640;
+    canvas.height = 480;
+
+    console.log("📡 Starting frame streaming to desktop...");
+    setIsStreaming(true);
+
+    // Send frames at 10 FPS
+    frameIntervalRef.current = setInterval(() => {
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        // Draw video frame to canvas
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        // Convert to JPEG with quality 0.5
+        canvas.toBlob(
+          (blob) => {
+            if (blob && socketRef.current?.connected) {
+              // Convert blob to base64
+              const reader = new FileReader();
+              reader.onloadend = () => {
+                const base64data = reader.result;
+                socketRef.current.emit("mobile_camera_frame", {
+                  frame: base64data,
+                  interviewId: sessionId,
+                  userId,
+                  timestamp: Date.now(),
+                });
+              };
+              reader.readAsDataURL(blob);
+            }
+          },
+          "image/jpeg",
+          0.5,
+        );
+      }
+    }, 100); // 10 FPS
+  };
+
+  // Stop frame streaming
+  const stopFrameStreaming = () => {
+    if (frameIntervalRef.current) {
+      clearInterval(frameIntervalRef.current);
+      frameIntervalRef.current = null;
+    }
+    setIsStreaming(false);
+    console.log("🛑 Stopped frame streaming");
+  };
+
+  // ✅ IMPROVED: Request camera permission and start recording with better flow
   useEffect(() => {
     if (!isConnected || cameraGranted) return;
 
     const requestCamera = async () => {
       try {
+        console.log("📱 Requesting front camera access...");
+
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: "user",
@@ -83,6 +148,7 @@ const MobileCameraPage = () => {
           audio: false,
         });
 
+        console.log("✅ Camera access granted");
         setCameraGranted(true);
 
         if (videoRef.current) {
@@ -90,52 +156,92 @@ const MobileCameraPage = () => {
           videoRef.current.play();
         }
 
-        // ✅ Step 1: Tell server mobile is connected FIRST
+        // ✅ STEP 1: Tell server mobile camera is connected
+        console.log(
+          "📤 Step 1: Notifying server of mobile camera connection...",
+        );
         socketRef.current.emit("secondary_camera_connected", {
           interviewId: sessionId,
           userId,
           timestamp: Date.now(),
         });
 
-        // ✅ Step 2: Wait for server to confirm video session ready
-        // BEFORE starting recording — otherwise chunks have no videoId
-        await new Promise((resolve, reject) => {
-          const timeout = setTimeout(
-            () => reject(new Error("video_recording_ready timeout")),
-            10000,
-          );
-          socketRef.current.once("video_recording_ready", (data) => {
-            if (data.videoType === "secondary_camera") {
-              clearTimeout(timeout);
-              resolve(data);
-            }
-          });
-          // Trigger the video session creation on server
-          socketRef.current.emit("video_recording_start", {
-            videoType: "secondary_camera",
-            totalChunks: 0,
-            metadata: {
-              mimeType: "video/webm;codecs=vp9",
-              videoBitsPerSecond: 2500000,
-            },
-            interviewId: sessionId,
-            userId,
-          });
+        // ✅ STEP 2: Start streaming frames to desktop for preview
+        console.log("📤 Step 2: Starting frame streaming to desktop...");
+        startFrameStreaming(stream);
+
+        // ✅ STEP 3: Request video recording session from server
+        console.log("📤 Step 3: Requesting video recording session...");
+        socketRef.current.emit("video_recording_start", {
+          videoType: "secondary_camera",
+          totalChunks: 0,
+          metadata: {
+            mimeType: "video/webm;codecs=vp9",
+            videoBitsPerSecond: 2500000,
+          },
+          interviewId: sessionId,
+          userId,
         });
 
-        // ✅ Step 3: NOW start recording
-        await secondaryCamera.startRecording();
-        console.log("✅ Mobile camera recording started");
+        // ✅ STEP 4: Wait for server confirmation with timeout
+        console.log("⏳ Step 4: Waiting for server confirmation...");
+        try {
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              socketRef.current.off("video_recording_ready", handler);
+              socketRef.current.off("video_recording_error", errorHandler);
+              reject(
+                new Error(
+                  "Server did not confirm video session within 10 seconds",
+                ),
+              );
+            }, 10000);
+
+            const handler = (data) => {
+              if (data.videoType === "secondary_camera") {
+                clearTimeout(timeout);
+                socketRef.current.off("video_recording_error", errorHandler);
+                console.log("✅ Server confirmed video session ready:", data);
+                resolve(data);
+              }
+            };
+
+            const errorHandler = (error) => {
+              if (error.videoType === "secondary_camera") {
+                clearTimeout(timeout);
+                socketRef.current.off("video_recording_ready", handler);
+                console.error("❌ Server error:", error);
+                reject(new Error(error.error || "Server error"));
+              }
+            };
+
+            socketRef.current.on("video_recording_ready", handler);
+            socketRef.current.on("video_recording_error", errorHandler);
+          });
+
+          // ✅ STEP 5: Start actual video recording
+          console.log("🎥 Step 5: Starting video recording...");
+          await secondaryCamera.startRecording();
+          console.log("✅ Mobile camera recording started successfully");
+        } catch (serverError) {
+          console.error("❌ Server confirmation failed:", serverError);
+          setError(`Failed to initialize recording: ${serverError.message}`);
+        }
       } catch (err) {
         console.error("❌ Camera error:", err);
         let errorMessage = "Unable to access front camera. ";
-        if (err.name === "NotAllowedError")
-          errorMessage += "Please grant camera permission.";
-        else if (err.name === "NotFoundError")
-          errorMessage += "No front camera found.";
-        else if (err.name === "NotReadableError")
-          errorMessage += "Camera in use by another app.";
-        else errorMessage += err.message;
+
+        if (err.name === "NotAllowedError") {
+          errorMessage +=
+            "Please grant camera permission and refresh the page.";
+        } else if (err.name === "NotFoundError") {
+          errorMessage += "No front camera found on this device.";
+        } else if (err.name === "NotReadableError") {
+          errorMessage += "Camera is in use by another app.";
+        } else {
+          errorMessage += err.message;
+        }
+
         setError(errorMessage);
       }
     };
@@ -144,17 +250,10 @@ const MobileCameraPage = () => {
     requestCamera();
   }, [isConnected, cameraGranted, sessionId, userId, secondaryCamera]);
 
-  // Setup video preview
-  useEffect(() => {
-    if (!videoRef.current || !secondaryCamera.secondaryCameraStream) return;
-
-    console.log("📱 Setting up video preview");
-    videoRef.current.srcObject = secondaryCamera.secondaryCameraStream;
-  }, [secondaryCamera.secondaryCameraStream]);
-
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      stopFrameStreaming();
       if (secondaryCamera.isRecording) {
         secondaryCamera.stopRecording();
       }
@@ -259,6 +358,13 @@ const MobileCameraPage = () => {
                       RECORDING
                     </span>
                   </>
+                ) : isStreaming ? (
+                  <>
+                    <div className="w-3 h-3 rounded-full bg-yellow-300 animate-pulse" />
+                    <span className="text-white font-bold text-sm">
+                      STREAMING
+                    </span>
+                  </>
                 ) : isConnected ? (
                   <>
                     <div className="w-3 h-3 rounded-full bg-yellow-300 animate-pulse" />
@@ -306,8 +412,11 @@ const MobileCameraPage = () => {
               style={{ transform: "scaleX(-1)" }}
             />
 
+            {/* Hidden canvas for frame capture */}
+            <canvas ref={canvasRef} className="hidden" />
+
             {/* Overlay when not recording */}
-            {!secondaryCamera.isRecording && !error && (
+            {!secondaryCamera.isRecording && !isStreaming && !error && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70">
                 <div className="animate-spin w-12 h-12 border-4 border-gray-600 border-t-orange-500 rounded-full mb-4" />
                 <p className="text-white text-sm font-medium">
@@ -324,6 +433,16 @@ const MobileCameraPage = () => {
                 <div className="flex items-center gap-2 px-4 py-2 bg-red-600/90 backdrop-blur-sm rounded-lg shadow-xl">
                   <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
                   <span className="text-white text-xs font-bold">REC</span>
+                </div>
+              </div>
+            )}
+
+            {/* Streaming Indicator */}
+            {isStreaming && !secondaryCamera.isRecording && (
+              <div className="absolute top-4 right-4">
+                <div className="flex items-center gap-2 px-4 py-2 bg-blue-600/90 backdrop-blur-sm rounded-lg shadow-xl">
+                  <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                  <span className="text-white text-xs font-bold">LIVE</span>
                 </div>
               </div>
             )}
@@ -352,6 +471,7 @@ const MobileCameraPage = () => {
                   <li>• Don't lock your screen or switch apps</li>
                   <li>• Ensure good lighting on your face</li>
                   <li>• Keep this page open until interview ends</li>
+                  <li>• Camera feed is streaming to desktop</li>
                 </ul>
               </div>
             </div>
@@ -365,7 +485,11 @@ const MobileCameraPage = () => {
               className={`w-2 h-2 rounded-full ${isConnected ? "bg-green-500" : "bg-gray-500"}`}
             />
             <span className="text-sm text-gray-300">
-              {isConnected ? "Connected to interview session" : "Disconnected"}
+              {isConnected
+                ? isStreaming
+                  ? "Streaming to desktop"
+                  : "Connected to interview session"
+                : "Disconnected"}
             </span>
           </div>
         </div>

@@ -154,6 +154,23 @@ function initInterviewSocket(httpServer) {
       // SECONDARY CAMERA EVENTS
       // ══════════════════════════════════════════════════════════════
 
+      // ✅ FIXED: Relay mobile camera frames to other clients in the room (desktop)
+      socket.on("mobile_camera_frame", (data) => {
+        // Forward the frame to all OTHER clients in the room (not the sender)
+        socket.to(`interview_${interviewId}`).emit("mobile_camera_frame", {
+          frame: data.frame,
+          timestamp: data.timestamp || Date.now(),
+        });
+
+        // Log occasionally for debugging
+        if (Math.random() < 0.01) {
+          console.log("📱 Relayed mobile camera frame to desktop", {
+            frameSize: data.frame?.length || 0,
+            timestamp: data.timestamp,
+          });
+        }
+      });
+
       socket.on("secondary_camera_connected", (data) => {
         console.log("📱 Secondary camera connected:", {
           interviewId: data.interviewId,
@@ -170,8 +187,7 @@ function initInterviewSocket(httpServer) {
 
         console.log("✅ Secondary camera status updated in session");
 
-        // ✅ FIX: Emit "secondary_camera_ready" (what the desktop listens for)
-        // to ALL clients in the room — desktop receives this and starts interview
+        // ✅ Emit "secondary_camera_ready" to ALL clients in the room
         io.to(`interview_${interviewId}`).emit("secondary_camera_ready", {
           interviewId: data.interviewId,
           timestamp: Date.now(),

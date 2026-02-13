@@ -78,6 +78,7 @@ const InterviewQuestions = ({
   const videoRef = useRef(null);
   const secondaryVideoRef = useRef(null);
   const screenVideoRef = useRef(null);
+  const secondaryCanvasRef = useRef(null);
   const isCleaningUpRef = useRef(false);
   const readyForQuestionSentRef = useRef(false);
 
@@ -222,6 +223,33 @@ const InterviewQuestions = ({
     socket.on("secondary_camera_status", (data) => {
       if (data.connected) setMobileCameraConnected(true);
     });
+
+    // ✅ FIXED: Receive mobile camera frames for preview with better error handling
+    socket.on("mobile_camera_frame", (data) => {
+      if (secondaryCanvasRef.current && data.frame) {
+        const canvas = secondaryCanvasRef.current;
+        const ctx = canvas.getContext("2d");
+        const img = new Image();
+
+        img.onload = () => {
+          // Set canvas size to match image (only on first frame or if size changed)
+          if (canvas.width === 0 || canvas.height === 0) {
+            canvas.width = img.width || 640;
+            canvas.height = img.height || 480;
+            console.log(`📐 Canvas sized: ${canvas.width}x${canvas.height}`);
+          }
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        };
+
+        img.onerror = (err) => {
+          console.error("❌ Failed to load mobile camera frame:", err);
+        };
+
+        img.src = data.frame;
+      }
+    });
+
     socket.on("interim_transcript", (data) =>
       interview.setLiveTranscript(data.text),
     );
@@ -811,7 +839,7 @@ const InterviewQuestions = ({
               </div>
             </Card>
 
-            {/* 2. Mobile Camera - ✅ FIXED: Always show placeholder, no stream preview */}
+            {/* 2. Mobile Camera - ✅ FIXED: Show canvas with streamed frames */}
             <Card className="overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
               <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-linear-to-r from-orange-50 to-red-50 dark:from-orange-900/20 dark:to-red-900/20">
                 <div className="flex items-center justify-between">
@@ -863,45 +891,22 @@ const InterviewQuestions = ({
                     style={{ transform: "scaleX(-1)" }}
                   />
 
-                  {/* Always show placeholder - mobile stream lives on phone */}
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-linear-to-br from-orange-950/60 to-gray-900 gap-3">
-                    {secondaryIsActive ? (
-                      <>
-                        <div className="w-14 h-14 rounded-full bg-orange-500/20 border-2 border-orange-500 flex items-center justify-center">
-                          <svg
-                            className="w-7 h-7 text-orange-400"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"
-                            />
-                          </svg>
-                        </div>
-                        <p className="text-xs text-orange-300 font-semibold text-center px-4">
-                          📱{" "}
-                          {secondaryCamera.isRecording
-                            ? "Recording"
-                            : "Connected"}{" "}
-                          on mobile device
-                        </p>
-                        <p className="text-xs text-gray-400 text-center px-4">
-                          Preview not available — stream is on your phone
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        <div className="animate-spin w-10 h-10 border-2 border-gray-600 border-t-orange-500 rounded-full" />
-                        <p className="text-xs text-gray-400 font-semibold">
-                          Waiting for mobile...
-                        </p>
-                      </>
-                    )}
-                  </div>
+                  {/* ✅ Canvas to display streamed frames from mobile */}
+                  <canvas
+                    ref={secondaryCanvasRef}
+                    className={`w-full h-full object-cover ${mobileCameraConnected ? "block" : "hidden"}`}
+                    style={{ transform: "scaleX(-1)" }}
+                  />
+
+                  {/* Placeholder when not connected */}
+                  {!mobileCameraConnected && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-linear-to-br from-orange-950/60 to-gray-900 gap-3">
+                      <div className="animate-spin w-10 h-10 border-2 border-gray-600 border-t-orange-500 rounded-full" />
+                      <p className="text-xs text-gray-400 font-semibold">
+                        Waiting for mobile...
+                      </p>
+                    </div>
+                  )}
 
                   <div className="absolute top-3 left-3 z-10">
                     <div className="flex items-center gap-2 px-3 py-1.5 bg-black/80 backdrop-blur-sm rounded-lg">
@@ -918,7 +923,7 @@ const InterviewQuestions = ({
                         {secondaryCamera.isRecording
                           ? "REC"
                           : mobileCameraConnected
-                            ? "STANDBY"
+                            ? "LIVE"
                             : "OFFLINE"}
                       </span>
                     </div>
