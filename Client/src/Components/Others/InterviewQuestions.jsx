@@ -81,6 +81,7 @@ const InterviewQuestions = ({
   const secondaryCanvasRef = useRef(null);
   const isCleaningUpRef = useRef(false);
   const readyForQuestionSentRef = useRef(false);
+  const hasReceivedFrameRef = useRef(false);
 
   const {
     isInitialized: isHolisticDetectionReady,
@@ -224,29 +225,79 @@ const InterviewQuestions = ({
       if (data.connected) setMobileCameraConnected(true);
     });
 
-    // ✅ FIXED: Receive mobile camera frames for preview with better error handling
+    // In InterviewQuestions.jsx, enhance the mobile_camera_frame listener
     socket.on("mobile_camera_frame", (data) => {
-      if (secondaryCanvasRef.current && data.frame) {
-        const canvas = secondaryCanvasRef.current;
-        const ctx = canvas.getContext("2d");
-        const img = new Image();
+      // Mark that we've received first frame
+      if (!hasReceivedFrameRef.current) {
+        hasReceivedFrameRef.current = true;
+        setMobileCameraConnected(true);
+        console.log("📱 First mobile frame received — camera connected!");
+      }
 
-        img.onload = () => {
-          // Set canvas size to match image (only on first frame or if size changed)
-          if (canvas.width === 0 || canvas.height === 0) {
-            canvas.width = img.width || 640;
-            canvas.height = img.height || 480;
-            console.log(`📐 Canvas sized: ${canvas.width}x${canvas.height}`);
-          }
+      // Validate canvas and data
+      if (!secondaryCanvasRef.current) {
+        console.warn("⚠️ Canvas ref not available");
+        return;
+      }
+
+      if (!data || !data.frame) {
+        console.warn("⚠️ Invalid frame data received");
+        return;
+      }
+
+      const canvas = secondaryCanvasRef.current;
+      const ctx = canvas.getContext("2d", { alpha: false }); // Better performance
+
+      // Ensure canvas has dimensions
+      if (canvas.width === 0 || canvas.height === 0) {
+        canvas.width = 640;
+        canvas.height = 480;
+        console.log(
+          "📐 Canvas dimensions set:",
+          canvas.width,
+          "x",
+          canvas.height,
+        );
+      }
+
+      const img = new Image();
+
+      img.onload = () => {
+        try {
+          // Clear previous frame
           ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+          // Draw new frame
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        };
 
-        img.onerror = (err) => {
-          console.error("❌ Failed to load mobile camera frame:", err);
-        };
+          // Update frame counter (for debugging)
+          if (!window.mobileFrameCount) window.mobileFrameCount = 0;
+          window.mobileFrameCount++;
 
+          // Log every 30 frames
+          if (window.mobileFrameCount % 30 === 0) {
+            console.log(
+              `🎨 Rendered ${window.mobileFrameCount} mobile camera frames`,
+            );
+          }
+        } catch (drawError) {
+          console.error("❌ Error drawing to canvas:", drawError);
+        }
+      };
+
+      img.onerror = (err) => {
+        console.error("❌ Failed to load mobile frame image:", {
+          error: err,
+          frameDataLength: data.frame?.length,
+          timestamp: data.timestamp,
+        });
+      };
+
+      // Set source (triggers load)
+      try {
         img.src = data.frame;
+      } catch (srcError) {
+        console.error("❌ Error setting image src:", srcError);
       }
     });
 
@@ -881,24 +932,12 @@ const InterviewQuestions = ({
               </div>
               <div className="p-3">
                 <div className="relative w-full aspect-video bg-gray-900 rounded-xl overflow-hidden shadow-lg">
-                  {/* Hidden video element - not used for mobile camera */}
-                  <video
-                    ref={secondaryVideoRef}
-                    autoPlay
-                    muted
-                    playsInline
-                    className="hidden"
-                    style={{ transform: "scaleX(-1)" }}
-                  />
-
                   {/* ✅ Canvas to display streamed frames from mobile */}
                   <canvas
                     ref={secondaryCanvasRef}
-                    className={`w-full h-full object-cover ${mobileCameraConnected ? "block" : "hidden"}`}
+                    className="w-full h-full object-cover"
                     style={{ transform: "scaleX(-1)" }}
                   />
-
-                  {/* Placeholder when not connected */}
                   {!mobileCameraConnected && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center bg-linear-to-br from-orange-950/60 to-gray-900 gap-3">
                       <div className="animate-spin w-10 h-10 border-2 border-gray-600 border-t-orange-500 rounded-full" />

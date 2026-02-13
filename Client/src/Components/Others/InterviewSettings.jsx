@@ -48,7 +48,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
   const selectedSkillsRef = useRef(null);
   const cameraStreamRef = useRef(null);
   const hasStartedInterviewRef = useRef(false);
-  // Socket ref for listening to mobile camera connection in settings phase
   const settingsSocketRef = useRef(null);
 
   useEffect(() => {
@@ -114,47 +113,8 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
   };
 
-  // ── Socket listener for mobile camera connection (settings phase only) ──
-  useEffect(() => {
-    if (!showQRModal || !sessionData) return;
-
-    console.log("📡 Connecting settings socket to listen for mobile camera...");
-
-    const socket = io(SOCKET_URL, {
-      query: {
-        interviewId: sessionData.interviewId,
-        userId: sessionData.userId,
-      },
-      transports: ["websocket", "polling"],
-      path: "/socket.io",
-      reconnection: true,
-      reconnectionAttempts: 5,
-    });
-
-    settingsSocketRef.current = socket;
-
-    socket.on("connect", () => {
-      console.log("✅ Settings socket connected:", socket.id);
-    });
-
-    // Server emits this when mobile sends secondary_camera_connected
-    socket.on("secondary_camera_ready", (data) => {
-      console.log("📱 Mobile camera confirmed by server:", data);
-      setSecondaryCameraConnected(true);
-      setQuestionsReady(true);
-      setIsGeneratingQuestions(false);
-    });
-
-    socket.on("connect_error", (err) => {
-      console.error("❌ Settings socket error:", err);
-    });
-
-    return () => {
-      console.log("🔌 Disconnecting settings socket");
-      socket.disconnect();
-      settingsSocketRef.current = null;
-    };
-  }, [showQRModal, sessionData]);
+  // ✅ REMOVED: Duplicate useEffect that was creating second socket connection
+  // The socket is now created in handleCameraSuccess and stored in settingsSocketRef
 
   // Handle primary camera success
   const handleCameraSuccess = async (stream) => {
@@ -194,16 +154,80 @@ const InterviewSettings = ({ onInterviewReady }) => {
       console.log("✅ Session data created:", newSessionData);
       setSessionData(newSessionData);
 
-      // ✅ IMPORTANT: Close camera modal AFTER generating QR code
+      // ✅ FIX 1: Initialize socket BEFORE generating QR code
+      console.log("📡 Initializing socket for mobile frames...");
+      const socket = io(SOCKET_URL, {
+        query: {
+          interviewId: newSessionData.interviewId,
+          userId: newSessionData.userId,
+        },
+        transports: ["websocket", "polling"],
+        path: "/socket.io",
+        reconnection: true,
+        reconnectionAttempts: 5,
+        autoConnect: true,
+      });
+
+      // ✅ FIX 2: Store socket in ref so it persists
+      settingsSocketRef.current = socket;
+
+      // ✅ FIX 3: Wait for socket to connect before showing QR
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error("Socket connection timeout"));
+        }, 10000);
+
+        socket.on("connect", () => {
+          clearTimeout(timeout);
+          console.log(
+            "✅ Settings socket connected before QR display:",
+            socket.id,
+          );
+          resolve();
+        });
+
+        socket.on("connect_error", (err) => {
+          clearTimeout(timeout);
+          console.error("❌ Socket connection failed:", err);
+          reject(err);
+        });
+      });
+
+      // ✅ FIX 4: Set up event listeners AFTER connection but BEFORE QR code
+      socket.on("secondary_camera_ready", (data) => {
+        console.log("📱 Mobile camera confirmed by server:", data);
+        setSecondaryCameraConnected(true);
+        setQuestionsReady(true);
+        setIsGeneratingQuestions(false);
+      });
+
+      socket.on("secondary_camera_status", (data) => {
+        if (data.connected) {
+          console.log("📱 Secondary camera status update:", data);
+          setSecondaryCameraConnected(true);
+        }
+      });
+
+      // ✅ FIX 5: Generate QR code AFTER socket is ready
       await generateQRCode(newSessionData);
-      setIsCameraOpen(false); // ✅ Move this AFTER QR code generation
+
+      // ✅ FIX 6: Close camera modal and show QR modal
+      setIsCameraOpen(false);
       setShowQRModal(true);
 
-      console.log("✅ QR modal shown, waiting for mobile connection...");
+      console.log(
+        "✅ Socket ready, QR displayed, waiting for mobile connection...",
+      );
     } catch (err) {
       console.error("❌ Session creation error:", err);
       setError(err?.message || "Failed to create interview session");
       setIsGeneratingQuestions(false);
+
+      // ✅ FIX 7: Clean up socket on error
+      if (settingsSocketRef.current) {
+        settingsSocketRef.current.disconnect();
+        settingsSocketRef.current = null;
+      }
 
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
@@ -211,6 +235,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
       }
     }
   };
+
   // Start interview — no local secondary stream needed (it lives on mobile)
   const tryStartInterview = () => {
     const canStart =
@@ -262,6 +287,14 @@ const InterviewSettings = ({ onInterviewReady }) => {
     setError(null);
     setShowQRModal(false);
 
+    // ✅ FIX 8: Disconnect settings socket before starting interview
+    // The interview will create its own socket connection
+    if (settingsSocketRef.current) {
+      console.log("🔌 Disconnecting settings socket before interview starts");
+      settingsSocketRef.current.disconnect();
+      settingsSocketRef.current = null;
+    }
+
     try {
       // secondaryCameraStream is null here — it lives on the mobile browser
       // InterviewQuestions handles it independently via useSecondaryCamera hook
@@ -288,6 +321,14 @@ const InterviewSettings = ({ onInterviewReady }) => {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      console.log("🧹 InterviewSettings cleanup");
+
+      // Disconnect socket if still connected
+      if (settingsSocketRef.current) {
+        settingsSocketRef.current.disconnect();
+        settingsSocketRef.current = null;
+      }
+
       if (!hasStartedInterviewRef.current) {
         if (cameraStreamRef.current) {
           cameraStreamRef.current.getTracks().forEach((track) => track.stop());

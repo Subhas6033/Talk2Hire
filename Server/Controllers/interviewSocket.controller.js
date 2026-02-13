@@ -50,6 +50,8 @@ function initInterviewSocket(httpServer) {
         secondaryCameraConnected: false,
         secondaryCameraMetadata: null,
         serverReadySent: false,
+        lastMobileFrame: null, // ✅ NEW
+        lastMobileFrameTimestamp: null, // ✅ NEW
       });
     }
     return interviewSessions.get(interviewId);
@@ -80,18 +82,27 @@ function initInterviewSocket(httpServer) {
       console.log(
         "📱 Secondary camera already connected, notifying new client",
       );
-      setTimeout(() => {
-        socket.emit("secondary_camera_ready", {
-          interviewId: interviewId,
-          timestamp: Date.now(),
-          message: "Mobile camera already connected and ready",
-        });
 
-        socket.emit("secondary_camera_status", {
-          connected: true,
-          metadata: session.secondaryCameraMetadata,
+      // ✅ FIX: No setTimeout — emit immediately to avoid race condition
+      socket.emit("secondary_camera_ready", {
+        interviewId: interviewId,
+        timestamp: Date.now(),
+        message: "Mobile camera already connected and ready",
+      });
+
+      socket.emit("secondary_camera_status", {
+        connected: true,
+        metadata: session.secondaryCameraMetadata,
+      });
+
+      // ✅ FIX: Send last cached frame so canvas shows immediately
+      if (session.lastMobileFrame) {
+        console.log("📸 Sending cached last frame to reconnected client");
+        socket.emit("mobile_camera_frame", {
+          frame: session.lastMobileFrame,
+          timestamp: session.lastMobileFrameTimestamp || Date.now(),
         });
-      }, 500); // Small delay to ensure client is ready to receive
+      }
     }
 
     // Interview state
@@ -156,19 +167,14 @@ function initInterviewSocket(httpServer) {
 
       // ✅ FIXED: Relay mobile camera frames to other clients in the room (desktop)
       socket.on("mobile_camera_frame", (data) => {
-        // Forward the frame to all OTHER clients in the room (not the sender)
+        session.lastMobileFrame = data.frame;
+        session.lastMobileFrameTimestamp = data.timestamp || Date.now();
+
+        // Relay to all other clients in the room
         socket.to(`interview_${interviewId}`).emit("mobile_camera_frame", {
           frame: data.frame,
           timestamp: data.timestamp || Date.now(),
         });
-
-        // Log occasionally for debugging
-        if (Math.random() < 0.01) {
-          console.log("📱 Relayed mobile camera frame to desktop", {
-            frameSize: data.frame?.length || 0,
-            timestamp: data.timestamp,
-          });
-        }
       });
 
       socket.on("secondary_camera_connected", (data) => {
