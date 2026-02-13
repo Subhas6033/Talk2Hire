@@ -86,6 +86,12 @@ const InterviewSettings = ({ onInterviewReady }) => {
   // ✅ FIXED: Generate QR code with passed session data
   const generateQRCode = async (sessionInfo) => {
     try {
+      console.log("📱 generateQRCode called with:", {
+        hasSessionInfo: !!sessionInfo,
+        sessionInfo,
+        userId: user?.id,
+      });
+
       if (!sessionInfo?.interviewId || !user?.id) {
         console.error(
           "❌ Cannot generate QR code: missing session or user data",
@@ -114,9 +120,11 @@ const InterviewSettings = ({ onInterviewReady }) => {
 
       setQrCodeDataUrl(qrDataUrl);
       console.log("✅ QR code generated successfully");
+      return qrDataUrl; // Return the QR code URL
     } catch (err) {
       console.error("❌ QR code generation error:", err);
       setError("Failed to generate QR code");
+      throw err;
     }
   };
 
@@ -150,6 +158,12 @@ const InterviewSettings = ({ onInterviewReady }) => {
 
     // ✅ DON'T close modal yet - show loading state
     console.log("🔄 Generating interview session...");
+    console.log("📊 Pre-dispatch state:", {
+      hasExistingSkills,
+      selectedSkills: selectedSkillsRef.current,
+      userId: user?.id,
+    });
+
     setIsGeneratingQuestions(true);
 
     try {
@@ -159,22 +173,41 @@ const InterviewSettings = ({ onInterviewReady }) => {
         }),
       ).unwrap();
 
+      console.log("📊 API Response received:", {
+        hasResult: !!result,
+        result,
+        sessionId: result?.sessionId,
+      });
+
       if (!result?.sessionId) {
+        console.error("❌ No session ID in response:", result);
         throw new Error("Session ID not returned from server");
+      }
+
+      if (!user?.id) {
+        console.error("❌ No user ID available");
+        throw new Error("User ID not available");
       }
 
       const newSessionData = {
         interviewId: result.sessionId,
-        userId: user?.id,
+        userId: user.id,
       };
 
+      console.log("✅ Session data created:", {
+        newSessionData,
+        interviewId: newSessionData.interviewId,
+        userId: newSessionData.userId,
+      });
+
       setSessionData(newSessionData);
-      console.log("✅ Session created:", newSessionData);
+      console.log("✅ Session state updated");
 
       // ✅ Close primary camera modal NOW
       setIsCameraOpen(false);
 
       // ✅ FIXED: Pass session data directly to generateQRCode
+      console.log("📱 Calling generateQRCode with:", newSessionData);
       await generateQRCode(newSessionData);
 
       // ✅ Show QR modal
@@ -185,6 +218,11 @@ const InterviewSettings = ({ onInterviewReady }) => {
       );
     } catch (err) {
       console.error("❌ Session creation error:", err);
+      console.error("Error details:", {
+        message: err?.message,
+        response: err?.response,
+        data: err?.response?.data,
+      });
       setError(err?.message || "Failed to create interview session");
       setIsGeneratingQuestions(false);
 
