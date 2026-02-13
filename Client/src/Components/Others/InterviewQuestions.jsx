@@ -100,24 +100,6 @@ const InterviewQuestions = ({
   const [mobileCameraConnected, setMobileCameraConnected] = useState(false);
   const [showScreenSharePrompt, setShowScreenSharePrompt] = useState(false);
 
-  // ✅ ADD: Debug state to track stream availability
-  useEffect(() => {
-    console.log("📊 Stream Status Update:", {
-      primaryStream: !!cameraStream,
-      primaryActive: cameraStream?.active,
-      primaryTracks: cameraStream?.getTracks().length,
-      secondaryProp: !!secondaryCameraStream,
-      secondaryHook: !!secondaryCamera.secondaryCameraStream,
-      screenStream: !!screenRecording.screenStream,
-      screenActive: screenRecording.screenStream?.active,
-    });
-  }, [
-    cameraStream,
-    secondaryCameraStream,
-    secondaryCamera.secondaryCameraStream,
-    screenRecording.screenStream,
-  ]);
-
   // ── Cleanup ───────────────────────────────────────────────────────────────
   const cleanupAllRecordings = useCallback(async () => {
     console.log("🧹 Cleaning up all recordings...");
@@ -168,23 +150,6 @@ const InterviewQuestions = ({
       attachStream(videoRef.current, cameraStream);
     }
   }, [cameraStream]);
-
-  // ── SECONDARY camera
-  const secondaryStream =
-    secondaryCameraStream || secondaryCamera.secondaryCameraStream;
-
-  useEffect(() => {
-    console.log("📱 Secondary camera effect triggered:", {
-      hasVideoRef: !!secondaryVideoRef.current,
-      hasStream: !!secondaryStream,
-      streamActive: secondaryStream?.active,
-    });
-
-    if (secondaryVideoRef.current && secondaryStream) {
-      console.log("✅ Attaching secondary camera stream");
-      attachStream(secondaryVideoRef.current, secondaryStream);
-    }
-  }, [secondaryStream]);
 
   // ── SCREEN recording
   useEffect(() => {
@@ -433,9 +398,9 @@ const InterviewQuestions = ({
     }
   }, [evaluationStatus, evaluationResults, onFinish]);
 
+  // ✅ FIXED: Secondary camera status based on mobile connection and recording state
   const secondaryIsActive =
     secondaryCamera.isRecording || mobileCameraConnected;
-  const hasSecondaryStream = !!secondaryStream;
 
   // ── Badge helper ──────────────────────────────────────────────────────────
   const Badge = ({ label, active, color }) => (
@@ -771,7 +736,7 @@ const InterviewQuestions = ({
             </Card>
           </div>
 
-          {/* ── Right: Three Video Feeds — ALL video elements always in DOM ─ */}
+          {/* ── Right: Three Video Feeds ─────────────────────────────────── */}
           <div className="lg:col-span-1 space-y-4">
             {/* 1. Primary Camera */}
             <Card className="overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
@@ -816,7 +781,6 @@ const InterviewQuestions = ({
               </div>
               <div className="p-3">
                 <div className="relative w-full aspect-video bg-gray-900 rounded-xl overflow-hidden shadow-lg">
-                  {/* ✅ Always in DOM */}
                   <video
                     ref={videoRef}
                     autoPlay
@@ -847,7 +811,7 @@ const InterviewQuestions = ({
               </div>
             </Card>
 
-            {/* 2. Mobile Camera */}
+            {/* 2. Mobile Camera - ✅ FIXED: Always show placeholder, no stream preview */}
             <Card className="overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
               <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-linear-to-r from-orange-50 to-red-50 dark:from-orange-900/20 dark:to-red-900/20">
                 <div className="flex items-center justify-between">
@@ -880,7 +844,7 @@ const InterviewQuestions = ({
                       className={`w-1.5 h-1.5 rounded-full ${secondaryIsActive ? "bg-orange-600 animate-pulse" : "bg-gray-400"}`}
                     />
                     {secondaryCamera.isRecording
-                      ? "LIVE"
+                      ? "RECORDING"
                       : mobileCameraConnected
                         ? "CONNECTED"
                         : "WAITING"}
@@ -889,51 +853,56 @@ const InterviewQuestions = ({
               </div>
               <div className="p-3">
                 <div className="relative w-full aspect-video bg-gray-900 rounded-xl overflow-hidden shadow-lg">
-                  {/* ✅ Always in DOM, hidden via CSS when no stream */}
+                  {/* Hidden video element - not used for mobile camera */}
                   <video
                     ref={secondaryVideoRef}
                     autoPlay
                     muted
                     playsInline
-                    className={`w-full h-full object-cover ${hasSecondaryStream ? "block" : "hidden"}`}
+                    className="hidden"
                     style={{ transform: "scaleX(-1)" }}
                   />
-                  {!hasSecondaryStream && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-linear-to-br from-orange-950/60 to-gray-900 gap-3">
-                      {secondaryIsActive ? (
-                        <>
-                          <div className="w-14 h-14 rounded-full bg-orange-500/20 border-2 border-orange-500 flex items-center justify-center">
-                            <svg
-                              className="w-7 h-7 text-orange-400"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"
-                              />
-                            </svg>
-                          </div>
-                          <p className="text-xs text-orange-300 font-semibold text-center px-4">
-                            📱 Recording on mobile device
-                          </p>
-                          <p className="text-xs text-gray-500 text-center px-4">
-                            Preview not available — stream is on your phone
-                          </p>
-                        </>
-                      ) : (
-                        <>
-                          <div className="animate-spin w-10 h-10 border-2 border-gray-600 border-t-orange-500 rounded-full" />
-                          <p className="text-xs text-gray-500 font-semibold">
-                            Waiting for mobile...
-                          </p>
-                        </>
-                      )}
-                    </div>
-                  )}
+
+                  {/* Always show placeholder - mobile stream lives on phone */}
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-linear-to-br from-orange-950/60 to-gray-900 gap-3">
+                    {secondaryIsActive ? (
+                      <>
+                        <div className="w-14 h-14 rounded-full bg-orange-500/20 border-2 border-orange-500 flex items-center justify-center">
+                          <svg
+                            className="w-7 h-7 text-orange-400"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"
+                            />
+                          </svg>
+                        </div>
+                        <p className="text-xs text-orange-300 font-semibold text-center px-4">
+                          📱{" "}
+                          {secondaryCamera.isRecording
+                            ? "Recording"
+                            : "Connected"}{" "}
+                          on mobile device
+                        </p>
+                        <p className="text-xs text-gray-400 text-center px-4">
+                          Preview not available — stream is on your phone
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <div className="animate-spin w-10 h-10 border-2 border-gray-600 border-t-orange-500 rounded-full" />
+                        <p className="text-xs text-gray-400 font-semibold">
+                          Waiting for mobile...
+                        </p>
+                      </>
+                    )}
+                  </div>
+
                   <div className="absolute top-3 left-3 z-10">
                     <div className="flex items-center gap-2 px-3 py-1.5 bg-black/80 backdrop-blur-sm rounded-lg">
                       <div
@@ -990,7 +959,6 @@ const InterviewQuestions = ({
               </div>
               <div className="p-3">
                 <div className="relative w-full aspect-video bg-gray-900 rounded-xl overflow-hidden shadow-lg">
-                  {/* ✅ Always in DOM, hidden via CSS when no stream */}
                   <video
                     ref={screenVideoRef}
                     autoPlay
