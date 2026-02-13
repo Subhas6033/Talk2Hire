@@ -55,47 +55,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
   }, [user, hasExistingSkills, setValue]);
 
-  // ✅ UPDATED: Generate questions ONLY after both cameras connected
-  const generateQuestionsInBackground = async () => {
-    if (!user?.id) {
-      setError("User not authenticated.");
-      return;
-    }
-
-    try {
-      setIsGeneratingQuestions(true);
-      setQuestionsReady(false);
-
-      console.log("🔄 Generating questions in background...");
-
-      const result = await dispatch(
-        startInterview({
-          skills: !hasExistingSkills ? selectedSkillsRef.current : undefined,
-        }),
-      ).unwrap();
-
-      if (!result?.sessionId) {
-        throw new Error("Session ID not returned from server");
-      }
-
-      const newSessionData = {
-        interviewId: result.sessionId,
-        userId: user?.id,
-      };
-
-      setSessionData(newSessionData);
-      setQuestionsReady(true);
-      setIsGeneratingQuestions(false);
-
-      console.log("✅ Questions ready:", newSessionData);
-    } catch (err) {
-      console.error("❌ Question generation error:", err);
-      setError(err?.message || "Failed to generate questions");
-      setIsGeneratingQuestions(false);
-      setQuestionsReady(false);
-    }
-  };
-
   const onSubmit = async () => {
     if (!hasExistingSkills && (!skills || skills.length === 0)) {
       setError("Please select at least one skill to continue.");
@@ -126,7 +85,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
   };
 
   // ✅ Handle primary camera success
-  const handleCameraSuccess = (stream) => {
+  const handleCameraSuccess = async (stream) => {
     console.log("📹 Primary camera stream received");
 
     cameraStreamRef.current = stream;
@@ -156,20 +115,67 @@ const InterviewSettings = ({ onInterviewReady }) => {
     // ✅ Close primary camera modal
     setIsCameraOpen(false);
 
-    // ✅ NEW: Show QR code modal for mobile connection
-    generateQRCode();
-    setShowQRModal(true);
+    // ✅ UPDATED: Generate session FIRST, then show QR code
+    console.log("🔄 Generating interview session...");
+    setIsGeneratingQuestions(true);
 
-    console.log(
-      "✅ Primary camera ready, showing QR code for mobile connection...",
-    );
+    try {
+      const result = await dispatch(
+        startInterview({
+          skills: !hasExistingSkills ? selectedSkillsRef.current : undefined,
+        }),
+      ).unwrap();
+
+      if (!result?.sessionId) {
+        throw new Error("Session ID not returned from server");
+      }
+
+      const newSessionData = {
+        interviewId: result.sessionId,
+        userId: user?.id,
+      };
+
+      setSessionData(newSessionData);
+      console.log("✅ Session created:", newSessionData);
+
+      // Now generate QR code with the session ID
+      await generateQRCode();
+      setShowQRModal(true);
+
+      console.log(
+        "✅ Primary camera ready, showing QR code for mobile connection...",
+      );
+    } catch (err) {
+      console.error("❌ Session creation error:", err);
+      setError(err?.message || "Failed to create interview session");
+      setIsGeneratingQuestions(false);
+
+      // Stop the camera if session creation failed
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+        cameraStreamRef.current = null;
+      }
+    }
   };
 
   // ✅ NEW: Generate QR code for mobile camera connection
   const generateQRCode = async () => {
     try {
-      // Build mobile camera URL
-      const mobileUrl = `${window.location.origin}/mobile-camera?mobile=true&session=${user?.id}&userId=${user?.id}`;
+      if (!sessionData?.interviewId || !user?.id) {
+        console.error(
+          "❌ Cannot generate QR code: missing session or user data",
+          {
+            hasSessionData: !!sessionData,
+            interviewId: sessionData?.interviewId,
+            userId: user?.id,
+          },
+        );
+        setError("Session not ready. Please try again.");
+        return;
+      }
+
+      // ✅ FIXED: Use actual session ID from API response
+      const mobileUrl = `${window.location.origin}/mobile-camera?mobile=true&session=${sessionData.interviewId}&userId=${user.id}`;
 
       console.log("📱 Generating QR code for:", mobileUrl);
 
@@ -184,7 +190,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
       });
 
       setQrCodeDataUrl(qrDataUrl);
-      console.log("✅ QR code generated");
+      console.log("✅ QR code generated successfully");
     } catch (err) {
       console.error("❌ QR code generation error:", err);
       setError("Failed to generate QR code");
@@ -222,10 +228,10 @@ const InterviewSettings = ({ onInterviewReady }) => {
     // ✅ Close QR modal
     setShowQRModal(false);
 
-    console.log("✅ Both cameras ready, starting question generation...");
-
-    // ✅ NEW: Start generating questions NOW (after both cameras connected)
-    generateQuestionsInBackground();
+    // ✅ UPDATED: Session already created, just mark questions as ready
+    console.log("✅ Both cameras ready, marking session as ready...");
+    setQuestionsReady(true);
+    setIsGeneratingQuestions(false);
   };
 
   // ✅ UPDATED: Start interview only when BOTH cameras + questions ready
@@ -500,7 +506,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
       >
         <div className="space-y-6">
           <div className="text-center">
-            <div className="w-20 h-20 rounded-full bg-linear-to-br from-orange-500 to-red-600 flex items-center justify-center mx-auto mb-6 shadow-xl">
+            <div className="w-20 h-20 rounded-full bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center mx-auto mb-6 shadow-xl">
               <svg
                 className="w-10 h-10 text-white"
                 fill="none"
@@ -543,31 +549,31 @@ const InterviewSettings = ({ onInterviewReady }) => {
             </h4>
             <ol className="space-y-3 text-sm text-blue-800 dark:text-blue-200">
               <li className="flex items-start gap-3">
-                <span className="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
+                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
                   1
                 </span>
                 <span>Open your phone's camera app</span>
               </li>
               <li className="flex items-start gap-3">
-                <span className="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
+                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
                   2
                 </span>
                 <span>Point your camera at the QR code above</span>
               </li>
               <li className="flex items-start gap-3">
-                <span className="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
+                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
                   3
                 </span>
                 <span>Tap the notification to open the link</span>
               </li>
               <li className="flex items-start gap-3">
-                <span className="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
+                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
                   4
                 </span>
                 <span>Grant camera permission when prompted</span>
               </li>
               <li className="flex items-start gap-3">
-                <span className="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
+                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
                   5
                 </span>
                 <span>
