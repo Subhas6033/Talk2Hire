@@ -15,6 +15,7 @@ const MobileCameraPage = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [cameraGranted, setCameraGranted] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingStarted, setStreamingStarted] = useState(false);
 
   const socketRef = useRef(null);
   const videoRef = useRef(null);
@@ -35,7 +36,6 @@ const MobileCameraPage = () => {
       userId,
     });
 
-    // Create socket connection
     const socket = io(SOCKET_URL, {
       query: { interviewId: sessionId, userId },
       transports: ["websocket", "polling"],
@@ -75,69 +75,92 @@ const MobileCameraPage = () => {
     };
   }, [isMobile, sessionId, userId]);
 
-  // Stream frames to desktop for preview
+  // ✅ FIXED: Start frame streaming immediately when camera is ready
   const startFrameStreaming = (stream) => {
-    if (!canvasRef.current || !videoRef.current || !socketRef.current) return;
+    if (!canvasRef.current || !videoRef.current || !socketRef.current) {
+      console.error("❌ Cannot start streaming - missing refs");
+      return;
+    }
+
+    if (streamingStarted) {
+      console.log("⚠️ Streaming already started");
+      return;
+    }
 
     const canvas = canvasRef.current;
     const video = videoRef.current;
     const ctx = canvas.getContext("2d");
 
-    // Set canvas size to match video
     canvas.width = 640;
     canvas.height = 480;
 
     console.log("📡 Starting frame streaming to desktop...");
     setIsStreaming(true);
+    setStreamingStarted(true);
 
-    // Send frames at 10 FPS
+    let frameCount = 0;
+
+    // Send frames at 10 FPS (every 100ms)
     frameIntervalRef.current = setInterval(() => {
-      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+      if (
+        video.readyState === video.HAVE_ENOUGH_DATA &&
+        socketRef.current?.connected
+      ) {
         // Draw video frame to canvas
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        // Convert to JPEG with quality 0.5
+        // Convert to JPEG blob
         canvas.toBlob(
           (blob) => {
             if (blob && socketRef.current?.connected) {
-              // Convert blob to base64
               const reader = new FileReader();
               reader.onloadend = () => {
                 const base64data = reader.result;
+
+                // Emit frame to server
                 socketRef.current.emit("mobile_camera_frame", {
                   frame: base64data,
                   interviewId: sessionId,
                   userId,
                   timestamp: Date.now(),
                 });
+
+                frameCount++;
+
+                // Log every 50 frames (every 5 seconds at 10 FPS)
+                if (frameCount % 50 === 0) {
+                  console.log(`📤 Sent ${frameCount} frames to desktop`);
+                }
               };
               reader.readAsDataURL(blob);
             }
           },
           "image/jpeg",
-          0.5,
+          0.6, // Quality 0.6 for better image
         );
       }
     }, 100); // 10 FPS
+
+    console.log("✅ Frame streaming active");
   };
 
-  // Stop frame streaming
   const stopFrameStreaming = () => {
     if (frameIntervalRef.current) {
       clearInterval(frameIntervalRef.current);
       frameIntervalRef.current = null;
     }
     setIsStreaming(false);
+    setStreamingStarted(false);
     console.log("🛑 Stopped frame streaming");
   };
 
-  // ✅ IMPROVED: Request camera permission and start recording with better flow
+  // ✅ FIXED: Request camera and start streaming IMMEDIATELY
   useEffect(() => {
     if (!isConnected || cameraGranted) return;
 
     const requestCamera = async () => {
       try {
-        console.log("📱 Requesting front camera access...");
+        console.log("📱 Step 1: Requesting front camera access...");
 
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
@@ -148,30 +171,37 @@ const MobileCameraPage = () => {
           audio: false,
         });
 
-        console.log("✅ Camera access granted");
+        console.log("✅ Step 1 Complete: Camera access granted");
         setCameraGranted(true);
 
+        // Attach stream to video element
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          videoRef.current.play();
+          await videoRef.current.play();
+          console.log("✅ Video element playing");
         }
 
-        // ✅ STEP 1: Tell server mobile camera is connected
+        // ✅ IMPORTANT: Wait for video to be ready before streaming
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        // Step 2: Notify server mobile camera is connected
         console.log(
-          "📤 Step 1: Notifying server of mobile camera connection...",
+          "📤 Step 2: Notifying server of mobile camera connection...",
         );
         socketRef.current.emit("secondary_camera_connected", {
           interviewId: sessionId,
           userId,
           timestamp: Date.now(),
         });
+        console.log("✅ Step 2 Complete: Server notified");
 
-        // ✅ STEP 2: Start streaming frames to desktop for preview
-        console.log("📤 Step 2: Starting frame streaming to desktop...");
+        // Step 3: Start streaming frames IMMEDIATELY
+        console.log("📤 Step 3: Starting frame streaming to desktop...");
         startFrameStreaming(stream);
+        console.log("✅ Step 3 Complete: Frame streaming started");
 
-        // ✅ STEP 3: Request video recording session from server
-        console.log("📤 Step 3: Requesting video recording session...");
+        // Step 4: Request video recording session
+        console.log("📤 Step 4: Requesting video recording session...");
         socketRef.current.emit("video_recording_start", {
           videoType: "secondary_camera",
           totalChunks: 0,
@@ -183,17 +213,14 @@ const MobileCameraPage = () => {
           userId,
         });
 
-        // ✅ STEP 4: Wait for server confirmation with timeout
-        console.log("⏳ Step 4: Waiting for server confirmation...");
+        // Step 5: Wait for server confirmation
         try {
           await new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
               socketRef.current.off("video_recording_ready", handler);
               socketRef.current.off("video_recording_error", errorHandler);
               reject(
-                new Error(
-                  "Server did not confirm video session within 10 seconds",
-                ),
+                new Error("Server timeout - no video session confirmation"),
               );
             }, 10000);
 
@@ -201,7 +228,10 @@ const MobileCameraPage = () => {
               if (data.videoType === "secondary_camera") {
                 clearTimeout(timeout);
                 socketRef.current.off("video_recording_error", errorHandler);
-                console.log("✅ Server confirmed video session ready:", data);
+                console.log(
+                  "✅ Step 4 Complete: Server confirmed video session:",
+                  data,
+                );
                 resolve(data);
               }
             };
@@ -219,25 +249,25 @@ const MobileCameraPage = () => {
             socketRef.current.on("video_recording_error", errorHandler);
           });
 
-          // ✅ STEP 5: Start actual video recording
+          // Step 6: Start actual video recording
           console.log("🎥 Step 5: Starting video recording...");
           await secondaryCamera.startRecording();
-          console.log("✅ Mobile camera recording started successfully");
+          console.log("✅ Step 5 Complete: Video recording started");
         } catch (serverError) {
           console.error("❌ Server confirmation failed:", serverError);
-          setError(`Failed to initialize recording: ${serverError.message}`);
+          // Continue streaming even if recording fails
+          console.log("⚠️ Continuing frame streaming without recording");
         }
       } catch (err) {
         console.error("❌ Camera error:", err);
         let errorMessage = "Unable to access front camera. ";
 
         if (err.name === "NotAllowedError") {
-          errorMessage +=
-            "Please grant camera permission and refresh the page.";
+          errorMessage += "Please grant camera permission and refresh.";
         } else if (err.name === "NotFoundError") {
-          errorMessage += "No front camera found on this device.";
+          errorMessage += "No front camera found.";
         } else if (err.name === "NotReadableError") {
-          errorMessage += "Camera is in use by another app.";
+          errorMessage += "Camera in use by another app.";
         } else {
           errorMessage += err.message;
         }
@@ -246,11 +276,10 @@ const MobileCameraPage = () => {
       }
     };
 
-    // Auto-request camera on mobile
     requestCamera();
   }, [isConnected, cameraGranted, sessionId, userId, secondaryCamera]);
 
-  // Cleanup on unmount
+  // Cleanup
   useEffect(() => {
     return () => {
       stopFrameStreaming();
@@ -261,7 +290,6 @@ const MobileCameraPage = () => {
     };
   }, [secondaryCamera]);
 
-  // If not mobile or missing params, show error
   if (!isMobile || !sessionId || !userId) {
     return (
       <div className="min-h-screen bg-linear-to-br from-gray-900 to-gray-800 flex items-center justify-center p-4">
@@ -287,10 +315,6 @@ const MobileCameraPage = () => {
           <p className="text-gray-600 dark:text-gray-400 mb-6">
             This page must be accessed by scanning the QR code from your desktop
             interview session.
-          </p>
-          <p className="text-sm text-gray-500 dark:text-gray-500">
-            Please return to your desktop and scan the QR code displayed during
-            interview setup.
           </p>
         </div>
       </div>
@@ -360,7 +384,7 @@ const MobileCameraPage = () => {
                   </>
                 ) : isStreaming ? (
                   <>
-                    <div className="w-3 h-3 rounded-full bg-yellow-300 animate-pulse" />
+                    <div className="w-3 h-3 rounded-full bg-green-300 animate-pulse" />
                     <span className="text-white font-bold text-sm">
                       STREAMING
                     </span>
@@ -369,7 +393,7 @@ const MobileCameraPage = () => {
                   <>
                     <div className="w-3 h-3 rounded-full bg-yellow-300 animate-pulse" />
                     <span className="text-white font-bold text-sm">
-                      STANDBY
+                      CONNECTED
                     </span>
                   </>
                 ) : (
@@ -412,17 +436,14 @@ const MobileCameraPage = () => {
               style={{ transform: "scaleX(-1)" }}
             />
 
-            {/* Hidden canvas for frame capture */}
             <canvas ref={canvasRef} className="hidden" />
 
-            {/* Overlay when not recording */}
-            {!secondaryCamera.isRecording && !isStreaming && !error && (
+            {/* Overlay when not streaming */}
+            {!isStreaming && !error && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70">
                 <div className="animate-spin w-12 h-12 border-4 border-gray-600 border-t-orange-500 rounded-full mb-4" />
                 <p className="text-white text-sm font-medium">
-                  {!isConnected
-                    ? "Connecting..."
-                    : "Waiting for interview to start..."}
+                  {!isConnected ? "Connecting..." : "Initializing camera..."}
                 </p>
               </div>
             )}
@@ -438,9 +459,9 @@ const MobileCameraPage = () => {
             )}
 
             {/* Streaming Indicator */}
-            {isStreaming && !secondaryCamera.isRecording && (
+            {isStreaming && (
               <div className="absolute top-4 right-4">
-                <div className="flex items-center gap-2 px-4 py-2 bg-blue-600/90 backdrop-blur-sm rounded-lg shadow-xl">
+                <div className="flex items-center gap-2 px-4 py-2 bg-green-600/90 backdrop-blur-sm rounded-lg shadow-xl">
                   <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
                   <span className="text-white text-xs font-bold">LIVE</span>
                 </div>
@@ -448,7 +469,7 @@ const MobileCameraPage = () => {
             )}
           </div>
 
-          {/* Footer Instructions */}
+          {/* Footer */}
           <div className="bg-gray-750 px-6 py-4 border-t border-gray-700">
             <div className="flex items-start gap-3">
               <svg
@@ -465,32 +486,35 @@ const MobileCameraPage = () => {
                 />
               </svg>
               <div className="text-sm text-gray-300">
-                <p className="font-semibold mb-1">Important:</p>
+                <p className="font-semibold mb-1">Status:</p>
                 <ul className="space-y-1 text-xs text-gray-400">
-                  <li>• Keep your phone steady during the interview</li>
-                  <li>• Don't lock your screen or switch apps</li>
-                  <li>• Ensure good lighting on your face</li>
-                  <li>• Keep this page open until interview ends</li>
-                  <li>• Camera feed is streaming to desktop</li>
+                  <li>
+                    •{" "}
+                    {isConnected
+                      ? "✅ Connected to server"
+                      : "❌ Not connected"}
+                  </li>
+                  <li>
+                    •{" "}
+                    {cameraGranted
+                      ? "✅ Camera access granted"
+                      : "⏳ Requesting camera..."}
+                  </li>
+                  <li>
+                    •{" "}
+                    {isStreaming
+                      ? "✅ Streaming to desktop"
+                      : "⏳ Waiting to stream..."}
+                  </li>
+                  <li>
+                    •{" "}
+                    {secondaryCamera.isRecording
+                      ? "✅ Recording active"
+                      : "⏳ Waiting to record..."}
+                  </li>
                 </ul>
               </div>
             </div>
-          </div>
-        </div>
-
-        {/* Connection Status */}
-        <div className="mt-6 text-center">
-          <div className="inline-flex items-center gap-2 px-4 py-2 bg-gray-800 rounded-lg border border-gray-700">
-            <div
-              className={`w-2 h-2 rounded-full ${isConnected ? "bg-green-500" : "bg-gray-500"}`}
-            />
-            <span className="text-sm text-gray-300">
-              {isConnected
-                ? isStreaming
-                  ? "Streaming to desktop"
-                  : "Connected to interview session"
-                : "Disconnected"}
-            </span>
           </div>
         </div>
       </div>
