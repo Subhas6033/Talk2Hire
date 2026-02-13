@@ -10,14 +10,12 @@ const Interview = () => {
   const [session, setSession] = useState(null);
   const [showSubmissionModal, setShowSubmissionModal] = useState(false);
 
-  // ✅ Track BOTH streams in refs
   const cameraStreamRef = useRef(null);
-  const secondaryCameraStreamRef = useRef(null); // ✅ NEW
 
   const handleInterviewReady = (data) => {
     console.log("✅ Interview session ready:", data);
 
-    // ✅ Verify PRIMARY stream
+    // Verify PRIMARY stream
     const videoTrack = data.cameraStream?.getVideoTracks()[0];
     if (!videoTrack) {
       console.error("❌ No primary video track!");
@@ -33,110 +31,52 @@ const Interview = () => {
       return;
     }
 
-    // ✅ Verify SECONDARY stream
-    const secondaryVideoTrack = data.secondaryCameraStream?.getVideoTracks()[0];
-    if (!secondaryVideoTrack) {
-      console.error("❌ No secondary video track!");
-      alert("Secondary camera stream invalid. Please refresh and try again.");
-      return;
-    }
-
-    if (secondaryVideoTrack.readyState !== "live") {
-      console.error(
-        "❌ Secondary video track not live:",
-        secondaryVideoTrack.readyState,
-      );
-      alert(
-        `Secondary camera is ${secondaryVideoTrack.readyState}. Please refresh and try again.`,
-      );
-      return;
-    }
-
-    console.log("✅ Both streams verified:", {
-      primary: {
-        active: data.cameraStream.active,
-        trackState: videoTrack.readyState,
-      },
-      secondary: {
-        active: data.secondaryCameraStream.active,
-        trackState: secondaryVideoTrack.readyState,
-      },
+    console.log("✅ Primary stream verified:", {
+      active: data.cameraStream.active,
+      trackState: videoTrack.readyState,
     });
 
-    // ✅ Store BOTH streams in refs
+    // Secondary camera is on the mobile device — no local stream to verify
+    // useSecondaryCamera hook inside InterviewQuestions handles it via socket
+
     cameraStreamRef.current = data.cameraStream;
-    secondaryCameraStreamRef.current = data.secondaryCameraStream; // ✅ NEW
     setSession(data);
   };
 
   const handleCancelInterview = () => {
     console.log("🛑 Canceling interview");
 
-    // ✅ Stop PRIMARY camera
     const primaryStream = session?.cameraStream || cameraStreamRef.current;
     if (primaryStream) {
-      console.log("🛑 Stopping primary camera stream");
       primaryStream.getTracks().forEach((track) => {
-        console.log(
-          `🛑 Stopping primary ${track.kind} track (${track.readyState})`,
-        );
-        track.stop();
-      });
-    }
-
-    // ✅ Stop SECONDARY camera
-    const secondaryStream =
-      session?.secondaryCameraStream || secondaryCameraStreamRef.current;
-    if (secondaryStream) {
-      console.log("🛑 Stopping secondary camera stream");
-      secondaryStream.getTracks().forEach((track) => {
-        console.log(
-          `🛑 Stopping secondary ${track.kind} track (${track.readyState})`,
-        );
+        console.log(`🛑 Stopping primary ${track.kind} track`);
         track.stop();
       });
     }
 
     cameraStreamRef.current = null;
-    secondaryCameraStreamRef.current = null;
     setSession(null);
   };
 
   const handleFinish = () => {
     console.log("✅ Interview finished");
 
-    // ✅ Stop both cameras on completion
     const primaryStream = session?.cameraStream || cameraStreamRef.current;
     if (primaryStream) {
-      console.log("🛑 Stopping primary camera after interview");
       primaryStream.getTracks().forEach((track) => track.stop());
     }
 
-    const secondaryStream =
-      session?.secondaryCameraStream || secondaryCameraStreamRef.current;
-    if (secondaryStream) {
-      console.log("🛑 Stopping secondary camera after interview");
-      secondaryStream.getTracks().forEach((track) => track.stop());
-    }
-
     cameraStreamRef.current = null;
-    secondaryCameraStreamRef.current = null;
     setShowSubmissionModal(true);
   };
 
-  // ✅ Cleanup on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       const primaryStream = cameraStreamRef.current;
       if (primaryStream) {
         console.log("🧹 Cleaning up primary camera on unmount");
         primaryStream.getTracks().forEach((track) => track.stop());
-      }
-
-      const secondaryStream = secondaryCameraStreamRef.current;
-      if (secondaryStream) {
-        console.log("🧹 Cleaning up secondary camera on unmount");
-        secondaryStream.getTracks().forEach((track) => track.stop());
       }
     };
   }, []);
@@ -162,7 +102,8 @@ const Interview = () => {
             interviewId={session.interviewId}
             userId={session.userId}
             cameraStream={session.cameraStream}
-            secondaryCameraStream={session.secondaryCameraStream} // ✅ Pass secondary camera
+            // secondaryCameraStream is null — mobile device handles it independently
+            secondaryCameraStream={session.secondaryCameraStream}
             onCancel={handleCancelInterview}
             onFinish={handleFinish}
           />

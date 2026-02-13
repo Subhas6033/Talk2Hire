@@ -74,51 +74,68 @@ const MobileCameraPage = () => {
 
     const requestCamera = async () => {
       try {
-        console.log("📱 Requesting front camera permission...");
-
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            facingMode: "user", // Front camera
+            facingMode: "user",
             width: { ideal: 1280 },
             height: { ideal: 720 },
           },
           audio: false,
         });
 
-        console.log("✅ Front camera granted");
         setCameraGranted(true);
 
-        // Show preview
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           videoRef.current.play();
         }
 
-        // Emit connection event
+        // ✅ Step 1: Tell server mobile is connected FIRST
         socketRef.current.emit("secondary_camera_connected", {
           interviewId: sessionId,
           userId,
           timestamp: Date.now(),
         });
 
-        // Start recording
+        // ✅ Step 2: Wait for server to confirm video session ready
+        // BEFORE starting recording — otherwise chunks have no videoId
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error("video_recording_ready timeout")),
+            10000,
+          );
+          socketRef.current.once("video_recording_ready", (data) => {
+            if (data.videoType === "secondary_camera") {
+              clearTimeout(timeout);
+              resolve(data);
+            }
+          });
+          // Trigger the video session creation on server
+          socketRef.current.emit("video_recording_start", {
+            videoType: "secondary_camera",
+            totalChunks: 0,
+            metadata: {
+              mimeType: "video/webm;codecs=vp9",
+              videoBitsPerSecond: 2500000,
+            },
+            interviewId: sessionId,
+            userId,
+          });
+        });
+
+        // ✅ Step 3: NOW start recording
         await secondaryCamera.startRecording();
         console.log("✅ Mobile camera recording started");
       } catch (err) {
-        console.error("❌ Camera permission denied:", err);
-
+        console.error("❌ Camera error:", err);
         let errorMessage = "Unable to access front camera. ";
-        if (err.name === "NotAllowedError") {
-          errorMessage +=
-            "Please grant camera permission and refresh the page.";
-        } else if (err.name === "NotFoundError") {
-          errorMessage += "No front camera found on this device.";
-        } else if (err.name === "NotReadableError") {
-          errorMessage += "Camera is being used by another app.";
-        } else {
-          errorMessage += err.message;
-        }
-
+        if (err.name === "NotAllowedError")
+          errorMessage += "Please grant camera permission.";
+        else if (err.name === "NotFoundError")
+          errorMessage += "No front camera found.";
+        else if (err.name === "NotReadableError")
+          errorMessage += "Camera in use by another app.";
+        else errorMessage += err.message;
         setError(errorMessage);
       }
     };

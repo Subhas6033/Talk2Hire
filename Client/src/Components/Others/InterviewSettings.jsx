@@ -12,6 +12,9 @@ import { Card } from "../Common/Card";
 import { useDispatch, useSelector } from "react-redux";
 import { startInterview } from "../../API/interviewApi";
 import QRCode from "qrcode";
+import { io } from "socket.io-client";
+
+const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
 const InterviewSettings = ({ onInterviewReady }) => {
   const dispatch = useDispatch();
@@ -44,8 +47,9 @@ const InterviewSettings = ({ onInterviewReady }) => {
 
   const selectedSkillsRef = useRef(null);
   const cameraStreamRef = useRef(null);
-  const secondaryCameraStreamRef = useRef(null);
   const hasStartedInterviewRef = useRef(false);
+  // Socket ref for listening to mobile camera connection in settings phase
+  const settingsSocketRef = useRef(null);
 
   useEffect(() => {
     if (hasExistingSkills) {
@@ -71,9 +75,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
     try {
       setStatus("loading");
       setError(null);
-
       selectedSkillsRef.current = skills;
-
       setOpenGuideLines(true);
       setStatus("succeeded");
     } catch (err) {
@@ -83,44 +85,28 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
   };
 
-  // ✅ FIXED: Generate QR code with passed session data
+  // Generate QR code with passed session data
   const generateQRCode = async (sessionInfo) => {
     try {
-      console.log("📱 generateQRCode called with:", {
-        hasSessionInfo: !!sessionInfo,
-        sessionInfo,
-        userId: user?.id,
-      });
+      console.log("📱 generateQRCode called with:", sessionInfo);
 
       if (!sessionInfo?.interviewId || !user?.id) {
-        console.error(
-          "❌ Cannot generate QR code: missing session or user data",
-          {
-            hasSessionInfo: !!sessionInfo,
-            interviewId: sessionInfo?.interviewId,
-            userId: user?.id,
-          },
-        );
         setError("Session not ready. Please try again.");
         return;
       }
 
       const mobileUrl = `${window.location.origin}/mobile-camera?mobile=true&session=${sessionInfo.interviewId}&userId=${user.id}`;
-
       console.log("📱 Generating QR code for:", mobileUrl);
 
       const qrDataUrl = await QRCode.toDataURL(mobileUrl, {
         width: 300,
         margin: 2,
-        color: {
-          dark: "#000000",
-          light: "#FFFFFF",
-        },
+        color: { dark: "#000000", light: "#FFFFFF" },
       });
 
       setQrCodeDataUrl(qrDataUrl);
       console.log("✅ QR code generated successfully");
-      return qrDataUrl; // Return the QR code URL
+      return qrDataUrl;
     } catch (err) {
       console.error("❌ QR code generation error:", err);
       setError("Failed to generate QR code");
@@ -128,41 +114,64 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
   };
 
-  // ✅ Handle primary camera success
+  // ── Socket listener for mobile camera connection (settings phase only) ──
+  useEffect(() => {
+    if (!showQRModal || !sessionData) return;
+
+    console.log("📡 Connecting settings socket to listen for mobile camera...");
+
+    const socket = io(SOCKET_URL, {
+      query: {
+        interviewId: sessionData.interviewId,
+        userId: sessionData.userId,
+      },
+      transports: ["websocket", "polling"],
+      path: "/socket.io",
+      reconnection: true,
+      reconnectionAttempts: 5,
+    });
+
+    settingsSocketRef.current = socket;
+
+    socket.on("connect", () => {
+      console.log("✅ Settings socket connected:", socket.id);
+    });
+
+    // Server emits this when mobile sends secondary_camera_connected
+    socket.on("secondary_camera_ready", (data) => {
+      console.log("📱 Mobile camera confirmed by server:", data);
+      setSecondaryCameraConnected(true);
+      setQuestionsReady(true);
+      setIsGeneratingQuestions(false);
+    });
+
+    socket.on("connect_error", (err) => {
+      console.error("❌ Settings socket error:", err);
+    });
+
+    return () => {
+      console.log("🔌 Disconnecting settings socket");
+      socket.disconnect();
+      settingsSocketRef.current = null;
+    };
+  }, [showQRModal, sessionData]);
+
+  // Handle primary camera success
   const handleCameraSuccess = async (stream) => {
     console.log("📹 Primary camera stream received");
-
     cameraStreamRef.current = stream;
 
     const videoTrack = stream.getVideoTracks()[0];
-
-    console.log("📹 Primary camera stored and verified:", {
-      streamId: stream.id,
-      active: stream.active,
-      trackState: videoTrack?.readyState,
-      trackEnabled: videoTrack?.enabled,
-    });
-
     if (videoTrack) {
       videoTrack.addEventListener(
         "ended",
         () => {
-          console.error(
-            "❌ CRITICAL: Primary camera track ended unexpectedly!",
-          );
+          console.error("❌ CRITICAL: Primary camera track ended!");
           alert("Primary camera stopped. Please refresh and try again.");
         },
         { once: true },
       );
     }
-
-    // ✅ DON'T close modal yet - show loading state
-    console.log("🔄 Generating interview session...");
-    console.log("📊 Pre-dispatch state:", {
-      hasExistingSkills,
-      selectedSkills: selectedSkillsRef.current,
-      userId: user?.id,
-    });
 
     setIsGeneratingQuestions(true);
 
@@ -173,56 +182,25 @@ const InterviewSettings = ({ onInterviewReady }) => {
         }),
       ).unwrap();
 
-      console.log("📊 API Response received:", {
-        hasResult: !!result,
-        result,
-        sessionId: result?.sessionId,
-      });
-
-      if (!result?.sessionId) {
-        console.error("❌ No session ID in response:", result);
+      if (!result?.sessionId)
         throw new Error("Session ID not returned from server");
-      }
-
-      if (!user?.id) {
-        console.error("❌ No user ID available");
-        throw new Error("User ID not available");
-      }
+      if (!user?.id) throw new Error("User ID not available");
 
       const newSessionData = {
         interviewId: result.sessionId,
         userId: user.id,
       };
 
-      console.log("✅ Session data created:", {
-        newSessionData,
-        interviewId: newSessionData.interviewId,
-        userId: newSessionData.userId,
-      });
-
+      console.log("✅ Session data created:", newSessionData);
       setSessionData(newSessionData);
-      console.log("✅ Session state updated");
 
-      // ✅ Close primary camera modal NOW
       setIsCameraOpen(false);
-
-      // ✅ FIXED: Pass session data directly to generateQRCode
-      console.log("📱 Calling generateQRCode with:", newSessionData);
       await generateQRCode(newSessionData);
-
-      // ✅ Show QR modal
       setShowQRModal(true);
 
-      console.log(
-        "✅ Primary camera ready, showing QR code for mobile connection...",
-      );
+      console.log("✅ QR modal shown, waiting for mobile connection...");
     } catch (err) {
       console.error("❌ Session creation error:", err);
-      console.error("Error details:", {
-        message: err?.message,
-        response: err?.response,
-        data: err?.response?.data,
-      });
       setError(err?.message || "Failed to create interview session");
       setIsGeneratingQuestions(false);
 
@@ -233,50 +211,12 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
   };
 
-  // ✅ Handle secondary camera success (from mobile phone)
-  const handleSecondaryCameraSuccess = (stream) => {
-    console.log("📱 Secondary camera stream received (from mobile)");
-
-    secondaryCameraStreamRef.current = stream;
-
-    const videoTrack = stream.getVideoTracks()[0];
-
-    console.log("📱 Secondary camera stored and verified:", {
-      streamId: stream.id,
-      active: stream.active,
-      trackState: videoTrack?.readyState,
-      trackEnabled: videoTrack?.enabled,
-    });
-
-    if (videoTrack) {
-      videoTrack.addEventListener(
-        "ended",
-        () => {
-          console.error(
-            "❌ CRITICAL: Secondary camera track ended unexpectedly!",
-          );
-          alert("Secondary camera stopped. Please refresh and try again.");
-        },
-        { once: true },
-      );
-    }
-
-    // ✅ Mark secondary camera as connected
-    setSecondaryCameraConnected(true);
-
-    // ✅ DON'T close modal yet - wait for all conditions
-    console.log("✅ Secondary camera connected, marking session as ready...");
-    setQuestionsReady(true);
-    setIsGeneratingQuestions(false);
-  };
-
-  // ✅ Start interview only when ALL conditions met
+  // Start interview — no local secondary stream needed (it lives on mobile)
   const tryStartInterview = () => {
     const canStart =
       questionsReady &&
       sessionData &&
       cameraStreamRef.current &&
-      secondaryCameraStreamRef.current &&
       secondaryCameraConnected &&
       !isGeneratingQuestions &&
       !hasStartedInterviewRef.current;
@@ -285,110 +225,50 @@ const InterviewSettings = ({ onInterviewReady }) => {
       questionsReady,
       hasSessionData: !!sessionData,
       hasPrimaryStream: !!cameraStreamRef.current,
-      hasSecondaryStream: !!secondaryCameraStreamRef.current,
       secondaryCameraConnected,
-      primaryStreamActive: cameraStreamRef.current?.active,
-      secondaryStreamActive: secondaryCameraStreamRef.current?.active,
       isGenerating: isGeneratingQuestions,
       hasStarted: hasStartedInterviewRef.current,
       canStart,
     });
 
-    if (!canStart) {
-      console.log("⏳ Not ready yet, waiting for:", {
-        needQuestions: !questionsReady,
-        needSession: !sessionData,
-        needPrimaryCamera: !cameraStreamRef.current,
-        needSecondaryCamera: !secondaryCameraStreamRef.current,
-        needSecondaryCameraConnected: !secondaryCameraConnected,
-      });
-      return;
-    }
+    if (!canStart) return;
 
     hasStartedInterviewRef.current = true;
 
     const primaryStream = cameraStreamRef.current;
-    const secondaryStream = secondaryCameraStreamRef.current;
-
-    // Verify primary camera
     const primaryVideoTrack = primaryStream.getVideoTracks()[0];
+
     if (!primaryVideoTrack) {
-      console.error("❌ No primary video track!");
       setError("No primary video track found. Please refresh and try again.");
       hasStartedInterviewRef.current = false;
       return;
     }
 
     if (primaryVideoTrack.readyState !== "live") {
-      console.error(
-        "❌ Primary video track not live:",
-        primaryVideoTrack.readyState,
-      );
       setError(
-        `Primary video track is ${primaryVideoTrack.readyState}. Please refresh and try again.`,
+        `Primary camera is ${primaryVideoTrack.readyState}. Please refresh.`,
       );
       hasStartedInterviewRef.current = false;
       return;
     }
 
     if (!primaryStream.active) {
-      console.error("❌ Primary stream not active!");
-      setError(
-        "Primary camera stream is not active. Please refresh and try again.",
-      );
+      setError("Primary camera stream is not active. Please refresh.");
       hasStartedInterviewRef.current = false;
       return;
     }
 
-    // Verify secondary camera
-    const secondaryVideoTrack = secondaryStream.getVideoTracks()[0];
-    if (!secondaryVideoTrack) {
-      console.error("❌ No secondary video track!");
-      setError("No secondary video track found. Please refresh and try again.");
-      hasStartedInterviewRef.current = false;
-      return;
-    }
-
-    if (secondaryVideoTrack.readyState !== "live") {
-      console.error(
-        "❌ Secondary video track not live:",
-        secondaryVideoTrack.readyState,
-      );
-      setError(
-        `Secondary video track is ${secondaryVideoTrack.readyState}. Please refresh and try again.`,
-      );
-      hasStartedInterviewRef.current = false;
-      return;
-    }
-
-    if (!secondaryStream.active) {
-      console.error("❌ Secondary stream not active!");
-      setError(
-        "Secondary camera stream is not active. Please refresh and try again.",
-      );
-      hasStartedInterviewRef.current = false;
-      return;
-    }
-
-    console.log("✅ ALL VERIFICATIONS PASSED - Starting interview:", {
-      primaryStreamActive: primaryStream.active,
-      primaryTrackState: primaryVideoTrack.readyState,
-      secondaryStreamActive: secondaryStream.active,
-      secondaryTrackState: secondaryVideoTrack.readyState,
-      sessionId: sessionData.interviewId,
-    });
-
+    console.log("✅ ALL CHECKS PASSED - Starting interview");
     setError(null);
-
-    // ✅ Close QR modal NOW
     setShowQRModal(false);
 
-    // ✅ Start interview with both camera streams
     try {
+      // secondaryCameraStream is null here — it lives on the mobile browser
+      // InterviewQuestions handles it independently via useSecondaryCamera hook
       onInterviewReady({
         ...sessionData,
         cameraStream: primaryStream,
-        secondaryCameraStream: secondaryStream,
+        secondaryCameraStream: null,
       });
     } catch (err) {
       console.error("❌ Error starting interview:", err);
@@ -397,7 +277,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
   };
 
-  // ✅ Watch for all conditions to start interview
+  // Watch for all conditions to start interview
   useEffect(() => {
     if (questionsReady && secondaryCameraConnected && !isGeneratingQuestions) {
       console.log("✅ All conditions met, attempting to start interview...");
@@ -410,19 +290,10 @@ const InterviewSettings = ({ onInterviewReady }) => {
     return () => {
       if (!hasStartedInterviewRef.current) {
         if (cameraStreamRef.current) {
-          console.log("🛑 Stopping primary camera (interview never started)");
           cameraStreamRef.current.getTracks().forEach((track) => track.stop());
         }
-        if (secondaryCameraStreamRef.current) {
-          console.log("🛑 Stopping secondary camera (interview never started)");
-          secondaryCameraStreamRef.current
-            .getTracks()
-            .forEach((track) => track.stop());
-        }
       }
-
       cameraStreamRef.current = null;
-      secondaryCameraStreamRef.current = null;
       hasStartedInterviewRef.current = false;
     };
   }, []);
@@ -505,9 +376,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
       {/* Guidelines Modal - Step 1 */}
       <Modal
         isOpen={openGuideLines}
-        onClose={() => {
-          setOpenGuideLines(false);
-        }}
+        onClose={() => setOpenGuideLines(false)}
         title="AI Interview Guidelines"
         size="xl"
       >
@@ -539,7 +408,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
         description="Please allow access to your camera. After this, you'll need to connect your mobile phone's front camera."
       />
 
-      {/* ✅ QR Code Modal - Step 4 - STAYS OPEN until interview starts */}
+      {/* QR Code Modal - Step 4 - stays open until mobile connects */}
       <Modal
         isOpen={showQRModal}
         onClose={() => {}}
@@ -548,7 +417,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
       >
         <div className="space-y-6">
           <div className="text-center">
-            <div className="w-20 h-20 rounded-full bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center mx-auto mb-6 shadow-xl">
+            <div className="w-20 h-20 rounded-full bg-linear-to-br from-orange-500 to-red-600 flex items-center justify-center mx-auto mb-6 shadow-xl">
               <svg
                 className="w-10 h-10 text-white"
                 fill="none"
@@ -572,11 +441,10 @@ const InterviewSettings = ({ onInterviewReady }) => {
             </p>
           </div>
 
-          {/* Session Creation Loading */}
           {isGeneratingQuestions && !qrCodeDataUrl && (
             <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
               <div className="flex items-center gap-3">
-                <div className="animate-spin w-5 h-5 border-3 border-blue-600 border-t-transparent rounded-full" />
+                <div className="animate-spin w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full" />
                 <div>
                   <p className="text-sm font-semibold text-blue-900 dark:text-blue-300">
                     Creating Interview Session...
@@ -589,7 +457,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
             </div>
           )}
 
-          {/* QR Code Display */}
           {qrCodeDataUrl && (
             <>
               <div className="flex justify-center">
@@ -607,42 +474,23 @@ const InterviewSettings = ({ onInterviewReady }) => {
                   Instructions:
                 </h4>
                 <ol className="space-y-3 text-sm text-blue-800 dark:text-blue-200">
-                  <li className="flex items-start gap-3">
-                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
-                      1
-                    </span>
-                    <span>Open your phone's camera app</span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
-                      2
-                    </span>
-                    <span>Point your camera at the QR code above</span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
-                      3
-                    </span>
-                    <span>Tap the notification to open the link</span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
-                      4
-                    </span>
-                    <span>Grant camera permission when prompted</span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
-                      5
-                    </span>
-                    <span>
-                      Keep your phone steady with the front camera facing you
-                    </span>
-                  </li>
+                  {[
+                    "Open your phone's camera app",
+                    "Point your camera at the QR code above",
+                    "Tap the notification to open the link",
+                    "Grant camera permission when prompted",
+                    "Keep your phone steady with the front camera facing you",
+                  ].map((step, i) => (
+                    <li key={i} className="flex items-start gap-3">
+                      <span className="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold">
+                        {i + 1}
+                      </span>
+                      <span>{step}</span>
+                    </li>
+                  ))}
                 </ol>
               </div>
 
-              {/* Waiting for connection */}
               {!secondaryCameraConnected && (
                 <div className="flex items-center justify-center gap-2 text-sm text-gray-600 dark:text-gray-400">
                   <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
@@ -652,7 +500,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
             </>
           )}
 
-          {/* Secondary Camera Connected */}
           {secondaryCameraConnected && (
             <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-lg p-4">
               <div className="flex items-center gap-3">
