@@ -193,12 +193,22 @@ const InterviewSettings = ({ onInterviewReady }) => {
         });
       });
 
-      // ✅ FIX 4: Set up event listeners AFTER connection but BEFORE QR code
+      // Set up event listeners AFTER connection but BEFORE QR code
       socket.on("secondary_camera_ready", (data) => {
         console.log("📱 Mobile camera confirmed by server:", data);
         setSecondaryCameraConnected(true);
         setQuestionsReady(true);
         setIsGeneratingQuestions(false);
+      });
+
+      //  Check server state on connection
+      socket.on("connect", () => {
+        console.log("✅ Settings socket connected:", socket.id);
+
+        // Request current secondary camera status from server
+        socket.emit("request_secondary_camera_status", {
+          interviewId: newSessionData.interviewId,
+        });
       });
 
       socket.on("secondary_camera_status", (data) => {
