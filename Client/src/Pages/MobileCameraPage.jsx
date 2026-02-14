@@ -319,7 +319,7 @@ const MobileCameraPage = () => {
       }
       secondaryCamera.cleanup();
     };
-  }, [secondaryCamera]);
+  }, []);
 
   if (!isMobile || !sessionId || !userId) {
     return (
