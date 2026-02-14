@@ -167,6 +167,16 @@ const InterviewQuestions = ({
     }
   }, [screenRecording.screenStream]);
 
+  // In InterviewQuestions.jsx - Add this useEffect before the socket setup
+  useEffect(() => {
+    if (secondaryCanvasRef.current) {
+      const canvas = secondaryCanvasRef.current;
+      canvas.width = 640;
+      canvas.height = 480;
+      console.log("✅ Secondary camera canvas initialized");
+    }
+  }, []);
+
   // ── Main socket ───────────────────────────────────────────────────────────
   useEffect(() => {
     console.log("🔌 Creating socket...");
@@ -235,7 +245,8 @@ const InterviewQuestions = ({
       }
 
       // Validate canvas and data
-      if (!secondaryCanvasRef.current) {
+      const canvas = secondaryCanvasRef.current;
+      if (!canvas) {
         console.warn("⚠️ Canvas ref not available");
         return;
       }
@@ -245,59 +256,64 @@ const InterviewQuestions = ({
         return;
       }
 
-      const canvas = secondaryCanvasRef.current;
-      const ctx = canvas.getContext("2d", { alpha: false }); // Better performance
-
-      // Ensure canvas has dimensions
-      if (canvas.width === 0 || canvas.height === 0) {
-        canvas.width = 640;
-        canvas.height = 480;
-        console.log(
-          "📐 Canvas dimensions set:",
-          canvas.width,
-          "x",
-          canvas.height,
-        );
-      }
-
-      const img = new Image();
-
-      img.onload = () => {
-        try {
-          // Clear previous frame
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-          // Draw new frame
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-          // Update frame counter (for debugging)
-          if (!window.mobileFrameCount) window.mobileFrameCount = 0;
-          window.mobileFrameCount++;
-
-          // Log every 30 frames
-          if (window.mobileFrameCount % 30 === 0) {
-            console.log(
-              `🎨 Rendered ${window.mobileFrameCount} mobile camera frames`,
-            );
-          }
-        } catch (drawError) {
-          console.error("❌ Error drawing to canvas:", drawError);
-        }
-      };
-
-      img.onerror = (err) => {
-        console.error("❌ Failed to load mobile frame image:", {
-          error: err,
-          frameDataLength: data.frame?.length,
-          timestamp: data.timestamp,
-        });
-      };
-
-      // Set source (triggers load)
+      // ✅ IMPROVED: Better error handling and validation
       try {
+        const ctx = canvas.getContext("2d", {
+          alpha: false,
+          willReadFrequently: false,
+        });
+
+        if (!ctx) {
+          console.error("❌ Failed to get 2D context");
+          return;
+        }
+
+        // Validate frame data format
+        if (!data.frame.startsWith("data:image/")) {
+          console.warn("⚠️ Invalid image data format");
+          return;
+        }
+
+        const img = new Image();
+
+        img.onload = () => {
+          try {
+            // Ensure canvas matches image dimensions for first frame
+            if (canvas.width !== img.width || canvas.height !== img.height) {
+              canvas.width = img.width;
+              canvas.height = img.height;
+              console.log(`📐 Canvas resized to ${img.width}x${img.height}`);
+            }
+
+            // Clear and draw
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+            // Update frame counter
+            if (!window.mobileFrameCount) window.mobileFrameCount = 0;
+            window.mobileFrameCount++;
+
+            if (window.mobileFrameCount % 30 === 0) {
+              console.log(
+                `🎨 Rendered ${window.mobileFrameCount} mobile camera frames`,
+              );
+            }
+          } catch (drawError) {
+            console.error("❌ Error drawing to canvas:", drawError);
+          }
+        };
+
+        img.onerror = (err) => {
+          console.error("❌ Failed to load mobile frame image:", {
+            error: err,
+            frameDataLength: data.frame?.length,
+            timestamp: data.timestamp,
+          });
+        };
+
         img.src = data.frame;
-      } catch (srcError) {
-        console.error("❌ Error setting image src:", srcError);
+      } catch (error) {
+        console.error("❌ Canvas frame processing error:", error);
       }
     });
 

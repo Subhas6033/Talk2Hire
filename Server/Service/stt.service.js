@@ -1,7 +1,6 @@
 const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
 
 function createSTTSession() {
-  // Verify API key exists
   if (!process.env.DEEPGRAM_API_KEY) {
     throw new Error("❌ DEEPGRAM_API_KEY is not set in environment variables");
   }
@@ -26,17 +25,16 @@ function createSTTSession() {
       let connection = null;
       let isOpen = false;
       let isConnecting = false;
-      let hasBeenOpened = false; // ✅ Track if connection ever successfully opened
-      let connectionError = null; // ✅ Store any error that occurs
+      let hasBeenOpened = false;
+      let connectionError = null;
       let openTimeout = null;
       let keepAliveInterval = null;
 
       // Idle detection
       let lastSpeechTime = Date.now();
       let idleCheckInterval = null;
-      const IDLE_TIMEOUT = 10000; // 10 seconds
+      const IDLE_TIMEOUT = 10000;
 
-      // ✅ Promise resolvers for waitForReady
       let openResolve = null;
       let openReject = null;
       const openPromise = new Promise((resolve, reject) => {
@@ -61,7 +59,6 @@ function createSTTSession() {
 
         connection = deepgram.listen.live(options);
 
-        // ✅ IMPROVED: Timeout that rejects the open promise
         openTimeout = setTimeout(() => {
           if (!isOpen && isConnecting) {
             console.error(
@@ -85,7 +82,6 @@ function createSTTSession() {
               connection = null;
             }
 
-            // ✅ Reject the open promise
             if (openReject) {
               openReject(timeoutError);
             }
@@ -94,10 +90,20 @@ function createSTTSession() {
           }
         }, 10000);
 
-        // ✅ IMPROVED: Set up keep-alive ONLY after connection opens
+        // ✅ OPTIMIZED: Faster keep-alive (3 seconds instead of 5)
         const startKeepAlive = () => {
           if (keepAliveInterval) {
             clearInterval(keepAliveInterval);
+          }
+
+          // Send initial keep-alive immediately
+          if (isOpen && connection) {
+            try {
+              console.log("💓 Sending initial keep-alive");
+              connection.keepAlive();
+            } catch (e) {
+              console.error("❌ Initial keep-alive error:", e.message);
+            }
           }
 
           keepAliveInterval = setInterval(() => {
@@ -107,23 +113,20 @@ function createSTTSession() {
                 connection.keepAlive();
               } catch (e) {
                 console.error("❌ Keep-alive error:", e.message);
-                // Stop keep-alive on error
                 if (keepAliveInterval) {
                   clearInterval(keepAliveInterval);
                   keepAliveInterval = null;
                 }
               }
             } else {
-              // Stop keep-alive if connection is no longer open
               if (keepAliveInterval) {
                 clearInterval(keepAliveInterval);
                 keepAliveInterval = null;
               }
             }
-          }, 5000);
+          }, 3000); // ✅ REDUCED from 5000 to 3000ms
         };
 
-        // ✅ IMPROVED: Start idle detection ONLY after connection opens
         const startIdleDetection = () => {
           if (idleCheckInterval) {
             clearInterval(idleCheckInterval);
@@ -152,12 +155,11 @@ function createSTTSession() {
           isConnecting = false;
           hasBeenOpened = true;
 
-          // ✅ Resolve the open promise
           if (openResolve) {
             openResolve(true);
           }
 
-          // ✅ Start keep-alive and idle detection NOW
+          // ✅ Start keep-alive and idle detection immediately
           startKeepAlive();
           startIdleDetection();
         });
@@ -172,21 +174,17 @@ function createSTTSession() {
           const isFinal = data.is_final;
           const speechFinal = data.speech_final;
 
-          // Reset idle timer on any speech
           lastSpeechTime = Date.now();
 
-          // Log transcript type
           console.log(
             `📝 [${isFinal ? "Final" : "Interim"}${speechFinal ? " - Speech Final" : ""}]:`,
             transcript.substring(0, 50),
           );
 
-          // Handle interim results
           if (!isFinal) {
             onInterim?.(transcript, data);
           }
 
-          // Handle final transcript
           if (isFinal && speechFinal) {
             console.log("✅ Complete utterance received:", transcript);
             onTranscript?.(transcript, data);
@@ -203,7 +201,6 @@ function createSTTSession() {
           clearTimeout(openTimeout);
           connectionError = err;
 
-          // Clean up intervals
           if (keepAliveInterval) {
             clearInterval(keepAliveInterval);
             keepAliveInterval = null;
@@ -216,7 +213,6 @@ function createSTTSession() {
           isOpen = false;
           isConnecting = false;
 
-          // ✅ Reject the open promise if connection never opened
           if (!hasBeenOpened && openReject) {
             openReject(err);
           }
@@ -233,7 +229,6 @@ function createSTTSession() {
 
           clearTimeout(openTimeout);
 
-          // Clean up intervals
           if (keepAliveInterval) {
             clearInterval(keepAliveInterval);
             keepAliveInterval = null;
@@ -246,7 +241,6 @@ function createSTTSession() {
           isOpen = false;
           isConnecting = false;
 
-          // ✅ If connection never opened, reject the promise
           if (!hasBeenOpened && openReject) {
             const closeError = new Error(
               `WebSocket closed before opening (code: ${closeEvent?.code || "unknown"})`,
@@ -285,7 +279,6 @@ function createSTTSession() {
 
         isConnecting = false;
 
-        // ✅ Reject the open promise
         if (openReject) {
           openReject(error);
         }
@@ -293,7 +286,6 @@ function createSTTSession() {
         onError?.(error);
       }
 
-      // Return connection wrapper
       return {
         send(chunk) {
           if (!connection || isConnecting || !isOpen) {
@@ -343,23 +335,19 @@ function createSTTSession() {
         },
 
         getReadyState() {
-          if (isConnecting) return 0; // CONNECTING
-          return isOpen ? 1 : 3; // OPEN : CLOSED
+          if (isConnecting) return 0;
+          return isOpen ? 1 : 3;
         },
 
-        // ✅ IMPROVED: Use the promise-based approach
         async waitForReady(timeout = 5000) {
-          // If already open, resolve immediately
           if (isOpen) {
             return true;
           }
 
-          // If there was already an error, reject immediately
           if (connectionError) {
             throw connectionError;
           }
 
-          // Race between the open promise and a timeout
           return Promise.race([
             openPromise,
             new Promise((_, reject) => {
@@ -370,13 +358,11 @@ function createSTTSession() {
           ]);
         },
 
-        // Method to reset idle timer manually
         resetIdleTimer() {
           lastSpeechTime = Date.now();
           console.log("🔄 Idle timer manually reset");
         },
 
-        // Method to pause/resume idle detection
         pauseIdleDetection() {
           if (idleCheckInterval) {
             clearInterval(idleCheckInterval);

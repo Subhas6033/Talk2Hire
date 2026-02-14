@@ -30,8 +30,8 @@ import useAudioRecording from "./useAudioRecording";
 const AUDIO_CONFIG = {
   MIN_BUFFER_SIZE: 3,
   SAMPLE_RATE: 48000,
-  RECOGNITION_DELAY: 2000,
-  MAX_RECOGNITION_WAIT: 5000,
+  RECOGNITION_DELAY: 800, // ✅ Optimized
+  MAX_RECOGNITION_WAIT: 3000, // ✅ Optimized
 };
 
 export const useInterview = (interviewId, userId, cameraStream) => {
@@ -47,6 +47,9 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const currentSourceRef = useRef(null);
   const recognitionTimeoutRef = useRef(null);
   const recordingTimerRef = useRef(null);
+
+  // ✅ FIX: Added missing ref declaration
+  const playbackScheduledRef = useRef(false);
 
   // Audio queue stored ONLY in ref
   const audioQueueRef = useRef([]);
@@ -75,7 +78,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     micStreamingActiveRef.current = interview.micStreamingActive;
   }, [interview]);
 
-  // ✅ FIX: Initialize AudioContext with user gesture
+  // Initialize AudioContext with user gesture
   useEffect(() => {
     const initAudioContext = () => {
       if (!audioCtxRef.current) {
@@ -91,7 +94,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       }
     };
 
-    // Initialize on user interaction
     const handleInteraction = () => {
       initAudioContext();
       document.removeEventListener("click", handleInteraction);
@@ -208,10 +210,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   // Safe base64 → ArrayBuffer converter
   const base64ToArrayBuffer = (base64) => {
-    // Replace URL-safe chars
     base64 = base64.replace(/-/g, "+").replace(/_/g, "/");
-
-    // Pad with '='
     while (base64.length % 4) {
       base64 += "=";
     }
@@ -225,7 +224,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     return bytes.buffer;
   };
 
-  // ✅ FIXED: Play the next chunk in the queue
   const playNextChunk = useCallback(async () => {
     if (audioQueueRef.current.length === 0 || !audioCtxRef.current) {
       isPlayingRef.current = false;
@@ -236,7 +234,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
     const audioCtx = audioCtxRef.current;
 
-    // Resume AudioContext if suspended
     if (audioCtx.state === "suspended") {
       await audioCtx.resume();
       console.log("🔊 AudioContext resumed for playback");
@@ -247,7 +244,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
     const buffer = audioQueueRef.current.shift();
 
-    // ✅ FIX: Stop previous source if still playing
     if (currentSourceRef.current) {
       try {
         currentSourceRef.current.stop();
@@ -259,11 +255,8 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     const source = audioCtx.createBufferSource();
     source.buffer = buffer;
     source.connect(audioCtx.destination);
-
-    // ✅ FIX: Store current source
     currentSourceRef.current = source;
 
-    // ✅ FIX: Connect to audio recording for mixed audio
     if (audioRecording.connectTTSAudio) {
       try {
         audioRecording.connectTTSAudio(buffer);
@@ -282,10 +275,9 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       );
 
       if (audioQueueRef.current.length > 0) {
-        playNextChunk(); // Play next queued chunk
+        playNextChunk();
       } else {
         console.log("✅ All audio played, enabling recognition");
-        // Enable recognition after TTS ends
         enableRecognitionAfterDelay();
       }
     };
@@ -314,7 +306,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     return audioCtxRef.current;
   };
 
-  // ✅ FIXED: Handle incoming TTS audio with better error handling
   const handleTtsAudio = useCallback(
     async (data) => {
       try {
@@ -325,14 +316,11 @@ export const useInterview = (interviewId, userId, cameraStream) => {
           audioLength: data?.audio?.length,
         });
 
-        // ✅ FIX: Handle both formats (object with audio property OR direct string)
         let base64Audio;
         if (typeof data === "string") {
-          // Direct base64 string
           base64Audio = data;
           console.log("📦 TTS data is direct base64 string");
         } else if (data && data.audio) {
-          // Object with audio property
           base64Audio = data.audio;
           console.log("📦 TTS data has audio property");
         } else {
@@ -345,16 +333,12 @@ export const useInterview = (interviewId, userId, cameraStream) => {
           return;
         }
 
-        // ✅ FIX: Update last chunk received time
         lastChunkReceivedTimeRef.current = Date.now();
 
         const audioCtx = await getAudioContext();
-
-        // Convert Base64 → ArrayBuffer
         const arrayBuffer = base64ToArrayBuffer(base64Audio);
         console.log(`✅ Decoded ${arrayBuffer.byteLength} bytes from base64`);
 
-        // Decode raw PCM 16-bit LE into Float32Array
         const numSamples = arrayBuffer.byteLength / 2;
         const audioBuffer = audioCtx.createBuffer(
           1,
@@ -369,21 +353,24 @@ export const useInterview = (interviewId, userId, cameraStream) => {
           channelData[i] = dataView.getInt16(i * 2, true) / 32768;
         }
 
-        // Push to queue
         audioQueueRef.current.push(audioBuffer);
         console.log(
           `📦 TTS audio queued (queue size: ${audioQueueRef.current.length}, duration: ${audioBuffer.duration.toFixed(2)}s)`,
         );
 
-        // ✅ FIX: Disable listening while TTS is active
         dispatch(disableListening());
 
-        // Play immediately if not already playing
-        if (!isPlayingRef.current) {
-          console.log("▶️ Starting playback immediately");
-          playNextChunk();
-        } else {
-          console.log("⏸️ Audio already playing, chunk queued");
+        // ✅ Batching logic to prevent stuttering
+        if (!isPlayingRef.current && !playbackScheduledRef.current) {
+          playbackScheduledRef.current = true;
+
+          await new Promise((resolve) => setTimeout(resolve, 50));
+
+          playbackScheduledRef.current = false;
+
+          if (audioQueueRef.current.length > 0) {
+            playNextChunk();
+          }
         }
       } catch (err) {
         console.error("❌ TTS playback error:", err);
@@ -393,7 +380,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch, playNextChunk],
   );
 
-  // Handle TTS stream end
   const handleTtsEnd = useCallback(() => {
     console.log("🔔 TTS stream ended");
     dispatch(setTtsStreamActive(false));
@@ -418,7 +404,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }
   }, [dispatch, playNextChunk, enableRecognitionAfterDelay]);
 
-  // ✅ FIXED: Start microphone streaming with audio recording connection
   const startMicStreaming = useCallback(async () => {
     if (micStreamRef.current) {
       console.log("🎤 Mic already streaming");
@@ -454,7 +439,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       source.connect(processor);
       processor.connect(audioCtx.destination);
 
-      // ✅ FIX: Connect microphone to audio recording
       if (audioRecording.connectMicrophoneAudio) {
         await audioRecording.connectMicrophoneAudio(stream);
         console.log("✅ Microphone connected to audio recording");
@@ -474,7 +458,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
           pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
         }
 
-        // ✅ FIX: Only send audio when listening is enabled
         if (
           socketRef.current?.connected &&
           isListeningRef.current &&
@@ -561,7 +544,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch],
   );
 
-  // Initialize audio recording on mount
   useEffect(() => {
     const initAudio = async () => {
       try {

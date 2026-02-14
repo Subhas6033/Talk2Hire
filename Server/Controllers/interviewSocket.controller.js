@@ -165,12 +165,23 @@ function initInterviewSocket(httpServer) {
       // SECONDARY CAMERA EVENTS
       // ══════════════════════════════════════════════════════════════
 
-      // ✅ FIXED: Relay mobile camera frames to other clients in the room (desktop)
+      // Add listener for BOTH event names to support legacy code
+      socket.on("security_frame_request", (data) => {
+        session.lastMobileFrame = data.frame;
+        session.lastMobileFrameTimestamp = data.timestamp || Date.now();
+
+        // Relay as "mobile_camera_frame" to desktop
+        socket.to(`interview_${interviewId}`).emit("mobile_camera_frame", {
+          frame: data.frame,
+          timestamp: data.timestamp || Date.now(),
+        });
+      });
+
+      // Keep the original listener for consistency
       socket.on("mobile_camera_frame", (data) => {
         session.lastMobileFrame = data.frame;
         session.lastMobileFrameTimestamp = data.timestamp || Date.now();
 
-        // Relay to all other clients in the room
         socket.to(`interview_${interviewId}`).emit("mobile_camera_frame", {
           frame: data.frame,
           timestamp: data.timestamp || Date.now(),
