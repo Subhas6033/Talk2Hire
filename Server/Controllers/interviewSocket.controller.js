@@ -183,7 +183,7 @@ function initInterviewSocket(httpServer) {
       // ================================================================
 
       // FIXED: Support both event names for backward compatibility
-      socket.on("security_frame_request", (data) => {
+      socket.on("security_frame_request", (data, ack) => {
         // Cache frame for reconnection
         session.lastMobileFrame = data.frame;
         session.lastMobileFrameTimestamp = data.timestamp || Date.now();
@@ -193,6 +193,12 @@ function initInterviewSocket(httpServer) {
           frame: data.frame,
           timestamp: data.timestamp || Date.now(),
         });
+
+        // FIX: Call ack so the client's ACK callback fires immediately,
+        // resetting isFramePendingRef and allowing the next frame to be sent.
+        if (typeof ack === "function") {
+          ack();
+        }
       });
 
       // Primary event listener for mobile camera frames

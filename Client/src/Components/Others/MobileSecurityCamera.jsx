@@ -7,6 +7,11 @@ import { Button } from "../index";
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
 const FRAME_SEND_INTERVAL = 1000;
 
+// FIX (MEDIUM): Max time to wait for a socket ACK before resetting isFramePending.
+// Without this, if the server never sends an ACK, isFramePending stays true
+// forever and NO frames are sent after the very first one.
+const FRAME_ACK_TIMEOUT_MS = 3000;
+
 const MobileSecurityCamera = () => {
   const [searchParams] = useSearchParams();
   const interviewId = searchParams.get("interviewId");
@@ -16,12 +21,16 @@ const MobileSecurityCamera = () => {
   const socketRef = useRef(null);
   const streamRef = useRef(null);
   const canvasRef = useRef(null);
-  const connectionWaitIntervalRef = useRef(null); // ✅ ADDED
+  const connectionWaitIntervalRef = useRef(null);
 
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const chunkCountRef = useRef(0);
   const frameSendIntervalRef = useRef(null);
+
+  // FIX: Track pending frame with a ref so the ACK timeout can clear it
+  const isFramePendingRef = useRef(false);
+  const framePendingTimeoutRef = useRef(null);
 
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -118,10 +127,14 @@ const MobileSecurityCamera = () => {
     socket.connect();
 
     return () => {
-      // ✅ ADDED: Clear interval on unmount
       if (connectionWaitIntervalRef.current) {
         clearInterval(connectionWaitIntervalRef.current);
         connectionWaitIntervalRef.current = null;
+      }
+      // FIX: Clear pending timeout on unmount
+      if (framePendingTimeoutRef.current) {
+        clearTimeout(framePendingTimeoutRef.current);
+        framePendingTimeoutRef.current = null;
       }
       stopVideoRecording();
       stopFrameSending();
@@ -271,11 +284,12 @@ const MobileSecurityCamera = () => {
 
     const canvas = document.createElement("canvas");
     canvasRef.current = canvas;
-    let isFramePending = false;
 
     frameSendIntervalRef.current = setInterval(() => {
       if (!videoRef.current || !socketRef.current?.connected) return;
-      if (isFramePending) return;
+
+      // FIX: Check ref instead of local variable (ref persists across interval ticks)
+      if (isFramePendingRef.current) return;
 
       try {
         const video = videoRef.current;
@@ -295,7 +309,19 @@ const MobileSecurityCamera = () => {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const frameData = canvas.toDataURL("image/jpeg", 0.5);
 
-        isFramePending = true;
+        isFramePendingRef.current = true;
+
+        // FIX: Set a safety timeout to reset isFramePending if ACK never arrives.
+        // Without this, one missed ACK permanently stops all future frames.
+        if (framePendingTimeoutRef.current) {
+          clearTimeout(framePendingTimeoutRef.current);
+        }
+        framePendingTimeoutRef.current = setTimeout(() => {
+          if (isFramePendingRef.current) {
+            console.warn("⚠️ Frame ACK timeout - resetting pending flag");
+            isFramePendingRef.current = false;
+          }
+        }, FRAME_ACK_TIMEOUT_MS);
 
         socketRef.current.emit(
           "security_frame_request",
@@ -304,14 +330,19 @@ const MobileSecurityCamera = () => {
             timestamp: Date.now(),
           },
           () => {
-            isFramePending = false;
+            // ACK received — clear timeout and reset flag
+            if (framePendingTimeoutRef.current) {
+              clearTimeout(framePendingTimeoutRef.current);
+              framePendingTimeoutRef.current = null;
+            }
+            isFramePendingRef.current = false;
           },
         );
 
         setFramesSent((prev) => prev + 1);
       } catch (error) {
         console.error("❌ Error capturing frame:", error);
-        isFramePending = false;
+        isFramePendingRef.current = false; // Always reset on error
       }
     }, FRAME_SEND_INTERVAL);
   };
@@ -321,10 +352,15 @@ const MobileSecurityCamera = () => {
       clearInterval(frameSendIntervalRef.current);
       frameSendIntervalRef.current = null;
     }
+    // FIX: Also clear the ACK timeout on stop
+    if (framePendingTimeoutRef.current) {
+      clearTimeout(framePendingTimeoutRef.current);
+      framePendingTimeoutRef.current = null;
+    }
+    isFramePendingRef.current = false;
   };
 
   const startVideoRecording = () => {
-    // ✅ FIXED: Clear any existing wait interval first
     if (connectionWaitIntervalRef.current) {
       clearInterval(connectionWaitIntervalRef.current);
       connectionWaitIntervalRef.current = null;
@@ -388,7 +424,6 @@ const MobileSecurityCamera = () => {
 
       console.log("📤 Requesting video session from server...");
 
-      // ✅ IMPROVED: Set a flag to track if we're waiting for server response
       let serverResponseReceived = false;
 
       socketRef.current.emit("video_recording_start", {
@@ -430,7 +465,6 @@ const MobileSecurityCamera = () => {
             reader.onloadend = () => {
               if (socketRef.current?.connected) {
                 const base64data = reader.result.split(",")[1];
-
                 socketRef.current.emit("video_chunk", {
                   videoType: "secondary_camera",
                   chunkNumber: chunkCountRef.current,
@@ -438,9 +472,7 @@ const MobileSecurityCamera = () => {
                   isLastChunk: false,
                   timestamp: Date.now(),
                 });
-
                 setChunksSent(chunkCountRef.current);
-
                 if (chunkCountRef.current % 5 === 0) {
                   console.log(
                     `📤 Security chunks sent: ${chunkCountRef.current}`,
@@ -503,13 +535,11 @@ const MobileSecurityCamera = () => {
 
       socketRef.current.on("video_recording_ready", readyListener);
 
-      // ✅ IMPROVED: Reduce timeout and add better error handling
       setTimeout(() => {
         if (!serverResponseReceived && !mediaRecorderRef.current) {
           console.error("❌ Server didn't confirm video session within 5s");
           socketRef.current.off("video_recording_ready", readyListener);
 
-          // ✅ ADDED: Try to start recording anyway if we have a stream
           console.log(
             "⚠️ Attempting to start recording without server confirmation",
           );
@@ -525,7 +555,6 @@ const MobileSecurityCamera = () => {
             recordedChunksRef.current = [];
             chunkCountRef.current = 0;
 
-            // Set up minimal handlers
             mediaRecorder.ondataavailable = (event) => {
               if (event.data && event.data.size > 0) {
                 chunkCountRef.current++;
@@ -542,13 +571,13 @@ const MobileSecurityCamera = () => {
             };
 
             mediaRecorder.start(2000);
-            setError(null); // Clear any previous errors
+            setError(null);
           } catch (fallbackError) {
             console.error("❌ Fallback recording failed:", fallbackError);
             setError("Failed to start recording. Please refresh the page.");
           }
         }
-      }, 5000); // Reduced from 10s to 5s
+      }, 5000);
     } catch (error) {
       console.error("❌ Failed to start MediaRecorder:", error);
       setError("Failed to start video recording: " + error.message);
@@ -608,7 +637,6 @@ const MobileSecurityCamera = () => {
         return "";
       }
     };
-
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [isStreaming]);
@@ -677,13 +705,7 @@ const MobileSecurityCamera = () => {
             <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
               <div className="flex items-center gap-2">
                 <div
-                  className={`w-2 h-2 rounded-full ${
-                    isRecording
-                      ? "bg-red-500 animate-pulse"
-                      : videoReady
-                        ? "bg-green-500"
-                        : "bg-gray-400"
-                  }`}
+                  className={`w-2 h-2 rounded-full ${isRecording ? "bg-red-500 animate-pulse" : videoReady ? "bg-green-500" : "bg-gray-400"}`}
                 />
                 <span className="text-sm text-gray-700 dark:text-gray-300">
                   Camera:{" "}
@@ -757,9 +779,7 @@ const MobileSecurityCamera = () => {
 
                 <div className="absolute top-4 right-4">
                   <div
-                    className={`flex items-center gap-2 px-3 py-2 backdrop-blur-sm rounded-md ${
-                      isConnected ? "bg-green-600/90" : "bg-red-600/90"
-                    }`}
+                    className={`flex items-center gap-2 px-3 py-2 backdrop-blur-sm rounded-md ${isConnected ? "bg-green-600/90" : "bg-red-600/90"}`}
                   >
                     <span className="text-xs font-medium text-white">
                       {isConnected ? "CONNECTED" : "DISCONNECTED"}

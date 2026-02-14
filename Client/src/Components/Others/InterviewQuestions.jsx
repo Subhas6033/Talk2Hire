@@ -5,13 +5,11 @@ import { Card } from "../Common/Card";
 import { useInterview } from "../../Hooks/useInterviewHook";
 import useVideoRecording from "../../Hooks/useVideoRecordingHook";
 import useHolisticDetection from "../../Hooks/useHolisticDetectionHook";
-import useAudioRecording from "../../Hooks/useAudioRecording";
 import useScreenRecording from "../../Hooks/useScreenRecording";
 import useSecondaryCamera from "../../Hooks/useSecondaryCameraHook";
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
-// Helper function to safely attach media streams to video elements
 function attachStream(videoEl, stream) {
   if (!videoEl || !stream) {
     console.warn("attachStream called with missing parameters:", {
@@ -62,11 +60,19 @@ const InterviewQuestions = ({
     stopRecording: stopVideoRecording,
   } = useVideoRecording(interviewId, userId, cameraStream, interview.socketRef);
 
-  const audioRecording = useAudioRecording(
-    interview.socketRef,
-    interviewId,
-    userId,
-  );
+  // FIX (CRITICAL): Removed the duplicate `useAudioRecording` hook call.
+  // Previously, InterviewQuestions declared its own local `audioRecording`
+  // via useAudioRecording(), AND used `interview.audioRecording` (which is
+  // the instance from inside useInterviewHook). These are TWO SEPARATE objects:
+  //
+  //   - startRecording() was called on interview.audioRecording (correct instance)
+  //   - isRecording was checked on the local audioRecording (wrong instance, always false)
+  //   - cleanupAllRecordings() called audioRecording.stopRecording() on the wrong instance
+  //   → The recording that was actually started was NEVER stopped on cleanup
+  //
+  // Fix: Use interview.audioRecording everywhere. One instance, one source of truth.
+  const audioRecording = interview.audioRecording;
+
   const screenRecording = useScreenRecording(
     interviewId,
     userId,
@@ -78,7 +84,6 @@ const InterviewQuestions = ({
     interview.socketRef,
   );
 
-  // Video element refs
   const videoRef = useRef(null);
   const secondaryVideoRef = useRef(null);
   const screenVideoRef = useRef(null);
@@ -86,7 +91,12 @@ const InterviewQuestions = ({
   const isCleaningUpRef = useRef(false);
   const readyForQuestionSentRef = useRef(false);
   const hasReceivedFrameRef = useRef(false);
-  const mobileImageRef = useRef(null); // ✅ ADDED: Reusable Image object
+
+  // Queue + single reusable Image to prevent onload overwrites.
+  const mobileImageRef = useRef(null);
+  const mobileFrameQueueRef = useRef([]);
+  const mobileFrameProcessingRef = useRef(false);
+
   const [screenShareAttempts, setScreenShareAttempts] = useState(0);
 
   const {
@@ -108,6 +118,8 @@ const InterviewQuestions = ({
   const [mobileCameraConnected, setMobileCameraConnected] = useState(false);
   const [showScreenSharePrompt, setShowScreenSharePrompt] = useState(false);
 
+  // FIX: Now cleanupAllRecordings correctly references the same audioRecording
+  // instance that startRecording() was called on (interview.audioRecording).
   const cleanupAllRecordings = useCallback(async () => {
     console.log("Cleaning up all recordings");
     const promises = [];
@@ -117,15 +129,13 @@ const InterviewQuestions = ({
         stopVideoRecording().catch((e) => console.error("stop video:", e)),
       );
     }
-
-    if (audioRecording.isRecording) {
+    if (audioRecording?.isRecording) {
       try {
         audioRecording.stopRecording();
       } catch (e) {
         console.error("stop audio:", e);
       }
     }
-
     if (screenRecording.isRecording) {
       promises.push(
         screenRecording
@@ -133,7 +143,6 @@ const InterviewQuestions = ({
           .catch((e) => console.error("stop screen:", e)),
       );
     }
-
     if (secondaryCamera.isRecording) {
       promises.push(
         secondaryCamera
@@ -159,7 +168,6 @@ const InterviewQuestions = ({
       hasStream: !!cameraStream,
       streamActive: cameraStream?.active,
     });
-
     if (videoRef.current && cameraStream) {
       console.log("Attaching primary camera stream");
       attachStream(videoRef.current, cameraStream);
@@ -173,14 +181,13 @@ const InterviewQuestions = ({
       hasStream: !!screenRecording.screenStream,
       streamActive: screenRecording.screenStream?.active,
     });
-
     if (screenVideoRef.current && screenRecording.screenStream) {
       console.log("Attaching screen recording stream");
       attachStream(screenVideoRef.current, screenRecording.screenStream);
     }
   }, [screenRecording.screenStream]);
 
-  // Initialize canvas dimensions for mobile camera frames
+  // Initialize canvas with fixed dimensions
   useEffect(() => {
     if (secondaryCanvasRef.current) {
       const canvas = secondaryCanvasRef.current;
@@ -190,11 +197,82 @@ const InterviewQuestions = ({
     }
   }, []);
 
-  // ✅ FIXED: Initialize reusable Image object once
+  // Initialize a single reusable Image object.
+  // We process frames from a queue one at a time so onload is never overwritten.
   useEffect(() => {
-    mobileImageRef.current = new Image();
-    mobileImageRef.current.crossOrigin = "anonymous";
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    mobileImageRef.current = img;
     console.log("Mobile camera Image object initialized");
+
+    img.onload = () => {
+      const canvas = secondaryCanvasRef.current;
+      if (!canvas) {
+        mobileFrameProcessingRef.current = false;
+        return;
+      }
+
+      try {
+        // Resize canvas only after onload — img.naturalWidth/Height are valid here
+        if (
+          canvas.width !== img.naturalWidth ||
+          canvas.height !== img.naturalHeight
+        ) {
+          if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+          }
+        }
+
+        const ctx = canvas.getContext("2d", {
+          alpha: false,
+          desynchronized: true,
+          willReadFrequently: false,
+        });
+
+        if (!ctx) {
+          mobileFrameProcessingRef.current = false;
+          return;
+        }
+
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+        if (!window.mobileFrameCount) window.mobileFrameCount = 0;
+        window.mobileFrameCount++;
+        if (window.mobileFrameCount % 30 === 0) {
+          console.log(`Rendered ${window.mobileFrameCount} mobile frames`);
+        }
+      } catch (error) {
+        console.error("Canvas draw error:", error);
+      }
+
+      // Process next frame in queue
+      mobileFrameProcessingRef.current = false;
+      processNextMobileFrame();
+    };
+
+    img.onerror = (err) => {
+      console.error("Failed to load mobile frame:", err);
+      mobileFrameProcessingRef.current = false;
+      processNextMobileFrame();
+    };
+
+    return () => {
+      img.onload = null;
+      img.onerror = null;
+    };
+  }, []);
+
+  // Drain the frame queue one frame at a time
+  const processNextMobileFrame = useCallback(() => {
+    if (mobileFrameProcessingRef.current) return;
+    if (mobileFrameQueueRef.current.length === 0) return;
+
+    const frameData = mobileFrameQueueRef.current.shift();
+    if (!frameData || !mobileImageRef.current) return;
+
+    mobileFrameProcessingRef.current = true;
+    mobileImageRef.current.src = frameData;
   }, []);
 
   // Main socket connection and event handler setup
@@ -260,7 +338,6 @@ const InterviewQuestions = ({
       }
     });
 
-    // ✅ FIXED: Single optimized mobile camera frame handler with reusable Image object
     socket.on("mobile_camera_frame", (data) => {
       if (!hasReceivedFrameRef.current) {
         hasReceivedFrameRef.current = true;
@@ -268,55 +345,21 @@ const InterviewQuestions = ({
         console.log("First mobile frame received - camera connected");
       }
 
-      const canvas = secondaryCanvasRef.current;
-      if (!canvas || !data?.frame) return;
+      if (!data?.frame) return;
 
       if (!data.frame.startsWith("data:image/")) {
         console.warn("Invalid image data format");
         return;
       }
 
-      const img = mobileImageRef.current;
-      if (!img) return;
+      if (mobileFrameQueueRef.current.length < 3) {
+        mobileFrameQueueRef.current.push(data.frame);
+      } else {
+        mobileFrameQueueRef.current.shift();
+        mobileFrameQueueRef.current.push(data.frame);
+      }
 
-      img.onload = () => {
-        try {
-          const ctx = canvas.getContext("2d", {
-            alpha: false,
-            desynchronized: true,
-            willReadFrequently: false,
-          });
-
-          if (!ctx) return;
-
-          if (canvas.width !== img.width || canvas.height !== img.height) {
-            canvas.width = img.width;
-            canvas.height = img.height;
-          }
-
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-          if (!window.mobileFrameCount) window.mobileFrameCount = 0;
-          window.mobileFrameCount++;
-
-          if (window.mobileFrameCount % 30 === 0) {
-            console.log(`Rendered ${window.mobileFrameCount} mobile frames`);
-          }
-        } catch (error) {
-          console.error("Canvas draw error:", error);
-        }
-      };
-
-      img.onerror = (err) => {
-        console.error("Failed to load mobile frame:", {
-          error: err,
-          frameDataLength: data.frame?.length,
-          timestamp: data.timestamp,
-        });
-      };
-
-      img.src = data.frame;
+      processNextMobileFrame();
     });
 
     socket.on("interim_transcript", (data) =>
@@ -346,21 +389,16 @@ const InterviewQuestions = ({
     socket.on("audio_recording_ready", (d) =>
       console.log("Audio recording ready:", d),
     );
-
     socket.on("audio_chunk_uploaded", (d) => {
-      if (d.chunkNumber % 10 === 0) {
+      if (d.chunkNumber % 10 === 0)
         console.log(`Audio chunk ${d.chunkNumber} uploaded (${d.progress}%)`);
-      }
     });
-
     socket.on("audio_chunk_error", (d) =>
       console.error("Audio chunk error:", d),
     );
-
     socket.on("audio_processing_complete", (d) =>
       console.log("Audio processing complete:", d),
     );
-
     socket.on("audio_processing_error", (d) =>
       console.error("Audio processing error:", d),
     );
@@ -368,35 +406,28 @@ const InterviewQuestions = ({
     socket.on("video_recording_ready", (d) =>
       console.log("Video recording ready:", d),
     );
-
     socket.on("video_chunk_uploaded", (d) => {
-      if (d.chunkNumber % 10 === 0) {
+      if (d.chunkNumber % 10 === 0)
         console.log(
           `${d.videoType} chunk ${d.chunkNumber} uploaded (${d.progress}%)`,
         );
-      }
     });
-
     socket.on("video_chunk_error", (d) =>
       console.error(`${d.videoType} chunk error:`, d.error),
     );
-
     socket.on("video_processing_complete", (d) =>
       console.log(`${d.videoType} processing complete:`, d),
     );
-
     socket.on("video_processing_error", (d) => {
       console.error(`${d.videoType} processing error:`, d);
       alert(`Video processing failed for ${d.videoType}: ${d.error}`);
     });
 
     socket.on("evaluation_started", () => setEvaluationStatus("started"));
-
     socket.on("evaluation_complete", (d) => {
       setEvaluationStatus("complete");
       setEvaluationResults(d.results);
     });
-
     socket.on("evaluation_error", (d) => {
       setEvaluationStatus("error");
       alert(`Evaluation failed: ${d.message}`);
@@ -406,22 +437,17 @@ const InterviewQuestions = ({
       console.log("Question received:", d);
       interview.handleQuestion(d);
     });
-
     socket.on("next_question", (d) => interview.handleNextQuestion(d));
     socket.on("idle_prompt", (d) => interview.handleIdlePrompt(d));
-
     socket.on("transcript_received", (d) =>
       interview.handleTranscriptReceived(d),
     );
-
     socket.on("final_answer", (d) => interview.handleFinalAnswer(d.text));
     socket.on("listening_enabled", () => interview.enableListening());
     socket.on("listening_disabled", () => interview.disableListening());
-
     socket.on("tts_audio", (chunk) => {
       if (chunk) interview.handleTtsAudio(chunk);
     });
-
     socket.on("tts_end", () => interview.handleTtsEnd());
 
     socket.on("interview_complete", async (d) => {
@@ -459,7 +485,6 @@ const InterviewQuestions = ({
       userId,
       sessionId: interviewId,
     });
-
     socket.connect();
 
     return () => {
@@ -491,15 +516,16 @@ const InterviewQuestions = ({
     (async () => {
       try {
         console.log("Starting desktop recordings");
-        await interview.audioRecording.startRecording();
+        // FIX: Use audioRecording (= interview.audioRecording) — same instance
+        // that cleanupAllRecordings checks. Previously called
+        // interview.audioRecording.startRecording() while cleanup checked the
+        // local useAudioRecording() instance, so cleanup never stopped it.
+        await audioRecording.startRecording();
         console.log("Audio recording started");
-
         await startVideoRecording();
         console.log("Primary camera recording started");
-
         setShowScreenSharePrompt(true);
         console.log("Screen share prompt shown");
-        console.log("Secondary camera managed by mobile device");
       } catch (err) {
         console.error("Failed to start recordings:", err);
       }
@@ -513,7 +539,7 @@ const InterviewQuestions = ({
     isVideoRecording,
   ]);
 
-  // Auto-finish interview when evaluation is complete
+  // Auto-finish when evaluation is complete
   useEffect(() => {
     if (evaluationStatus === "complete" && evaluationResults) {
       alert(
@@ -569,16 +595,11 @@ const InterviewQuestions = ({
               } catch (err) {
                 console.error("Screen share denied:", err);
                 setScreenShareAttempts((prev) => prev + 1);
-
                 if (screenShareAttempts >= 2) {
                   const skip = confirm(
-                    "Screen sharing failed. Continue interview without screen recording?\n\n" +
-                      "Note: This may affect your interview evaluation.",
+                    "Screen sharing failed. Continue interview without screen recording?\n\nNote: This may affect your interview evaluation.",
                   );
-
-                  if (skip) {
-                    setShowScreenSharePrompt(false);
-                  }
+                  if (skip) setShowScreenSharePrompt(false);
                 } else {
                   alert("Please allow screen sharing and try again.");
                 }
@@ -997,7 +1018,6 @@ const InterviewQuestions = ({
                       </p>
                     </div>
                   )}
-
                   <div className="absolute top-3 left-3 z-10">
                     <div className="flex items-center gap-2 px-3 py-1.5 bg-black/80 backdrop-blur-sm rounded-lg">
                       <div

@@ -30,7 +30,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState(null);
 
-  // Modal states
   const [openGuideLines, setOpenGuideLines] = useState(false);
   const [isMicOpen, setIsMicOpen] = useState(false);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
@@ -84,7 +83,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
   };
 
-  // Generate QR code with passed session data
   const generateQRCode = async (sessionInfo) => {
     try {
       console.log("📱 generateQRCode called with:", sessionInfo);
@@ -113,10 +111,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
   };
 
-  // ✅ REMOVED: Duplicate useEffect that was creating second socket connection
-  // The socket is now created in handleCameraSuccess and stored in settingsSocketRef
-
-  // Handle primary camera success
   const handleCameraSuccess = async (stream) => {
     console.log("📹 Primary camera stream received");
     cameraStreamRef.current = stream;
@@ -154,7 +148,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
       console.log("✅ Session data created:", newSessionData);
       setSessionData(newSessionData);
 
-      // ✅ FIX 1: Initialize socket BEFORE generating QR code
       console.log("📡 Initializing socket for mobile frames...");
       const socket = io(SOCKET_URL, {
         query: {
@@ -168,16 +161,21 @@ const InterviewSettings = ({ onInterviewReady }) => {
         autoConnect: true,
       });
 
-      // ✅ FIX 2: Store socket in ref so it persists
       settingsSocketRef.current = socket;
 
-      // ✅ FIX 3: Wait for socket to connect before showing QR
+      // FIX (MEDIUM): Only ONE "connect" listener, defined ONCE.
+      // Previously there were two: one inside the Promise and one after it.
+      // The second listener accumulated on every reconnect, firing duplicate
+      // secondary_camera_status checks and cluttering the event loop.
+      // Now we use socket.once() for the initial connection gate, and then
+      // set up all subsequent listeners outside the Promise.
       await new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
           reject(new Error("Socket connection timeout"));
         }, 10000);
 
-        socket.on("connect", () => {
+        // FIX: Use .once() so this fires exactly once for the initial connect
+        socket.once("connect", () => {
           clearTimeout(timeout);
           console.log(
             "✅ Settings socket connected before QR display:",
@@ -193,7 +191,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
         });
       });
 
-      // Set up event listeners AFTER connection but BEFORE QR code
+      // FIX: All ongoing event listeners set up AFTER connection, ONCE each.
       socket.on("secondary_camera_ready", (data) => {
         console.log("📱 Mobile camera confirmed by server:", data);
         setSecondaryCameraConnected(true);
@@ -201,27 +199,25 @@ const InterviewSettings = ({ onInterviewReady }) => {
         setIsGeneratingQuestions(false);
       });
 
-      //  Check server state on connection
-      socket.on("connect", () => {
-        console.log("✅ Settings socket connected:", socket.id);
-
-        // Request current secondary camera status from server
-        socket.emit("request_secondary_camera_status", {
-          interviewId: newSessionData.interviewId,
-        });
-      });
-
       socket.on("secondary_camera_status", (data) => {
         if (data.connected) {
           console.log("📱 Secondary camera status update:", data);
           setSecondaryCameraConnected(true);
+          setQuestionsReady(true); // FIX: was missing here
+          setIsGeneratingQuestions(false); // FIX: was missing here — spinner never cleared
         }
       });
 
-      // ✅ FIX 5: Generate QR code AFTER socket is ready
+      // FIX: Request current secondary camera status once, right after connecting.
+      // Previously this was inside a second socket.on("connect") handler that
+      // would re-fire on every reconnect and stack up duplicate listeners.
+      socket.emit("request_secondary_camera_status", {
+        interviewId: newSessionData.interviewId,
+      });
+      console.log("✅ Settings socket connected:", socket.id);
+
       await generateQRCode(newSessionData);
 
-      // ✅ FIX 6: Close camera modal and show QR modal
       setIsCameraOpen(false);
       setShowQRModal(true);
 
@@ -233,7 +229,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
       setError(err?.message || "Failed to create interview session");
       setIsGeneratingQuestions(false);
 
-      // ✅ FIX 7: Clean up socket on error
       if (settingsSocketRef.current) {
         settingsSocketRef.current.disconnect();
         settingsSocketRef.current = null;
@@ -246,7 +241,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
   };
 
-  // Start interview — no local secondary stream needed (it lives on mobile)
   const tryStartInterview = () => {
     const canStart =
       questionsReady &&
@@ -297,8 +291,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
     setError(null);
     setShowQRModal(false);
 
-    // ✅ FIX 8: Disconnect settings socket before starting interview
-    // The interview will create its own socket connection
     if (settingsSocketRef.current) {
       console.log("🔌 Disconnecting settings socket before interview starts");
       settingsSocketRef.current.disconnect();
@@ -306,8 +298,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
 
     try {
-      // secondaryCameraStream is null here — it lives on the mobile browser
-      // InterviewQuestions handles it independently via useSecondaryCamera hook
       onInterviewReady({
         ...sessionData,
         cameraStream: primaryStream,
@@ -320,7 +310,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
   };
 
-  // Watch for all conditions to start interview
   useEffect(() => {
     if (questionsReady && secondaryCameraConnected && !isGeneratingQuestions) {
       console.log("✅ All conditions met, attempting to start interview...");
@@ -328,12 +317,10 @@ const InterviewSettings = ({ onInterviewReady }) => {
     }
   }, [questionsReady, secondaryCameraConnected, isGeneratingQuestions]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       console.log("🧹 InterviewSettings cleanup");
 
-      // Disconnect socket if still connected
       if (settingsSocketRef.current) {
         settingsSocketRef.current.disconnect();
         settingsSocketRef.current = null;
@@ -408,7 +395,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
               <p className="text-red-400 text-sm text-center">{error}</p>
             </div>
           )}
-
           <div className="flex justify-center">
             <Button
               type="submit"
@@ -424,7 +410,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
         </form>
       </Card>
 
-      {/* Guidelines Modal - Step 1 */}
       <Modal
         isOpen={openGuideLines}
         onClose={() => setOpenGuideLines(false)}
@@ -439,7 +424,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
         />
       </Modal>
 
-      {/* Microphone Check - Step 2 */}
       <MicrophoneCheck
         isOpen={isMicOpen}
         onClose={() => setIsMicOpen(false)}
@@ -449,7 +433,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
         }}
       />
 
-      {/* Primary Camera Check - Step 3 */}
       <CameraCheck
         isOpen={isCameraOpen}
         onClose={() => setIsCameraOpen(false)}
@@ -459,7 +442,6 @@ const InterviewSettings = ({ onInterviewReady }) => {
         description="Please allow access to your camera. After this, you'll need to connect your mobile phone's front camera."
       />
 
-      {/* QR Code Modal - Step 4 - stays open until mobile connects */}
       <Modal
         isOpen={showQRModal}
         onClose={() => {}}

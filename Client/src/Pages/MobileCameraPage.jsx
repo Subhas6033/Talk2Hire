@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { io } from "socket.io-client";
 import useSecondaryCamera from "../Hooks/useSecondaryCameraHook";
@@ -15,26 +15,31 @@ const MobileCameraPage = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [cameraGranted, setCameraGranted] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [streamingStarted, setStreamingStarted] = useState(false);
 
   const socketRef = useRef(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const frameIntervalRef = useRef(null);
 
+  // FIX 1 (CRITICAL): Use a REF to control the rAF loop, NOT state.
+  // React state captured in a requestAnimationFrame closure is stale — it
+  // freezes at the value from when the closure was created (false).
+  // A ref is mutable and always reflects the current value.
+  const isStreamingRef = useRef(false);
+
+  // FIX 2 (CRITICAL): Also guard startFrameStreaming with a ref so the
+  // "already started" check works correctly (state would always read false).
+  const streamingStartedRef = useRef(false);
+
   const secondaryCamera = useSecondaryCamera(sessionId, userId, socketRef);
 
-  // Initialize socket connection on component mount
   useEffect(() => {
     if (!isMobile || !sessionId || !userId) {
       setError("Invalid mobile camera link. Please scan the QR code again.");
       return;
     }
 
-    console.log("Mobile secondary camera initializing:", {
-      sessionId,
-      userId,
-    });
+    console.log("Mobile secondary camera initializing:", { sessionId, userId });
 
     const socket = io(SOCKET_URL, {
       query: { interviewId: sessionId, userId },
@@ -65,25 +70,29 @@ const MobileCameraPage = () => {
       console.log("Mobile socket disconnected:", reason);
       setIsConnected(false);
       setIsStreaming(false);
+      // Keep isStreamingRef true on temporary disconnect so loop stays alive
+      // for reconnection. Loop already guards with socketRef.current?.connected.
     });
 
     return () => {
       if (frameIntervalRef.current) {
         clearInterval(frameIntervalRef.current);
       }
+      isStreamingRef.current = false;
+      streamingStartedRef.current = false;
       socket.disconnect();
     };
   }, [isMobile, sessionId, userId]);
 
-  // FIXED: Improved frame streaming with requestAnimationFrame for smoother capture
   const startFrameStreaming = (stream) => {
     if (!canvasRef.current || !videoRef.current || !socketRef.current) {
       console.error("Cannot start streaming - missing required references");
       return;
     }
 
-    if (streamingStarted) {
-      console.log("Streaming already started, skipping");
+    // FIX 2: Guard with REF not state (state is always stale false here)
+    if (streamingStartedRef.current) {
+      console.log("Streaming already active, skipping");
       return;
     }
 
@@ -91,28 +100,34 @@ const MobileCameraPage = () => {
     const video = videoRef.current;
     const ctx = canvas.getContext("2d");
 
-    // Set canvas dimensions for optimal quality and performance
     canvas.width = 640;
     canvas.height = 480;
 
     console.log("Starting frame streaming to desktop");
-    setIsStreaming(true);
-    setStreamingStarted(true);
+
+    // FIX 1: Set REF true BEFORE starting the loop so the closure reads true
+    isStreamingRef.current = true;
+    streamingStartedRef.current = true;
+    setIsStreaming(true); // UI display only
 
     let frameCount = 0;
     let lastFrameTime = 0;
-    const FRAME_INTERVAL = 100; // Target 10 FPS for optimal bandwidth usage
+    const FRAME_INTERVAL = 100; // 10 FPS
 
-    // Use requestAnimationFrame for smoother frame capture synchronized with browser rendering
     const captureFrame = () => {
-      if (!streamingStarted || !socketRef.current?.connected) {
-        console.log("Streaming stopped or socket disconnected");
+      // FIX 1: Read from REF — always gets current value, never stale
+      if (!isStreamingRef.current) {
+        console.log("Streaming stopped (ref=false), ending rAF loop");
+        return;
+      }
+
+      // Keep loop alive during temporary disconnects; frames will resume on reconnect
+      if (!socketRef.current?.connected) {
+        requestAnimationFrame(captureFrame);
         return;
       }
 
       const now = Date.now();
-
-      // Throttle frame rate to 10 FPS to prevent overwhelming the network
       if (now - lastFrameTime < FRAME_INTERVAL) {
         requestAnimationFrame(captureFrame);
         return;
@@ -120,31 +135,27 @@ const MobileCameraPage = () => {
 
       lastFrameTime = now;
 
-      // Only capture when video has sufficient data loaded
       if (video.readyState === video.HAVE_ENOUGH_DATA) {
         try {
-          // Draw current video frame to canvas
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-          // Convert canvas to JPEG blob with quality 0.7 for good balance of quality and size
           canvas.toBlob(
             (blob) => {
-              if (blob && socketRef.current?.connected) {
+              if (
+                blob &&
+                socketRef.current?.connected &&
+                isStreamingRef.current
+              ) {
                 const reader = new FileReader();
                 reader.onloadend = () => {
-                  const base64data = reader.result;
-
-                  // FIXED: Emit using correct event name that matches server listener
+                  if (!isStreamingRef.current) return; // guard after async gap
                   socketRef.current.emit("mobile_camera_frame", {
-                    frame: base64data,
+                    frame: reader.result,
                     interviewId: sessionId,
                     userId,
                     timestamp: Date.now(),
                   });
-
                   frameCount++;
-
-                  // Log progress every 50 frames to avoid console spam
                   if (frameCount % 50 === 0) {
                     console.log(`Sent ${frameCount} frames to desktop`);
                   }
@@ -153,33 +164,32 @@ const MobileCameraPage = () => {
               }
             },
             "image/jpeg",
-            0.7, // IMPROVED: Increased quality from 0.6 to 0.7 for better image clarity
+            0.7,
           );
-        } catch (error) {
-          console.error("Error capturing frame:", error);
+        } catch (err) {
+          console.error("Error capturing frame:", err);
         }
       }
 
-      // Continue the capture loop
       requestAnimationFrame(captureFrame);
     };
 
-    // Start the continuous capture loop
     requestAnimationFrame(captureFrame);
-    console.log("Frame streaming active: 10 FPS at 640x480 with 0.7 quality");
+    console.log("Frame streaming active: 10 FPS at 640x480");
   };
 
   const stopFrameStreaming = () => {
+    // Setting ref false stops the rAF loop cleanly on next tick
+    isStreamingRef.current = false;
+    streamingStartedRef.current = false;
     if (frameIntervalRef.current) {
       clearInterval(frameIntervalRef.current);
       frameIntervalRef.current = null;
     }
     setIsStreaming(false);
-    setStreamingStarted(false);
     console.log("Stopped frame streaming");
   };
 
-  // FIXED: Request camera and start streaming immediately when socket connects
   useEffect(() => {
     if (!isConnected || cameraGranted) return;
 
@@ -199,17 +209,14 @@ const MobileCameraPage = () => {
         console.log("Step 1 Complete: Camera access granted");
         setCameraGranted(true);
 
-        // Attach stream to video element
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           await videoRef.current.play();
           console.log("Video element is now playing");
         }
 
-        // IMPORTANT: Wait for video to be fully ready before starting frame capture
         await new Promise((resolve) => setTimeout(resolve, 500));
 
-        // Step 2: Notify server that mobile camera is connected
         console.log("Step 2: Notifying server of mobile camera connection");
         socketRef.current.emit("secondary_camera_connected", {
           interviewId: sessionId,
@@ -218,12 +225,10 @@ const MobileCameraPage = () => {
         });
         console.log("Step 2 Complete: Server notified");
 
-        // Step 3: Start streaming frames to desktop immediately
         console.log("Step 3: Starting frame streaming to desktop");
         startFrameStreaming(stream);
         console.log("Step 3 Complete: Frame streaming started");
 
-        // Step 4: Request video recording session from server
         console.log("Step 4: Requesting video recording session");
         socketRef.current.emit("video_recording_start", {
           videoType: "secondary_camera",
@@ -236,7 +241,6 @@ const MobileCameraPage = () => {
           userId,
         });
 
-        // Step 5: Wait for server confirmation with timeout handling
         try {
           await new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
@@ -272,19 +276,16 @@ const MobileCameraPage = () => {
             socketRef.current.on("video_recording_error", errorHandler);
           });
 
-          // Step 6: Start actual video recording
           console.log("Step 5: Starting video recording");
           await secondaryCamera.startRecording();
           console.log("Step 5 Complete: Video recording started");
         } catch (serverError) {
           console.error("Server confirmation failed:", serverError);
-          // Continue streaming frames even if recording session fails
           console.log("Continuing frame streaming without recording");
         }
       } catch (err) {
         console.error("Camera error:", err);
         let errorMessage = "Unable to access front camera. ";
-
         if (err.name === "NotAllowedError") {
           errorMessage += "Please grant camera permission and refresh.";
         } else if (err.name === "NotFoundError") {
@@ -294,15 +295,13 @@ const MobileCameraPage = () => {
         } else {
           errorMessage += err.message;
         }
-
         setError(errorMessage);
       }
     };
 
     requestCamera();
-  }, [isConnected, cameraGranted, sessionId, userId, secondaryCamera]);
+  }, [isConnected, cameraGranted, sessionId, userId]);
 
-  // Cleanup on component unmount
   useEffect(() => {
     return () => {
       stopFrameStreaming();
@@ -313,7 +312,6 @@ const MobileCameraPage = () => {
     };
   }, [secondaryCamera]);
 
-  // Render invalid link message if URL parameters are missing
   if (!isMobile || !sessionId || !userId) {
     return (
       <div className="min-h-screen bg-linear-to-br from-gray-900 to-gray-800 flex items-center justify-center p-4">
@@ -348,7 +346,6 @@ const MobileCameraPage = () => {
   return (
     <div className="min-h-screen bg-linear-to-br from-gray-900 to-gray-800 flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-lg">
-        {/* Header Section */}
         <div className="text-center mb-6">
           <div className="w-16 h-16 rounded-full bg-linear-to-br from-orange-500 to-red-600 flex items-center justify-center mx-auto mb-4 shadow-xl">
             <svg
@@ -373,7 +370,6 @@ const MobileCameraPage = () => {
           </p>
         </div>
 
-        {/* Error Message Display */}
         {error && (
           <div className="mb-6 bg-red-500/10 border-2 border-red-500 rounded-xl p-6 text-center">
             <svg
@@ -393,9 +389,7 @@ const MobileCameraPage = () => {
           </div>
         )}
 
-        {/* Camera Preview Card */}
         <div className="bg-gray-800 rounded-2xl overflow-hidden shadow-2xl border-2 border-gray-700">
-          {/* Status Bar showing current connection and recording state */}
           <div className="bg-linear-to-r from-orange-600 to-red-600 px-6 py-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -429,27 +423,24 @@ const MobileCameraPage = () => {
                   </>
                 )}
               </div>
-              <div className="flex items-center gap-2">
-                {isConnected && (
-                  <svg
-                    className="w-5 h-5 text-white"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"
-                    />
-                  </svg>
-                )}
-              </div>
+              {isConnected && (
+                <svg
+                  className="w-5 h-5 text-white"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"
+                  />
+                </svg>
+              )}
             </div>
           </div>
 
-          {/* Video Preview Section */}
           <div className="relative aspect-9/16 bg-black">
             <video
               ref={videoRef}
@@ -459,11 +450,8 @@ const MobileCameraPage = () => {
               className="w-full h-full object-cover"
               style={{ transform: "scaleX(-1)" }}
             />
-
-            {/* Hidden canvas used for frame capture */}
             <canvas ref={canvasRef} className="hidden" />
 
-            {/* Loading overlay shown when not streaming */}
             {!isStreaming && !error && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70">
                 <div className="animate-spin w-12 h-12 border-4 border-gray-600 border-t-orange-500 rounded-full mb-4" />
@@ -473,7 +461,6 @@ const MobileCameraPage = () => {
               </div>
             )}
 
-            {/* Recording Indicator Badge */}
             {secondaryCamera.isRecording && (
               <div className="absolute top-4 left-4">
                 <div className="flex items-center gap-2 px-4 py-2 bg-red-600/90 backdrop-blur-sm rounded-lg shadow-xl">
@@ -483,7 +470,6 @@ const MobileCameraPage = () => {
               </div>
             )}
 
-            {/* Streaming Indicator Badge */}
             {isStreaming && (
               <div className="absolute top-4 right-4">
                 <div className="flex items-center gap-2 px-4 py-2 bg-green-600/90 backdrop-blur-sm rounded-lg shadow-xl">
@@ -494,7 +480,6 @@ const MobileCameraPage = () => {
             )}
           </div>
 
-          {/* Footer with status information */}
           <div className="bg-gray-750 px-6 py-4 border-t border-gray-700">
             <div className="flex items-start gap-3">
               <svg
