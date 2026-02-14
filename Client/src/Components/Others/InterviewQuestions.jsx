@@ -60,17 +60,6 @@ const InterviewQuestions = ({
     stopRecording: stopVideoRecording,
   } = useVideoRecording(interviewId, userId, cameraStream, interview.socketRef);
 
-  // FIX (CRITICAL): Removed the duplicate `useAudioRecording` hook call.
-  // Previously, InterviewQuestions declared its own local `audioRecording`
-  // via useAudioRecording(), AND used `interview.audioRecording` (which is
-  // the instance from inside useInterviewHook). These are TWO SEPARATE objects:
-  //
-  //   - startRecording() was called on interview.audioRecording (correct instance)
-  //   - isRecording was checked on the local audioRecording (wrong instance, always false)
-  //   - cleanupAllRecordings() called audioRecording.stopRecording() on the wrong instance
-  //   → The recording that was actually started was NEVER stopped on cleanup
-  //
-  // Fix: Use interview.audioRecording everywhere. One instance, one source of truth.
   const audioRecording = interview.audioRecording;
 
   const screenRecording = useScreenRecording(
@@ -92,10 +81,8 @@ const InterviewQuestions = ({
   const readyForQuestionSentRef = useRef(false);
   const hasReceivedFrameRef = useRef(false);
 
-  // Queue + single reusable Image to prevent onload overwrites.
-  const mobileImageRef = useRef(null);
-  const mobileFrameQueueRef = useRef([]);
-  const mobileFrameProcessingRef = useRef(false);
+  // REMOVED: mobileImageRef, mobileFrameQueueRef, mobileFrameProcessingRef
+  // No longer needed with simplified frame handling
 
   const [screenShareAttempts, setScreenShareAttempts] = useState(0);
 
@@ -118,8 +105,6 @@ const InterviewQuestions = ({
   const [mobileCameraConnected, setMobileCameraConnected] = useState(false);
   const [showScreenSharePrompt, setShowScreenSharePrompt] = useState(false);
 
-  // FIX: Now cleanupAllRecordings correctly references the same audioRecording
-  // instance that startRecording() was called on (interview.audioRecording).
   const cleanupAllRecordings = useCallback(async () => {
     console.log("Cleaning up all recordings");
     const promises = [];
@@ -187,93 +172,93 @@ const InterviewQuestions = ({
     }
   }, [screenRecording.screenStream]);
 
-  // Initialize canvas with fixed dimensions
+  // SIMPLIFIED MOBILE CAMERA FRAME HANDLING
+  // Replaced complex queue system with direct rendering
   useEffect(() => {
-    if (secondaryCanvasRef.current) {
-      const canvas = secondaryCanvasRef.current;
-      canvas.width = 640;
-      canvas.height = 480;
-      console.log("Secondary camera canvas initialized: 640x480");
+    if (!secondaryCanvasRef.current) return;
+
+    const canvas = secondaryCanvasRef.current;
+    canvas.width = 640;
+    canvas.height = 480;
+    const ctx = canvas.getContext("2d", { alpha: false });
+
+    if (!ctx) {
+      console.error("Failed to get canvas context");
+      return;
     }
-  }, []);
 
-  // Initialize a single reusable Image object.
-  // We process frames from a queue one at a time so onload is never overwritten.
-  useEffect(() => {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    mobileImageRef.current = img;
-    console.log("Mobile camera Image object initialized");
+    console.log("Mobile camera canvas initialized: 640x480");
 
-    img.onload = () => {
-      const canvas = secondaryCanvasRef.current;
-      if (!canvas) {
-        mobileFrameProcessingRef.current = false;
+    const handleMobileFrame = (data) => {
+      if (!hasReceivedFrameRef.current) {
+        hasReceivedFrameRef.current = true;
+        setMobileCameraConnected(true);
+        console.log("✅ First mobile frame received - camera connected");
+      }
+
+      if (!data?.frame) {
+        console.warn("Frame data missing");
         return;
       }
 
-      try {
-        // Resize canvas only after onload — img.naturalWidth/Height are valid here
-        if (
-          canvas.width !== img.naturalWidth ||
-          canvas.height !== img.naturalHeight
-        ) {
-          if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-            canvas.width = img.naturalWidth;
-            canvas.height = img.naturalHeight;
-          }
-        }
-
-        const ctx = canvas.getContext("2d", {
-          alpha: false,
-          desynchronized: true,
-          willReadFrequently: false,
-        });
-
-        if (!ctx) {
-          mobileFrameProcessingRef.current = false;
-          return;
-        }
-
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-        if (!window.mobileFrameCount) window.mobileFrameCount = 0;
-        window.mobileFrameCount++;
-        if (window.mobileFrameCount % 30 === 0) {
-          console.log(`Rendered ${window.mobileFrameCount} mobile frames`);
-        }
-      } catch (error) {
-        console.error("Canvas draw error:", error);
+      if (!data.frame.startsWith("data:image/")) {
+        console.warn("Invalid image data format");
+        return;
       }
 
-      // Process next frame in queue
-      mobileFrameProcessingRef.current = false;
-      processNextMobileFrame();
+      // Create new image for each frame (no queue needed)
+      const img = new Image();
+
+      img.onload = () => {
+        try {
+          // Auto-resize canvas to match image dimensions
+          if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+            if (
+              canvas.width !== img.naturalWidth ||
+              canvas.height !== img.naturalHeight
+            ) {
+              canvas.width = img.naturalWidth;
+              canvas.height = img.naturalHeight;
+            }
+          }
+
+          // Draw frame to canvas
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+          // Log every 30th frame
+          if (!window.mobileFrameCount) window.mobileFrameCount = 0;
+          window.mobileFrameCount++;
+          if (window.mobileFrameCount % 30 === 0) {
+            console.log(`✅ Rendered ${window.mobileFrameCount} mobile frames`);
+          }
+        } catch (error) {
+          console.error("Canvas draw error:", error);
+        }
+      };
+
+      img.onerror = (err) => {
+        console.error("Failed to load mobile frame:", err);
+      };
+
+      // Set image source to trigger load
+      img.src = data.frame;
     };
 
-    img.onerror = (err) => {
-      console.error("Failed to load mobile frame:", err);
-      mobileFrameProcessingRef.current = false;
-      processNextMobileFrame();
-    };
+    // Register socket listener
+    const socket = interview.socketRef.current;
+    if (socket) {
+      socket.on("mobile_camera_frame", handleMobileFrame);
+      console.log("Mobile camera frame listener registered");
+    }
 
+    // Cleanup
     return () => {
-      img.onload = null;
-      img.onerror = null;
+      if (socket) {
+        socket.off("mobile_camera_frame", handleMobileFrame);
+        console.log("Mobile camera frame listener removed");
+      }
     };
-  }, []);
-
-  // Drain the frame queue one frame at a time
-  const processNextMobileFrame = useCallback(() => {
-    if (mobileFrameProcessingRef.current) return;
-    if (mobileFrameQueueRef.current.length === 0) return;
-
-    const frameData = mobileFrameQueueRef.current.shift();
-    if (!frameData || !mobileImageRef.current) return;
-
-    mobileFrameProcessingRef.current = true;
-    mobileImageRef.current.src = frameData;
-  }, []);
+  }, [interview.socketRef]);
 
   // Main socket connection and event handler setup
   useEffect(() => {
@@ -336,30 +321,6 @@ const InterviewQuestions = ({
       if (data.connected) {
         setMobileCameraConnected(true);
       }
-    });
-
-    socket.on("mobile_camera_frame", (data) => {
-      if (!hasReceivedFrameRef.current) {
-        hasReceivedFrameRef.current = true;
-        setMobileCameraConnected(true);
-        console.log("First mobile frame received - camera connected");
-      }
-
-      if (!data?.frame) return;
-
-      if (!data.frame.startsWith("data:image/")) {
-        console.warn("Invalid image data format");
-        return;
-      }
-
-      if (mobileFrameQueueRef.current.length < 3) {
-        mobileFrameQueueRef.current.push(data.frame);
-      } else {
-        mobileFrameQueueRef.current.shift();
-        mobileFrameQueueRef.current.push(data.frame);
-      }
-
-      processNextMobileFrame();
     });
 
     socket.on("interim_transcript", (data) =>
@@ -516,10 +477,6 @@ const InterviewQuestions = ({
     (async () => {
       try {
         console.log("Starting desktop recordings");
-        // FIX: Use audioRecording (= interview.audioRecording) — same instance
-        // that cleanupAllRecordings checks. Previously called
-        // interview.audioRecording.startRecording() while cleanup checked the
-        // local useAudioRecording() instance, so cleanup never stopped it.
         await audioRecording.startRecording();
         console.log("Audio recording started");
         await startVideoRecording();

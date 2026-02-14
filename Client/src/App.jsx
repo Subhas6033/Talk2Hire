@@ -127,7 +127,11 @@ const App = () => {
                     />
                     <Route
                       path="/mobile-camera"
-                      element={<MobileCameraPage />}
+                      element={
+                        <ProtectedRoute>
+                          <MobileCameraPage />
+                        </ProtectedRoute>
+                      }
                     />
                     <Route
                       path="/dashboard"

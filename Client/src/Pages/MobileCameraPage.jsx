@@ -148,17 +148,26 @@ const MobileCameraPage = () => {
               ) {
                 const reader = new FileReader();
                 reader.onloadend = () => {
-                  if (!isStreamingRef.current) return; // guard after async gap
-                  socketRef.current.emit("mobile_camera_frame", {
-                    frame: reader.result,
-                    interviewId: sessionId,
-                    userId,
-                    timestamp: Date.now(),
-                  });
-                  frameCount++;
-                  if (frameCount % 50 === 0) {
-                    console.log(`Sent ${frameCount} frames to desktop`);
-                  }
+                  if (!isStreamingRef.current) return;
+                  // FIXED: Changed event name from "mobile_camera_frame" to "security_frame_request"
+                  socketRef.current.emit(
+                    "security_frame_request",
+                    {
+                      frame: reader.result,
+                      interviewId: sessionId,
+                      userId,
+                      timestamp: Date.now(),
+                    },
+                    () => {
+                      // ACK callback - confirms server received the frame
+                      frameCount++;
+                      if (frameCount % 50 === 0) {
+                        console.log(
+                          `Sent ${frameCount} frames to desktop (ACK received)`,
+                        );
+                      }
+                    },
+                  );
                 };
                 reader.readAsDataURL(blob);
               }
