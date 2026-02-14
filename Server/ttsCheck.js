@@ -1,162 +1,110 @@
-const { pool } = require("./Config/database.config");
+// Migration Script: Create temp_registrations table
+// Run this file with: node migrations/001_create_temp_registrations.js
 
-async function runAudioChunkMigration() {
-  const connection = await pool.getConnection();
+const mysql = require("mysql2/promise");
+require("dotenv").config();
+
+const migration = {
+  name: "001_create_temp_registrations",
+
+  up: `
+    CREATE TABLE IF NOT EXISTS temp_registrations (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      session_id VARCHAR(64) NOT NULL UNIQUE,
+      password_hash VARCHAR(255) NOT NULL,
+      resume_url TEXT NOT NULL,
+      resume_mimetype VARCHAR(100) NOT NULL,
+      resume_filename VARCHAR(255) NOT NULL,
+      status ENUM('processing', 'completed', 'failed') DEFAULT 'processing',
+      extracted_email VARCHAR(255) NULL,
+      extracted_fullname VARCHAR(255) NULL,
+      extracted_mobile VARCHAR(50) NULL,
+      extracted_location VARCHAR(255) NULL,
+      extracted_skills TEXT NULL,
+      error_message TEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      expires_at TIMESTAMP NOT NULL,
+      INDEX idx_session (session_id),
+      INDEX idx_status (status),
+      INDEX idx_expires (expires_at),
+      INDEX idx_email (extracted_email)
+    ) ENGINE=InnoDB 
+      DEFAULT CHARSET=utf8mb4 
+      COLLATE=utf8mb4_unicode_ci;
+  `,
+
+  down: `
+    DROP TABLE IF EXISTS temp_registrations;
+  `,
+
+  verify: `
+    SELECT 
+      TABLE_NAME,
+      TABLE_ROWS,
+      CREATE_TIME
+    FROM information_schema.TABLES 
+    WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'temp_registrations';
+  `,
+};
+
+async function runMigration() {
+  let connection;
 
   try {
-    console.log("🚀 Starting audio chunk upload_status migration...");
+    console.log("🔄 Connecting to database...");
 
-    // ── Step 1: Check current definition ───────────────────────────────────
-    const [columns] = await connection.execute(`
-      SHOW COLUMNS FROM interview_audio_chunks WHERE Field = 'upload_status';
-    `);
-
-    if (columns.length === 0) {
-      console.log(
-        "⚠️  Table interview_audio_chunks not found or column missing",
-      );
-      return;
-    }
-
-    const currentType = columns[0].Type;
-    console.log("Current upload_status definition:", currentType);
-
-    // ── Step 2: Check video chunks table too ───────────────────────────────
-    const [videoColumns] = await connection
-      .execute(
-        `
-      SHOW COLUMNS FROM interview_video_chunks WHERE Field = 'upload_status';
-    `,
-      )
-      .catch(() => [[]]);
-
-    if (videoColumns.length > 0) {
-      console.log("Video chunk upload_status:", videoColumns[0].Type);
-    }
-
-    // ── Step 3: Fix audio_chunks table ─────────────────────────────────────
-    console.log("🔄 Updating interview_audio_chunks.upload_status...");
-
-    await connection.execute(`
-      ALTER TABLE interview_audio_chunks
-      MODIFY COLUMN upload_status ENUM(
-        'pending',
-        'uploading',
-        'uploaded',
-        'merging',
-        'merged',
-        'deleted',
-        'failed'
-      ) NOT NULL DEFAULT 'pending';
-    `);
-
-    console.log("✅ interview_audio_chunks.upload_status updated");
-
-    // ── Step 4: Fix video_chunks table too (same issue likely) ─────────────
-    if (videoColumns.length > 0) {
-      console.log("🔄 Updating interview_video_chunks.upload_status...");
-
-      await connection
-        .execute(
-          `
-        ALTER TABLE interview_video_chunks
-        MODIFY COLUMN upload_status ENUM(
-          'pending',
-          'uploading',
-          'uploaded',
-          'merging',
-          'merged',
-          'deleted',
-          'failed'
-        ) NOT NULL DEFAULT 'pending';
-      `,
-        )
-        .catch((err) => {
-          console.warn(
-            "⚠️  Could not update video chunks (may be fine):",
-            err.message,
-          );
-        });
-
-      console.log("✅ interview_video_chunks.upload_status updated");
-    }
-
-    // ── Step 5: Fix interview_audio.upload_status too ──────────────────────
-    const [audioColumns] = await connection
-      .execute(
-        `
-      SHOW COLUMNS FROM interview_audio WHERE Field = 'upload_status';
-    `,
-      )
-      .catch(() => [[]]);
-
-    if (audioColumns.length > 0) {
-      console.log(
-        "Current interview_audio.upload_status:",
-        audioColumns[0].Type,
-      );
-
-      await connection
-        .execute(
-          `
-        ALTER TABLE interview_audio
-        MODIFY COLUMN upload_status ENUM(
-          'pending',
-          'uploading',
-          'uploaded',
-          'merging',
-          'merged',
-          'completed',
-          'failed'
-        ) NOT NULL DEFAULT 'pending';
-      `,
-        )
-        .catch((err) => {
-          console.warn(
-            "⚠️  Could not update interview_audio status:",
-            err.message,
-          );
-        });
-
-      console.log("✅ interview_audio.upload_status updated");
-    }
-
-    // ── Step 6: Verify ─────────────────────────────────────────────────────
-    console.log("\n🔍 Verifying all updates...");
-
-    const [verify1] = await connection.execute(`
-      SHOW COLUMNS FROM interview_audio_chunks WHERE Field = 'upload_status';
-    `);
-    console.log("interview_audio_chunks.upload_status:", verify1[0].Type);
-
-    const [verify2] = await connection
-      .execute(
-        `
-      SHOW COLUMNS FROM interview_audio WHERE Field = 'upload_status';
-    `,
-      )
-      .catch(() => [[{ Type: "N/A" }]]);
-    console.log("interview_audio.upload_status:", verify2[0].Type);
-
-    console.log("\n🎉 Migration completed successfully!");
-    console.log("✅ 'uploaded' is now a valid status for audio chunks");
-    console.log("✅ Audio recording will work correctly now");
-  } catch (error) {
-    console.error("❌ Migration failed:", error);
-    console.error("Details:", {
-      message: error.message,
-      code: error.code,
-      sqlMessage: error.sqlMessage,
+    // Create database connection
+    connection = await mysql.createConnection({
+      host: process.env.DB_HOST || "localhost",
+      user: process.env.DB_USER || "root",
+      password: process.env.DB_PASSWORD || "",
+      database: process.env.DB_NAME || "interview_db",
+      port: process.env.DB_PORT || 3306,
     });
+
+    console.log("✅ Connected to database");
+
+    // Run the UP migration
+    console.log(`\n📊 Running migration: ${migration.name}`);
+    await connection.query(migration.up);
+    console.log("✅ Table created successfully");
+
+    // Verify the migration
+    console.log("\n🔍 Verifying table creation...");
+    const [rows] = await connection.query(migration.verify);
+
+    if (rows.length > 0) {
+      console.log("✅ Table verified:");
+      console.table(rows);
+
+      // Show table structure
+      console.log("\n📋 Table structure:");
+      const [columns] = await connection.query("DESCRIBE temp_registrations");
+      console.table(columns);
+    } else {
+      console.log("❌ Table not found after migration!");
+      process.exit(1);
+    }
+
+    console.log("\n✅ Migration completed successfully!");
+  } catch (error) {
+    console.error("❌ Migration failed:", error.message);
+    console.error("\nFull error:", error);
+    process.exit(1);
   } finally {
-    connection.release();
-    process.exit();
+    if (connection) {
+      await connection.end();
+      console.log("\n🔌 Database connection closed");
+    }
   }
 }
 
-process.on("unhandledRejection", (error) => {
-  console.error("❌ Unhandled error:", error);
-  process.exit(1);
-});
+// Run migration if this file is executed directly
+if (require.main === module) {
+  runMigration();
+}
 
-runAudioChunkMigration();
+// Export for use in migration runner
+module.exports = { migration, runMigration };

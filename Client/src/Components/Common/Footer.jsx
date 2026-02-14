@@ -5,7 +5,7 @@ const Footer = () => (
   <footer
     className="
       relative
-      bg-linear-to-br from-[#0b0f1f]/95 via-[#11162a]/95 to-[#0b0f1f]/95
+      bg-linear-to-br from-bgDark/95 via-[#11162a]/95 to-bgDark/95
       backdrop-blur-xl
       border-t border-white/10
       text-white

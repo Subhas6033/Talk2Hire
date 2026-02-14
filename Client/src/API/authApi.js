@@ -12,7 +12,6 @@ export const registerUser = createAsyncThunk(
         },
         withCredentials: true,
       });
-      console.log("Register response:", response.data);
       return response.data;
     } catch (error) {
       return rejectWithValue(error.response?.data?.message || error.message);

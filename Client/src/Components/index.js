@@ -22,6 +22,8 @@ import MobileSecurityCamera from "./Others/MobileSecurityCamera";
 import SecurityMonitor from "./Others/SecurityMonitor";
 import AuthProvider from "./Loader/AuthProviders";
 import SkillsSelector from "./Others/SkillsSelector";
+import WelcomeCarousel from "./Common/WelcomeCarousal";
+import OnboardingFlow from "./Common/Onboarding";
 
 export {
   Nav,
@@ -48,4 +50,6 @@ export {
   SecurityMonitor,
   AuthProvider,
   SkillsSelector,
+  WelcomeCarousel,
+  OnboardingFlow,
 };

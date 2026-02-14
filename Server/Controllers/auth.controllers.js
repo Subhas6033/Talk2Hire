@@ -15,6 +15,7 @@ const {
   uploadFileToFTP,
   deleteFileFromFTP,
 } = require("../Upload/uploadOnFTP.js");
+const crypto = require("node:crypto");
 
 const generateRefreshAndAccessTokens = async (user) => {
   const refreshToken = jwt.sign(
@@ -79,14 +80,30 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
   res.status(200).json(new APIRES(200, null, "Access token refreshed"));
 });
 
-const registerUser = asyncHandler(async (req, res) => {
-  console.log("✅ Registration started");
-  const { fullName, email, password } = req.body;
+// function to clean and parse JSON responses from AI
+function parseAIResponse(content) {
+  try {
+    let cleaned = content.trim();
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, "");
+    cleaned = cleaned.replace(/\s*```$/i, "");
+    cleaned = cleaned.trim();
+    return JSON.parse(cleaned);
+  } catch (error) {
+    console.error("❌ Failed to parse AI response:", error);
+    console.error("📄 Raw content:", content);
+    throw new Error(`Invalid JSON response from AI: ${error.message}`);
+  }
+}
+
+// ✅ NEW STEP 1: Upload resume and start extraction (NO account creation)
+const uploadResumeForRegistration = asyncHandler(async (req, res) => {
+  console.log("✅ Step 1: Upload resume for registration");
+  const { password } = req.body;
   const resumeFile = req.file;
 
   // Validation
-  if ([fullName, email, password].some((f) => !f || f.trim() === "")) {
-    throw new APIERR(400, "All fields are required");
+  if (!password || password.trim() === "") {
+    throw new APIERR(400, "Password is required");
   }
 
   if (password.length < 6) {
@@ -97,13 +114,7 @@ const registerUser = asyncHandler(async (req, res) => {
     throw new APIERR(400, "Resume is required");
   }
 
-  const existingUser = await User.findByEmail(email);
-  if (existingUser) {
-    await fs.unlink(resumeFile.path).catch(() => {});
-    throw new APIERR(409, "Email is already registered");
-  }
-
-  // Read file buffer and hash password in parallel
+  // Read file buffer and hash password
   const [fileBuffer, passwordHash] = await Promise.all([
     fs.readFile(resumeFile.path),
     bcrypt.hash(password, 8),
@@ -113,7 +124,6 @@ const registerUser = asyncHandler(async (req, res) => {
   await fs.unlink(resumeFile.path).catch(() => {});
 
   console.log("📤 Uploading resume to FTP...");
-
   const ftpResult = await uploadFileToFTP(
     fileBuffer,
     resumeFile.originalname,
@@ -121,79 +131,319 @@ const registerUser = asyncHandler(async (req, res) => {
   );
   console.log("✅ FTP upload complete");
 
-  console.log("🔍 Detecting domain from resume...");
-  // Detect domain first to provide better context for skill extraction and filtering
-  const detectedDomain = await detectResumeDomain({
-    ftpUrl: ftpResult.url,
-    mimeType: resumeFile.mimetype,
-    originalFileName: resumeFile.originalname,
-  });
-  console.log(`🎯 Detected domain: "${detectedDomain}"`);
-  console.log("🎯 Extracting skills from resume...");
-  const skillsData = await extractSkills({
-    ftpUrl: ftpResult.url,
-    mimeType: resumeFile.mimetype,
-    originalFileName: resumeFile.originalname,
-    targetDomain: detectedDomain,
-    matchThreshold: 6,
-  });
+  // ✅ Generate temporary session ID - crypto.randomBytes now works
+  const tempSessionId = crypto.randomBytes(32).toString("hex");
 
-  // Normalise both plain strings and { skill, relevance_score } objects
-  const normaliseSkill = (item) => {
-    if (!item) return null;
-    if (typeof item === "string") return item.trim() || null;
-    if (typeof item === "object" && typeof item.skill === "string")
-      return item.skill.trim() || null;
-    return null;
-  };
-
-  // Combine all relevant skill categories and normalise
-  const extractedSkills = [
-    ...(Array.isArray(skillsData.technical_skills)
-      ? skillsData.technical_skills
-      : []),
-    ...(Array.isArray(skillsData.soft_skills) ? skillsData.soft_skills : []),
-    ...(Array.isArray(skillsData.certifications)
-      ? skillsData.certifications
-      : []),
-    ...(Array.isArray(skillsData.languages) ? skillsData.languages : []),
-  ]
-    .map(normaliseSkill)
-    .filter(Boolean);
-
-  // Remove duplicates (case-insensitive)
-  const seen = new Set();
-  const uniqueSkills = extractedSkills.filter((skill) => {
-    const key = skill.toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-
-  console.log(
-    `📊 Extracted ${uniqueSkills.length} relevant skills for domain "${detectedDomain}":`,
-    uniqueSkills,
-  );
-  console.log("💾 Creating user in database...");
-
-  const skillsString = uniqueSkills.join(", ");
-
-  const [result] = await pool.execute(
-    `INSERT INTO users (fullName, email, hashPassword, resume, resume_upload_status, skills, interview_selected_skills) 
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  // Store temporary registration data in database
+  await pool.execute(
+    `INSERT INTO temp_registrations (session_id, password_hash, resume_url, resume_mimetype, resume_filename, status, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 1 HOUR))`,
     [
-      fullName,
-      email,
+      tempSessionId,
       passwordHash,
       ftpResult.url,
+      resumeFile.mimetype,
+      resumeFile.originalname,
+      "processing",
+    ],
+  );
+
+  // Start background extraction (non-blocking)
+  extractResumeForTempRegistration({
+    sessionId: tempSessionId,
+    ftpUrl: ftpResult.url,
+    mimeType: resumeFile.mimetype,
+    originalFileName: resumeFile.originalname,
+  }).catch((error) => {
+    console.error("❌ Background extraction failed:", error);
+  });
+
+  // ✅ Return session ID immediately (carousel shows while extraction happens)
+  res.status(200).json(
+    new APIRES(
+      200,
+      {
+        sessionId: tempSessionId,
+        status: "processing",
+      },
+      "Resume uploaded. Extraction in progress.",
+    ),
+  );
+});
+
+// ✅ NEW: Background extraction for temp registration
+async function extractResumeForTempRegistration({
+  sessionId,
+  ftpUrl,
+  mimeType,
+  originalFileName,
+}) {
+  try {
+    console.log(`🔄 Starting extraction for session ${sessionId}`);
+
+    // Extract full resume text
+    let extractedText = "";
+    if (mimeType === "application/pdf") {
+      const ocrResponse = await fetch("https://api.mistral.ai/v1/ocr", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "mistral-ocr-latest",
+          document: { type: "document_url", document_url: ftpUrl },
+          include_image_base64: false,
+        }),
+      });
+
+      const ocrData = await ocrResponse.json();
+      extractedText =
+        ocrData.pages?.map((p) => p.markdown || "").join("\n\n") || "";
+    }
+
+    extractedText = extractedText.replace(/\s+/g, " ").trim();
+
+    // Extract email
+    console.log("📧 Extracting email...");
+    const emailResponse = await mistral.chat.complete({
+      model: "mistral-small-latest",
+      messages: [
+        {
+          role: "system",
+          content: `Extract ONLY the email address from the resume text. Return just the email, nothing else. If no email found, return "null".`,
+        },
+        {
+          role: "user",
+          content: `Extract email from: ${extractedText.slice(0, 3000)}`,
+        },
+      ],
+    });
+
+    const email = emailResponse.choices[0].message.content.trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const extractedEmail =
+      email === "null" || !emailRegex.test(email) ? null : email;
+
+    if (!extractedEmail) {
+      await pool.execute(
+        `UPDATE temp_registrations SET status = ?, error_message = ? WHERE session_id = ?`,
+        ["failed", "Could not extract email from resume", sessionId],
+      );
+      return;
+    }
+
+    // Extract personal info
+    console.log("👤 Extracting personal info...");
+    const personalInfoResponse = await mistral.chat.complete({
+      model: "mistral-small-latest",
+      messages: [
+        {
+          role: "system",
+          content: `You are a resume parser. Extract the following information from the resume:
+1. Full name
+2. Mobile/phone number
+3. Location/City
+
+Return ONLY a valid JSON object with these fields, no markdown formatting:
+{
+  "fullName": "...",
+  "mobile": "...",
+  "location": "..."
+}
+
+CRITICAL RULES:
+- Return ONLY the JSON object, nothing else
+- Do NOT wrap in markdown code fences
+- No explanation, no extra text
+- If a field is not found, set it to null`,
+        },
+        {
+          role: "user",
+          content: `Extract personal information from this resume:\n\n${extractedText.slice(0, 3000)}`,
+        },
+      ],
+    });
+
+    const rawContent = personalInfoResponse.choices[0].message.content;
+    const personalInfo = parseAIResponse(rawContent);
+
+    // Detect domain
+    console.log("🔍 Detecting domain...");
+    const detectedDomain = await detectResumeDomain({
+      ftpUrl,
+      mimeType,
+      originalFileName,
+    });
+
+    // Extract skills
+    console.log("🎯 Extracting skills...");
+    const skillsData = await extractSkills({
+      ftpUrl,
+      mimeType,
+      originalFileName,
+      targetDomain: detectedDomain,
+      matchThreshold: 6,
+    });
+
+    const normaliseSkill = (item) => {
+      if (!item) return null;
+      if (typeof item === "string") return item.trim() || null;
+      if (typeof item === "object" && typeof item.skill === "string")
+        return item.skill.trim() || null;
+      return null;
+    };
+
+    const allSkills = [
+      ...(skillsData.technical_skills || []),
+      ...(skillsData.soft_skills || []),
+      ...(skillsData.certifications || []),
+      ...(skillsData.languages || []),
+    ]
+      .map(normaliseSkill)
+      .filter(Boolean);
+
+    const seen = new Set();
+    const uniqueSkills = allSkills.filter((skill) => {
+      const key = skill.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    const skillsString = uniqueSkills.join(", ");
+
+    // Update temp registration with extracted data
+    await pool.execute(
+      `UPDATE temp_registrations 
+       SET status = ?, 
+           extracted_email = ?,
+           extracted_fullname = ?,
+           extracted_mobile = ?,
+           extracted_location = ?,
+           extracted_skills = ?,
+           updated_at = NOW()
+       WHERE session_id = ?`,
+      [
+        "completed",
+        extractedEmail,
+        personalInfo.fullName || null,
+        personalInfo.mobile || null,
+        personalInfo.location || null,
+        skillsString,
+        sessionId,
+      ],
+    );
+
+    console.log(`✅ Extraction completed for session ${sessionId}`);
+  } catch (error) {
+    console.error(`❌ Extraction failed for session ${sessionId}:`, error);
+    await pool.execute(
+      `UPDATE temp_registrations SET status = ?, error_message = ? WHERE session_id = ?`,
+      ["failed", error.message, sessionId],
+    );
+  }
+}
+
+// ✅ NEW: Get extraction status
+const getExtractionStatus = asyncHandler(async (req, res) => {
+  const { sessionId } = req.params;
+
+  const [rows] = await pool.execute(
+    `SELECT session_id, status, extracted_email, extracted_fullname, extracted_mobile, extracted_location, extracted_skills, error_message
+     FROM temp_registrations 
+     WHERE session_id = ? AND expires_at > NOW()`,
+    [sessionId],
+  );
+
+  if (!rows[0]) {
+    throw new APIERR(404, "Session not found or expired");
+  }
+
+  const data = rows[0];
+
+  // Parse skills into array
+  const cvSkills = data.extracted_skills
+    ? data.extracted_skills
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : [];
+
+  res.status(200).json(
+    new APIRES(
+      200,
+      {
+        sessionId: data.session_id,
+        status: data.status,
+        extractedData:
+          data.status === "completed"
+            ? {
+                email: data.extracted_email,
+                fullName: data.extracted_fullname,
+                mobile: data.extracted_mobile,
+                location: data.extracted_location,
+                cvSkills: cvSkills,
+              }
+            : null,
+        error: data.error_message,
+      },
+      "Extraction status retrieved",
+    ),
+  );
+});
+
+// ✅ NEW STEP 2: Complete registration with reviewed data
+const completeRegistration = asyncHandler(async (req, res) => {
+  console.log("✅ Step 2: Complete registration");
+  const { sessionId, fullName, email, mobile, location, skills } = req.body;
+
+  // Validate inputs
+  if (!sessionId || !fullName || !email || !skills) {
+    throw new APIERR(400, "Missing required fields");
+  }
+
+  // Get temp registration data
+  const [tempRows] = await pool.execute(
+    `SELECT * FROM temp_registrations 
+     WHERE session_id = ? AND status = 'completed' AND expires_at > NOW()`,
+    [sessionId],
+  );
+
+  if (!tempRows[0]) {
+    throw new APIERR(
+      404,
+      "Session not found, expired, or extraction not complete",
+    );
+  }
+
+  const tempData = tempRows[0];
+
+  // Check if email already exists
+  const existingUser = await User.findByEmail(email);
+  if (existingUser) {
+    throw new APIERR(409, "Email is already registered");
+  }
+
+  // NOW create the actual user account
+  const [result] = await pool.execute(
+    `INSERT INTO users (email, hashPassword, fullName, mobile, location, skills, resume, resume_upload_status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+    [
+      email,
+      tempData.password_hash,
+      fullName,
+      mobile || null,
+      location || null,
+      skills,
+      tempData.resume_url,
       "completed",
-      skillsString,
-      null,
     ],
   );
 
   const userId = result.insertId;
 
+  // Generate tokens and login
   const { refreshToken, accessToken } = await generateRefreshAndAccessTokens({
     id: userId,
     email,
@@ -201,6 +451,7 @@ const registerUser = asyncHandler(async (req, res) => {
 
   await User.updateRefreshToken(userId, refreshToken);
 
+  // Set cookies
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
@@ -217,38 +468,33 @@ const registerUser = asyncHandler(async (req, res) => {
     maxAge: 24 * 60 * 60 * 1000,
   });
 
+  // Delete temp registration
+  await pool.execute(`DELETE FROM temp_registrations WHERE session_id = ?`, [
+    sessionId,
+  ]);
+
+  // Return user data
   res.status(201).json(
     new APIRES(
       201,
       {
         id: userId,
-        fullName,
         email,
+        fullName,
+        mobile,
+        location,
+        cvSkills: skills
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
         resumeStatus: "completed",
-        detectedDomain,
-        cvSkills: uniqueSkills,
-        skillsBreakdown: {
-          technical: (skillsData.technical_skills || [])
-            .map(normaliseSkill)
-            .filter(Boolean),
-          soft: (skillsData.soft_skills || [])
-            .map(normaliseSkill)
-            .filter(Boolean),
-          certifications: (skillsData.certifications || [])
-            .map(normaliseSkill)
-            .filter(Boolean),
-          languages: (skillsData.languages || [])
-            .map(normaliseSkill)
-            .filter(Boolean),
-        },
-        metadata: skillsData.metadata || null,
       },
-      "User registered successfully",
+      "Registration completed successfully",
     ),
   );
 });
 
-// Helper function to detect professional domain from resume text using Mistral OCR
+// Helper function to detect professional domain
 async function detectResumeDomain({ ftpUrl, mimeType, originalFileName }) {
   let extractedText = "";
 
@@ -269,23 +515,9 @@ async function detectResumeDomain({ ftpUrl, mimeType, originalFileName }) {
     const ocrData = await ocrResponse.json();
     extractedText =
       ocrData.pages?.map((p) => p.markdown || "").join("\n\n") || "";
-  } else {
-    const response = await fetch(ftpUrl);
-    if (!response.ok)
-      throw new Error(`Failed to fetch file: ${response.status}`);
-    const buffer = Buffer.from(await response.arrayBuffer());
-
-    if (mimeType === "text/plain") {
-      extractedText = buffer.toString("utf-8");
-    } else if (mimeType.includes("wordprocessingml.document")) {
-      const result = await mammoth.extractRawText({ buffer });
-      extractedText = result.value;
-    }
   }
 
   extractedText = extractedText.replace(/\s+/g, " ").trim();
-
-  // Truncate to first 5000 chars — enough context for domain detection
   const snippet = extractedText.slice(0, 5000);
 
   const domainResponse = await mistral.chat.complete({
@@ -295,12 +527,11 @@ async function detectResumeDomain({ ftpUrl, mimeType, originalFileName }) {
         role: "system",
         content: `You are a resume analyser. Based on the resume text provided, determine the single most specific professional domain or job role the candidate belongs to.
 
-Examples of domains: "Full Stack Web Developer", "Data Scientist", "DevOps Engineer", "UI/UX Designer", "Android Developer", "Machine Learning Engineer", "Cybersecurity Analyst", "Product Manager", "Backend Engineer", "Cloud Architect".
+Examples: "Full Stack Web Developer", "Data Scientist", "DevOps Engineer", "UI/UX Designer".
 
 Rules:
 - Return ONLY the domain/role as a short phrase (2-5 words).
-- No explanation, no punctuation, no extra text.
-- Be as specific as possible — prefer "React Frontend Developer" over "Software Engineer".`,
+- No explanation, no punctuation, no extra text.`,
       },
       {
         role: "user",
@@ -317,6 +548,7 @@ Rules:
   return domain;
 }
 
+// Keep all other existing functions (getCVSkills, loginUser, etc.)
 const getCVSkills = asyncHandler(async (req, res) => {
   const userId = req.user.id;
 
@@ -328,7 +560,6 @@ const getCVSkills = asyncHandler(async (req, res) => {
     throw new APIERR(404, "User not found");
   }
 
-  // Parse skills from comma-separated string to array
   const skillsString = rows[0].skills || "";
   const cvSkills = skillsString
     ? skillsString
@@ -420,9 +651,77 @@ const loginUser = asyncHandler(async (req, res) => {
       },
       "Successfully logged in",
     ),
-    console.log("Login controllers end"),
   );
 });
+
+// Helper function to detect professional domain from resume text using Mistral OCR
+async function detectResumeDomain({ ftpUrl, mimeType, originalFileName }) {
+  let extractedText = "";
+
+  if (mimeType === "application/pdf") {
+    const ocrResponse = await fetch("https://api.mistral.ai/v1/ocr", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "mistral-ocr-latest",
+        document: { type: "document_url", document_url: ftpUrl },
+        include_image_base64: false,
+      }),
+    });
+
+    const ocrData = await ocrResponse.json();
+    extractedText =
+      ocrData.pages?.map((p) => p.markdown || "").join("\n\n") || "";
+  } else {
+    const response = await fetch(ftpUrl);
+    if (!response.ok)
+      throw new Error(`Failed to fetch file: ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+
+    if (mimeType === "text/plain") {
+      extractedText = buffer.toString("utf-8");
+    } else if (mimeType.includes("wordprocessingml.document")) {
+      const result = await mammoth.extractRawText({ buffer });
+      extractedText = result.value;
+    }
+  }
+
+  extractedText = extractedText.replace(/\s+/g, " ").trim();
+
+  // Truncate to first 5000 chars — enough context for domain detection
+  const snippet = extractedText.slice(0, 5000);
+
+  const domainResponse = await mistral.chat.complete({
+    model: "mistral-small-latest",
+    messages: [
+      {
+        role: "system",
+        content: `You are a resume analyser. Based on the resume text provided, determine the single most specific professional domain or job role the candidate belongs to.
+
+Examples of domains: "Full Stack Web Developer", "Data Scientist", "DevOps Engineer", "UI/UX Designer", "Android Developer", "Machine Learning Engineer", "Cybersecurity Analyst", "Product Manager", "Backend Engineer", "Cloud Architect".
+
+Rules:
+- Return ONLY the domain/role as a short phrase (2-5 words).
+- No explanation, no punctuation, no extra text.
+- Be as specific as possible — prefer "React Frontend Developer" over "Software Engineer".`,
+      },
+      {
+        role: "user",
+        content: `Determine the professional domain of this resume:\n\n${snippet}`,
+      },
+    ],
+  });
+
+  const domain =
+    domainResponse.choices[0].message.content
+      .trim()
+      .replace(/^["']|["']$/g, "") || "Software Engineer";
+
+  return domain;
+}
 
 const logoutUser = asyncHandler(async (req, res) => {
   res.clearCookie("refreshToken", {
@@ -966,7 +1265,9 @@ async function processSkillExtraction({
 
 module.exports = {
   generateRefreshAndAccessTokens,
-  registerUser,
+  uploadResumeForRegistration,
+  getExtractionStatus,
+  completeRegistration,
   loginUser,
   logoutUser,
   forgotPassword,

@@ -540,7 +540,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
           <div className="shrink-0 lg:w-1/2 space-y-5">
             {/* Question Generation Status */}
             {isGeneratingQuestions && !questionsReady && (
-              <div className="relative overflow-hidden rounded-2xl bg-linear-to-br from-blue-500/10 to-cyan-500/10 border border-blue-500/20 p-5 backdrop-blur-sm">
+              <div className="mr-5 relative overflow-hidden rounded-2xl bg-linear-to-br from-blue-500/10 to-cyan-500/10 border border-blue-500/20 p-5 backdrop-blur-sm">
                 <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-3xl"></div>
                 <div className="relative flex items-start gap-4">
                   <div className="shrink-0 mt-1">

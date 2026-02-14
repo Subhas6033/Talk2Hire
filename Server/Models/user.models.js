@@ -19,6 +19,15 @@ const User = {
   async findById(userId) {
     const db = pool;
     const [rows] = await db.execute(
+      "SELECT * FROM users WHERE email = ? LIMIT 1",
+      [email],
+    );
+    return rows[0];
+  },
+
+  async findById(userId) {
+    const db = pool;
+    const [rows] = await db.execute(
       "SELECT * FROM users WHERE id = ? LIMIT 1",
       [userId],
     );
@@ -26,20 +35,24 @@ const User = {
   },
 
   async create({
-    fullName,
+    fullName = null, // Made optional
     email,
     hashPassword,
-    resume,
+    resume = null,
     resumeUploadStatus = "pending",
     refreshToken = "",
-    skills = "",
+    skills = null,
+    mobile = null,
+    location = null,
   }) {
     if (!isValidEmail(email)) {
       throw new APIERR(400, "Please enter a valid mail");
     }
     const db = pool;
     const [result] = await db.execute(
-      "INSERT INTO users (fullName, email, hashPassword, resume, resume_upload_status, refreshToken, skills) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      `INSERT INTO users 
+       (fullName, email, hashPassword, resume, resume_upload_status, refreshToken, skills, mobile, location) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         fullName,
         email,
@@ -48,9 +61,50 @@ const User = {
         resumeUploadStatus,
         refreshToken,
         skills,
+        mobile,
+        location,
       ],
     );
     return result.insertId;
+  },
+
+  async updateProfile(userId, { fullName, mobile, location, skills }) {
+    if (!userId) {
+      throw new APIERR(400, "User ID is required");
+    }
+
+    const db = pool;
+    const updates = [];
+    const values = [];
+
+    if (fullName !== undefined) {
+      updates.push("fullName = ?");
+      values.push(fullName);
+    }
+    if (mobile !== undefined) {
+      updates.push("mobile = ?");
+      values.push(mobile);
+    }
+    if (location !== undefined) {
+      updates.push("location = ?");
+      values.push(location);
+    }
+    if (skills !== undefined) {
+      updates.push("skills = ?");
+      values.push(skills);
+    }
+
+    if (updates.length === 0) {
+      throw new APIERR(400, "No fields to update");
+    }
+
+    updates.push("updated_at = NOW()");
+    values.push(userId);
+
+    await db.execute(
+      `UPDATE users SET ${updates.join(", ")} WHERE id = ?`,
+      values,
+    );
   },
 
   async updateRefreshToken(userId, refreshToken) {
@@ -91,6 +145,26 @@ const User = {
     );
   },
 
+  async updateCvExtractedSkills(userId, skillsArray) {
+    if (!userId) {
+      throw new APIERR(400, "User ID is required");
+    }
+
+    if (!Array.isArray(skillsArray)) {
+      throw new APIERR(400, "Skills must be an array");
+    }
+
+    const db = pool;
+
+    // Store as JSON
+    await db.execute(
+      `UPDATE users
+       SET cv_extracted_skills = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [JSON.stringify(skillsArray), userId],
+    );
+  },
+
   async updateInterviewSkills(userId, skillsArray) {
     if (!userId) {
       throw new APIERR(400, "User ID is required");
@@ -122,6 +196,32 @@ const User = {
     ]);
 
     return rows[0]?.skills || "";
+  },
+
+  async getCvExtractedSkills(userId) {
+    if (!userId) {
+      throw new APIERR(400, "User ID is required");
+    }
+
+    const db = pool;
+    const [rows] = await db.execute(
+      "SELECT cv_extracted_skills FROM users WHERE id = ?",
+      [userId],
+    );
+
+    const skillsData = rows[0]?.cv_extracted_skills;
+
+    if (!skillsData) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(skillsData);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      console.error("Error parsing CV extracted skills:", error);
+      return [];
+    }
   },
 
   async getInterviewSkills(userId) {

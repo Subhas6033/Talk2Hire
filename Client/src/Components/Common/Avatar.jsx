@@ -13,7 +13,9 @@ const Avatar = () => {
 
   if (!user) return null;
 
-  const firstName = user.fullName.split(" ")[0];
+  const fullName = user.fullName || user.email || "User";
+  const firstName = fullName.split(" ")[0];
+  const avatarInitial = firstName.charAt(0).toUpperCase();
 
   const handleLogout = () => {
     dispatch(logoutUser());
@@ -41,7 +43,7 @@ const Avatar = () => {
           />
         ) : (
           <span className="text-zinc-100 font-bold text-lg">
-            {firstName.charAt(0).toUpperCase()}
+            {avatarInitial}
           </span>
         )}
       </div>

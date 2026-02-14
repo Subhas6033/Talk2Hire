@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { motion } from "motion/react";
 import {
   fadeUp,
@@ -10,6 +10,7 @@ import {
   TrustedCompaniesSlider,
   PricingSection,
   TestimonialsSection,
+  WelcomeCarousel,
 } from "../Components/index";
 import { Card, CardHeader, CardBody } from "../Components/Common/Card";
 import { useNavigate } from "react-router-dom";
@@ -17,9 +18,29 @@ import { featuresData } from "../Data/HomePageData";
 
 const Home = () => {
   const navigate = useNavigate();
+  const [showWelcomeCarousel, setShowWelcomeCarousel] = useState(false);
+
+  // Check if user has seen welcome carousel (for first-time visitors only)
+  useEffect(() => {
+    const hasSeenWelcome = localStorage.getItem("hasSeenWelcome");
+
+    if (!hasSeenWelcome) {
+      setShowWelcomeCarousel(true);
+    }
+  }, []);
+
+  const handleWelcomeComplete = () => {
+    localStorage.setItem("hasSeenWelcome", "true");
+    setShowWelcomeCarousel(false);
+  };
 
   return (
     <>
+      {/* Welcome Carousel for first-time visitors */}
+      {showWelcomeCarousel && (
+        <WelcomeCarousel onComplete={handleWelcomeComplete} />
+      )}
+
       {/* SEO */}
       <meta
         name="description"
