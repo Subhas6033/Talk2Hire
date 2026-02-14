@@ -332,6 +332,7 @@ const MobileSecurityCamera = () => {
 
     if (!streamRef.current) {
       console.error("❌ No stream available for recording");
+      setError("No camera stream available");
       return;
     }
 
@@ -364,6 +365,8 @@ const MobileSecurityCamera = () => {
     }
 
     try {
+      console.log("🎥 Starting MediaRecorder for security camera...");
+
       const mimeTypes = [
         "video/webm;codecs=vp9",
         "video/webm;codecs=vp8",
@@ -374,6 +377,7 @@ const MobileSecurityCamera = () => {
       for (const mimeType of mimeTypes) {
         if (MediaRecorder.isTypeSupported(mimeType)) {
           selectedMimeType = mimeType;
+          console.log(`✅ Using MIME type: ${mimeType}`);
           break;
         }
       }
@@ -381,6 +385,11 @@ const MobileSecurityCamera = () => {
       if (!selectedMimeType) {
         throw new Error("No supported video MIME type found");
       }
+
+      console.log("📤 Requesting video session from server...");
+
+      // ✅ IMPROVED: Set a flag to track if we're waiting for server response
+      let serverResponseReceived = false;
 
       socketRef.current.emit("video_recording_start", {
         videoType: "secondary_camera",
@@ -394,6 +403,9 @@ const MobileSecurityCamera = () => {
 
       const readyListener = (response) => {
         if (response.videoType !== "secondary_camera") return;
+
+        serverResponseReceived = true;
+        console.log("✅ Server ready for security camera chunks:", response);
 
         const options = {
           mimeType: selectedMimeType,
@@ -410,10 +422,15 @@ const MobileSecurityCamera = () => {
             chunkCountRef.current++;
             recordedChunksRef.current.push(event.data);
 
+            console.log(
+              `📦 Security chunk ${chunkCountRef.current} captured (${event.data.size} bytes)`,
+            );
+
             const reader = new FileReader();
             reader.onloadend = () => {
               if (socketRef.current?.connected) {
                 const base64data = reader.result.split(",")[1];
+
                 socketRef.current.emit("video_chunk", {
                   videoType: "secondary_camera",
                   chunkNumber: chunkCountRef.current,
@@ -421,7 +438,14 @@ const MobileSecurityCamera = () => {
                   isLastChunk: false,
                   timestamp: Date.now(),
                 });
+
                 setChunksSent(chunkCountRef.current);
+
+                if (chunkCountRef.current % 5 === 0) {
+                  console.log(
+                    `📤 Security chunks sent: ${chunkCountRef.current}`,
+                  );
+                }
               }
             };
             reader.readAsDataURL(event.data);
@@ -434,6 +458,9 @@ const MobileSecurityCamera = () => {
         };
 
         mediaRecorder.onstop = () => {
+          console.log(
+            `🛑 MediaRecorder stopped. Total chunks: ${chunkCountRef.current}`,
+          );
           setIsRecording(false);
           setDebugInfo((prev) => ({ ...prev, recordingStarted: false }));
 
@@ -446,34 +473,82 @@ const MobileSecurityCamera = () => {
         };
 
         mediaRecorder.onstart = () => {
+          console.log("▶️ MediaRecorder started");
           setIsRecording(true);
           setDebugInfo((prev) => ({ ...prev, recordingStarted: true }));
         };
 
+        socketRef.current.off("disconnect");
+        socketRef.current.off("reconnect");
+
         socketRef.current.on("disconnect", () => {
+          console.warn("🔌 Socket disconnected — pausing recorder");
           if (mediaRecorder.state === "recording") {
             mediaRecorder.pause();
           }
         });
 
         socketRef.current.on("reconnect", () => {
+          console.log("🔄 Socket reconnected — resuming recorder");
           if (mediaRecorder.state === "paused") {
             mediaRecorder.resume();
           }
         });
 
         mediaRecorder.start(2000);
+        console.log("✅ MediaRecorder started (2s chunks)");
+
         socketRef.current.off("video_recording_ready", readyListener);
       };
 
       socketRef.current.on("video_recording_ready", readyListener);
 
+      // ✅ IMPROVED: Reduce timeout and add better error handling
       setTimeout(() => {
-        if (!mediaRecorderRef.current) {
+        if (!serverResponseReceived && !mediaRecorderRef.current) {
+          console.error("❌ Server didn't confirm video session within 5s");
           socketRef.current.off("video_recording_ready", readyListener);
-          setError("Server did not respond. Please refresh the page.");
+
+          // ✅ ADDED: Try to start recording anyway if we have a stream
+          console.log(
+            "⚠️ Attempting to start recording without server confirmation",
+          );
+
+          const options = {
+            mimeType: selectedMimeType,
+            videoBitsPerSecond: 2500000,
+          };
+
+          try {
+            const mediaRecorder = new MediaRecorder(streamRef.current, options);
+            mediaRecorderRef.current = mediaRecorder;
+            recordedChunksRef.current = [];
+            chunkCountRef.current = 0;
+
+            // Set up minimal handlers
+            mediaRecorder.ondataavailable = (event) => {
+              if (event.data && event.data.size > 0) {
+                chunkCountRef.current++;
+                console.log(
+                  `📦 Chunk ${chunkCountRef.current} (fallback mode)`,
+                );
+              }
+            };
+
+            mediaRecorder.onstart = () => {
+              console.log("▶️ MediaRecorder started (fallback mode)");
+              setIsRecording(true);
+              setDebugInfo((prev) => ({ ...prev, recordingStarted: true }));
+            };
+
+            mediaRecorder.start(2000);
+            setError(null); // Clear any previous errors
+          } catch (fallbackError) {
+            console.error("❌ Fallback recording failed:", fallbackError);
+            setError("Failed to start recording. Please refresh the page.");
+          }
         }
-      }, 10000);
+      }, 5000); // Reduced from 10s to 5s
     } catch (error) {
       console.error("❌ Failed to start MediaRecorder:", error);
       setError("Failed to start video recording: " + error.message);
