@@ -81,9 +81,6 @@ const InterviewQuestions = ({
   const readyForQuestionSentRef = useRef(false);
   const hasReceivedFrameRef = useRef(false);
 
-  // REMOVED: mobileImageRef, mobileFrameQueueRef, mobileFrameProcessingRef
-  // No longer needed with simplified frame handling
-
   const [screenShareAttempts, setScreenShareAttempts] = useState(0);
 
   const {
@@ -172,8 +169,7 @@ const InterviewQuestions = ({
     }
   }, [screenRecording.screenStream]);
 
-  // SIMPLIFIED MOBILE CAMERA FRAME HANDLING
-  // Simplified mobile camera frame handling - WITH DEBUG LOGS
+  // Initialize canvas (separate from frame handling)
   useEffect(() => {
     if (!secondaryCanvasRef.current) {
       console.error("❌ Canvas ref is null!");
@@ -190,117 +186,8 @@ const InterviewQuestions = ({
       return;
     }
 
-    console.log("✅ Mobile camera canvas ready:", {
-      width: canvas.width,
-      height: canvas.height,
-      hasContext: !!ctx,
-    });
-
-    // Draw test rectangle to verify canvas works
-    ctx.fillStyle = "blue";
-    ctx.fillRect(0, 0, 50, 50);
-    console.log("✅ Drew test blue rectangle on canvas");
-
-    const handleMobileFrame = (data) => {
-      console.log("📱 handleMobileFrame called!", {
-        hasData: !!data,
-        hasFrame: !!data?.frame,
-        frameType: typeof data?.frame,
-        frameStart: data?.frame?.substring(0, 30),
-      });
-
-      if (!hasReceivedFrameRef.current) {
-        hasReceivedFrameRef.current = true;
-        setMobileCameraConnected(true);
-        console.log("✅ FIRST mobile frame received - camera connected");
-      }
-
-      if (!data?.frame) {
-        console.warn("⚠️ Frame data missing");
-        return;
-      }
-
-      if (!data.frame.startsWith("data:image/")) {
-        console.warn(
-          "⚠️ Invalid image data format:",
-          data.frame.substring(0, 50),
-        );
-        return;
-      }
-
-      console.log("📸 Creating image from frame data");
-
-      // Create new image for each frame
-      const img = new Image();
-
-      img.onload = () => {
-        console.log("✅ Image loaded successfully:", {
-          naturalWidth: img.naturalWidth,
-          naturalHeight: img.naturalHeight,
-        });
-
-        try {
-          // Auto-resize canvas to match image dimensions
-          if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-            if (
-              canvas.width !== img.naturalWidth ||
-              canvas.height !== img.naturalHeight
-            ) {
-              canvas.width = img.naturalWidth;
-              canvas.height = img.naturalHeight;
-              console.log(
-                "📐 Canvas resized to:",
-                canvas.width,
-                "x",
-                canvas.height,
-              );
-            }
-          }
-
-          // Draw frame to canvas
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          console.log("✅ Frame drawn to canvas");
-
-          // Log every 10th frame
-          if (!window.mobileFrameCount) window.mobileFrameCount = 0;
-          window.mobileFrameCount++;
-          if (window.mobileFrameCount % 10 === 0) {
-            console.log(`✅ Rendered ${window.mobileFrameCount} mobile frames`);
-          }
-        } catch (error) {
-          console.error("❌ Canvas draw error:", error);
-        }
-      };
-
-      img.onerror = (err) => {
-        console.error("❌ Failed to load mobile frame image:", err);
-      };
-
-      // Set image source to trigger load
-      img.src = data.frame;
-      console.log("📤 Image src set, waiting for onload...");
-    };
-
-    // Register socket listener
-    const socket = interview.socketRef.current;
-    if (socket) {
-      socket.on("mobile_camera_frame", handleMobileFrame);
-      console.log(
-        "✅ Mobile camera frame listener registered on socket:",
-        socket.id,
-      );
-    } else {
-      console.error("❌ Socket ref is null!");
-    }
-
-    // Cleanup
-    return () => {
-      if (socket) {
-        socket.off("mobile_camera_frame", handleMobileFrame);
-        console.log("🧹 Mobile camera frame listener removed");
-      }
-    };
-  }, [interview.socketRef]);
+    console.log("✅ Mobile camera canvas initialized: 640x480");
+  }, []);
 
   // Main socket connection and event handler setup
   useEffect(() => {
@@ -363,6 +250,76 @@ const InterviewQuestions = ({
       if (data.connected) {
         setMobileCameraConnected(true);
       }
+    });
+
+    // ✅ CRITICAL FIX: Mobile camera frame handler registered in main socket setup
+    socket.on("mobile_camera_frame", (data) => {
+      console.log("📱 Mobile frame received");
+
+      if (!hasReceivedFrameRef.current) {
+        hasReceivedFrameRef.current = true;
+        setMobileCameraConnected(true);
+        console.log("✅ First mobile frame received - camera connected");
+      }
+
+      if (!data?.frame) {
+        console.warn("Frame data missing");
+        return;
+      }
+
+      if (!data.frame.startsWith("data:image/")) {
+        console.warn("Invalid image data format");
+        return;
+      }
+
+      if (!secondaryCanvasRef.current) {
+        console.warn("Canvas ref not available");
+        return;
+      }
+
+      const canvas = secondaryCanvasRef.current;
+      const ctx = canvas.getContext("2d", { alpha: false });
+      if (!ctx) {
+        console.error("Failed to get canvas context");
+        return;
+      }
+
+      // Create new image for each frame
+      const img = new Image();
+
+      img.onload = () => {
+        try {
+          // Auto-resize canvas to match image dimensions
+          if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+            if (
+              canvas.width !== img.naturalWidth ||
+              canvas.height !== img.naturalHeight
+            ) {
+              canvas.width = img.naturalWidth;
+              canvas.height = img.naturalHeight;
+            }
+          }
+
+          // Draw frame to canvas
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+          // Log every 30th frame
+          if (!window.mobileFrameCount) window.mobileFrameCount = 0;
+          window.mobileFrameCount++;
+          if (window.mobileFrameCount % 30 === 0) {
+            console.log(`✅ Rendered ${window.mobileFrameCount} mobile frames`);
+          }
+        } catch (error) {
+          console.error("Canvas draw error:", error);
+        }
+      };
+
+      img.onerror = (err) => {
+        console.error("Failed to load mobile frame:", err);
+      };
+
+      // Set image source to trigger load
+      img.src = data.frame;
     });
 
     socket.on("interim_transcript", (data) =>
@@ -537,48 +494,6 @@ const InterviewQuestions = ({
     cameraStream,
     isVideoRecording,
   ]);
-
-  // Check if mobile frame listener is registered
-  const socket = window.__REACT_DEVTOOLS_GLOBAL_HOOK__?.renderers
-    ?.values()
-    .next().value?.currentDispatcherRef?.current;
-
-  // Manual test
-  let testCount = 0;
-  const originalListener = socket?._callbacks?.["mobile_camera_frame"];
-  console.log("Mobile frame listeners:", originalListener);
-
-  // Add a test listener
-  if (socket) {
-    socket.on("mobile_camera_frame", (data) => {
-      testCount++;
-      console.log(`✅ TEST: Received mobile frame #${testCount}`, {
-        hasFrame: !!data?.frame,
-        frameType: typeof data?.frame,
-        frameLength: data?.frame?.length,
-        frameStart: data?.frame?.substring(0, 50),
-      });
-    });
-  }
-
-  // Get the canvas element
-  const canvas = document.querySelector("canvas");
-  if (canvas) {
-    const ctx = canvas.getContext("2d");
-
-    // Draw a test rectangle
-    ctx.fillStyle = "green";
-    ctx.fillRect(0, 0, 100, 100);
-
-    console.log("Canvas info:", {
-      width: canvas.width,
-      height: canvas.height,
-      hasContext: !!ctx,
-      canvasElement: canvas,
-    });
-  } else {
-    console.error("❌ Canvas not found!");
-  }
 
   // Auto-finish when evaluation is complete
   useEffect(() => {
@@ -1051,7 +966,6 @@ const InterviewQuestions = ({
                     className="w-full h-full object-cover"
                     style={{
                       transform: "scaleX(-1)",
-                      backgroundColor: "red", // ← ADD THIS TEMPORARILY
                     }}
                   />
                   {!mobileCameraConnected && (
