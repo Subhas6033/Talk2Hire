@@ -42,8 +42,8 @@ function createTTSStream() {
           preview: trimmedText.substring(0, 50) + "...",
         });
 
-        // CRITICAL: Start request immediately - don't await
-        const response = deepgram.speak.request(
+        // ✅ FIX: Must await the request to get the response object
+        const response = await deepgram.speak.request(
           { text: trimmedText },
           {
             model: "aura-asteria-en", // Natural female voice
@@ -53,8 +53,59 @@ function createTTSStream() {
           },
         );
 
-        // Get stream as soon as possible
-        const stream = await response.getStream();
+        console.log(
+          "🔍 Deepgram response received, checking for stream method...",
+        );
+
+        // ✅ FIX: Handle different SDK versions and response formats
+        let stream;
+
+        // Try different methods to get the stream
+        if (typeof response.getStream === "function") {
+          console.log("✅ Using response.getStream() method");
+          stream = await response.getStream();
+        } else if (typeof response.stream === "function") {
+          console.log("✅ Using response.stream() method");
+          stream = response.stream();
+        } else if (response.readable || response[Symbol.asyncIterator]) {
+          console.log("✅ Response itself is a readable stream");
+          stream = response;
+        } else if (typeof response.getAudio === "function") {
+          console.log(
+            "✅ Using response.getAudio() - will send as single chunk",
+          );
+          const audioBuffer = await response.getAudio();
+
+          if (audioBuffer) {
+            const buffer = Buffer.isBuffer(audioBuffer)
+              ? audioBuffer
+              : Buffer.from(audioBuffer);
+
+            const firstChunkTime = Date.now();
+            console.log(`🎵 Audio ready (${firstChunkTime - startTime}ms)`);
+            console.log(`✅ TTS complete: ${buffer.length} bytes in 1 chunk`);
+
+            onChunk(buffer);
+          }
+
+          onChunk(null);
+          return;
+        } else {
+          // Debug: show what's available on the response
+          console.error("❌ Unknown response format. Available methods:", {
+            type: typeof response,
+            constructor: response?.constructor?.name,
+            keys: Object.keys(response || {}),
+            hasGetStream: "getStream" in (response || {}),
+            hasStream: "stream" in (response || {}),
+            hasGetAudio: "getAudio" in (response || {}),
+          });
+          throw new Error(
+            "Deepgram response does not have a recognized stream method. " +
+              "Available keys: " +
+              Object.keys(response || {}).join(", "),
+          );
+        }
 
         if (!stream) {
           console.error("❌ No audio stream returned from Deepgram");
@@ -117,6 +168,7 @@ function createTTSStream() {
           message: error.message,
           code: error.code,
           statusCode: error.statusCode,
+          stack: error.stack, // ✅ Added stack trace for debugging
         });
 
         // Always signal end even on error
@@ -158,21 +210,33 @@ function createTTSStream() {
           },
         );
 
-        const stream = await response.getStream();
+        // ✅ FIX: Handle different response formats
+        let audioData;
 
-        if (!stream) {
-          throw new Error("No audio stream returned from Deepgram");
-        }
-
-        // Collect all chunks
-        const chunks = [];
-        for await (const chunk of stream) {
-          if (chunk) {
-            chunks.push(chunk);
+        if (typeof response.getAudio === "function") {
+          audioData = await response.getAudio();
+        } else if (typeof response.getStream === "function") {
+          const stream = await response.getStream();
+          const chunks = [];
+          for await (const chunk of stream) {
+            if (chunk) chunks.push(chunk);
           }
+          audioData = Buffer.concat(chunks);
+        } else if (typeof response.stream === "function") {
+          const stream = response.stream();
+          const chunks = [];
+          for await (const chunk of stream) {
+            if (chunk) chunks.push(chunk);
+          }
+          audioData = Buffer.concat(chunks);
+        } else {
+          throw new Error("Unable to extract audio from Deepgram response");
         }
 
-        const buffer = Buffer.concat(chunks);
+        const buffer = Buffer.isBuffer(audioData)
+          ? audioData
+          : Buffer.from(audioData);
+
         const totalTime = Date.now() - startTime;
 
         console.log(`✅ TTS buffer complete:`, {
@@ -185,6 +249,7 @@ function createTTSStream() {
         console.error("❌ TTS buffer error:", {
           message: error.message,
           code: error.code,
+          stack: error.stack,
         });
         throw error;
       }
