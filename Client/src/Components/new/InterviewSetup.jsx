@@ -211,8 +211,8 @@ const InterviewSetup = () => {
     });
 
     QRCode.toDataURL(
-      `${window.location.origin}/mobile-camera?interviewId=${sessionData.interviewId}&userId=${user.id}`,
-    ).then(setQrCodeDataUrl);
+      `${window.location.origin}/mobile-camera?mobile=true&interviewId=${sessionData.interviewId}&userId=${user.id}`,
+    );
 
     return () => socket.disconnect();
   }, [currentStep, sessionData, user?.id]);
