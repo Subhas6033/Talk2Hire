@@ -5,7 +5,7 @@ import { useDispatch, useSelector } from "react-redux";
 import { Card } from "../Common/Card";
 import { Button, SkillsSelector } from "../index";
 import { startInterview } from "../../API/interviewApi";
-import QRCode from "qrcode";
+import { QRCodeCanvas } from "qrcode.react";
 import { io } from "socket.io-client";
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
@@ -209,10 +209,6 @@ const InterviewSetup = () => {
       };
       img.src = data.frame;
     });
-
-    QRCode.toDataURL(
-      `${window.location.origin}/mobile-camera?mobile=true&interviewId=${sessionData.interviewId}&userId=${user.id}`,
-    );
 
     return () => socket.disconnect();
   }, [currentStep, sessionData, user?.id]);
@@ -591,24 +587,18 @@ const InterviewSetup = () => {
             </h2>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {/* QR Code and Instructions */}
               <div className="space-y-6">
                 <div className="text-center">
                   <h3 className="text-lg font-semibold text-white mb-4">
                     Scan with Phone
                   </h3>
-                  {qrCodeDataUrl ? (
-                    <div className="inline-block p-4 bg-white rounded-2xl">
-                      <img
-                        src={qrCodeDataUrl}
-                        alt="QR Code"
-                        className="w-64 h-64"
-                      />
-                    </div>
-                  ) : (
-                    <div className="w-72 h-72 bg-gray-700 rounded-2xl flex items-center justify-center mx-auto">
-                      <div className="animate-spin w-12 h-12 border-4 border-purple-500/30 border-t-purple-500 rounded-full" />
-                    </div>
-                  )}
+                  <div className="inline-block p-4 bg-white rounded-2xl mx-auto">
+                    <QRCodeCanvas
+                      value={`${window.location.origin}/mobile-camera?interviewId=${sessionData?.interviewId}&userId=${user?.id}`}
+                      size={256}
+                    />
+                  </div>
                 </div>
 
                 <div className="text-sm text-gray-400 space-y-2">
@@ -623,6 +613,7 @@ const InterviewSetup = () => {
                 </div>
               </div>
 
+              {/* Mobile Camera Preview */}
               <div className="space-y-4">
                 <div className="relative w-full aspect-video bg-black rounded-xl overflow-hidden">
                   <canvas
