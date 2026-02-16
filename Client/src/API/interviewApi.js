@@ -14,7 +14,7 @@ export const startInterview = createAsyncThunk(
         fd.append("file", resume);
       }
 
-      // ✅ Add skills to form data if provided
+      //  Add skills to form data if provided
       if (skills && skills.length > 0) {
         fd.append("skills", JSON.stringify(skills));
       }

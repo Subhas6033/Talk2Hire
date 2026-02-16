@@ -22,8 +22,8 @@ class GlobalMediaMerger {
       screenSize = 0.25, // 0.25 = 25% of main video size
       deleteChunksAfter = true,
       generatePreview = true,
-      secondaryCameraPosition = "top-right", // ✅ NEW: Position for secondary camera in layouts
-      secondaryCameraSize = 0.2, // ✅ NEW: Size for secondary camera overlay
+      secondaryCameraPosition = "top-right", //  NEW: Position for secondary camera in layouts
+      secondaryCameraSize = 0.2, //  NEW: Size for secondary camera overlay
     } = options;
 
     const tempDir = path.join(
@@ -46,7 +46,7 @@ class GlobalMediaMerger {
       console.log("\n🎙️ STEP 2: Merging audio chunks...\n");
       const audioResults = await this.mergeAllAudioChunks(interviewId, tempDir);
 
-      // ✅ NEW: Detect available cameras
+      //  NEW: Detect available cameras
       const availableCameras = {
         primary: !!videoResults.primary_camera,
         secondary: !!videoResults.secondary_camera,
@@ -55,7 +55,7 @@ class GlobalMediaMerger {
 
       console.log("\n📹 Available video sources:", availableCameras);
 
-      // ✅ NEW: Auto-select best layout based on available sources
+      //  NEW: Auto-select best layout based on available sources
       const selectedLayout = this.selectOptimalLayout(layout, availableCameras);
 
       console.log(`\n🎨 STEP 3: Creating ${selectedLayout} layout...\n`);
@@ -97,7 +97,7 @@ class GlobalMediaMerger {
       await fs.rm(tempDir, { recursive: true, force: true });
 
       console.log(`\n${"═".repeat(80)}`);
-      console.log(`✅ MERGE COMPLETE FOR INTERVIEW ${interviewId}`);
+      console.log(` MERGE COMPLETE FOR INTERVIEW ${interviewId}`);
       console.log(`${"═".repeat(80)}\n`);
 
       return {
@@ -112,7 +112,7 @@ class GlobalMediaMerger {
         previewUrl,
         videos: videoResults,
         audio: audioResults,
-        availableCameras, // ✅ NEW: Include info about what was recorded
+        availableCameras, //  NEW: Include info about what was recorded
       };
     } catch (error) {
       console.error(`\n❌ MERGE FAILED FOR INTERVIEW ${interviewId}:`, error);
@@ -125,7 +125,7 @@ class GlobalMediaMerger {
     }
   }
 
-  // ✅ NEW: Select optimal layout based on available cameras
+  //  NEW: Select optimal layout based on available cameras
   selectOptimalLayout(requestedLayout, availableCameras) {
     const { primary, secondary, screen } = availableCameras;
 
@@ -201,7 +201,7 @@ class GlobalMediaMerger {
         chunkCount: chunks.length,
       };
 
-      console.log(`  ✅ ${video.video_type} merged successfully`);
+      console.log(`   ${video.video_type} merged successfully`);
     }
 
     return results;
@@ -242,7 +242,7 @@ class GlobalMediaMerger {
           }
         })
         .on("end", () => {
-          console.log(`  ✅ Merge complete                    `);
+          console.log(`   Merge complete                    `);
           resolve();
         })
         .on("error", reject)
@@ -280,7 +280,7 @@ class GlobalMediaMerger {
         chunkCount: chunks.length,
       };
 
-      console.log(`  ✅ ${audio.audio_type} merged successfully`);
+      console.log(`   ${audio.audio_type} merged successfully`);
     }
 
     return results;
@@ -321,7 +321,7 @@ class GlobalMediaMerger {
           }
         })
         .on("end", () => {
-          console.log(`  ✅ Merge complete                    `);
+          console.log(`   Merge complete                    `);
           resolve();
         })
         .on("error", reject)
@@ -331,7 +331,7 @@ class GlobalMediaMerger {
     return outputPath;
   }
 
-  // ✅ UPDATED: Enhanced layout creation with secondary camera support
+  //  UPDATED: Enhanced layout creation with secondary camera support
   async createVideoLayout(videoResults, audioResults, layout, options) {
     const {
       screenPosition,
@@ -342,7 +342,7 @@ class GlobalMediaMerger {
     } = options;
 
     const primaryCameraPath = videoResults.primary_camera?.localPath;
-    const secondaryCameraPath = videoResults.secondary_camera?.localPath; // ✅ NEW
+    const secondaryCameraPath = videoResults.secondary_camera?.localPath; //  NEW
     const screenPath = videoResults.screen_recording?.localPath;
     const audioPath = audioResults.mixed_audio?.localPath;
 
@@ -350,7 +350,7 @@ class GlobalMediaMerger {
 
     let ffmpegCommand = ffmpeg();
 
-    // ✅ NEW: Triple camera layout (primary + secondary + screen)
+    //  NEW: Triple camera layout (primary + secondary + screen)
     if (
       layout === "triple-camera" &&
       primaryCameraPath &&
@@ -377,7 +377,7 @@ class GlobalMediaMerger {
         ])
         .map("[outv]");
 
-      // ✅ NEW: Grid layout with secondary camera (2x2 or 3-way grid)
+      //  NEW: Grid layout with secondary camera (2x2 or 3-way grid)
     } else if (layout === "grid") {
       const sources = [
         primaryCameraPath,
@@ -460,7 +460,7 @@ class GlobalMediaMerger {
         ])
         .map("[outv]");
 
-      // ✅ UPDATED: Picture-in-picture with optional secondary camera
+      //  UPDATED: Picture-in-picture with optional secondary camera
     } else if (
       layout === "picture-in-picture" &&
       primaryCameraPath &&
@@ -570,7 +570,7 @@ class GlobalMediaMerger {
           }
         })
         .on("end", () => {
-          console.log(`  ✅ Layout complete                    `);
+          console.log(`   Layout complete                    `);
           resolve();
         })
         .on("error", reject)
@@ -593,7 +593,7 @@ class GlobalMediaMerger {
 
     const result = await uploadFileToFTP(buffer, filename, remoteDir);
 
-    console.log(`  ✅ Uploaded to: ${result.url}`);
+    console.log(`   Uploaded to: ${result.url}`);
 
     return {
       ...result,
@@ -623,7 +623,7 @@ class GlobalMediaMerger {
 
     const result = await uploadFileToFTP(buffer, filename, remoteDir);
 
-    console.log(`  ✅ Preview uploaded: ${result.url}`);
+    console.log(`   Preview uploaded: ${result.url}`);
 
     return result.url;
   }
@@ -661,7 +661,7 @@ class GlobalMediaMerger {
       await InterviewAudio.markChunksDeleted(data.audioId);
     }
 
-    console.log(`  ✅ Deleted ${deletedCount} chunks from FTP`);
+    console.log(`   Deleted ${deletedCount} chunks from FTP`);
   }
 
   parseTimemark(timemark) {

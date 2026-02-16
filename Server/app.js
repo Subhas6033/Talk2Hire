@@ -82,7 +82,7 @@ app.use((req, res, next) => {
   res.on("finish", () => {
     const duration = Date.now() - startTime;
     console.log(
-      `✅ [${requestId}] ${req.method} ${req.path} - ${res.statusCode} (${duration}ms)`,
+      ` [${requestId}] ${req.method} ${req.path} - ${res.statusCode} (${duration}ms)`,
     );
   });
 
@@ -128,14 +128,14 @@ const {
 
 // Retry failed uploads every hour
 if (process.env.ENABLE_VIDEO_RETRY === "true") {
-  console.log("✅ Video retry service enabled (runs every hour)");
+  console.log(" Video retry service enabled (runs every hour)");
 
   setInterval(
     async () => {
       try {
         console.log("🔄 Running scheduled retry for failed video uploads...");
         const result = await retryFailedUploads();
-        console.log("✅ Retry complete:", result);
+        console.log(" Retry complete:", result);
       } catch (error) {
         console.error("❌ Scheduled retry failed:", error);
       }
@@ -146,14 +146,14 @@ if (process.env.ENABLE_VIDEO_RETRY === "true") {
 
 // Cleanup old chunks every day
 if (process.env.ENABLE_CHUNK_CLEANUP === "true") {
-  console.log("✅ Chunk cleanup service enabled (runs every 24 hours)");
+  console.log(" Chunk cleanup service enabled (runs every 24 hours)");
 
   setInterval(
     async () => {
       try {
         console.log("🧹 Running scheduled cleanup for old video chunks...");
         const result = await cleanupOldChunks(7); // Delete chunks older than 7 days
-        console.log("✅ Cleanup complete:", result);
+        console.log(" Cleanup complete:", result);
       } catch (error) {
         console.error("❌ Scheduled cleanup failed:", error);
       }

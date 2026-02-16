@@ -73,7 +73,7 @@ async function mistralResponse({ ftpUrl, mimeType, originalFileName }) {
     throw new Error("Extracted text is too short");
   }
 
-  console.log("✅ Text extracted. Length:", extractedText.length);
+  console.log(" Text extracted. Length:", extractedText.length);
 
   // --- Chunking for Mistral summarization ---
   const maxChars = 12000;
@@ -238,7 +238,7 @@ async function extractSkills({
     throw new Error("Extracted text is too short");
   }
 
-  console.log("✅ Text extracted. Length:", extractedText.length);
+  console.log(" Text extracted. Length:", extractedText.length);
 
   // --- Extract and filter skills using Mistral ---
   const systemPrompt = targetDomain
@@ -379,10 +379,10 @@ ${extractedText}`;
       },
     };
 
-    console.log("✅ Skills filtered successfully");
+    console.log(" Skills filtered successfully");
     console.log(`📊 Extracted: ${totalExtracted} skills`);
     console.log(
-      `✅ Relevant: ${totalRelevant} skills (${result.metadata.match_percentage} match)`,
+      ` Relevant: ${totalRelevant} skills (${result.metadata.match_percentage} match)`,
     );
     console.log("🏆 Top Skills:");
     all_relevant_skills.slice(0, 5).forEach((s, i) => {
@@ -392,7 +392,7 @@ ${extractedText}`;
     return result;
   } else {
     // No domain filtering - return all skills
-    console.log("✅ Skills extracted successfully (no filtering)");
+    console.log(" Skills extracted successfully (no filtering)");
     console.log(parsed);
     return parsed;
   }

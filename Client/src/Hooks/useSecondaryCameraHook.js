@@ -43,7 +43,7 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
         if (testRecorder.state !== "inactive") testRecorder.stop();
 
         console.log(
-          `✅ Secondary camera MIME type: ${mimeType || "default"} @ ${bitrate}bps`,
+          ` Secondary camera MIME type: ${mimeType || "default"} @ ${bitrate}bps`,
         );
         return { mimeType: mimeType || "default", bitrate, options };
       } catch {
@@ -70,7 +70,7 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
         audio: false,
       });
 
-      console.log("✅ Secondary camera access granted");
+      console.log(" Secondary camera access granted");
       secondaryStreamRef.current = stream;
       setSecondaryCameraStream(stream);
       setIsConnected(true);
@@ -221,7 +221,7 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
       };
 
       mediaRecorder.onstart = () => {
-        console.log("✅ Secondary camera MediaRecorder started");
+        console.log(" Secondary camera MediaRecorder started");
         setIsRecording(true);
       };
 
@@ -285,7 +285,7 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
           if (response.videoType !== "secondary_camera") return;
           clearTimeout(timeout);
           socketRef.current.off("video_recording_error", errorHandler);
-          console.log("✅ Server confirmed secondary camera ready:", response);
+          console.log(" Server confirmed secondary camera ready:", response);
           resolve(response);
         };
 
@@ -302,7 +302,7 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
 
       await serverResponsePromise;
       console.log(
-        "✅ Secondary camera session confirmed, starting MediaRecorder",
+        " Secondary camera session confirmed, starting MediaRecorder",
       );
       secondarySessionReadyRef.current = true;
       isRequestingSessionRef.current = false;
@@ -353,7 +353,7 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
 
       try {
         recorder.stop();
-        console.log("✅ Stop command sent to secondary camera recorder");
+        console.log(" Stop command sent to secondary camera recorder");
       } catch (error) {
         console.error("❌ Error stopping recorder:", error);
         mediaRecorderRef.current = null;

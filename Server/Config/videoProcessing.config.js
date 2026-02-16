@@ -24,9 +24,9 @@ module.exports = {
   },
 
   scheduling: {
-    autoMergeIntervalMs: 30 * 60 * 1000, // 30 minutes ✅ UPDATED
-    pendingUploadsIntervalMs: 30 * 60 * 1000, // 30 minutes ✅ UPDATED
-    retryFailedIntervalMs: 30 * 60 * 1000, // 30 minutes ✅ UPDATED
+    autoMergeIntervalMs: 30 * 60 * 1000, // 30 minutes  UPDATED
+    pendingUploadsIntervalMs: 30 * 60 * 1000, // 30 minutes  UPDATED
+    retryFailedIntervalMs: 30 * 60 * 1000, // 30 minutes  UPDATED
     cleanupChunksIntervalMs: 24 * 60 * 60 * 1000, // Daily (24 hours)
     verifyUploadsIntervalMs: 60 * 60 * 1000, // Hourly (1 hour)
     cleanupFailedIntervalMs: 7 * 24 * 60 * 60 * 1000, // Weekly (7 days)

@@ -13,9 +13,9 @@ const uploadFileMicro = async (file) => {
   const result = await uploadFileToFTP(
     file.buffer,
     file.originalname,
-    "/public"
+    "/public",
   );
-  console.log("✅ FTP uploaded URL:", result.url);
+  console.log(" FTP uploaded URL:", result.url);
   return result; // <-- this returns the FTP URL and file info
 };
 
@@ -26,7 +26,7 @@ const uploadFile = asyncHandler(async (req, res) => {
     new APIRES(200, {
       message: "File uploaded successfully",
       data: result,
-    })
+    }),
   );
 });
 

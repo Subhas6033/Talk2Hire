@@ -10,7 +10,7 @@ module.exports.up = async () => {
     MODIFY COLUMN skill VARCHAR(255) NOT NULL DEFAULT '';
   `);
 
-  console.log("✅ Migration UP completed");
+  console.log(" Migration UP completed");
 };
 
 module.exports.down = async () => {
@@ -23,5 +23,5 @@ module.exports.down = async () => {
     MODIFY COLUMN skill TEXT NOT NULL;
   `);
 
-  console.log("✅ Migration DOWN completed");
+  console.log(" Migration DOWN completed");
 };

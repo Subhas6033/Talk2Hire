@@ -19,7 +19,7 @@ class InterviewAudio {
         [interviewId, userId, audioType, fileSize, totalChunks],
       );
 
-      console.log("✅ Audio record created:", result.insertId);
+      console.log(" Audio record created:", result.insertId);
       return result.insertId;
     } catch (error) {
       console.error("❌ Error creating audio record:", error);
@@ -112,7 +112,7 @@ class InterviewAudio {
         [status, status, audioId],
       );
 
-      console.log(`✅ Audio ${audioId} status updated to: ${status}`);
+      console.log(` Audio ${audioId} status updated to: ${status}`);
     } catch (error) {
       console.error("❌ Error updating audio status:", error);
       throw error;
@@ -142,7 +142,7 @@ class InterviewAudio {
         [ftpUrl, ftpPath, fileSize, duration, audioId],
       );
 
-      console.log(`✅ Audio ${audioId} updated after merge`);
+      console.log(` Audio ${audioId} updated after merge`);
     } catch (error) {
       console.error("❌ Error updating audio after merge:", error);
       throw error;
@@ -246,7 +246,7 @@ class InterviewAudio {
       // Delete audio record
       await pool.execute(`DELETE FROM interview_audio WHERE id = ?`, [audioId]);
 
-      console.log(`✅ Audio ${audioId} deleted`);
+      console.log(` Audio ${audioId} deleted`);
     } catch (error) {
       console.error("❌ Error deleting audio:", error);
       throw error;

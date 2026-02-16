@@ -101,7 +101,7 @@ class FTPConnectionPool {
       this.activeConnections++;
 
       console.log(
-        `✅ FTP connection created (${this.activeConnections}/${this.maxConnections} active)`,
+        ` FTP connection created (${this.activeConnections}/${this.maxConnections} active)`,
       );
 
       return connection;
@@ -121,7 +121,7 @@ class FTPConnectionPool {
     connection.lastUsed = Date.now();
 
     console.log(
-      `✅ FTP connection released (${this.pool.filter((c) => c.inUse).length}/${this.maxConnections} active)`,
+      ` FTP connection released (${this.pool.filter((c) => c.inUse).length}/${this.maxConnections} active)`,
     );
 
     // If there are waiting requests, give them the connection
@@ -192,7 +192,7 @@ class FTPConnectionPool {
     this.activeConnections = 0;
     this.waitQueue = [];
 
-    console.log("✅ All FTP connections closed");
+    console.log(" All FTP connections closed");
   }
 
   /**
@@ -281,7 +281,7 @@ async function uploadFileToFTPPooled(
     // Build public URL
     const fileUrl = `${process.env.FTP_BASE_URL}/artlabss.com/interview2${remotePath}`;
 
-    console.log("✅ FTP upload successful");
+    console.log(" FTP upload successful");
     console.log("📍 Remote path:", remotePath);
     console.log("🔗 File URL:", fileUrl);
 
@@ -302,7 +302,7 @@ async function deleteFileFromFTPPooled(remotePath) {
   return withFTPConnection(async (client) => {
     console.log("🗑️ Deleting file:", remotePath);
     await client.remove(remotePath);
-    console.log("✅ File deleted from FTP");
+    console.log(" File deleted from FTP");
     return { success: true };
   });
 }
@@ -343,7 +343,7 @@ async function downloadFileFromFTPPooled(remotePath) {
     // Concatenate chunks into buffer
     const fileBuffer = Buffer.concat(chunks);
 
-    console.log("✅ Download successful:", fileBuffer.length, "bytes");
+    console.log(" Download successful:", fileBuffer.length, "bytes");
 
     return fileBuffer;
   });

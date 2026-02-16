@@ -13,7 +13,7 @@ const Interview = () => {
   const cameraStreamRef = useRef(null);
 
   const handleInterviewReady = (data) => {
-    console.log("✅ Interview session ready:", data);
+    console.log(" Interview session ready:", data);
 
     // Verify PRIMARY stream
     const videoTrack = data.cameraStream?.getVideoTracks()[0];
@@ -31,7 +31,7 @@ const Interview = () => {
       return;
     }
 
-    console.log("✅ Primary stream verified:", {
+    console.log(" Primary stream verified:", {
       active: data.cameraStream.active,
       trackState: videoTrack.readyState,
     });
@@ -59,7 +59,7 @@ const Interview = () => {
   };
 
   const handleFinish = () => {
-    console.log("✅ Interview finished");
+    console.log(" Interview finished");
 
     const primaryStream = session?.cameraStream || cameraStreamRef.current;
     if (primaryStream) {

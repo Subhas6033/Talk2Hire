@@ -15,41 +15,49 @@ const InterviewSetup = () => {
   const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
 
-  const { watch, setValue, handleSubmit } = useForm({
+  const { watch, setValue } = useForm({
     mode: "onChange",
     defaultValues: { skills: [] },
   });
 
   const skills = watch("skills");
 
-  // Setup states
+  /* ================= STEPS ================= */
+
+  const steps = [
+    { num: 1, label: "Skills" },
+    { num: 2, label: "Guidelines" },
+    { num: 3, label: "Microphone" },
+    { num: 4, label: "Primary Camera" },
+    { num: 5, label: "Mobile Camera" },
+    { num: 6, label: "Screen Share" },
+  ];
+
+  /* ================= STATE ================= */
+
   const [currentStep, setCurrentStep] = useState(1);
   const [error, setError] = useState(null);
 
-  // Question generation states
   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
   const [questionsReady, setQuestionsReady] = useState(false);
   const [sessionData, setSessionData] = useState(null);
 
-  // Microphone states
   const [micStream, setMicStream] = useState(null);
   const [micLevel, setMicLevel] = useState(0);
   const [isMicTesting, setIsMicTesting] = useState(false);
 
-  // Primary camera states
   const [primaryCameraStream, setPrimaryCameraStream] = useState(null);
   const [primaryCameraError, setPrimaryCameraError] = useState(null);
 
-  // Mobile camera states
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState("");
   const [mobileCameraConnected, setMobileCameraConnected] = useState(false);
   const [mobileFramesReceived, setMobileFramesReceived] = useState(0);
 
-  // Screen share states
   const [screenShareStream, setScreenShareStream] = useState(null);
   const [screenShareError, setScreenShareError] = useState(null);
 
-  // Refs
+  /* ================= REFS ================= */
+
   const primaryVideoRef = useRef(null);
   const mobileCanvasRef = useRef(null);
   const screenVideoRef = useRef(null);
@@ -57,409 +65,200 @@ const InterviewSetup = () => {
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
   const animationFrameRef = useRef(null);
-  const questionGenerationStartedRef = useRef(false);
-  const socketInitializedRef = useRef(false);
+  const questionStartedRef = useRef(false);
+  const hasNavigatedRef = useRef(false);
 
-  const hasExistingSkills = user?.skill && user.skill.trim() !== "";
+  const hasExistingSkills = user?.skill?.trim();
 
-  useEffect(() => {
-    if (hasExistingSkills) {
-      const skillsArray = user.skill
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      setValue("skills", skillsArray);
-    }
-  }, [user, hasExistingSkills, setValue]);
+  /* ================= STEP 1 ================= */
 
-  // STEP 1: Start question generation
-  const handleStartSetup = async () => {
+  const handleStartSetup = () => {
     if (!hasExistingSkills && (!skills || skills.length === 0)) {
-      setError("Please select at least one skill to continue.");
-      return;
-    }
-
-    if (!user?.id) {
-      setError("User not authenticated.");
+      setError("Please select at least one skill.");
       return;
     }
 
     setError(null);
+    setCurrentStep(2);
 
-    if (!questionGenerationStartedRef.current) {
-      questionGenerationStartedRef.current = true;
+    if (!questionStartedRef.current) {
+      questionStartedRef.current = true;
       setIsGeneratingQuestions(true);
 
-      try {
-        console.log("Starting question generation...");
-        const result = await dispatch(
-          startInterview({
-            skills: !hasExistingSkills ? skills : undefined,
-          }),
-        ).unwrap();
+      dispatch(
+        startInterview({
+          skills: !hasExistingSkills ? skills : undefined,
+        }),
+      )
+        .unwrap()
+        .then((res) => {
+          if (!res?.sessionId) throw new Error("No session id");
 
-        if (!result?.sessionId) {
-          throw new Error("Session ID not returned from server");
-        }
+          setSessionData({
+            interviewId: res.sessionId,
+            userId: user.id,
+          });
 
-        const newSessionData = {
-          interviewId: result.sessionId,
-          userId: user.id,
-        };
-
-        console.log("Questions generated:", newSessionData);
-        setSessionData(newSessionData);
-        setQuestionsReady(true);
-        setIsGeneratingQuestions(false);
-      } catch (err) {
-        console.error("Question generation error:", err);
-        setError(err?.message || "Failed to generate interview questions");
-        setIsGeneratingQuestions(false);
-        questionGenerationStartedRef.current = false;
-        return;
-      }
+          setQuestionsReady(true);
+        })
+        .catch(() => {
+          setError("Failed to generate questions.");
+          questionStartedRef.current = false;
+        })
+        .finally(() => {
+          setIsGeneratingQuestions(false);
+        });
     }
-
-    setCurrentStep(2);
   };
 
-  // STEP 2: Accept guidelines
-  const handleAcceptGuidelines = () => {
-    setCurrentStep(3);
-  };
+  const handleAcceptGuidelines = () => setCurrentStep(3);
+  const handleMicSuccess = () => setCurrentStep(4);
+  const handlePrimaryCameraSuccess = () => setCurrentStep(5);
+  const handleMobileCameraSuccess = () => setCurrentStep(6);
 
-  // STEP 3: Microphone test
+  /* ================= MIC TEST ================= */
+
   const startMicTest = async () => {
     try {
       setIsMicTesting(true);
-      setError(null);
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+        audio: true,
       });
 
       setMicStream(stream);
 
-      const audioContext = new (
-        window.AudioContext || window.webkitAudioContext
-      )();
+      if (!audioContextRef.current) {
+        audioContextRef.current = new AudioContext();
+      }
+
+      const audioContext = audioContextRef.current;
+
+      if (audioContext.state === "suspended") {
+        await audioContext.resume();
+      }
+
       const analyser = audioContext.createAnalyser();
-      const microphone = audioContext.createMediaStreamSource(stream);
+      const source = audioContext.createMediaStreamSource(stream);
 
+      source.connect(analyser);
       analyser.fftSize = 256;
-      microphone.connect(analyser);
-
-      audioContextRef.current = audioContext;
       analyserRef.current = analyser;
 
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
       const updateLevel = () => {
-        if (!analyserRef.current) return;
-
         analyser.getByteFrequencyData(dataArray);
-        const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
-        const level = Math.min(100, (average / 128) * 100);
-        setMicLevel(level);
+        const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
 
+        setMicLevel(Math.min(100, (avg / 128) * 100));
         animationFrameRef.current = requestAnimationFrame(updateLevel);
       };
 
       updateLevel();
-      console.log("Microphone test started");
-    } catch (err) {
-      console.error("Microphone error:", err);
-      setError(
-        err.name === "NotAllowedError"
-          ? "Microphone permission denied. Please allow access and try again."
-          : "Failed to access microphone: " + err.message,
-      );
+    } catch {
+      setError("Microphone permission denied.");
       setIsMicTesting(false);
     }
   };
 
-  const handleMicSuccess = () => {
-    setCurrentStep(4);
-  };
+  /* ================= PRIMARY CAMERA ================= */
 
-  // STEP 4: Primary camera test
   const startPrimaryCameraTest = async () => {
     try {
       setPrimaryCameraError(null);
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
+        video: true,
       });
 
       setPrimaryCameraStream(stream);
-
-      if (primaryVideoRef.current) {
-        primaryVideoRef.current.srcObject = stream;
-        await primaryVideoRef.current.play();
-      }
-
-      const videoTrack = stream.getVideoTracks()[0];
-      videoTrack.addEventListener(
-        "ended",
-        () => {
-          setPrimaryCameraError("Camera track ended unexpectedly");
-          console.error("Primary camera track ended!");
-        },
-        { once: true },
-      );
-
-      console.log("Primary camera started");
-    } catch (err) {
-      console.error("Primary camera error:", err);
-      setPrimaryCameraError(
-        err.name === "NotAllowedError"
-          ? "Camera permission denied. Please allow access and try again."
-          : "Failed to access camera: " + err.message,
-      );
+    } catch {
+      setPrimaryCameraError("Camera permission denied.");
     }
   };
 
   useEffect(() => {
-    if (currentStep === 4 && !primaryCameraStream) {
-      startPrimaryCameraTest();
-    }
+    if (currentStep === 4) startPrimaryCameraTest();
   }, [currentStep]);
 
-  const handlePrimaryCameraSuccess = () => {
-    setCurrentStep(5);
-  };
-
-  // STEP 5: Mobile camera setup
-  const generateQRCode = async () => {
-    if (!sessionData?.interviewId || !user?.id) {
-      setError("Session not ready. Please try again.");
-      return;
-    }
-
-    try {
-      const mobileUrl = `${window.location.origin}/mobile-camera?mobile=true&interviewId=${sessionData.interviewId}&userId=${user.id}`;
-      console.log("Generating QR code for:", mobileUrl);
-
-      const qrDataUrl = await QRCode.toDataURL(mobileUrl, {
-        width: 280,
-        margin: 2,
-        color: { dark: "#000000", light: "#FFFFFF" },
-      });
-
-      setQrCodeDataUrl(qrDataUrl);
-      console.log("QR code generated");
-    } catch (err) {
-      console.error("QR code generation error:", err);
-      setError("Failed to generate QR code");
-    }
-  };
-
-  const initializeSocket = async () => {
-    if (socketInitializedRef.current || !sessionData) return;
-
-    socketInitializedRef.current = true;
-
-    try {
-      console.log("Initializing socket...");
-      const socket = io(SOCKET_URL, {
-        query: {
-          interviewId: sessionData.interviewId,
-          userId: sessionData.userId,
-          type: "settings",
-        },
-        transports: ["websocket", "polling"],
-        path: "/socket.io",
-        reconnection: true,
-        reconnectionAttempts: 5,
-        autoConnect: true,
-      });
-
-      settingsSocketRef.current = socket;
-
-      await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error("Socket connection timeout"));
-        }, 10000);
-
-        socket.once("connect", () => {
-          clearTimeout(timeout);
-          console.log("Settings socket connected:", socket.id);
-          resolve();
-        });
-
-        socket.on("connect_error", (err) => {
-          clearTimeout(timeout);
-          reject(err);
-        });
-      });
-
-      socket.on("secondary_camera_ready", (data) => {
-        console.log("Mobile camera confirmed:", data);
-        setMobileCameraConnected(true);
-      });
-
-      socket.on("secondary_camera_status", (data) => {
-        if (data.connected) {
-          setMobileCameraConnected(true);
-        }
-      });
-
-      if (mobileCanvasRef.current) {
-        const canvas = mobileCanvasRef.current;
-        canvas.width = 640;
-        canvas.height = 480;
-      }
-
-      socket.on("mobile_camera_frame", (data) => {
-        if (!data?.frame || !mobileCanvasRef.current) return;
-
-        const canvas = mobileCanvasRef.current;
-        const ctx = canvas.getContext("2d", { alpha: false });
-        if (!ctx) return;
-
-        const img = new Image();
-        img.onload = () => {
-          try {
-            if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-              if (
-                canvas.width !== img.naturalWidth ||
-                canvas.height !== img.naturalHeight
-              ) {
-                canvas.width = img.naturalWidth;
-                canvas.height = img.naturalHeight;
-              }
-            }
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-            setMobileFramesReceived((prev) => prev + 1);
-          } catch (error) {
-            console.error("Canvas draw error:", error);
-          }
-        };
-        img.src = data.frame;
-      });
-
-      socket.emit("request_secondary_camera_status", {
-        interviewId: sessionData.interviewId,
-      });
-
-      await generateQRCode();
-    } catch (err) {
-      console.error("Socket initialization error:", err);
-      setError(err?.message || "Failed to initialize connection");
-      socketInitializedRef.current = false;
-    }
-  };
+  /* ================= MOBILE CAMERA SOCKET ================= */
 
   useEffect(() => {
-    if (currentStep === 5 && questionsReady && sessionData) {
-      initializeSocket();
-    }
-  }, [currentStep, questionsReady, sessionData]);
+    if (currentStep !== 5 || !sessionData) return;
 
-  const handleMobileCameraSuccess = () => {
-    setCurrentStep(6);
-  };
+    const socket = io(SOCKET_URL, {
+      query: {
+        interviewId: sessionData.interviewId,
+        userId: sessionData.userId,
+      },
+    });
 
-  // STEP 6: Screen share test
+    settingsSocketRef.current = socket;
+
+    socket.on("secondary_camera_ready", () => setMobileCameraConnected(true));
+
+    socket.on("mobile_camera_frame", (data) => {
+      if (!data?.frame || !mobileCanvasRef.current) return;
+
+      const img = new Image();
+      img.onload = () => {
+        const ctx = mobileCanvasRef.current.getContext("2d");
+        ctx.drawImage(img, 0, 0);
+        setMobileFramesReceived((prev) => prev + 1);
+      };
+      img.src = data.frame;
+    });
+
+    QRCode.toDataURL(
+      `${window.location.origin}/mobile-camera?interviewId=${sessionData.interviewId}&userId=${user.id}`,
+    ).then(setQrCodeDataUrl);
+
+    return () => socket.disconnect();
+  }, [currentStep, sessionData, user?.id]);
+
+  /* ================= SCREEN SHARE ================= */
+
   const startScreenShareTest = async () => {
     try {
-      setScreenShareError(null);
-
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          displaySurface: "monitor",
-          cursor: "always",
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-        },
-        audio: false,
+        video: true,
       });
 
       setScreenShareStream(stream);
 
       if (screenVideoRef.current) {
         screenVideoRef.current.srcObject = stream;
-        await screenVideoRef.current.play();
+        await screenVideoRef.current.play().catch(() => {});
       }
-
-      const videoTrack = stream.getVideoTracks()[0];
-      videoTrack.addEventListener(
-        "ended",
-        () => {
-          setScreenShareError("Screen sharing stopped");
-        },
-        { once: true },
-      );
-
-      console.log("Screen share started");
-    } catch (err) {
-      console.error("Screen share error:", err);
-      setScreenShareError(
-        err.name === "NotAllowedError"
-          ? "Screen sharing permission denied."
-          : "Failed to start screen sharing: " + err.message,
-      );
+    } catch {
+      setScreenShareError("Screen share denied.");
     }
   };
 
   useEffect(() => {
-    if (currentStep === 6 && !screenShareStream) {
-      startScreenShareTest();
-    }
+    if (currentStep === 6) startScreenShareTest();
   }, [currentStep]);
 
+  /* ================= START INTERVIEW ================= */
+
   const handleStartInterview = () => {
-    if (!questionsReady || !sessionData) {
-      setError("Interview questions not ready.");
+    if (!questionsReady) {
+      setError("Finalizing questions...");
       return;
     }
 
-    if (!micStream) {
-      setError("Microphone not configured.");
+    if (
+      !micStream ||
+      !primaryCameraStream ||
+      !mobileCameraConnected ||
+      !screenShareStream
+    ) {
+      setError("All devices must be configured.");
       return;
     }
 
-    if (!primaryCameraStream) {
-      setError("Primary camera not configured.");
-      return;
-    }
-
-    if (!mobileCameraConnected) {
-      setError("Mobile camera not connected.");
-      return;
-    }
-
-    if (!screenShareStream) {
-      setError("Screen sharing not started.");
-      return;
-    }
-
-    const primaryTrack = primaryCameraStream.getVideoTracks()[0];
-    if (primaryTrack.readyState !== "live") {
-      setError("Primary camera is not active.");
-      return;
-    }
-
-    const screenTrack = screenShareStream.getVideoTracks()[0];
-    if (screenTrack.readyState !== "live") {
-      setError("Screen sharing is not active.");
-      return;
-    }
-
-    console.log("All checks passed - starting interview");
-
-    if (settingsSocketRef.current) {
-      settingsSocketRef.current.disconnect();
-      settingsSocketRef.current = null;
-    }
+    hasNavigatedRef.current = true;
 
     navigate("/interview/live", {
       state: {
@@ -471,81 +270,58 @@ const InterviewSetup = () => {
     });
   };
 
+  /* ================= CLEANUP ================= */
+
   useEffect(() => {
     return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
-      }
-      if (settingsSocketRef.current) {
-        settingsSocketRef.current.disconnect();
-      }
-
-      if (currentStep < 7) {
-        if (micStream) {
-          micStream.getTracks().forEach((track) => track.stop());
-        }
-        if (primaryCameraStream) {
-          primaryCameraStream.getTracks().forEach((track) => track.stop());
-        }
-        if (screenShareStream) {
-          screenShareStream.getTracks().forEach((track) => track.stop());
-        }
-      }
+      cancelAnimationFrame(animationFrameRef.current);
+      micStream?.getTracks().forEach((t) => t.stop());
+      primaryCameraStream?.getTracks().forEach((t) => t.stop());
+      screenShareStream?.getTracks().forEach((t) => t.stop());
+      settingsSocketRef.current?.disconnect();
     };
-  }, [currentStep]);
+  }, []);
 
-  const renderStepIndicator = () => {
-    const steps = [
-      { num: 1, label: "Skills" },
-      { num: 2, label: "Guidelines" },
-      { num: 3, label: "Microphone" },
-      { num: 4, label: "Camera" },
-      { num: 5, label: "Mobile" },
-      { num: 6, label: "Screen" },
-    ];
+  useEffect(() => {
+    if (primaryVideoRef.current && primaryCameraStream) {
+      primaryVideoRef.current.srcObject = primaryCameraStream;
+    }
+  }, [primaryCameraStream]);
 
-    return (
-      <div className="flex items-center justify-center gap-2 mb-8 overflow-x-auto pb-4">
-        {steps.map((step, idx) => (
-          <div key={step.num} className="flex items-center">
+  /* ================= STEP INDICATOR ================= */
+
+  const renderStepIndicator = () => (
+    <div className="flex items-center justify-center gap-2 mb-8 overflow-x-auto pb-4">
+      {steps.map((step, idx) => (
+        <div key={step.num} className="flex items-center">
+          <div
+            className={`flex flex-col items-center ${
+              currentStep >= step.num ? "opacity-100" : "opacity-40"
+            }`}
+          >
             <div
-              className={`flex flex-col items-center ${
-                currentStep >= step.num ? "opacity-100" : "opacity-40"
+              className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${
+                currentStep > step.num
+                  ? "bg-green-500 text-white"
+                  : currentStep === step.num
+                    ? "bg-purple-600 text-white"
+                    : "bg-gray-700 text-gray-400"
               }`}
             >
-              <div
-                className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold transition-all ${
-                  currentStep > step.num
-                    ? "bg-green-500 text-white"
-                    : currentStep === step.num
-                      ? "bg-purple-600 text-white ring-4 ring-purple-600/30"
-                      : "bg-gray-700 text-gray-400"
-                }`}
-              >
-                {currentStep > step.num ? "✓" : step.num}
-              </div>
-              <span className="text-xs mt-1 text-gray-400 whitespace-nowrap">
-                {step.label}
-              </span>
+              {currentStep > step.num ? "✓" : step.num}
             </div>
-            {idx < steps.length - 1 && (
-              <div
-                className={`w-8 h-0.5 mx-2 mb-4 transition-all ${
-                  currentStep > step.num ? "bg-green-500" : "bg-gray-700"
-                }`}
-              />
-            )}
+            <span className="text-xs mt-1 text-gray-400">{step.label}</span>
           </div>
-        ))}
-      </div>
-    );
-  };
+          {idx < steps.length - 1 && (
+            <div className="w-8 h-0.5 mx-2 mb-4 bg-gray-700" />
+          )}
+        </div>
+      ))}
+    </div>
+  );
 
   return (
-    <section className="min-h-screen bg-linear-to-br from-gray-900 to-gray-800 p-4 md:p-6">
+    <section className="min-h-screen bg-gray-900 p-6">
       <div className="max-w-4xl mx-auto">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-white mb-2">
@@ -669,24 +445,9 @@ const InterviewSetup = () => {
               ))}
             </div>
 
-            {!questionsReady && (
-              <div className="mb-6 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
-                <div className="flex items-center gap-3">
-                  <div className="animate-spin w-5 h-5 border-2 border-blue-400/30 border-t-blue-400 rounded-full" />
-                  <p className="text-blue-300 text-sm">
-                    Preparing questions...
-                  </p>
-                </div>
-              </div>
-            )}
-
             <div className="flex justify-center">
-              <Button
-                onClick={handleAcceptGuidelines}
-                disabled={!questionsReady}
-                className="px-10"
-              >
-                {questionsReady ? "Accept & Continue" : "Waiting..."}
+              <Button onClick={handleAcceptGuidelines} className="px-10">
+                Accept and Continue
               </Button>
             </div>
           </Card>
@@ -997,7 +758,7 @@ const InterviewSetup = () => {
                   </p>
 
                   <Button onClick={handleStartInterview} className="px-10">
-                    Start Interview
+                    {questionsReady ? "Start Interview" : "Finalizing..."}
                   </Button>
                 </div>
               </div>
@@ -1008,5 +769,4 @@ const InterviewSetup = () => {
     </section>
   );
 };
-
 export default InterviewSetup;

@@ -10,7 +10,7 @@ const SecurityMonitor = ({
   setSecurityStream,
   isVisible,
   onToggleVisibility,
-  readOnly = false, // ✅ NEW: Read-only mode when security is already connected via QR
+  readOnly = false, //  NEW: Read-only mode when security is already connected via QR
 }) => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -24,7 +24,7 @@ const SecurityMonitor = ({
   // Detection state
   const [phoneDetected, setPhoneDetected] = useState(false);
 
-  // ✅ NEW: Check for existing connection on mount
+  //  NEW: Check for existing connection on mount
   useEffect(() => {
     const checkExistingConnection = () => {
       const mobileConnected = localStorage.getItem(`security_${interviewId}`);
@@ -33,7 +33,7 @@ const SecurityMonitor = ({
       );
 
       if (mobileConnected === "connected" && angleVerified === "true") {
-        console.log("✅ Security camera already connected (QR setup)");
+        console.log(" Security camera already connected (QR setup)");
         setIsConnected(true);
         setConnectionMethod("mobile");
         setShowInstructions(false);
@@ -82,7 +82,7 @@ const SecurityMonitor = ({
       setShowInstructions(false);
       startDetection();
 
-      console.log("✅ Security camera connected");
+      console.log(" Security camera connected");
     } catch (error) {
       console.error("❌ Security camera error:", error);
 
@@ -283,7 +283,7 @@ const SecurityMonitor = ({
 
       {/* Content */}
       <div className="p-4 bg-white dark:bg-gray-900">
-        {/* ✅ MODIFIED: Show status when read-only */}
+        {/*  MODIFIED: Show status when read-only */}
         {readOnly && isConnected ? (
           <div className="space-y-4">
             {/* Status Display */}

@@ -11,9 +11,9 @@ console.log("📁 Upload directory:", uploadDir);
 try {
   if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
-    console.log("✅ Upload directory created:", uploadDir);
+    console.log(" Upload directory created:", uploadDir);
   } else {
-    console.log("✅ Upload directory already exists:", uploadDir);
+    console.log(" Upload directory already exists:", uploadDir);
   }
 } catch (error) {
   console.error("❌ Error creating upload directory:", error);
@@ -55,7 +55,7 @@ const fileFilter = (req, file, cb) => {
   if (file.fieldname === "resume") {
     // Only accept PDF files for resume
     if (file.mimetype === "application/pdf") {
-      console.log("✅ Resume file accepted");
+      console.log(" Resume file accepted");
       cb(null, true);
     } else {
       console.log("❌ Resume file rejected - not PDF");
@@ -65,7 +65,7 @@ const fileFilter = (req, file, cb) => {
     // Only accept images for profile
     const allowedTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
     if (allowedTypes.includes(file.mimetype)) {
-      console.log("✅ Profile image accepted");
+      console.log(" Profile image accepted");
       cb(null, true);
     } else {
       console.log("❌ Profile image rejected - invalid type");
@@ -82,7 +82,7 @@ const upload = multer({
   storage: storage,
   fileFilter: fileFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024, // ✅ Increased to 10MB to be safe
+    fileSize: 10 * 1024 * 1024, //  Increased to 10MB to be safe
     files: 2, // Maximum 2 files at once
   },
 });

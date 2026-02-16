@@ -138,7 +138,7 @@ async function evaluateInterview(interviewId) {
       });
 
       console.log(
-        `✅ Question ${question.question_order} evaluated: ${evaluation.score}/10`,
+        ` Question ${question.question_order} evaluated: ${evaluation.score}/10`,
       );
     }
 
@@ -150,7 +150,7 @@ async function evaluateInterview(interviewId) {
     );
 
     console.log(
-      `✅ Interview evaluation complete. Overall score: ${overallEvaluation.overallScore}/100`,
+      ` Interview evaluation complete. Overall score: ${overallEvaluation.overallScore}/100`,
     );
 
     return {

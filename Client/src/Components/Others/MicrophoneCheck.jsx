@@ -169,9 +169,7 @@ const MicrophoneCheck = ({ isOpen, onClose, onSuccess }) => {
 
         {status === "success" && (
           <>
-            <p className="text-green-600 font-medium">
-              Microphone test passed ✅
-            </p>
+            <p className="text-green-600 font-medium">Microphone test passed</p>
             <Button onClick={onSuccess}>Continue</Button>
           </>
         )}

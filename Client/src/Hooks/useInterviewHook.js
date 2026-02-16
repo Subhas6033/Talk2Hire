@@ -88,7 +88,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         console.log("▶️ AudioContext resumed on initialization");
       }
 
-      console.log("✅ AudioContext pre-warmed:", {
+      console.log(" AudioContext pre-warmed:", {
         state: audioCtx.state,
         sampleRate: audioCtx.sampleRate,
         baseLatency: audioCtx.baseLatency,
@@ -180,7 +180,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     if (playbackQueueRef.current.length === 0) {
       isPlayingRef.current = false;
       dispatch(setIsPlaying(false));
-      console.log("✅ TTS playback complete");
+      console.log(" TTS playback complete");
 
       // Server will send listening_enabled when ready (no client-side delay)
       return;
@@ -229,7 +229,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       currentSourceRef.current = null;
 
       console.log(
-        `✅ Audio chunk finished (${playbackQueueRef.current.length} remaining)`,
+        ` Audio chunk finished (${playbackQueueRef.current.length} remaining)`,
       );
 
       if (playbackQueueRef.current.length > 0) {
@@ -320,7 +320,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       console.log("▶️ Playing remaining chunks");
       playNextChunk();
     } else if (!hasAudio && !isPlayingRef.current) {
-      console.log("✅ TTS complete - waiting for server listening_enabled");
+      console.log(" TTS complete - waiting for server listening_enabled");
     } else {
       console.log("⏳ Audio still playing, will wait for server signal");
     }
@@ -351,7 +351,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
       micStreamRef.current = stream;
       dispatch(setMicPermissionGranted(true));
-      console.log("✅ Microphone access granted");
+      console.log(" Microphone access granted");
 
       const audioCtx = audioCtxRef.current;
 
@@ -400,7 +400,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         }
       };
 
-      console.log("✅ Mic streaming started");
+      console.log(" Mic streaming started");
     } catch (err) {
       console.error("❌ Microphone error:", err);
       alert(
@@ -463,7 +463,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     const initAudio = async () => {
       try {
         await audioRecording.initializeAudioRecording();
-        console.log("✅ Audio recording initialized");
+        console.log(" Audio recording initialized");
       } catch (error) {
         console.error("❌ Failed to init audio recording:", error);
       }
@@ -516,7 +516,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       // Start microphone streaming
       console.log("🎤 Starting microphone");
       await startMicStreaming();
-      console.log("✅ Microphone started");
+      console.log(" Microphone started");
 
       // Verify prerequisites
       if (!serverReadyRef.current) {
@@ -531,12 +531,12 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         return;
       }
 
-      console.log("✅ All prerequisites met, setting hasStarted flag");
+      console.log(" All prerequisites met, setting hasStarted flag");
       dispatch(setHasStarted(true));
 
       console.log("📤 Emitting ready_for_question event");
       socketRef.current.emit("ready_for_question");
-      console.log("✅ ready_for_question emitted successfully");
+      console.log(" ready_for_question emitted successfully");
     } catch (error) {
       console.error("❌ Auto-start error:", error);
       hasStartedRef.current = false;

@@ -37,7 +37,7 @@ class InterviewScreenRecording {
       ]);
 
       console.log(
-        `✅ Screen recording record created with ID: ${result.insertId}`,
+        ` Screen recording record created with ID: ${result.insertId}`,
       );
       return result.insertId;
     } catch (error) {
@@ -107,7 +107,7 @@ class InterviewScreenRecording {
       await pool.execute(query, [status, screenRecordingId]);
 
       console.log(
-        `✅ Screen recording ${screenRecordingId} status updated to: ${status}`,
+        ` Screen recording ${screenRecordingId} status updated to: ${status}`,
       );
     } catch (error) {
       console.error("❌ Error updating screen recording status:", error);
@@ -147,7 +147,7 @@ class InterviewScreenRecording {
       ]);
 
       console.log(
-        `✅ Screen recording ${screenRecordingId} updated after upload`,
+        ` Screen recording ${screenRecordingId} updated after upload`,
       );
     } catch (error) {
       console.error("❌ Error updating screen recording after upload:", error);
@@ -258,9 +258,7 @@ class InterviewScreenRecording {
         screenRecordingId,
       ]);
 
-      console.log(
-        `✅ Screen recording ${screenRecordingId} updated after merge`,
-      );
+      console.log(` Screen recording ${screenRecordingId} updated after merge`);
     } catch (error) {
       console.error("❌ Error updating screen recording after merge:", error);
       throw error;

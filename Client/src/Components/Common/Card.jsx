@@ -40,7 +40,7 @@ const paddings = {
   none: "p-0",
 };
 
-// ✅ FIXED: Hidden scrollbar styles
+//  FIXED: Hidden scrollbar styles
 const scrollbarStyles = `
   /* Hide scrollbar for Chrome, Safari and Opera */
   [class*="scrollbar-hide"]::-webkit-scrollbar {
@@ -62,7 +62,7 @@ export const Card = ({
   hoverable = false,
   scrollable = false,
   maxHeight,
-  hideScrollbar = false, // ✅ NEW: Option to hide scrollbar
+  hideScrollbar = false, //  NEW: Option to hide scrollbar
   ...props
 }) => {
   const cardVariant = scrollable ? "scrollable" : variant;
@@ -71,7 +71,7 @@ export const Card = ({
 
   return (
     <>
-      {/* ✅ Inject scrollbar styles */}
+      {/*  Inject scrollbar styles */}
       {hideScrollbar && <style>{scrollbarStyles}</style>}
 
       <motion.div

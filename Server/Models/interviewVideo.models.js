@@ -59,7 +59,7 @@ const InterviewVideo = {
         ],
       );
 
-      console.log("✅ Video record created:", result.insertId);
+      console.log(" Video record created:", result.insertId);
       return result.insertId;
     } catch (error) {
       console.error("❌ Error creating video record:", error);
@@ -94,7 +94,7 @@ const InterviewVideo = {
         [ftpPath, ftpUrl, fileSize, duration, videoId],
       );
 
-      console.log("✅ Video record updated successfully");
+      console.log(" Video record updated successfully");
       return true;
     } catch (error) {
       console.error("❌ Error updating video record:", error);
@@ -123,7 +123,7 @@ const InterviewVideo = {
         [ftpUrl, fileSize, duration, checksum, videoId],
       );
 
-      console.log("✅ Video updated after merge");
+      console.log(" Video updated after merge");
       return true;
     } catch (error) {
       console.error("❌ Error updating after merge:", error);
@@ -190,7 +190,7 @@ const InterviewVideo = {
         [checksum, videoId],
       );
 
-      console.log("✅ Checksum updated:", checksum.substring(0, 16) + "...");
+      console.log(" Checksum updated:", checksum.substring(0, 16) + "...");
       return true;
     } catch (error) {
       console.error("❌ Error updating checksum:", error);
@@ -376,7 +376,7 @@ const InterviewVideo = {
            WHERE video_id = ?`,
           [videoId],
         );
-        console.log("✅ Chunks marked as deleted");
+        console.log(" Chunks marked as deleted");
       } catch (statusError) {
         // If 'deleted' status fails (column too small), try alternative approach
         if (statusError.code === "WARN_DATA_TRUNCATED") {
@@ -389,7 +389,7 @@ const InterviewVideo = {
             `DELETE FROM interview_video_chunks WHERE video_id = ?`,
             [videoId],
           );
-          console.log("✅ Chunks deleted from database");
+          console.log(" Chunks deleted from database");
 
           // Option 2: Use a shorter status (if you want to keep records)
           // await db.execute(
@@ -506,7 +506,7 @@ const InterviewVideo = {
       // Delete video
       await db.execute(`DELETE FROM interview_videos WHERE id = ?`, [videoId]);
 
-      console.log("✅ Video record deleted:", videoId);
+      console.log(" Video record deleted:", videoId);
       return true;
     } catch (error) {
       console.error("❌ Error deleting video:", error);
@@ -527,7 +527,7 @@ const InterviewVideo = {
         [daysOld],
       );
 
-      console.log(`✅ Cleaned up ${result.affectedRows} old failed uploads`);
+      console.log(` Cleaned up ${result.affectedRows} old failed uploads`);
       return result.affectedRows;
     } catch (error) {
       console.error("❌ Error cleaning up old uploads:", error);

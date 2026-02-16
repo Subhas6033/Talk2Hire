@@ -61,7 +61,7 @@ async function uploadScreenRecordingChunk({
     await InterviewScreenRecording.updateProgress(screenRecordingId, progress);
 
     console.log(
-      `✅ Screen chunk ${chunkNumber}/${totalChunks} uploaded (${progress}%) - Checksum: ${chunkChecksum.substring(0, 8)}...`,
+      ` Screen chunk ${chunkNumber}/${totalChunks} uploaded (${progress}%) - Checksum: ${chunkChecksum.substring(0, 8)}...`,
     );
 
     return {
@@ -126,7 +126,7 @@ async function finalizeScreenRecordingUpload({
       interviewId,
     );
 
-    console.log("✅ Screen recording chunks merged successfully:", mergeResult);
+    console.log(" Screen recording chunks merged successfully:", mergeResult);
 
     // Update screen recording with merged file info
     await InterviewScreenRecording.updateAfterMerge({
@@ -171,7 +171,7 @@ async function cleanupScreenRecordingChunks(screenRecordingId, chunks) {
     for (const chunk of chunks) {
       try {
         await deleteFileFromFTP(chunk.temp_ftp_path);
-        console.log(`✅ Deleted screen chunk ${chunk.chunk_number} from FTP`);
+        console.log(` Deleted screen chunk ${chunk.chunk_number} from FTP`);
       } catch (error) {
         console.warn(
           `⚠️ Failed to delete screen chunk ${chunk.chunk_number}:`,
@@ -183,7 +183,7 @@ async function cleanupScreenRecordingChunks(screenRecordingId, chunks) {
     // Mark chunks as deleted in database
     await InterviewScreenRecording.markChunksDeleted(screenRecordingId);
 
-    console.log("✅ Screen chunk cleanup complete");
+    console.log(" Screen chunk cleanup complete");
   } catch (error) {
     console.error("❌ Error cleaning up screen chunks:", error);
     // Don't throw - cleanup is not critical
@@ -235,7 +235,7 @@ async function verifyScreenRecordingIntegrity(screenRecordingId) {
       };
     }
 
-    console.log("✅ Screen recording integrity verified");
+    console.log(" Screen recording integrity verified");
 
     return {
       valid: true,
@@ -289,7 +289,7 @@ async function autoUploadInterviewScreenRecordings(interviewId) {
     );
 
     if (interviewScreenRecordings.length === 0) {
-      console.log("✅ No pending screen recordings to upload");
+      console.log(" No pending screen recordings to upload");
       return { success: true, uploaded: 0 };
     }
 
@@ -328,7 +328,7 @@ async function autoUploadInterviewScreenRecordings(interviewId) {
         } else {
           // No chunks, just mark as completed
           console.log(
-            `✅ Screen recording ${screenRecording.id} has no chunks, marking complete`,
+            ` Screen recording ${screenRecording.id} has no chunks, marking complete`,
           );
           await InterviewScreenRecording.updateUploadStatus(
             screenRecording.id,
@@ -342,7 +342,7 @@ async function autoUploadInterviewScreenRecordings(interviewId) {
         }
 
         console.log(
-          `✅ Screen recording ${screenRecording.id} processed successfully`,
+          ` Screen recording ${screenRecording.id} processed successfully`,
         );
       } catch (error) {
         console.error(
@@ -361,7 +361,7 @@ async function autoUploadInterviewScreenRecordings(interviewId) {
       }
     }
 
-    console.log("✅ Screen recording auto-upload complete:", results);
+    console.log(" Screen recording auto-upload complete:", results);
 
     return {
       success: true,

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 
 /**
- * ✅ FULLY FIXED TTS Hook
+ *  FULLY FIXED TTS Hook
  * - Handles base64 audio (not ArrayBuffer)
  * - Zero-latency playback
  * - Proper cleanup
@@ -14,7 +14,7 @@ export const useTTS = (ws) => {
   useEffect(() => {
     if (!ws) return;
 
-    // ✅ Pre-warm AudioContext on mount (saves 50-200ms on first play)
+    //  Pre-warm AudioContext on mount (saves 50-200ms on first play)
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)({
       sampleRate: 48000,
       latencyHint: "interactive", // Optimize for low latency
@@ -28,7 +28,7 @@ export const useTTS = (ws) => {
 
     ws.onmessage = async (msg) => {
       try {
-        // ✅ FIX: Server sends base64 strings, NOT ArrayBuffer
+        //  FIX: Server sends base64 strings, NOT ArrayBuffer
         if (typeof msg.data !== "string") {
           console.warn("Unexpected message type:", typeof msg.data);
           return;
@@ -48,7 +48,7 @@ export const useTTS = (ws) => {
     };
 
     /**
-     * ✅ OPTIMIZED: Play base64 audio immediately
+     *  OPTIMIZED: Play base64 audio immediately
      */
     const playAudioChunk = async (base64Audio) => {
       const audioCtx = audioCtxRef.current;
@@ -67,7 +67,7 @@ export const useTTS = (ws) => {
         }
       }
 
-      // ✅ Convert base64 to ArrayBuffer
+      //  Convert base64 to ArrayBuffer
       const binaryString = window.atob(base64Audio);
       const len = binaryString.length;
       const bytes = new Uint8Array(len);
@@ -75,7 +75,7 @@ export const useTTS = (ws) => {
         bytes[i] = binaryString.charCodeAt(i);
       }
 
-      // ✅ Decode PCM16 audio
+      //  Decode PCM16 audio
       const numSamples = bytes.length / 2;
       const audioBuffer = audioCtx.createBuffer(1, numSamples, 48000);
       const channelData = audioBuffer.getChannelData(0);
@@ -86,7 +86,7 @@ export const useTTS = (ws) => {
         channelData[i] = dataView.getInt16(i * 2, true) / 32768;
       }
 
-      // ✅ Create and play source immediately
+      //  Create and play source immediately
       const source = audioCtx.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(audioCtx.destination);

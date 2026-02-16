@@ -244,7 +244,7 @@ const createAllTables = async (pool) => {
       interviewVideoChunksTableQuery,
     );
 
-    console.log("✅ All tables created successfully.");
+    console.log(" All tables created successfully.");
   } catch (error) {
     console.error("❌ Error creating tables:", error);
     throw error;

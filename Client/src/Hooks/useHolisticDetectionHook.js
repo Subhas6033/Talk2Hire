@@ -55,7 +55,7 @@ const useHolisticDetection = (videoRef, socketRef, isEnabled = true) => {
 
         holisticLandmarkerRef.current = landmarker;
         setIsInitialized(true);
-        console.log("✅ MediaPipe Holistic Landmarker initialized");
+        console.log(" MediaPipe Holistic Landmarker initialized");
       } catch (error) {
         console.error("❌ Failed to initialize holistic detection:", error);
       }

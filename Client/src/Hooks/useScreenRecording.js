@@ -42,7 +42,7 @@ const useScreenRecording = (interviewId, userId, socketRef) => {
         if (testRecorder.state !== "inactive") testRecorder.stop();
 
         console.log(
-          `✅ Screen MIME type: ${mimeType || "default"} @ ${bitrate}bps`,
+          ` Screen MIME type: ${mimeType || "default"} @ ${bitrate}bps`,
         );
         return { mimeType: mimeType || "default", bitrate, options };
       } catch {
@@ -69,7 +69,7 @@ const useScreenRecording = (interviewId, userId, socketRef) => {
         audio: false,
       });
 
-      console.log("✅ Screen share granted");
+      console.log(" Screen share granted");
       screenStreamRef.current = stream;
       setScreenStream(stream); // triggers re-render so preview <video> gets srcObject
       return stream;
@@ -191,7 +191,7 @@ const useScreenRecording = (interviewId, userId, socketRef) => {
       };
 
       mediaRecorder.onstart = () => {
-        console.log("✅ Screen MediaRecorder started");
+        console.log(" Screen MediaRecorder started");
         setIsRecording(true);
       };
 
@@ -255,7 +255,7 @@ const useScreenRecording = (interviewId, userId, socketRef) => {
           if (response.videoType !== "screen_recording") return;
           clearTimeout(timeout);
           socketRef.current.off("video_recording_error", errorHandler);
-          console.log("✅ Server confirmed screen recording ready:", response);
+          console.log(" Server confirmed screen recording ready:", response);
           resolve(response);
         };
 
@@ -271,7 +271,7 @@ const useScreenRecording = (interviewId, userId, socketRef) => {
       });
 
       await serverResponsePromise;
-      console.log("✅ Screen session confirmed, starting MediaRecorder");
+      console.log(" Screen session confirmed, starting MediaRecorder");
       screenSessionReadyRef.current = true;
       isRequestingSessionRef.current = false;
       mediaRecorder.start(CHUNK_DURATION);
@@ -289,7 +289,7 @@ const useScreenRecording = (interviewId, userId, socketRef) => {
   const stopRecording = useCallback(async () => {
     console.log("🛑 Attempting to stop screen recording...");
 
-    // ✅ FIX: Check if mediaRecorderRef exists and is not null
+    //  FIX: Check if mediaRecorderRef exists and is not null
     if (!mediaRecorderRef.current) {
       console.log(
         "⚠️ No media recorder to stop (already stopped or never started)",
@@ -307,7 +307,7 @@ const useScreenRecording = (interviewId, userId, socketRef) => {
       return null;
     }
 
-    // ✅ FIX: Check state before attempting to stop
+    //  FIX: Check state before attempting to stop
     if (mediaRecorderRef.current.state === "inactive") {
       console.log("⚠️ Recorder already inactive");
       return null;
@@ -319,16 +319,16 @@ const useScreenRecording = (interviewId, userId, socketRef) => {
       const originalStop = recorder.onstop;
       recorder.onstop = (e) => {
         if (originalStop) originalStop(e);
-        mediaRecorderRef.current = null; // ✅ FIX: Clear ref after stop
+        mediaRecorderRef.current = null; //  FIX: Clear ref after stop
         resolve(chunkCountRef.current);
       };
 
       try {
         recorder.stop();
-        console.log("✅ Stop command sent to recorder");
+        console.log(" Stop command sent to recorder");
       } catch (error) {
         console.error("❌ Error stopping recorder:", error);
-        mediaRecorderRef.current = null; // ✅ FIX: Clear ref even on error
+        mediaRecorderRef.current = null; //  FIX: Clear ref even on error
         resolve(null);
       }
     });
@@ -340,7 +340,7 @@ const useScreenRecording = (interviewId, userId, socketRef) => {
   const cleanup = useCallback(() => {
     console.log("🧹 Cleaning up screen recording");
 
-    // ✅ FIX: Only stop if recorder exists and is not inactive
+    //  FIX: Only stop if recorder exists and is not inactive
     if (
       mediaRecorderRef.current &&
       mediaRecorderRef.current.state !== "inactive"

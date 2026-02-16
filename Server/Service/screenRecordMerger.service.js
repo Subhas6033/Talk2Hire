@@ -56,7 +56,7 @@ async function mergeScreenRecordingChunks(screenRecordingId, interviewId) {
         chunkFiles.push(chunkPath);
 
         console.log(
-          `✅ Downloaded screen chunk ${chunk.chunk_number}/${chunks.length}`,
+          ` Downloaded screen chunk ${chunk.chunk_number}/${chunks.length}`,
         );
       }
 
@@ -98,7 +98,7 @@ async function mergeScreenRecordingChunks(screenRecordingId, interviewId) {
             }
           })
           .on("end", () => {
-            console.log("✅ Screen recording chunks merged successfully");
+            console.log(" Screen recording chunks merged successfully");
             resolve();
           })
           .on("error", (err) => {
@@ -148,7 +148,7 @@ async function mergeScreenRecordingChunks(screenRecordingId, interviewId) {
         ftpRemoteDir,
       );
 
-      console.log(`✅ Merged screen recording uploaded:`, ftpResult.url);
+      console.log(` Merged screen recording uploaded:`, ftpResult.url);
 
       // Clean up temp directory
       await fs.rm(tempDir, { recursive: true, force: true });

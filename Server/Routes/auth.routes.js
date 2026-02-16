@@ -1,8 +1,8 @@
 const router = require("express").Router();
 const {
-  uploadResumeForRegistration, // ✅ NEW - Step 1: Upload resume
-  getExtractionStatus, // ✅ NEW - Polling endpoint
-  completeRegistration, // ✅ NEW - Step 2: Create account
+  uploadResumeForRegistration, //  NEW - Step 1: Upload resume
+  getExtractionStatus, //  NEW - Polling endpoint
+  completeRegistration, //  NEW - Step 2: Create account
   loginUser,
   logoutUser,
   forgotPassword,
@@ -25,13 +25,13 @@ const uploadResume = uploadSingle("resume");
 router
   // ==================== PUBLIC ROUTES ====================
 
-  // ✅ NEW STEP 1: Upload resume and start extraction (NO account creation)
+  //  NEW STEP 1: Upload resume and start extraction (NO account creation)
   .post("/upload-resume", uploadResume, uploadResumeForRegistration)
 
-  // ✅ NEW: Get extraction status (for polling)
+  //  NEW: Get extraction status (for polling)
   .get("/extraction-status/:sessionId", getExtractionStatus)
 
-  // ✅ NEW STEP 2: Complete registration with reviewed data
+  //  NEW STEP 2: Complete registration with reviewed data
   .post("/complete-registration", completeRegistration)
 
   // Login user

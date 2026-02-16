@@ -18,7 +18,7 @@ const extractJSON = (text) => {
   const jsonEnd = cleaned.lastIndexOf("}");
 
   if (jsonStart === -1 || jsonEnd === -1 || jsonEnd <= jsonStart) {
-    // ✅ FALLBACK: If no JSON found, try to wrap plain text as JSON
+    //  FALLBACK: If no JSON found, try to wrap plain text as JSON
     console.warn("⚠️ No JSON structure found, attempting to wrap plain text");
 
     // If it looks like a plain question, wrap it
@@ -26,7 +26,7 @@ const extractJSON = (text) => {
       return { question: cleaned };
     }
 
-    // ✅ Log the actual response for debugging
+    //  Log the actual response for debugging
     console.error("❌ Raw response that failed:", text);
     throw new Error("No valid JSON object found in response");
   }
@@ -59,7 +59,7 @@ const generateQuestions = asyncHandler(async (req, res) => {
   console.log("📄 Starting resume retrieval and question generation...");
   console.log("🎯 Skills received:", skills);
 
-  // ✅ STEP 1: Get user data
+  //  STEP 1: Get user data
   const user = await User.findById(userId);
   if (!user) {
     throw new APIERR(404, "User not found");
@@ -68,17 +68,17 @@ const generateQuestions = asyncHandler(async (req, res) => {
   let resumeUrl;
   let rawText;
 
-  // ✅ STEP 2: Save interview skills if provided
+  //  STEP 2: Save interview skills if provided
   if (skills && Array.isArray(skills) && skills.length > 0) {
     console.log("💾 Saving interview-selected skills:", skills);
     await User.updateInterviewSkills(userId, skills);
-    console.log("✅ Interview skills saved to user profile");
+    console.log(" Interview skills saved to user profile");
   }
 
-  // ✅ STEP 3: Check if resume exists in DB
+  //  STEP 3: Check if resume exists in DB
   if (user?.resume) {
     // Resume already exists - use it (NO FILE UPLOAD NEEDED)
-    console.log("✅ Resume found in database:", user.resume);
+    console.log(" Resume found in database:", user.resume);
     resumeUrl = user.resume;
 
     console.log("📝 Extracting text from existing resume...");
@@ -99,7 +99,7 @@ const generateQuestions = asyncHandler(async (req, res) => {
         );
       }
 
-      console.log("✅ Resume text extracted successfully");
+      console.log(" Resume text extracted successfully");
     } catch (extractError) {
       console.error("❌ Error extracting resume text:", extractError);
       throw new APIERR(
@@ -108,7 +108,7 @@ const generateQuestions = asyncHandler(async (req, res) => {
       );
     }
   } else {
-    // ✅ STEP 4: No resume in DB - handle new upload
+    //  STEP 4: No resume in DB - handle new upload
     if (!req.file) {
       throw new APIERR(400, "Resume file is required for first-time upload");
     }
@@ -120,12 +120,12 @@ const generateQuestions = asyncHandler(async (req, res) => {
       const uploadedFile = await uploadFileMicro(req.file);
       resumeUrl = uploadedFile.ftpUrl;
 
-      console.log("✅ Resume uploaded:", resumeUrl);
+      console.log(" Resume uploaded:", resumeUrl);
 
       // Save resume URL to user profile
       user.resume = resumeUrl;
       await user.save();
-      console.log("✅ Resume saved to user profile");
+      console.log(" Resume saved to user profile");
 
       // Extract text from uploaded resume
       const rawTextObj = await mistralResponse({
@@ -140,21 +140,21 @@ const generateQuestions = asyncHandler(async (req, res) => {
         throw new APIERR(500, "Failed to extract text from uploaded resume");
       }
 
-      console.log("✅ Resume text extracted from new upload");
+      console.log(" Resume text extracted from new upload");
     } catch (uploadError) {
       console.error("❌ Resume upload/processing error:", uploadError);
       throw new APIERR(500, "Failed to process resume: " + uploadError.message);
     }
   }
 
-  console.log("✅ Resume text ready:", rawText.substring(0, 100) + "...");
+  console.log(" Resume text ready:", rawText.substring(0, 100) + "...");
 
-  // ✅ STEP 5: Create interview session
+  //  STEP 5: Create interview session
   console.log("🎯 Creating interview session...");
   const sessionId = await Interview.createSession(userId);
-  console.log("✅ Interview session created:", sessionId);
+  console.log(" Interview session created:", sessionId);
 
-  // ✅ STEP 6: Generate first question using AI
+  //  STEP 6: Generate first question using AI
   console.log("🤖 Generating first interview question...");
 
   // Include selected skills in the prompt if available
@@ -214,7 +214,7 @@ FORMAT:
     // Check if Ollama is running
     try {
       const healthCheck = await ollama.list();
-      console.log("✅ Ollama is running, available models:", healthCheck);
+      console.log(" Ollama is running, available models:", healthCheck);
     } catch (healthError) {
       console.error("❌ Ollama server is not responding:", healthError.message);
     }
@@ -234,12 +234,12 @@ FORMAT:
 
   console.log("📄 Raw AI response:", raw);
 
-  // ✅ STEP 7: Parse and validate AI response
+  //  STEP 7: Parse and validate AI response
   let parsed;
   try {
     // Use helper function to extract JSON
     parsed = extractJSON(raw);
-    console.log("✅ Parsed JSON:", parsed);
+    console.log(" Parsed JSON:", parsed);
   } catch (parseError) {
     console.error("❌ Failed to parse AI response:", raw);
     console.error("Parse error:", parseError.message);
@@ -259,9 +259,9 @@ FORMAT:
   }
 
   const firstQuestion = parsed.question.trim();
-  console.log("✅ First question generated:", firstQuestion);
+  console.log(" First question generated:", firstQuestion);
 
-  // ✅ STEP 8: Save first question to database
+  //  STEP 8: Save first question to database
   console.log("💾 Saving first question to database...");
 
   let qnaId;
@@ -273,7 +273,7 @@ FORMAT:
       technology: null,
       difficulty: "basic",
     });
-    console.log("✅ First question saved with ID:", qnaId);
+    console.log(" First question saved with ID:", qnaId);
   } catch (dbError) {
     console.error("❌ Database error saving question:", dbError);
     throw new APIERR(
@@ -282,7 +282,7 @@ FORMAT:
     );
   }
 
-  console.log("✅ Question generation complete!");
+  console.log(" Question generation complete!");
 
   res.status(200).json(
     new APIRES(
@@ -298,7 +298,7 @@ FORMAT:
   );
 });
 
-// ✅ Generate the next question based on the user answer
+//  Generate the next question based on the user answer
 const generateNextQuestion = asyncHandler(async (req, res) => {
   const { sessionId, resumeText, history } = req.body;
 
@@ -349,23 +349,23 @@ MANDATORY RULES:
 EXAMPLES BY DOMAIN:
 
 SOFTWARE:
-✅ "You mentioned using React in your previous answer. How do you handle state management in large-scale applications?"
+ "You mentioned using React in your previous answer. How do you handle state management in large-scale applications?"
 ❌ "Can you explain how you use [framework] in your projects?"
 
 HEALTHCARE:
-✅ "You mentioned working with ventilator settings. What parameters do you monitor most closely for a patient with ARDS?"
+ "You mentioned working with ventilator settings. What parameters do you monitor most closely for a patient with ARDS?"
 ❌ "How do you handle [medical equipment] in critical situations?"
 
 MARKETING:
-✅ "Since you've worked with email campaigns, how do you optimize subject lines for better open rates?"
+ "Since you've worked with email campaigns, how do you optimize subject lines for better open rates?"
 ❌ "What strategies do you use for [marketing channel]?"
 
 FINANCE:
-✅ "You mentioned analyzing balance sheets. What red flags do you look for when assessing a company's liquidity?"
+ "You mentioned analyzing balance sheets. What red flags do you look for when assessing a company's liquidity?"
 ❌ "How do you evaluate [financial metric]?"
 
 EDUCATION:
-✅ "You teach high school science. How do you make abstract concepts like molecular bonding engaging for students?"
+ "You teach high school science. How do you make abstract concepts like molecular bonding engaging for students?"
 ❌ "How do you teach [subject] to different learning styles?"
 
 STRICT OUTPUT RULES:
@@ -414,7 +414,7 @@ FORMAT:
   try {
     // Use helper function to extract JSON
     parsed = extractJSON(raw);
-    console.log("✅ Parsed JSON:", parsed);
+    console.log(" Parsed JSON:", parsed);
   } catch (err) {
     console.error("❌ Invalid JSON from AI:", raw);
     console.error("Parse error:", err.message);
@@ -443,7 +443,7 @@ FORMAT:
       difficulty: null,
       questionOrder,
     });
-    console.log("✅ Question saved with ID:", qnaId);
+    console.log(" Question saved with ID:", qnaId);
   } catch (dbError) {
     console.error("❌ Database error:", dbError);
     throw new APIERR(500, "Failed to save question: " + dbError.message);

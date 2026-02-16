@@ -46,10 +46,10 @@ function createSTTSession() {
       let openTimeout = null;
       let keepAliveInterval = null;
 
-      // ✅ FIXED: Idle detection state with better control
+      //  FIXED: Idle detection state with better control
       let lastSpeechTime = Date.now();
       let idleCheckInterval = null;
-      let idleAlreadyTriggered = false; // ✅ NEW: Prevent multiple idle triggers
+      let idleAlreadyTriggered = false; //  NEW: Prevent multiple idle triggers
       const IDLE_TIMEOUT = 10000; // 10 seconds of silence triggers idle
 
       // Promise to track connection opening
@@ -169,7 +169,7 @@ function createSTTSession() {
         };
 
         /**
-         * ✅ FIXED: Start idle detection to notify when user stops speaking
+         *  FIXED: Start idle detection to notify when user stops speaking
          * Now prevents multiple idle triggers with idleAlreadyTriggered flag
          */
         const startIdleDetection = () => {
@@ -178,16 +178,16 @@ function createSTTSession() {
           }
 
           lastSpeechTime = Date.now();
-          idleAlreadyTriggered = false; // ✅ Reset flag
+          idleAlreadyTriggered = false; //  Reset flag
 
-          // ✅ OPTIMIZED: Check every 2 seconds instead of 1 (reduces CPU usage)
+          //  OPTIMIZED: Check every 2 seconds instead of 1 (reduces CPU usage)
           idleCheckInterval = setInterval(() => {
             if (isOpen && !idleAlreadyTriggered) {
               const timeSinceLastSpeech = Date.now() - lastSpeechTime;
               if (timeSinceLastSpeech >= IDLE_TIMEOUT) {
                 console.log("⏰ User idle detected (10 seconds of silence)");
 
-                // ✅ CRITICAL: Set flag and pause detection to prevent multiple triggers
+                //  CRITICAL: Set flag and pause detection to prevent multiple triggers
                 idleAlreadyTriggered = true;
 
                 if (idleCheckInterval) {
@@ -198,7 +198,7 @@ function createSTTSession() {
                 onIdle?.();
               }
             }
-          }, 2000); // ✅ Changed from 1000ms to 2000ms
+          }, 2000); //  Changed from 1000ms to 2000ms
         };
 
         // ================================================================
@@ -209,7 +209,7 @@ function createSTTSession() {
          * Handle successful connection opening
          */
         connection.on(LiveTranscriptionEvents.Open, () => {
-          console.log("✅ Deepgram WebSocket OPEN - Connection successful");
+          console.log(" Deepgram WebSocket OPEN - Connection successful");
           clearTimeout(openTimeout);
           isOpen = true;
           isConnecting = false;
@@ -237,7 +237,7 @@ function createSTTSession() {
           const isFinal = data.is_final;
           const speechFinal = data.speech_final;
 
-          // ✅ Update last speech time and reset idle flag when we receive any transcript
+          //  Update last speech time and reset idle flag when we receive any transcript
           lastSpeechTime = Date.now();
           idleAlreadyTriggered = false;
 
@@ -259,7 +259,7 @@ function createSTTSession() {
 
           // Send final transcripts when speech is complete
           if (isFinal && speechFinal) {
-            console.log("✅ Complete utterance received:", transcript);
+            console.log(" Complete utterance received:", transcript);
             onTranscript?.(transcript, data);
           }
         });
@@ -434,7 +434,7 @@ function createSTTSession() {
             connection.finish();
             isOpen = false;
             isConnecting = false;
-            console.log("✅ Deepgram connection finished");
+            console.log(" Deepgram connection finished");
             return true;
           } catch (error) {
             console.error("❌ Error finishing connection:", error.message);
@@ -495,12 +495,12 @@ function createSTTSession() {
          */
         resetIdleTimer() {
           lastSpeechTime = Date.now();
-          idleAlreadyTriggered = false; // ✅ Reset flag
+          idleAlreadyTriggered = false; //  Reset flag
           console.log("🔄 Idle timer manually reset");
         },
 
         /**
-         * ✅ FIXED: Pause idle detection
+         *  FIXED: Pause idle detection
          * Useful when you don't want idle callbacks during certain periods
          */
         pauseIdleDetection() {
@@ -509,18 +509,18 @@ function createSTTSession() {
             idleCheckInterval = null;
             console.log("⏸️ Idle detection paused");
           }
-          // ✅ Also set flag to prevent trigger during pause
+          //  Also set flag to prevent trigger during pause
           idleAlreadyTriggered = true;
         },
 
         /**
-         * ✅ FIXED: Resume idle detection
+         *  FIXED: Resume idle detection
          * Restarts idle detection after it was paused
          */
         resumeIdleDetection() {
           if (!idleCheckInterval && isOpen) {
             lastSpeechTime = Date.now();
-            idleAlreadyTriggered = false; // ✅ Reset flag
+            idleAlreadyTriggered = false; //  Reset flag
 
             idleCheckInterval = setInterval(() => {
               if (isOpen && !idleAlreadyTriggered) {
@@ -539,7 +539,7 @@ function createSTTSession() {
                   onIdle?.();
                 }
               }
-            }, 2000); // ✅ 2 second interval
+            }, 2000); //  2 second interval
 
             console.log("▶️ Idle detection resumed");
           }

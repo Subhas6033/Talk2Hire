@@ -95,9 +95,9 @@ function parseAIResponse(content) {
   }
 }
 
-// ✅ NEW STEP 1: Upload resume and start extraction (NO account creation)
+//  NEW STEP 1: Upload resume and start extraction (NO account creation)
 const uploadResumeForRegistration = asyncHandler(async (req, res) => {
-  console.log("✅ Step 1: Upload resume for registration");
+  console.log(" Step 1: Upload resume for registration");
   const { password } = req.body;
   const resumeFile = req.file;
 
@@ -129,9 +129,9 @@ const uploadResumeForRegistration = asyncHandler(async (req, res) => {
     resumeFile.originalname,
     "/public/resumes",
   );
-  console.log("✅ FTP upload complete");
+  console.log(" FTP upload complete");
 
-  // ✅ Generate temporary session ID - crypto.randomBytes now works
+  //  Generate temporary session ID - crypto.randomBytes now works
   const tempSessionId = crypto.randomBytes(32).toString("hex");
 
   // Store temporary registration data in database
@@ -158,7 +158,7 @@ const uploadResumeForRegistration = asyncHandler(async (req, res) => {
     console.error("❌ Background extraction failed:", error);
   });
 
-  // ✅ Return session ID immediately (carousel shows while extraction happens)
+  //  Return session ID immediately (carousel shows while extraction happens)
   res.status(200).json(
     new APIRES(
       200,
@@ -171,7 +171,7 @@ const uploadResumeForRegistration = asyncHandler(async (req, res) => {
   );
 });
 
-// ✅ NEW: Background extraction for temp registration
+//  NEW: Background extraction for temp registration
 async function extractResumeForTempRegistration({
   sessionId,
   ftpUrl,
@@ -335,7 +335,7 @@ CRITICAL RULES:
       ],
     );
 
-    console.log(`✅ Extraction completed for session ${sessionId}`);
+    console.log(` Extraction completed for session ${sessionId}`);
   } catch (error) {
     console.error(`❌ Extraction failed for session ${sessionId}:`, error);
     await pool.execute(
@@ -345,7 +345,7 @@ CRITICAL RULES:
   }
 }
 
-// ✅ NEW: Get extraction status
+//  NEW: Get extraction status
 const getExtractionStatus = asyncHandler(async (req, res) => {
   const { sessionId } = req.params;
 
@@ -393,9 +393,9 @@ const getExtractionStatus = asyncHandler(async (req, res) => {
   );
 });
 
-// ✅ NEW STEP 2: Complete registration with reviewed data
+//  NEW STEP 2: Complete registration with reviewed data
 const completeRegistration = asyncHandler(async (req, res) => {
-  console.log("✅ Step 2: Complete registration");
+  console.log(" Step 2: Complete registration");
   const { sessionId, fullName, email, mobile, location, skills } = req.body;
 
   // Validate inputs
@@ -778,7 +778,7 @@ const getCurrentUser = asyncHandler(async (req, res) => {
         email: user.email,
         resume: user.resume,
         resumeStatus: user.resume_upload_status,
-        cvSkills, // ✅ Now includes parsed skills array
+        cvSkills, //  Now includes parsed skills array
         interviewSkills,
       },
       "User retrieved successfully",
@@ -1037,7 +1037,7 @@ const updateProfile = asyncHandler(async (req, res) => {
         `/public/resumes/`,
       );
 
-      console.log("✅ Resume uploaded to FTP:", ftpUploadResult.url);
+      console.log(" Resume uploaded to FTP:", ftpUploadResult.url);
 
       if (user.resume) {
         try {
@@ -1121,7 +1121,7 @@ const updateProfile = asyncHandler(async (req, res) => {
         `/public/profile-images/${userId}`,
       );
 
-      console.log("✅ Profile image uploaded to FTP:", ftpUploadResult.url);
+      console.log(" Profile image uploaded to FTP:", ftpUploadResult.url);
 
       if (user.profile_image_path) {
         try {
@@ -1248,7 +1248,7 @@ async function processSkillExtraction({
     await User.updateSkills(userId, skillsString);
     await User.updateResumeStatus(userId, "completed");
 
-    console.log(`✅ Skills extraction completed for user ${userId}`);
+    console.log(` Skills extraction completed for user ${userId}`);
     console.log(
       `📝 Extracted ${uniqueSkills.length} relevant skills for domain "${detectedDomain}"`,
     );

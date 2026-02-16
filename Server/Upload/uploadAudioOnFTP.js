@@ -30,7 +30,7 @@ async function uploadAudioChunk({
       ftpRemoteDir,
     );
 
-    console.log(`✅ Audio chunk ${chunkNumber} uploaded:`, uploadResult.url);
+    console.log(` Audio chunk ${chunkNumber} uploaded:`, uploadResult.url);
 
     // Save chunk metadata to database
     await InterviewAudio.saveChunk({
@@ -85,7 +85,7 @@ async function finalizeAudioUpload({ audioId, interviewId }) {
     // Merge audio chunks using ffmpeg
     const mergeResult = await mergeAudioChunks(audioId);
 
-    console.log(`✅ Audio chunks merged:`, mergeResult);
+    console.log(` Audio chunks merged:`, mergeResult);
 
     // Update audio record with final info
     await InterviewAudio.updateAfterMerge({
@@ -99,7 +99,7 @@ async function finalizeAudioUpload({ audioId, interviewId }) {
     // Mark chunks as deleted (they're now merged)
     await InterviewAudio.markChunksDeleted(audioId);
 
-    console.log(`✅ Audio ${audioId} finalized successfully`);
+    console.log(` Audio ${audioId} finalized successfully`);
 
     return {
       success: true,

@@ -28,7 +28,7 @@ const authMiddleware = (req, res, next) => {
       email: decoded.email,
     };
 
-    console.log("✅ Authenticated user:", req.user.id);
+    console.log(" Authenticated user:", req.user.id);
 
     // Continue to next middleware/route
     next();

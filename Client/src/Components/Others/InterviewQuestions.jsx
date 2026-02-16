@@ -473,19 +473,19 @@ const InterviewQuestions = ({
       try {
         console.log("Starting desktop recordings");
 
-        // ✅ STEP 1: Start audio first (for TTS playback)
+        //  STEP 1: Start audio first (for TTS playback)
         await audioRecording.startRecording();
-        console.log("✅ Audio recording started");
+        console.log(" Audio recording started");
 
-        // ✅ STEP 2: Start primary camera
+        //  STEP 2: Start primary camera
         await startVideoRecording();
-        console.log("✅ Primary camera recording started");
+        console.log(" Primary camera recording started");
 
-        // ✅ STEP 3: Show screen share prompt WITHOUT blocking TTS
+        //  STEP 3: Show screen share prompt WITHOUT blocking TTS
         setShowScreenSharePrompt(true);
         console.log("📺 Screen share prompt shown");
 
-        // ✅ Interview can now proceed - TTS will play while waiting for screen share
+        //  Interview can now proceed - TTS will play while waiting for screen share
       } catch (err) {
         console.error("Failed to start recordings:", err);
       }
@@ -571,7 +571,7 @@ const InterviewQuestions = ({
                   await screenRecording.startRecording();
                   setShowScreenSharePrompt(false);
                   setScreenShareAttempts(0);
-                  console.log("✅ Screen recording started successfully");
+                  console.log(" Screen recording started successfully");
                 } catch (err) {
                   console.error("❌ Screen share denied:", err);
                   setScreenShareAttempts((prev) => prev + 1);

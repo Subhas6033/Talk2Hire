@@ -33,7 +33,7 @@ const CameraCheck = ({
         audio: false,
       });
 
-      console.log(`✅ ${facingMode} camera access granted:`, {
+      console.log(` ${facingMode} camera access granted:`, {
         streamId: mediaStream.id,
         active: mediaStream.active,
         tracks: mediaStream.getTracks().map((t) => ({
@@ -59,7 +59,7 @@ const CameraCheck = ({
         };
       }
 
-      console.log(`✅ ${facingMode} camera stream ready for handoff`);
+      console.log(` ${facingMode} camera stream ready for handoff`);
     } catch (err) {
       console.error(`❌ ${facingMode} camera access error:`, err);
 
@@ -92,17 +92,17 @@ const CameraCheck = ({
         })),
       });
 
-      // ✅ CRITICAL: Set handoff flag BEFORE calling onSuccess
+      //  CRITICAL: Set handoff flag BEFORE calling onSuccess
       streamHandedOffRef.current = true;
 
-      console.log(`✅ Handoff flag set to TRUE for ${facingMode} camera`);
+      console.log(` Handoff flag set to TRUE for ${facingMode} camera`);
       console.log(`📤 Passing stream to parent component...`);
 
       // Pass stream to parent
       onSuccess(stream);
 
       console.log(
-        `✅ Stream handed off successfully - will NOT be cleaned up on unmount`,
+        ` Stream handed off successfully - will NOT be cleaned up on unmount`,
       );
 
       // Don't close modal or stop stream here - parent will handle it
@@ -127,7 +127,7 @@ const CameraCheck = ({
       setStream(null);
       streamRef.current = null;
     } else if (streamHandedOffRef.current) {
-      console.log(`✅ Stream was handed off to parent, NOT stopping`);
+      console.log(` Stream was handed off to parent, NOT stopping`);
     }
 
     setError(null);
@@ -157,7 +157,7 @@ const CameraCheck = ({
           console.log(`  - Stopped ${track.kind} track:`, track.label);
         });
       } else if (streamHandedOffRef.current) {
-        console.log(`✅ Cleanup: Stream was handed off, not stopping`);
+        console.log(` Cleanup: Stream was handed off, not stopping`);
       }
     };
   }, [facingMode]);

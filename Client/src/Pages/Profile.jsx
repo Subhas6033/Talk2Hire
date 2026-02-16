@@ -394,7 +394,7 @@ const ProfilePage = () => {
                 <div className="bg-white/5 rounded-lg p-3 text-sm">
                   <p className="text-white/70">Current resume status:</p>
                   <p className="text-green-400 font-medium">
-                    ✅ Uploaded successfully
+                    Uploaded successfully
                   </p>
                 </div>
               )}

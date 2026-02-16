@@ -70,7 +70,7 @@ const MobileSecurityCamera = () => {
     socketRef.current = socket;
 
     socket.on("connect", () => {
-      console.log("✅ Security camera connected to server, ID:", socket.id);
+      console.log(" Security camera connected to server, ID:", socket.id);
       setIsConnected(true);
       setError(null);
 
@@ -96,7 +96,7 @@ const MobileSecurityCamera = () => {
     });
 
     socket.on("reconnect", (attemptNumber) => {
-      console.log(`✅ Reconnected after ${attemptNumber} attempts`);
+      console.log(` Reconnected after ${attemptNumber} attempts`);
       setIsConnected(true);
       setError(null);
 
@@ -106,13 +106,13 @@ const MobileSecurityCamera = () => {
     });
 
     socket.on("video_recording_ready", (response) => {
-      console.log("✅ Server ready for video chunks:", response);
+      console.log(" Server ready for video chunks:", response);
     });
 
     socket.on("video_chunk_uploaded", (data) => {
       if (data.chunkNumber % 5 === 0) {
         console.log(
-          `✅ Server confirmed chunk ${data.chunkNumber} (${data.progress}%)`,
+          ` Server confirmed chunk ${data.chunkNumber} (${data.progress}%)`,
         );
       }
     });
@@ -387,7 +387,7 @@ const MobileSecurityCamera = () => {
         if (socketRef.current?.connected) {
           clearInterval(connectionWaitIntervalRef.current);
           connectionWaitIntervalRef.current = null;
-          console.log("✅ Socket connected, starting recording now");
+          console.log(" Socket connected, starting recording now");
           startVideoRecording();
         } else if (Date.now() - startTime > maxWaitTime) {
           clearInterval(connectionWaitIntervalRef.current);
@@ -413,7 +413,7 @@ const MobileSecurityCamera = () => {
       for (const mimeType of mimeTypes) {
         if (MediaRecorder.isTypeSupported(mimeType)) {
           selectedMimeType = mimeType;
-          console.log(`✅ Using MIME type: ${mimeType}`);
+          console.log(` Using MIME type: ${mimeType}`);
           break;
         }
       }
@@ -440,7 +440,7 @@ const MobileSecurityCamera = () => {
         if (response.videoType !== "secondary_camera") return;
 
         serverResponseReceived = true;
-        console.log("✅ Server ready for security camera chunks:", response);
+        console.log(" Server ready for security camera chunks:", response);
 
         const options = {
           mimeType: selectedMimeType,
@@ -528,7 +528,7 @@ const MobileSecurityCamera = () => {
         });
 
         mediaRecorder.start(2000);
-        console.log("✅ MediaRecorder started (2s chunks)");
+        console.log(" MediaRecorder started (2s chunks)");
 
         socketRef.current.off("video_recording_ready", readyListener);
       };
@@ -647,14 +647,14 @@ const MobileSecurityCamera = () => {
         <Card className="p-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200">
           <h3 className="text-sm font-bold text-blue-900 mb-2">Debug Info</h3>
           <div className="text-xs text-blue-800 space-y-1 font-mono">
-            <div>Stream: {debugInfo.streamObtained ? "✅" : "❌"}</div>
-            <div>Metadata: {debugInfo.metadataLoaded ? "✅" : "❌"}</div>
-            <div>Play Attempted: {debugInfo.playAttempted ? "✅" : "❌"}</div>
-            <div>Play Succeeded: {debugInfo.playSucceeded ? "✅" : "❌"}</div>
-            <div>Video Ready: {videoReady ? "✅" : "❌"}</div>
-            <div>Is Streaming: {isStreaming ? "✅" : "❌"}</div>
-            <div>Recording: {isRecording ? "✅" : "❌"}</div>
-            <div>Socket Connected: {isConnected ? "✅" : "❌"}</div>
+            <div>Stream: {debugInfo.streamObtained ? "" : "❌"}</div>
+            <div>Metadata: {debugInfo.metadataLoaded ? "" : "❌"}</div>
+            <div>Play Attempted: {debugInfo.playAttempted ? "" : "❌"}</div>
+            <div>Play Succeeded: {debugInfo.playSucceeded ? "" : "❌"}</div>
+            <div>Video Ready: {videoReady ? "" : "❌"}</div>
+            <div>Is Streaming: {isStreaming ? "" : "❌"}</div>
+            <div>Recording: {isRecording ? "" : "❌"}</div>
+            <div>Socket Connected: {isConnected ? "" : "❌"}</div>
             <div>Chunks Sent: {chunksSent}</div>
             <div>Frames Sent: {framesSent}</div>
           </div>
@@ -847,7 +847,7 @@ const MobileSecurityCamera = () => {
                 </svg>
                 <div>
                   <p className="text-sm font-semibold text-green-900">
-                    ✅ Security Camera {isRecording ? "Recording" : "Ready"}!
+                    Security Camera {isRecording ? "Recording" : "Ready"}!
                   </p>
                   <p className="text-xs text-green-800 mt-1">
                     Return to your laptop. Keep this page open. Sending{" "}

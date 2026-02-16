@@ -34,7 +34,7 @@ async function triggerAutoVideoUpload(interviewId) {
     // Trigger automatic upload
     const result = await autoUploadInterviewVideos(interviewId);
 
-    console.log("✅ Automatic video upload complete:", result);
+    console.log(" Automatic video upload complete:", result);
 
     return result;
   } catch (error) {
@@ -61,7 +61,7 @@ async function retryFailedUploads() {
     const pendingVideos = await InterviewVideo.getPendingUploads();
 
     if (pendingVideos.length === 0) {
-      console.log("✅ No failed uploads to retry");
+      console.log(" No failed uploads to retry");
       return { success: true, retried: 0 };
     }
 
@@ -97,7 +97,7 @@ async function retryFailedUploads() {
 
     const successCount = results.filter((r) => r.success).length;
     console.log(
-      `✅ Retry complete: ${successCount}/${pendingVideos.length} successful`,
+      ` Retry complete: ${successCount}/${pendingVideos.length} successful`,
     );
 
     return {
@@ -130,7 +130,7 @@ async function cleanupOldChunks(daysOld = 7) {
       [daysOld],
     );
 
-    console.log(`✅ Cleaned up ${result.affectedRows} old chunks`);
+    console.log(` Cleaned up ${result.affectedRows} old chunks`);
 
     return {
       success: true,

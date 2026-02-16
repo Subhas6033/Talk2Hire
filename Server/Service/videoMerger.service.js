@@ -22,7 +22,7 @@ class VideoChunkMerger {
     try {
       await fs.mkdir(this.tempDir, { recursive: true });
       await fs.mkdir(this.outputDir, { recursive: true });
-      console.log("✅ Temporary directories initialized");
+      console.log(" Temporary directories initialized");
     } catch (error) {
       console.error("❌ Error creating directories:", error);
       throw error;
@@ -68,7 +68,7 @@ class VideoChunkMerger {
       try {
         const localPath = path.join(
           this.tempDir,
-          `chunk_${videoId}_${chunk.chunk_number}.webm`
+          `chunk_${videoId}_${chunk.chunk_number}.webm`,
         );
 
         // Download from FTP
@@ -79,7 +79,7 @@ class VideoChunkMerger {
           const actualChecksum = this.calculateChecksum(buffer);
           if (actualChecksum !== chunk.checksum) {
             throw new Error(
-              `Chunk ${chunk.chunk_number} integrity check failed`
+              `Chunk ${chunk.chunk_number} integrity check failed`,
             );
           }
         }
@@ -94,12 +94,12 @@ class VideoChunkMerger {
         });
 
         console.log(
-          `✅ Downloaded chunk ${chunk.chunk_number} (${buffer.length} bytes)`
+          ` Downloaded chunk ${chunk.chunk_number} (${buffer.length} bytes)`,
         );
       } catch (error) {
         console.error(
           `❌ Failed to download chunk ${chunk.chunk_number}:`,
-          error
+          error,
         );
         throw error;
       }
@@ -119,14 +119,14 @@ class VideoChunkMerger {
         // Create concat file list
         const concatListPath = path.join(
           this.tempDir,
-          `concat_${Date.now()}.txt`
+          `concat_${Date.now()}.txt`,
         );
         const concatContent = chunks
           .map((chunk) => `file '${chunk.path}'`)
           .join("\n");
 
         await fs.writeFile(concatListPath, concatContent);
-        console.log("✅ Concat list created:", concatListPath);
+        console.log(" Concat list created:", concatListPath);
 
         // FFmpeg command for lossless merge
         const ffmpegArgs = [
@@ -171,7 +171,7 @@ class VideoChunkMerger {
             console.error("FFmpeg stderr:", stderr);
             reject(new Error(`FFmpeg failed with code ${code}`));
           } else {
-            console.log("✅ FFmpeg merge completed successfully");
+            console.log(" FFmpeg merge completed successfully");
             resolve(outputPath);
           }
         });
@@ -199,7 +199,7 @@ class VideoChunkMerger {
       const chunkBuffer = await fs.readFile(chunk.path);
       outputStream.write(chunkBuffer);
       console.log(
-        `✅ Appended chunk ${chunk.number} (${chunkBuffer.length} bytes)`
+        ` Appended chunk ${chunk.number} (${chunkBuffer.length} bytes)`,
       );
     }
 
@@ -207,7 +207,7 @@ class VideoChunkMerger {
 
     return new Promise((resolve, reject) => {
       outputStream.on("finish", () => {
-        console.log("✅ Binary concatenation complete");
+        console.log(" Binary concatenation complete");
         resolve(outputPath);
       });
       outputStream.on("error", reject);
@@ -278,7 +278,7 @@ class VideoChunkMerger {
           try {
             const metadata = JSON.parse(stdout);
             const videoStream = metadata.streams?.find(
-              (s) => s.codec_type === "video"
+              (s) => s.codec_type === "video",
             );
 
             // Parse frame rate properly
@@ -345,7 +345,7 @@ class VideoChunkMerger {
       const totalTime = Math.round((Date.now() - startTime) / 1000);
       const speedMBps = (buffer.length / 1024 / 1024 / totalTime).toFixed(2);
 
-      console.log(`✅ Upload complete in ${totalTime}s (${speedMBps} MB/s)`);
+      console.log(` Upload complete in ${totalTime}s (${speedMBps} MB/s)`);
 
       return result;
     } catch (error) {
@@ -384,7 +384,7 @@ class VideoChunkMerger {
       // Download chunks from FTP
       const downloadedChunks = await this.downloadChunksFromFTP(
         videoId,
-        chunks
+        chunks,
       );
 
       // Prepare output path
@@ -396,12 +396,12 @@ class VideoChunkMerger {
       try {
         mergedPath = await this.mergeChunksWithFFmpeg(
           downloadedChunks,
-          outputPath
+          outputPath,
         );
       } catch (ffmpegError) {
         console.warn(
           "⚠️ FFmpeg merge failed, using binary concatenation:",
-          ffmpegError
+          ffmpegError,
         );
         mergedPath = await this.mergeBinaryConcat(downloadedChunks, outputPath);
       }
@@ -412,7 +412,7 @@ class VideoChunkMerger {
 
       // Read merged file
       const mergedBuffer = await fs.readFile(mergedPath);
-      console.log(`✅ Merged video size: ${mergedBuffer.length} bytes`);
+      console.log(` Merged video size: ${mergedBuffer.length} bytes`);
 
       // Calculate checksum
       const checksum = this.calculateChecksum(mergedBuffer);
@@ -425,10 +425,10 @@ class VideoChunkMerger {
         mergedBuffer,
         sanitizedFilename,
         ftpRemoteDir,
-        300000 // 5 minute timeout
+        300000, // 5 minute timeout
       );
 
-      console.log("✅ Merged video uploaded to FTP:", ftpResult.url);
+      console.log(" Merged video uploaded to FTP:", ftpResult.url);
 
       // Update video record
       await InterviewVideo.updateAfterUpload({
@@ -448,7 +448,7 @@ class VideoChunkMerger {
         ...downloadedChunks.map((c) => c.path),
       ]);
 
-      console.log("✅ Video merge complete!");
+      console.log(" Video merge complete!");
 
       return {
         success: true,
@@ -474,7 +474,7 @@ class VideoChunkMerger {
     for (const filePath of filePaths) {
       try {
         await fs.unlink(filePath);
-        console.log(`✅ Deleted: ${path.basename(filePath)}`);
+        console.log(` Deleted: ${path.basename(filePath)}`);
       } catch (error) {
         console.warn(`⚠️ Failed to delete ${filePath}:`, error.message);
       }
@@ -487,7 +487,7 @@ class VideoChunkMerger {
   async mergeMultipleCameras(
     videoIds,
     interviewId,
-    outputType = "side-by-side"
+    outputType = "side-by-side",
   ) {
     try {
       console.log(`🎥 Merging ${videoIds.length} camera angles...`);
@@ -509,14 +509,14 @@ class VideoChunkMerger {
 
         const tempPath = path.join(
           this.tempDir,
-          `camera_${videoId}_${Date.now()}.webm`
+          `camera_${videoId}_${Date.now()}.webm`,
         );
         await fs.writeFile(tempPath, buffer);
 
         videoPaths.push(tempPath);
         videoMetadata.push(video);
 
-        console.log(`✅ Downloaded camera video: ${video.video_type}`);
+        console.log(` Downloaded camera video: ${video.video_type}`);
       }
 
       // Prepare output
@@ -557,7 +557,7 @@ class VideoChunkMerger {
       console.log(
         "🎬 Multi-camera FFmpeg command:",
         "ffmpeg",
-        ffmpegArgs.join(" ")
+        ffmpegArgs.join(" "),
       );
 
       await new Promise((resolve, reject) => {
@@ -592,13 +592,13 @@ class VideoChunkMerger {
         mergedBuffer,
         sanitizedFilename,
         ftpRemoteDir,
-        300000
+        300000,
       );
 
       // Clean up
       await this.cleanupTempFiles([outputPath, ...videoPaths]);
 
-      console.log("✅ Multi-camera merge complete!");
+      console.log(" Multi-camera merge complete!");
 
       return {
         success: true,

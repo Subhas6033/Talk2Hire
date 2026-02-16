@@ -24,7 +24,7 @@ class VideoProcessingJobs {
         await this.getCompletedInterviewsNeedingMerge();
 
       if (interviewsNeedingMerge.length === 0) {
-        console.log("✅ No interviews need video merging");
+        console.log(" No interviews need video merging");
         return { success: true, merged: 0 };
       }
 
@@ -59,9 +59,7 @@ class VideoProcessingJobs {
             ...mergeResult,
           });
 
-          console.log(
-            `✅ Interview ${interview.id} videos merged successfully`,
-          );
+          console.log(` Interview ${interview.id} videos merged successfully`);
         } catch (error) {
           console.error(`❌ Failed to merge interview ${interview.id}:`, error);
           results.push({
@@ -76,7 +74,7 @@ class VideoProcessingJobs {
 
       const successCount = results.filter((r) => r.success).length;
       console.log(
-        `✅ Auto-merge complete: ${successCount}/${interviewsNeedingMerge.length} successful`,
+        ` Auto-merge complete: ${successCount}/${interviewsNeedingMerge.length} successful`,
       );
 
       return {
@@ -93,7 +91,7 @@ class VideoProcessingJobs {
   }
 
   /**
-   * ✅ Get interviews that are completed but videos not merged
+   *  Get interviews that are completed but videos not merged
    */
   async getCompletedInterviewsNeedingMerge() {
     try {
@@ -128,7 +126,7 @@ class VideoProcessingJobs {
   }
 
   /**
-   * ✅ Merge all videos for a specific interview with timeout and retry
+   *  Merge all videos for a specific interview with timeout and retry
    */
   async mergeInterviewVideos(interviewId, options = {}) {
     const {
@@ -193,7 +191,7 @@ class VideoProcessingJobs {
             { timeoutMs, maxRetries, retryDelayMs },
           );
 
-          console.log(`✅ Merged ${video.video_type}:`, mergeResult.ftpUrl);
+          console.log(` Merged ${video.video_type}:`, mergeResult.ftpUrl);
 
           mergedVideos.push({
             videoType: video.video_type,
@@ -223,7 +221,7 @@ class VideoProcessingJobs {
         }
       }
 
-      console.log(`✅ Merge complete for interview ${interviewId}:`, {
+      console.log(` Merge complete for interview ${interviewId}:`, {
         totalVideos: videos.length,
         merged: mergedVideos.length,
         failed: errors.length,
@@ -242,7 +240,7 @@ class VideoProcessingJobs {
   }
 
   /**
-   * ✅ Merge with timeout protection and retry logic
+   *  Merge with timeout protection and retry logic
    */
   async mergeWithTimeoutAndRetry(video, interviewId, chunkCount, options) {
     const { timeoutMs, maxRetries, retryDelayMs } = options;
@@ -303,7 +301,7 @@ class VideoProcessingJobs {
   }
 
   /**
-   * ✅ Timeout wrapper utility
+   *  Timeout wrapper utility
    */
   async withTimeout(promise, timeoutMs, errorMessage) {
     let timeoutHandle;
@@ -329,7 +327,7 @@ class VideoProcessingJobs {
   }
 
   /**
-   * ✅ Sleep utility
+   *  Sleep utility
    */
   sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -353,7 +351,7 @@ class VideoProcessingJobs {
       const pendingVideos = await InterviewVideo.getPendingUploads();
 
       if (pendingVideos.length === 0) {
-        console.log("✅ No pending uploads to process");
+        console.log(" No pending uploads to process");
         return;
       }
 
@@ -387,7 +385,7 @@ class VideoProcessingJobs {
           const result = await autoUploadInterviewVideos(interviewId);
           results.push({ interviewId, ...result });
 
-          console.log(`✅ Interview ${interviewId} processed:`, result);
+          console.log(` Interview ${interviewId} processed:`, result);
         } catch (error) {
           console.error(
             `❌ Failed to process interview ${interviewId}:`,
@@ -403,7 +401,7 @@ class VideoProcessingJobs {
         }
       }
 
-      console.log("✅ Automated upload processing complete:", {
+      console.log(" Automated upload processing complete:", {
         totalInterviews: Object.keys(videosByInterview).length,
         successful: results.filter((r) => r.success).length,
         failed: results.filter((r) => !r.success).length,
@@ -429,7 +427,7 @@ class VideoProcessingJobs {
       const failedVideos = await InterviewVideo.getFailedUploads();
 
       if (failedVideos.length === 0) {
-        console.log("✅ No failed uploads to retry");
+        console.log(" No failed uploads to retry");
         return { success: true, retried: 0 };
       }
 
@@ -481,7 +479,7 @@ class VideoProcessingJobs {
 
       const successCount = results.filter((r) => r.success).length;
       console.log(
-        `✅ Retry complete: ${successCount}/${failedVideos.length} successful`,
+        ` Retry complete: ${successCount}/${failedVideos.length} successful`,
       );
 
       return {
@@ -527,7 +525,7 @@ class VideoProcessingJobs {
           await deleteFileFromFTP(chunk.temp_ftp_path);
           deletedCount++;
           console.log(
-            `✅ Deleted chunk ${chunk.chunk_number} of video ${chunk.video_id}`,
+            ` Deleted chunk ${chunk.chunk_number} of video ${chunk.video_id}`,
           );
         } catch (error) {
           console.warn(
@@ -547,7 +545,7 @@ class VideoProcessingJobs {
       );
 
       console.log(
-        `✅ Cleaned up ${deletedCount} chunks from FTP, ${result.affectedRows} records updated`,
+        ` Cleaned up ${deletedCount} chunks from FTP, ${result.affectedRows} records updated`,
       );
 
       return {
@@ -576,7 +574,7 @@ class VideoProcessingJobs {
       const deletedCount =
         await InterviewVideo.cleanupOldFailedUploads(daysOld);
 
-      console.log(`✅ Cleaned up ${deletedCount} old failed uploads`);
+      console.log(` Cleaned up ${deletedCount} old failed uploads`);
 
       return {
         success: true,
@@ -611,7 +609,7 @@ class VideoProcessingJobs {
       );
 
       if (recentVideos.length === 0) {
-        console.log("✅ No recent videos to verify");
+        console.log(" No recent videos to verify");
         return { success: true, verified: 0 };
       }
 
@@ -642,7 +640,7 @@ class VideoProcessingJobs {
 
       const validCount = results.filter((r) => r.valid).length;
       console.log(
-        `✅ Verification complete: ${validCount}/${recentVideos.length} passed`,
+        ` Verification complete: ${validCount}/${recentVideos.length} passed`,
       );
 
       return {
@@ -748,7 +746,7 @@ class VideoProcessingJobs {
       });
     }, config.scheduling.cleanupFailedIntervalMs);
 
-    console.log("✅ Video processing job scheduler started");
+    console.log(" Video processing job scheduler started");
     console.log(
       `  ↳ Auto-merge: Every ${config.scheduling.autoMergeIntervalMs / 60000} minutes`,
     );

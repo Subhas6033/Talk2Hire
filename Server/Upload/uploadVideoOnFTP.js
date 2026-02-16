@@ -52,7 +52,7 @@ async function uploadVideoToFTP({
       checksum,
     });
 
-    console.log("✅ Video record created with ID:", videoId);
+    console.log(" Video record created with ID:", videoId);
 
     // 2. Update status to uploading
     await InterviewVideo.updateUploadStatus(videoId, "uploading");
@@ -69,10 +69,10 @@ async function uploadVideoToFTP({
     const ftpResult = await uploadFileToFTP(
       videoBuffer,
       sanitizedFilename,
-      ftpRemoteDir
+      ftpRemoteDir,
     );
 
-    console.log("✅ FTP upload successful:", ftpResult);
+    console.log(" FTP upload successful:", ftpResult);
 
     // 4. Update video record with FTP details
     await InterviewVideo.updateAfterUpload({
@@ -83,7 +83,7 @@ async function uploadVideoToFTP({
       duration: metadata.duration || null,
     });
 
-    console.log("✅ Video upload complete");
+    console.log(" Video upload complete");
 
     return {
       success: true,
@@ -134,7 +134,7 @@ async function uploadVideoChunk({
     const ftpResult = await uploadFileToFTP(
       chunkBuffer,
       chunkFilename,
-      ftpRemoteDir
+      ftpRemoteDir,
     );
 
     // Save chunk information with checksum
@@ -151,7 +151,7 @@ async function uploadVideoChunk({
     await InterviewVideo.updateProgress(videoId, progress);
 
     console.log(
-      `✅ Chunk ${chunkNumber}/${totalChunks} uploaded (${progress}%) - Checksum: ${chunkChecksum.substring(0, 8)}...`
+      ` Chunk ${chunkNumber}/${totalChunks} uploaded (${progress}%) - Checksum: ${chunkChecksum.substring(0, 8)}...`,
     );
 
     return {
@@ -197,7 +197,7 @@ async function finalizeVideoUpload({ videoId, interviewId }) {
     if (chunks.length < expectedChunks) {
       throw new APIERR(
         400,
-        `Missing chunks: ${chunks.length}/${expectedChunks} uploaded`
+        `Missing chunks: ${chunks.length}/${expectedChunks} uploaded`,
       );
     }
 
@@ -206,10 +206,10 @@ async function finalizeVideoUpload({ videoId, interviewId }) {
     // Use video merger service to merge chunks
     const mergeResult = await videoMerger.mergeVideoChunks(
       videoId,
-      interviewId
+      interviewId,
     );
 
-    console.log("✅ Video chunks merged successfully:", mergeResult);
+    console.log(" Video chunks merged successfully:", mergeResult);
 
     // Update video with merged file info
     await InterviewVideo.updateAfterMerge({
@@ -249,11 +249,11 @@ async function cleanupVideoChunks(videoId, chunks) {
     for (const chunk of chunks) {
       try {
         await deleteFileFromFTP(chunk.temp_ftp_path);
-        console.log(`✅ Deleted chunk ${chunk.chunk_number} from FTP`);
+        console.log(` Deleted chunk ${chunk.chunk_number} from FTP`);
       } catch (error) {
         console.warn(
           `⚠️ Failed to delete chunk ${chunk.chunk_number}:`,
-          error.message
+          error.message,
         );
       }
     }
@@ -261,7 +261,7 @@ async function cleanupVideoChunks(videoId, chunks) {
     // Mark chunks as deleted in database
     await InterviewVideo.markChunksDeleted(videoId);
 
-    console.log("✅ Chunk cleanup complete");
+    console.log(" Chunk cleanup complete");
   } catch (error) {
     console.error("❌ Error cleaning up chunks:", error);
     // Don't throw - cleanup is not critical
@@ -277,11 +277,11 @@ async function autoUploadInterviewVideos(interviewId) {
 
     const pendingVideos = await InterviewVideo.getPendingUploads();
     const interviewVideos = pendingVideos.filter(
-      (v) => v.interview_id === interviewId
+      (v) => v.interview_id === interviewId,
     );
 
     if (interviewVideos.length === 0) {
-      console.log("✅ No pending videos to upload");
+      console.log(" No pending videos to upload");
       return { success: true, uploaded: 0 };
     }
 
@@ -298,7 +298,7 @@ async function autoUploadInterviewVideos(interviewId) {
 
         if (chunks && chunks.length > 0) {
           console.log(
-            `🎬 Video has ${chunks.length} chunks, initiating merge...`
+            `🎬 Video has ${chunks.length} chunks, initiating merge...`,
           );
 
           // Finalize (merge) the chunked video
@@ -316,7 +316,7 @@ async function autoUploadInterviewVideos(interviewId) {
           });
         } else {
           // No chunks, just mark as completed
-          console.log(`✅ Video ${video.id} has no chunks, marking complete`);
+          console.log(` Video ${video.id} has no chunks, marking complete`);
           await InterviewVideo.updateUploadStatus(video.id, "completed");
           results.push({
             videoId: video.id,
@@ -326,7 +326,7 @@ async function autoUploadInterviewVideos(interviewId) {
           });
         }
 
-        console.log(`✅ Video ${video.id} processed successfully`);
+        console.log(` Video ${video.id} processed successfully`);
       } catch (error) {
         console.error(`❌ Failed to process video ${video.id}:`, error);
         await InterviewVideo.markAsFailed(video.id, error.message);
@@ -339,7 +339,7 @@ async function autoUploadInterviewVideos(interviewId) {
       }
     }
 
-    console.log("✅ Auto-upload complete:", results);
+    console.log(" Auto-upload complete:", results);
 
     return {
       success: true,
@@ -359,7 +359,7 @@ async function autoUploadInterviewVideos(interviewId) {
  */
 async function mergeMultipleCameraAngles(
   interviewId,
-  outputType = "side-by-side"
+  outputType = "side-by-side",
 ) {
   try {
     console.log(`🎥 Merging multiple cameras for interview ${interviewId}...`);
@@ -367,7 +367,7 @@ async function mergeMultipleCameraAngles(
     // Get all completed videos for this interview
     const videos = await InterviewVideo.getByInterviewId(interviewId);
     const completedVideos = videos.filter(
-      (v) => v.upload_status === "completed"
+      (v) => v.upload_status === "completed",
     );
 
     if (completedVideos.length < 2) {
@@ -381,7 +381,7 @@ async function mergeMultipleCameraAngles(
     const result = await videoMerger.mergeMultipleCameras(
       videoIds,
       interviewId,
-      outputType
+      outputType,
     );
 
     // Create new video record for merged output
@@ -399,7 +399,7 @@ async function mergeMultipleCameraAngles(
 
     await InterviewVideo.updateUploadStatus(mergedVideoId, "completed");
 
-    console.log("✅ Multi-camera merge complete:", mergedVideoId);
+    console.log(" Multi-camera merge complete:", mergedVideoId);
 
     return {
       success: true,
@@ -442,7 +442,7 @@ async function verifyVideoIntegrity(videoId) {
       // Mark video as failed
       await InterviewVideo.markAsFailed(
         videoId,
-        "Integrity check failed - checksum mismatch"
+        "Integrity check failed - checksum mismatch",
       );
 
       return {
@@ -453,7 +453,7 @@ async function verifyVideoIntegrity(videoId) {
       };
     }
 
-    console.log("✅ Video integrity verified");
+    console.log(" Video integrity verified");
 
     return {
       valid: true,

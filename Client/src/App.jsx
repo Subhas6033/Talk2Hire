@@ -67,7 +67,7 @@ const App = () => {
         <Loader label="Setting up your interview" />
       ) : (
         <>
-          {/* ✅ IMPROVED: Show onboarding as full-page overlay when active */}
+          {/*  IMPROVED: Show onboarding as full-page overlay when active */}
           {showOnboarding ? (
             <OnboardingFlow
               isOpen={showOnboarding}

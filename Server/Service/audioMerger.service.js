@@ -87,7 +87,7 @@ async function mergeAudioChunks(audioId) {
           }
         })
         .on("end", () => {
-          console.log("✅ Audio chunks merged successfully");
+          console.log(" Audio chunks merged successfully");
           resolve();
         })
         .on("error", (error) => {
@@ -114,7 +114,7 @@ async function mergeAudioChunks(audioId) {
       ftpRemoteDir,
     );
 
-    console.log("✅ Merged audio uploaded to FTP:", ftpResult.url);
+    console.log(" Merged audio uploaded to FTP:", ftpResult.url);
 
     // Cleanup temp files
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -180,7 +180,7 @@ async function mergeVideoWithAudio(videoFtpPath, audioFtpPath, interviewId) {
           }
         })
         .on("end", () => {
-          console.log("✅ Video and audio merged successfully");
+          console.log(" Video and audio merged successfully");
           resolve();
         })
         .on("error", (error) => {
@@ -204,7 +204,7 @@ async function mergeVideoWithAudio(videoFtpPath, audioFtpPath, interviewId) {
       ftpRemoteDir,
     );
 
-    console.log("✅ Final video uploaded to FTP:", ftpResult.url);
+    console.log(" Final video uploaded to FTP:", ftpResult.url);
 
     // Cleanup
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -261,7 +261,7 @@ async function reencodeAudio(inputPath, outputPath, options = {}) {
         }
       })
       .on("end", () => {
-        console.log("✅ Audio re-encoded successfully");
+        console.log(" Audio re-encoded successfully");
         resolve();
       })
       .on("error", reject)

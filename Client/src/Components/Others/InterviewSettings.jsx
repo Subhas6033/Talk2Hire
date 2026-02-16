@@ -625,7 +625,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
                     { icon: "📱", text: "Open your phone's camera app" },
                     { icon: "🎯", text: "Point at the QR code on the left" },
                     { icon: "🔔", text: "Tap the notification that appears" },
-                    { icon: "✅", text: "Grant camera permission" },
+                    { icon: "", text: "Grant camera permission" },
                     { icon: "📹", text: "Position front camera facing you" },
                   ].map((step, i) => (
                     <li key={i} className="flex items-start gap-4 group">

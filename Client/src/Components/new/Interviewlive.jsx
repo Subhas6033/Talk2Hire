@@ -132,7 +132,7 @@ const InterviewLive = () => {
     }
   }, []);
 
-  // Main socket connection
+  // Main socket connection with proper type parameter
   useEffect(() => {
     if (!sessionData) return;
 
@@ -142,6 +142,7 @@ const InterviewLive = () => {
       query: {
         interviewId: sessionData.interviewId,
         userId: sessionData.userId,
+        type: "interview",
       },
       transports: ["websocket", "polling"],
       path: "/socket.io",
@@ -325,18 +326,18 @@ const InterviewLive = () => {
         console.log("Starting recordings");
 
         await audioRecording.startRecording();
-        console.log("✅ Audio started");
+        console.log(" Audio started");
 
         await startVideoRecording();
-        console.log("✅ Primary camera started");
+        console.log(" Primary camera started");
 
         if (screenShareStream) {
           screenRecording.startRecording(screenShareStream);
-          console.log("✅ Screen recording started");
+          console.log(" Screen recording started");
         }
 
         // Secondary camera is already streaming from mobile device
-        console.log("✅ All recordings active");
+        console.log(" All recordings active");
       } catch (err) {
         console.error("Failed to start recordings:", err);
       }

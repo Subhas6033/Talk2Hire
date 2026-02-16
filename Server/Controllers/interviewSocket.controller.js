@@ -32,7 +32,7 @@ function getTTSInstance(interviewId) {
       `📊 Cache status BEFORE creation: ${cacheSize} instances cached`,
     );
     ttsInstanceCache.set(interviewId, createTTSStream());
-    console.log(`✅ TTS instance created and cached for: ${interviewId}`);
+    console.log(` TTS instance created and cached for: ${interviewId}`);
     console.log(
       `📊 Cache status AFTER creation: ${ttsInstanceCache.size} instances cached`,
     );
@@ -115,7 +115,7 @@ function initInterviewSocket(httpServer) {
   }
 
   // ============================================================================
-  // ✅ FIX 1: SETTINGS SOCKET HANDLER
+  //  FIX 1: SETTINGS SOCKET HANDLER
   // Handles mobile camera preview during InterviewSetup phase
   // ============================================================================
   function handleSettingsSocket(socket, interviewId, userId) {
@@ -156,7 +156,7 @@ function initInterviewSocket(httpServer) {
       });
     });
 
-    // ✅ FIX 2: Handle mobile frames (new event name + backward compatibility)
+    //  FIX 2: Handle mobile frames (new event name + backward compatibility)
     socket.on("security_frame_request", (data, ack) => {
       // Cache frame for reconnection
       session.lastMobileFrame = data.frame;
@@ -217,7 +217,7 @@ function initInterviewSocket(httpServer) {
   }
 
   // ============================================================================
-  // ✅ FIX 1: INTERVIEW SOCKET HANDLER
+  //  FIX 1: INTERVIEW SOCKET HANDLER
   // Handles full interview logic (TTS, STT, recording, evaluation)
   // ============================================================================
   async function handleInterviewSocket(socket, interviewId, userId) {
@@ -341,7 +341,7 @@ function initInterviewSocket(httpServer) {
         });
       });
 
-      // ✅ FIX 2: Support new event name for mobile frames
+      //  FIX 2: Support new event name for mobile frames
       socket.on("security_frame_request", (data, ack) => {
         session.lastMobileFrame = data.frame;
         session.lastMobileFrameTimestamp = data.timestamp || Date.now();
@@ -789,7 +789,7 @@ function initInterviewSocket(httpServer) {
           await deepgramReadyPromise;
 
           if (deepgramConnection && deepgramConnection.isConnected()) {
-            console.log(`✅ [${context}] Deepgram verified ready`);
+            console.log(` [${context}] Deepgram verified ready`);
             return true;
           }
 
@@ -802,7 +802,7 @@ function initInterviewSocket(httpServer) {
           await retryConnection;
 
           if (deepgramConnection && deepgramConnection.isConnected()) {
-            console.log(`✅ [${context}] Deepgram ready after retry`);
+            console.log(` [${context}] Deepgram ready after retry`);
             return true;
           }
 
@@ -1150,7 +1150,7 @@ function initInterviewSocket(httpServer) {
                 if (!hasResolved) {
                   clearTimeout(connectionTimeout);
                   hasResolved = true;
-                  console.log("✅ Deepgram connection opened and ready");
+                  console.log(" Deepgram connection opened and ready");
                   resolve(connection);
                 }
               })
@@ -1662,7 +1662,7 @@ function initInterviewSocket(httpServer) {
 
   // ============================================================================
   // MAIN SOCKET CONNECTION HANDLER
-  // ✅ FIX 1: Distinguish settings socket from interview socket using 'type'
+  //  FIX 1: Distinguish settings socket from interview socket using 'type'
   // ============================================================================
   io.on("connection", async (socket) => {
     const { interviewId, userId, type } = socket.handshake.query;
@@ -1696,7 +1696,7 @@ function initInterviewSocket(httpServer) {
 
 /**
  * ============================================================================
- * ✅ FULLY OPTIMIZED: streamTTSToClient - ZERO-LATENCY STREAMING
+ *  FULLY OPTIMIZED: streamTTSToClient - ZERO-LATENCY STREAMING
  * ============================================================================
  */
 async function streamTTSToClient(socket, text, interviewId, retryCount = 0) {
@@ -1744,7 +1744,7 @@ async function streamTTSToClient(socket, text, interviewId, retryCount = 0) {
 
           const totalTime = Date.now() - startTime;
           console.log(
-            `✅ TTS complete: ${totalBytes}B in ${chunkCount} chunks (${totalTime}ms total, first chunk: ${firstChunkTime ? firstChunkTime + "ms" : "N/A"})`,
+            ` TTS complete: ${totalBytes}B in ${chunkCount} chunks (${totalTime}ms total, first chunk: ${firstChunkTime ? firstChunkTime + "ms" : "N/A"})`,
           );
           socket.emit("tts_end");
           resolve();

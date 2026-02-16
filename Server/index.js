@@ -47,9 +47,9 @@ async function testDeepgramLatency() {
 
       const status =
         latency < 100
-          ? "✅ EXCELLENT"
+          ? " EXCELLENT"
           : latency < 200
-            ? "✅ GOOD"
+            ? " GOOD"
             : latency < 500
               ? "⚠️  FAIR"
               : "❌ POOR";
@@ -73,7 +73,7 @@ pool
   .getConnection()
   .then(async (connection) => {
     connection.release();
-    console.log("✅ Connected to DB");
+    console.log(" Connected to DB");
     app.get("/", (req, res) => {
       res.send(
         "Welcome to the Quantamhash Corporation AI Interview Platform Server",

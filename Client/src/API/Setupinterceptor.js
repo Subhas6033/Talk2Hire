@@ -20,13 +20,13 @@ export const setupInterceptors = (store) => {
       const status = error.response?.status;
 
       if (status === 401) {
-        // ✅ Token expired/invalid - clear session
+        //  Token expired/invalid - clear session
         console.log("❌ Session expired (401) - clearing authentication");
 
-        // ✅ Clear Redux state and localStorage
+        //  Clear Redux state and localStorage
         store.dispatch(clearSession());
 
-        // ✅ Redirect to login page (only if not already there)
+        //  Redirect to login page (only if not already there)
         if (
           window.location.pathname !== "/login" &&
           window.location.pathname !== "/signup"

@@ -41,7 +41,7 @@ const uploadVideoChunkController = asyncHandler(async (req, res) => {
     // Get or create video record
     let video = await InterviewVideo.getByInterviewAndType(
       interviewId,
-      videoType
+      videoType,
     );
 
     if (!video) {
@@ -77,7 +77,7 @@ const uploadVideoChunkController = asyncHandler(async (req, res) => {
           ftpPath: result.ftpPath,
           checksum: result.checksum,
         },
-      })
+      }),
     );
   } catch (error) {
     console.error("❌ Error uploading video chunk:", error);
@@ -126,7 +126,7 @@ const uploadVideoFinalController = asyncHandler(async (req, res) => {
       metadata,
     });
 
-    console.log("✅ Final video uploaded successfully:", result.ftpUrl);
+    console.log(" Final video uploaded successfully:", result.ftpUrl);
 
     res.status(200).json(
       new APIRES(200, {
@@ -138,7 +138,7 @@ const uploadVideoFinalController = asyncHandler(async (req, res) => {
           fileSize: result.fileSize,
           checksum: result.checksum,
         },
-      })
+      }),
     );
   } catch (error) {
     console.error("❌ Error uploading final video:", error);
@@ -155,7 +155,7 @@ const finalizeChunkedVideoController = asyncHandler(async (req, res) => {
   }
 
   console.log(
-    `🎬 Finalizing chunked video ${videoId} for interview ${interviewId}`
+    `🎬 Finalizing chunked video ${videoId} for interview ${interviewId}`,
   );
 
   try {
@@ -165,7 +165,7 @@ const finalizeChunkedVideoController = asyncHandler(async (req, res) => {
       new APIRES(200, {
         message: "Video finalized successfully",
         data: result,
-      })
+      }),
     );
   } catch (error) {
     console.error("❌ Error finalizing video:", error);
@@ -206,7 +206,7 @@ const getInterviewVideosController = asyncHandler(async (req, res) => {
             completedAt: v.completed_at,
           })),
         },
-      })
+      }),
     );
   } catch (error) {
     console.error("❌ Error getting interview videos:", error);
@@ -229,7 +229,7 @@ const getVideoStatsController = asyncHandler(async (req, res) => {
       new APIRES(200, {
         message: "Video statistics retrieved successfully",
         data: stats,
-      })
+      }),
     );
   } catch (error) {
     console.error("❌ Error getting video stats:", error);
@@ -252,7 +252,7 @@ const getDetailedStatsController = asyncHandler(async (req, res) => {
       new APIRES(200, {
         message: "Detailed statistics retrieved successfully",
         data: stats,
-      })
+      }),
     );
   } catch (error) {
     console.error("❌ Error getting detailed stats:", error);
@@ -275,7 +275,7 @@ const manualUploadVideosController = asyncHandler(async (req, res) => {
 
     console.log(
       "🤖 Manually triggering video upload for interview:",
-      interviewId
+      interviewId,
     );
 
     const result = await autoUploadInterviewVideos(interviewId);
@@ -284,7 +284,7 @@ const manualUploadVideosController = asyncHandler(async (req, res) => {
       new APIRES(200, {
         message: "Video upload process completed",
         data: result,
-      })
+      }),
     );
   } catch (error) {
     console.error("❌ Error in manual video upload:", error);
@@ -304,7 +304,7 @@ const mergeCameraAnglesController = asyncHandler(async (req, res) => {
   const type = outputType || "side-by-side";
 
   console.log(
-    `🎥 Merging camera angles for interview ${interviewId} (${type})`
+    `🎥 Merging camera angles for interview ${interviewId} (${type})`,
   );
 
   try {
@@ -314,7 +314,7 @@ const mergeCameraAnglesController = asyncHandler(async (req, res) => {
       new APIRES(200, {
         message: "Camera angles merged successfully",
         data: result,
-      })
+      }),
     );
   } catch (error) {
     console.error("❌ Error merging camera angles:", error);
@@ -341,7 +341,7 @@ const verifyVideoIntegrityController = asyncHandler(async (req, res) => {
           ? "Video integrity verified"
           : "Video integrity check failed",
         data: result,
-      })
+      }),
     );
   } catch (error) {
     console.error("❌ Error verifying video integrity:", error);
@@ -369,7 +369,7 @@ const deleteVideoController = asyncHandler(async (req, res) => {
       try {
         const { deleteFileFromFTP } = require("../Upload/uploadOnFTP");
         await deleteFileFromFTP(video.ftp_path);
-        console.log("✅ Video deleted from FTP");
+        console.log(" Video deleted from FTP");
       } catch (ftpError) {
         console.error("⚠️ Failed to delete from FTP:", ftpError);
       }
@@ -395,7 +395,7 @@ const deleteVideoController = asyncHandler(async (req, res) => {
       new APIRES(200, {
         message: "Video deleted successfully",
         data: { videoId },
-      })
+      }),
     );
   } catch (error) {
     console.error("❌ Error deleting video:", error);

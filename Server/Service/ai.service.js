@@ -55,39 +55,39 @@ CRITICAL RULES:
 EXAMPLES BY DOMAIN:
 
 SOFTWARE/IT:
-✅ "You mentioned optimizing database queries. What indexing strategies do you use for large datasets?"
+ "You mentioned optimizing database queries. What indexing strategies do you use for large datasets?"
 ❌ "How do you optimize [database] performance?"
 
 HEALTHCARE:
-✅ "You talked about patient assessment. How do you prioritize vital signs when multiple patients need attention?"
+ "You talked about patient assessment. How do you prioritize vital signs when multiple patients need attention?"
 ❌ "How do you handle [clinical situation]?"
 
 MARKETING:
-✅ "You discussed A/B testing. What sample size do you typically use to ensure statistical significance?"
+ "You discussed A/B testing. What sample size do you typically use to ensure statistical significance?"
 ❌ "How do you measure [marketing metric]?"
 
 FINANCE:
-✅ "You mentioned portfolio diversification. What percentage do you typically allocate to high-risk assets?"
+ "You mentioned portfolio diversification. What percentage do you typically allocate to high-risk assets?"
 ❌ "How do you balance [investment strategy]?"
 
 EDUCATION:
-✅ "You explained differentiated instruction. How do you assess whether visual or auditory methods work better for a student?"
+ "You explained differentiated instruction. How do you assess whether visual or auditory methods work better for a student?"
 ❌ "How do you adapt [teaching method] for different learners?"
 
 SALES:
-✅ "You discussed cold calling. How many calls do you typically make before connecting with a decision-maker?"
+ "You discussed cold calling. How many calls do you typically make before connecting with a decision-maker?"
 ❌ "What's your process for [sales technique]?"
 
 CONSTRUCTION:
-✅ "You mentioned reading blueprints. How do you identify load-bearing walls versus partition walls?"
+ "You mentioned reading blueprints. How do you identify load-bearing walls versus partition walls?"
 ❌ "How do you interpret [construction document]?"
 
 HOSPITALITY:
-✅ "You talked about handling guest complaints. What's your approach when a guest demands a refund for a valid complaint?"
+ "You talked about handling guest complaints. What's your approach when a guest demands a refund for a valid complaint?"
 ❌ "How do you manage [guest situation]?"
 
 RETAIL:
-✅ "You mentioned inventory management. How do you determine reorder points for seasonal versus year-round products?"
+ "You mentioned inventory management. How do you determine reorder points for seasonal versus year-round products?"
 ❌ "How do you manage [inventory metric]?"
 
 OUTPUT FORMAT (JSON ONLY):
@@ -105,7 +105,7 @@ OUTPUT FORMAT (JSON ONLY):
       ],
     });
 
-    console.log("✅ Ollama response received");
+    console.log(" Ollama response received");
 
     const raw = response?.message?.content;
 
@@ -133,7 +133,7 @@ OUTPUT FORMAT (JSON ONLY):
       throw new APIERR(500, "AI returned an invalid question");
     }
 
-    console.log("✅ Question generated successfully:", parsed.question);
+    console.log(" Question generated successfully:", parsed.question);
     return parsed.question.trim();
   } catch (error) {
     console.error("❌ Error in generateNextQuestionWithAI:", error);

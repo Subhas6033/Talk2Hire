@@ -63,7 +63,7 @@ const useAudioRecording = (socketRef, interviewId, userId) => {
       ttsGain.connect(destination);
       micGain.connect(destination);
 
-      console.log("✅ Audio recording system initialized", {
+      console.log(" Audio recording system initialized", {
         sampleRate: audioContext.sampleRate,
         state: audioContext.state,
       });
@@ -158,7 +158,7 @@ const useAudioRecording = (socketRef, interviewId, userId) => {
         return;
       }
 
-      console.log("✅ Audio stream has tracks:", audioTracks.length);
+      console.log(" Audio stream has tracks:", audioTracks.length);
 
       // Use Opus codec for better compression and quality
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
@@ -197,7 +197,7 @@ const useAudioRecording = (socketRef, interviewId, userId) => {
 
           const handler = (response) => {
             clearTimeout(timeout);
-            console.log("✅ Server confirmed audio session:", response);
+            console.log(" Server confirmed audio session:", response);
             audioSessionIdRef.current = response.audioId;
             resolve(response);
           };
@@ -252,7 +252,7 @@ const useAudioRecording = (socketRef, interviewId, userId) => {
       };
 
       mediaRecorder.onstart = () => {
-        console.log("✅ Audio recording started");
+        console.log(" Audio recording started");
         isRecordingRef.current = true;
         hasStartedRef.current = true;
       };
@@ -280,7 +280,7 @@ const useAudioRecording = (socketRef, interviewId, userId) => {
       mediaRecorder.start(CHUNK_DURATION_MS);
 
       console.log(
-        `✅ Audio MediaRecorder started (${CHUNK_DURATION_MS}ms chunks)`,
+        ` Audio MediaRecorder started (${CHUNK_DURATION_MS}ms chunks)`,
       );
     } catch (error) {
       console.error("❌ Failed to start audio recording:", error);
@@ -312,7 +312,7 @@ const useAudioRecording = (socketRef, interviewId, userId) => {
         micSourceRef.current = null;
       }
 
-      console.log("✅ Audio recording stopped successfully");
+      console.log(" Audio recording stopped successfully");
     } catch (error) {
       console.error("❌ Error stopping audio recording:", error);
     }
