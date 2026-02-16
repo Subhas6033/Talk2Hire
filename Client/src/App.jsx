@@ -23,6 +23,7 @@ import {
   MobileCameraPage,
   RegistrationForm,
 } from "./Pages/index.pages.js";
+import { StreamProvider } from "./Hooks/streamContext.js";
 
 import { Guidlines, MobileSecurityCamera } from "./Components/index.js";
 import InterviewSetup from "./Components/new/InterviewSetup.jsx";
@@ -82,85 +83,87 @@ const App = () => {
                   {...pageTransition}
                   className="flex-1"
                 >
-                  <Routes>
-                    {/* PUBLIC ROUTES */}
-                    <Route path="/" element={<Home />} />
-                    <Route path="/about" element={<About />} />
-                    <Route path="/privacy" element={<Privacy />} />
-                    <Route path="/terms" element={<Terms />} />
-                    <Route path="/contact" element={<Contact />} />
-                    <Route path="/guidlines" element={<Guidlines />} />
-                    <Route path="/hire" element={<Hire />} />
-                    <Route
-                      path="/mobile-security"
-                      element={<MobileSecurityCamera />}
-                    />
-                    <Route
-                      path="/verify-password"
-                      element={<VerifyPassword />}
-                    />
+                  <StreamProvider>
+                    <Routes>
+                      {/* PUBLIC ROUTES */}
+                      <Route path="/" element={<Home />} />
+                      <Route path="/about" element={<About />} />
+                      <Route path="/privacy" element={<Privacy />} />
+                      <Route path="/terms" element={<Terms />} />
+                      <Route path="/contact" element={<Contact />} />
+                      <Route path="/guidlines" element={<Guidlines />} />
+                      <Route path="/hire" element={<Hire />} />
+                      <Route
+                        path="/mobile-security"
+                        element={<MobileSecurityCamera />}
+                      />
+                      <Route
+                        path="/verify-password"
+                        element={<VerifyPassword />}
+                      />
 
-                    {/* Redirect to home if already logged in */}
-                    <Route
-                      path="/login"
-                      element={
-                        <PublicRoute>
-                          <Login />
-                        </PublicRoute>
-                      }
-                    />
-                    <Route
-                      path="/signup"
-                      element={
-                        <PublicRoute>
-                          <RegistrationForm />
-                        </PublicRoute>
-                      }
-                    />
+                      {/* Redirect to home if already logged in */}
+                      <Route
+                        path="/login"
+                        element={
+                          <PublicRoute>
+                            <Login />
+                          </PublicRoute>
+                        }
+                      />
+                      <Route
+                        path="/signup"
+                        element={
+                          <PublicRoute>
+                            <RegistrationForm />
+                          </PublicRoute>
+                        }
+                      />
 
-                    {/* PROTECTED ROUTES */}
-                    <Route
-                      path="/interview"
-                      element={
-                        <ProtectedRoute>
-                          <InterviewSetup />
-                        </ProtectedRoute>
-                      }
-                    />
+                      {/* PROTECTED ROUTES */}
+                      <Route
+                        path="/interview"
+                        element={
+                          <ProtectedRoute>
+                            <InterviewSetup />
+                          </ProtectedRoute>
+                        }
+                      />
 
-                    <Route
-                      path="/interview/live"
-                      element={
-                        <ProtectedRoute>
-                          <InterviewLive />
-                        </ProtectedRoute>
-                      }
-                    />
+                      <Route
+                        path="/interview/live"
+                        element={
+                          <ProtectedRoute>
+                            <InterviewLive />
+                          </ProtectedRoute>
+                        }
+                      />
 
-                    <Route
-                      path="/mobile-camera"
-                      element={<MobileCameraPage />}
-                    />
-                    <Route
-                      path="/dashboard"
-                      element={
-                        <ProtectedRoute>
-                          <InterviewDashboard />
-                        </ProtectedRoute>
-                      }
-                    />
-                    <Route
-                      path="/profile/:id"
-                      element={
-                        <ProtectedRoute>
-                          <Profile />
-                        </ProtectedRoute>
-                      }
-                    />
+                      <Route
+                        path="/mobile-camera"
+                        element={<MobileCameraPage />}
+                      />
+                      <Route
+                        path="/dashboard"
+                        element={
+                          <ProtectedRoute>
+                            <InterviewDashboard />
+                          </ProtectedRoute>
+                        }
+                      />
+                      <Route
+                        path="/profile/:id"
+                        element={
+                          <ProtectedRoute>
+                            <Profile />
+                          </ProtectedRoute>
+                        }
+                      />
 
-                    {/* NOT FOUND */}
-                    <Route path="*" element={<NotFound />} />
-                  </Routes>
+                      {/* NOT FOUND */}
+                      <Route path="*" element={<NotFound />} />
+                    </Routes>
+                  </StreamProvider>
                 </motion.main>
               </AnimatePresence>
             </>

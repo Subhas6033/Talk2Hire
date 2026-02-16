@@ -7,6 +7,7 @@ import { Button, SkillsSelector } from "../index";
 import { startInterview } from "../../API/interviewApi";
 import { QRCodeCanvas } from "qrcode.react";
 import { io } from "socket.io-client";
+import { useStreams } from "../../Hooks/streamContext";
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
@@ -14,6 +15,7 @@ const InterviewSetup = () => {
   const navigate = useNavigate();
   const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
+  const streamsRef = useStreams();
 
   const { watch, setValue } = useForm({
     mode: "onChange",
@@ -79,7 +81,6 @@ const InterviewSetup = () => {
     }
 
     setError(null);
-    setCurrentStep(2);
 
     if (!questionStartedRef.current) {
       questionStartedRef.current = true;
@@ -100,7 +101,7 @@ const InterviewSetup = () => {
           });
 
           setQuestionsReady(true);
-          setCurrentStep(2);
+          setCurrentStep(2); // ✅ Only set once after success
         })
         .catch(() => {
           setError("Failed to generate questions.");
@@ -112,10 +113,45 @@ const InterviewSetup = () => {
     }
   };
 
-  const handleAcceptGuidelines = () => setCurrentStep(3);
-  const handleMicSuccess = () => setCurrentStep(4);
-  const handlePrimaryCameraSuccess = () => setCurrentStep(5);
-  const handleMobileCameraSuccess = () => setCurrentStep(6);
+  const handleAcceptGuidelines = () => {
+    if (isGeneratingQuestions) {
+      setError("Please wait for questions to finish generating.");
+      return;
+    }
+    if (!questionsReady) {
+      setError("Questions are not ready yet. Please wait.");
+      return;
+    }
+    setError(null);
+    setCurrentStep(3);
+  };
+
+  const handleMicSuccess = () => {
+    if (!questionsReady) {
+      setError("Questions are not ready yet.");
+      return;
+    }
+    setError(null);
+    setCurrentStep(4);
+  };
+
+  const handlePrimaryCameraSuccess = () => {
+    if (!questionsReady) {
+      setError("Questions are not ready yet.");
+      return;
+    }
+    setError(null);
+    setCurrentStep(5);
+  };
+
+  const handleMobileCameraSuccess = () => {
+    if (!questionsReady) {
+      setError("Questions are not ready yet.");
+      return;
+    }
+    setError(null);
+    setCurrentStep(6);
+  };
 
   /* ================= MIC TEST ================= */
 
@@ -192,12 +228,16 @@ const InterviewSetup = () => {
       query: {
         interviewId: sessionData.interviewId,
         userId: sessionData.userId,
+        type: "settings", // ✅ CRITICAL FIX: Added type parameter
       },
     });
 
     settingsSocketRef.current = socket;
 
-    socket.on("secondary_camera_ready", () => setMobileCameraConnected(true));
+    socket.on("secondary_camera_ready", () => {
+      console.log("✅ Mobile camera connected");
+      setMobileCameraConnected(true);
+    });
 
     socket.on("mobile_camera_frame", (data) => {
       if (!data?.frame || !mobileCanvasRef.current) return;
@@ -211,7 +251,15 @@ const InterviewSetup = () => {
       img.src = data.frame;
     });
 
-    return () => socket.disconnect();
+    socket.on("connect_error", (err) => {
+      console.error("Socket connection error:", err);
+      setError("Failed to connect to server for mobile camera.");
+    });
+
+    return () => {
+      console.log("Disconnecting settings socket");
+      socket.disconnect();
+    };
   }, [currentStep, sessionData, user?.id]);
 
   /* ================= SCREEN SHARE ================= */
@@ -255,26 +303,31 @@ const InterviewSetup = () => {
       return;
     }
 
+    // Store streams in context ref (not in navigation state)
+    streamsRef.current = {
+      micStream,
+      primaryCameraStream,
+      screenShareStream,
+      sessionData,
+    };
+
     hasNavigatedRef.current = true;
 
-    navigate("/interview/live", {
-      state: {
-        sessionData,
-        micStream,
-        primaryCameraStream,
-        screenShareStream,
-      },
-    });
+    // Navigate WITHOUT passing streams in state
+    navigate("/interview/live");
   };
 
   /* ================= CLEANUP ================= */
 
   useEffect(() => {
     return () => {
-      cancelAnimationFrame(animationFrameRef.current);
-      micStream?.getTracks().forEach((t) => t.stop());
-      primaryCameraStream?.getTracks().forEach((t) => t.stop());
-      screenShareStream?.getTracks().forEach((t) => t.stop());
+      // Only cleanup if we haven't navigated to the interview
+      if (!hasNavigatedRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        micStream?.getTracks().forEach((t) => t.stop());
+        primaryCameraStream?.getTracks().forEach((t) => t.stop());
+        screenShareStream?.getTracks().forEach((t) => t.stop());
+      }
       settingsSocketRef.current?.disconnect();
     };
   }, []);
@@ -442,9 +495,26 @@ const InterviewSetup = () => {
               ))}
             </div>
 
+            {isGeneratingQuestions && (
+              <div className="mb-6 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+                <div className="flex items-center gap-3">
+                  <div className="animate-spin w-5 h-5 border-2 border-blue-400/30 border-t-blue-400 rounded-full" />
+                  <p className="text-blue-300 text-sm">
+                    Questions are being generated. Please wait...
+                  </p>
+                </div>
+              </div>
+            )}
+
             <div className="flex justify-center">
-              <Button onClick={handleAcceptGuidelines} className="px-10">
-                Accept and Continue
+              <Button
+                onClick={handleAcceptGuidelines}
+                className="px-10"
+                disabled={isGeneratingQuestions || !questionsReady}
+              >
+                {isGeneratingQuestions
+                  ? "Please wait..."
+                  : "Accept and Continue"}
               </Button>
             </div>
           </Card>
@@ -625,6 +695,8 @@ const InterviewSetup = () => {
                 <div className="relative w-full aspect-video bg-black rounded-xl overflow-hidden">
                   <canvas
                     ref={mobileCanvasRef}
+                    width="640"
+                    height="480"
                     className="w-full h-full object-cover"
                     style={{ transform: "scaleX(-1)" }}
                   />
@@ -675,7 +747,9 @@ const InterviewSetup = () => {
                       </Button>
                     </div>
                   ) : (
-                    <p className="text-gray-400 text-sm">Waiting...</p>
+                    <p className="text-gray-400 text-sm">
+                      Waiting for connection...
+                    </p>
                   )}
                 </div>
               </div>
@@ -767,4 +841,5 @@ const InterviewSetup = () => {
     </section>
   );
 };
+
 export default InterviewSetup;

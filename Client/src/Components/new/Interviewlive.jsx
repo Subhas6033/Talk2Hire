@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { io } from "socket.io-client";
 import { useInterview } from "../../Hooks/useInterviewHook";
 import useVideoRecording from "../../Hooks/useVideoRecordingHook";
@@ -8,16 +8,17 @@ import useScreenRecording from "../../Hooks/useScreenRecording";
 import useSecondaryCamera from "../../Hooks/useSecondaryCameraHook";
 import { Button } from "../index";
 import { Card } from "../Common/Card";
+import { useStreams } from "../../Hooks/streamContext";
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
 const InterviewLive = () => {
-  const location = useLocation();
   const navigate = useNavigate();
+  const streamsRef = useStreams();
 
-  // Get streams and session from navigation state
+  // Get streams and session from context ref
   const { sessionData, micStream, primaryCameraStream, screenShareStream } =
-    location.state || {};
+    streamsRef.current || {};
 
   // Redirect if no session data
   useEffect(() => {
@@ -326,18 +327,18 @@ const InterviewLive = () => {
         console.log("Starting recordings");
 
         await audioRecording.startRecording();
-        console.log(" Audio started");
+        console.log("✓ Audio started");
 
         await startVideoRecording();
-        console.log(" Primary camera started");
+        console.log("✓ Primary camera started");
 
         if (screenShareStream) {
           screenRecording.startRecording(screenShareStream);
-          console.log(" Screen recording started");
+          console.log("✓ Screen recording started");
         }
 
         // Secondary camera is already streaming from mobile device
-        console.log(" All recordings active");
+        console.log("✓ All recordings active");
       } catch (err) {
         console.error("Failed to start recordings:", err);
       }
@@ -360,6 +361,28 @@ const InterviewLive = () => {
       navigate("/dashboard");
     }
   }, [evaluationStatus, evaluationResults, navigate]);
+
+  // Cleanup streams when component unmounts
+  useEffect(() => {
+    return () => {
+      // Clear the streams from context when leaving the interview
+      if (streamsRef.current) {
+        streamsRef.current.micStream?.getTracks().forEach((t) => t.stop());
+        streamsRef.current.primaryCameraStream
+          ?.getTracks()
+          .forEach((t) => t.stop());
+        streamsRef.current.screenShareStream
+          ?.getTracks()
+          .forEach((t) => t.stop());
+        streamsRef.current = {
+          micStream: null,
+          primaryCameraStream: null,
+          screenShareStream: null,
+          sessionData: null,
+        };
+      }
+    };
+  }, []);
 
   const secondaryIsActive =
     secondaryCamera.isRecording || mobileCameraConnected;
