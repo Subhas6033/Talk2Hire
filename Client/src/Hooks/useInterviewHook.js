@@ -351,9 +351,16 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
       micStreamRef.current = stream;
       dispatch(setMicPermissionGranted(true));
-      console.log(" Microphone access granted");
+      console.log("✅ Microphone access granted");
 
       const audioCtx = audioCtxRef.current;
+
+      // ✅ CRITICAL FIX: Resume AudioContext if suspended
+      if (audioCtx.state === "suspended") {
+        console.log("▶️ Resuming AudioContext for microphone...");
+        await audioCtx.resume();
+        console.log("✅ AudioContext resumed, state:", audioCtx.state);
+      }
 
       const source = audioCtx.createMediaStreamSource(stream);
       const processor = audioCtx.createScriptProcessor(4096, 1, 1);
@@ -400,7 +407,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         }
       };
 
-      console.log(" Mic streaming started");
+      console.log("✅ Mic streaming started");
     } catch (err) {
       console.error("❌ Microphone error:", err);
       alert(

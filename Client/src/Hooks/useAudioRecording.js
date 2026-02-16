@@ -45,6 +45,11 @@ const useAudioRecording = (socketRef, interviewId, userId) => {
       const audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
       audioContextRef.current = audioContext;
 
+      // Resume if suspended
+      if (audioContext.state === "suspended") {
+        await audioContext.resume();
+      }
+
       // Create destination for mixed audio
       const destination = audioContext.createMediaStreamDestination();
       destinationRef.current = destination;
@@ -63,7 +68,7 @@ const useAudioRecording = (socketRef, interviewId, userId) => {
       ttsGain.connect(destination);
       micGain.connect(destination);
 
-      console.log(" Audio recording system initialized", {
+      console.log("✅ Audio recording system initialized", {
         sampleRate: audioContext.sampleRate,
         state: audioContext.state,
       });
@@ -153,12 +158,7 @@ const useAudioRecording = (socketRef, interviewId, userId) => {
 
       // Check if stream has audio tracks
       const audioTracks = stream.getAudioTracks();
-      if (audioTracks.length === 0) {
-        console.error("❌ No audio tracks in destination stream");
-        return;
-      }
-
-      console.log(" Audio stream has tracks:", audioTracks.length);
+      console.log("📊 Audio stream has tracks:", audioTracks.length);
 
       // Use Opus codec for better compression and quality
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
@@ -197,7 +197,7 @@ const useAudioRecording = (socketRef, interviewId, userId) => {
 
           const handler = (response) => {
             clearTimeout(timeout);
-            console.log(" Server confirmed audio session:", response);
+            console.log("✅ Server confirmed audio session:", response);
             audioSessionIdRef.current = response.audioId;
             resolve(response);
           };
@@ -223,9 +223,11 @@ const useAudioRecording = (socketRef, interviewId, userId) => {
         chunkNumberRef.current++;
         const currentChunk = chunkNumberRef.current;
 
-        console.log(
-          `📦 Audio chunk #${currentChunk} ready (${event.data.size} bytes)`,
-        );
+        if (currentChunk % 5 === 0) {
+          console.log(
+            `📦 Audio chunk #${currentChunk} ready (${event.data.size} bytes)`,
+          );
+        }
 
         // Convert to base64 for WebSocket transmission
         const reader = new FileReader();
@@ -242,17 +244,13 @@ const useAudioRecording = (socketRef, interviewId, userId) => {
               interviewId,
               userId,
             });
-
-            if (currentChunk % 5 === 0) {
-              console.log(`📤 Audio chunk #${currentChunk} sent to server`);
-            }
           }
         };
         reader.readAsDataURL(event.data);
       };
 
       mediaRecorder.onstart = () => {
-        console.log(" Audio recording started");
+        console.log("✅ Audio recording started");
         isRecordingRef.current = true;
         hasStartedRef.current = true;
       };
@@ -280,7 +278,7 @@ const useAudioRecording = (socketRef, interviewId, userId) => {
       mediaRecorder.start(CHUNK_DURATION_MS);
 
       console.log(
-        ` Audio MediaRecorder started (${CHUNK_DURATION_MS}ms chunks)`,
+        `✅ Audio MediaRecorder started (${CHUNK_DURATION_MS}ms chunks)`,
       );
     } catch (error) {
       console.error("❌ Failed to start audio recording:", error);
@@ -312,7 +310,7 @@ const useAudioRecording = (socketRef, interviewId, userId) => {
         micSourceRef.current = null;
       }
 
-      console.log(" Audio recording stopped successfully");
+      console.log("✅ Audio recording stopped successfully");
     } catch (error) {
       console.error("❌ Error stopping audio recording:", error);
     }

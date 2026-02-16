@@ -8,6 +8,7 @@ export const StreamProvider = ({ children }) => {
     primaryCameraStream: null,
     screenShareStream: null,
     sessionData: null,
+    preInitializedSocket: null,
   });
 
   return (

@@ -73,6 +73,7 @@ const InterviewSetup = () => {
 
   const primaryVideoRef = useRef(null);
   const mobileCanvasRef = useRef(null);
+  const micTestCleanupRef = useRef(false);
   const screenVideoRef = useRef(null);
   const settingsSocketRef = useRef(null);
   const interviewSocketRef = useRef(null);
@@ -143,6 +144,18 @@ const InterviewSetup = () => {
       setError("Questions are not ready yet.");
       return;
     }
+
+    // Stop the animation frame
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+
+    // Mark cleanup as done
+    micTestCleanupRef.current = true;
+    analyserRef.current = null;
+
+    console.log("✅ Mic test complete, moving to next step");
     setError(null);
     setCurrentStep(4);
   };
@@ -202,45 +215,107 @@ const InterviewSetup = () => {
   const startMicTest = async () => {
     try {
       setIsMicTesting(true);
+      setError(null);
+      micTestCleanupRef.current = false; // Prevent cleanup
+
+      console.log("🎤 Starting microphone test...");
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+
+      console.log("✅ Got microphone stream:", {
+        active: stream.active,
+        tracks: stream.getTracks().length,
       });
 
       setMicStream(stream);
 
+      // Create or get AudioContext
       if (!audioContextRef.current) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
         audioContextRef.current = new AudioContext();
+        console.log("✅ Created new AudioContext");
       }
 
       const audioContext = audioContextRef.current;
 
+      console.log("📊 AudioContext state:", audioContext.state);
+
+      // Resume AudioContext if suspended
       if (audioContext.state === "suspended") {
+        console.log("▶️ Resuming AudioContext...");
         await audioContext.resume();
+        console.log("✅ AudioContext resumed, state:", audioContext.state);
       }
 
-      const analyser = audioContext.createAnalyser();
-      const source = audioContext.createMediaStreamSource(stream);
+      // Verify AudioContext is now running
+      if (audioContext.state !== "running") {
+        throw new Error(
+          `AudioContext state is ${audioContext.state}, expected 'running'`,
+        );
+      }
 
-      source.connect(analyser);
+      // Create analyser node
+      const analyser = audioContext.createAnalyser();
       analyser.fftSize = 256;
       analyserRef.current = analyser;
+      console.log("✅ Created analyser node");
+
+      // Create source from microphone stream
+      const source = audioContext.createMediaStreamSource(stream);
+      console.log("✅ Created MediaStreamSource");
+
+      // Connect source to analyser
+      source.connect(analyser);
+      console.log("✅ Connected source to analyser");
 
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
+      let frameCount = 0;
       const updateLevel = () => {
+        // Check if we should stop
+        if (!analyserRef.current || micTestCleanupRef.current) {
+          console.log("⚠️ Stopping mic test updates");
+          return;
+        }
+
         analyser.getByteFrequencyData(dataArray);
         const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+        const level = Math.min(100, (avg / 128) * 100);
 
-        setMicLevel(Math.min(100, (avg / 128) * 100));
+        setMicLevel(level);
+
+        frameCount++;
+        if (frameCount === 1) {
+          console.log("✅ First level update:", level.toFixed(1));
+        }
+        if (frameCount % 60 === 0) {
+          console.log(
+            `🎤 Mic level: ${level.toFixed(1)}%, avg: ${avg.toFixed(1)}`,
+          );
+        }
+
         animationFrameRef.current = requestAnimationFrame(updateLevel);
       };
 
+      // Start the animation loop
+      console.log("🔄 Starting level update loop...");
       updateLevel();
+      console.log("✅ Microphone test started successfully");
     } catch (err) {
-      console.error("Microphone error:", err);
-      setError("Microphone permission denied.");
+      console.error("❌ Microphone error:", err);
+      console.error("Error details:", {
+        name: err.name,
+        message: err.message,
+      });
+      setError(`Microphone error: ${err.message}`);
       setIsMicTesting(false);
+      micTestCleanupRef.current = true;
     }
   };
 
@@ -416,7 +491,6 @@ const InterviewSetup = () => {
             clearTimeout(timeout);
             console.log("✅ Socket connected:", socket.id);
 
-            // ✅ CRITICAL: Tell server we're in SETUP MODE
             socket.emit("setup_mode", {
               setupInProgress: true,
               interviewId: sessionData.interviewId,
@@ -449,8 +523,6 @@ const InterviewSetup = () => {
             resolve();
           });
         });
-
-        // ✅ DON'T register tts_audio or question listeners - backend blocks them
 
         console.log("📝 Registering recording sessions (NO DATA SENT YET)");
 
@@ -622,11 +694,23 @@ const InterviewSetup = () => {
         console.log("   - Interview: NOT started");
         console.log("   - TTS/STT: Blocked");
 
-        // ✅ CRITICAL: Set navigation flag BEFORE storing context
-        hasNavigatedRef.current = true;
-        console.log("✅ Navigation flag set to TRUE");
+        // ✅ CRITICAL: Validate screen stream before navigation
+        if (!screenShareStream || !screenShareStream.active) {
+          throw new Error("Screen share stream is not active");
+        }
 
-        // Store streams in context SYNCHRONOUSLY
+        const screenTrack = screenShareStream.getVideoTracks()[0];
+        if (!screenTrack || screenTrack.readyState !== "live") {
+          throw new Error("Screen sharing track is not active");
+        }
+
+        console.log("✅ Screen stream verified:", {
+          active: screenShareStream.active,
+          trackState: screenTrack.readyState,
+          trackEnabled: screenTrack.enabled,
+        });
+
+        // ✅ Store streams in context SYNCHRONOUSLY
         streamsRef.current = {
           micStream,
           primaryCameraStream,
@@ -645,19 +729,20 @@ const InterviewSetup = () => {
           socketConnected: socket.connected,
         });
 
-        // Small delay to ensure React state updates
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        // ✅ Set navigation flag
+        hasNavigatedRef.current = true;
+        console.log("✅ Navigation flag set to TRUE");
 
         if (mounted) {
           console.log("🚀 Navigating to /interview/live");
           console.log("⚡ Interview will START on next page");
-          navigate("/interview/live", { replace: true }); // ✅ Use replace
+          navigate("/interview/live", { replace: true });
         }
       } catch (error) {
         console.error("❌ Pre-initialization failed:", error);
         if (mounted) {
           setInitError(error.message);
-          hasNavigatedRef.current = false; // Reset flag on error
+          hasNavigatedRef.current = false;
           if (socket) {
             socket.disconnect();
             interviewSocketRef.current = null;
@@ -670,7 +755,6 @@ const InterviewSetup = () => {
 
     return () => {
       mounted = false;
-      // Don't disconnect socket here - let cleanup effect handle it
     };
   }, [
     currentStep,
@@ -680,35 +764,40 @@ const InterviewSetup = () => {
     primaryCameraStream,
     screenShareStream,
     navigate,
+    streamsRef,
   ]);
 
   /* ================= CLEANUP ================= */
 
   useEffect(() => {
     return () => {
-      // Only cleanup if we DIDN'T navigate successfully
-      if (!hasNavigatedRef.current) {
-        console.log("🧹 Cleaning up streams (setup cancelled)");
-        cancelAnimationFrame(animationFrameRef.current);
-
-        if (audioContextRef.current) {
-          audioContextRef.current.close().catch(console.error);
-        }
-
-        micStream?.getTracks().forEach((t) => {
-          console.log("🛑 Stopping mic track");
-          t.stop();
-        });
-        primaryCameraStream?.getTracks().forEach((t) => {
-          console.log("🛑 Stopping camera track");
-          t.stop();
-        });
-        screenShareStream?.getTracks().forEach((t) => {
-          console.log("🛑 Stopping screen track");
-          t.stop();
-        });
-      } else {
+      // Only cleanup when actually leaving the component (navigation successful)
+      if (hasNavigatedRef.current) {
         console.log("✅ Navigation successful, streams preserved in context");
+        settingsSocketRef.current?.disconnect();
+        return;
+      }
+
+      // Component unmounting without successful navigation
+      console.log("🧹 Cleaning up streams (setup cancelled)");
+
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+
+      // Don't close AudioContext - let it be reused
+      // if (audioContextRef.current) {
+      //   audioContextRef.current.close().catch(console.error);
+      // }
+
+      if (micStream) {
+        micStream.getTracks().forEach((t) => t.stop());
+      }
+      if (primaryCameraStream) {
+        primaryCameraStream.getTracks().forEach((t) => t.stop());
+      }
+      if (screenShareStream) {
+        screenShareStream.getTracks().forEach((t) => t.stop());
       }
 
       settingsSocketRef.current?.disconnect();

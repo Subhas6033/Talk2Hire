@@ -34,10 +34,15 @@ const InterviewLive = () => {
     preInitializedSocket,
   } = streamsRef.current || {};
 
-  // Redirect if no session data (with delay for context to populate)
+  // ✅ FIXED: Better redirect logic with proper delay
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (!sessionData || !micStream || !primaryCameraStream) {
+      if (
+        !sessionData ||
+        !micStream ||
+        !primaryCameraStream ||
+        !screenShareStream
+      ) {
         console.error("❌ Missing required streams:", {
           hasSessionData: !!sessionData,
           hasMicStream: !!micStream,
@@ -47,10 +52,16 @@ const InterviewLive = () => {
         alert("Invalid session. Please complete setup first.");
         navigate("/interview");
       }
-    }, 500); // Increased timeout
+    }, 1000); // Increased from 500ms to 1000ms
 
     return () => clearTimeout(timer);
-  }, [navigate]); // Only run once with navigate dependency
+  }, [
+    sessionData,
+    micStream,
+    primaryCameraStream,
+    screenShareStream,
+    navigate,
+  ]);
 
   const interview = useInterview(
     sessionData?.interviewId,
@@ -150,24 +161,46 @@ const InterviewLive = () => {
     }
   }, [primaryCameraStream]);
 
-  // ✅ Attach screen share stream with retry logic
+  // ✅ FIXED: Attach screen share stream with better error handling
   useEffect(() => {
-    if (!screenVideoRef.current || !screenShareStream) return;
+    if (!screenVideoRef.current || !screenShareStream) {
+      console.log("⏸️ Waiting for screen share stream or video ref");
+      return;
+    }
 
     console.log("🖥️ Attaching screen share stream");
 
     const videoElement = screenVideoRef.current;
+
+    // Clear any previous stream
+    if (videoElement.srcObject) {
+      const oldStream = videoElement.srcObject;
+      oldStream.getTracks().forEach((track) => track.stop());
+    }
+
     videoElement.srcObject = screenShareStream;
     videoElement.muted = true;
     videoElement.playsInline = true;
 
     const playVideo = async () => {
       try {
+        // Wait for metadata to load
+        await new Promise((resolve, reject) => {
+          if (videoElement.readyState >= 2) {
+            resolve();
+          } else {
+            videoElement.onloadedmetadata = resolve;
+            videoElement.onerror = reject;
+            setTimeout(() => reject(new Error("Metadata timeout")), 5000);
+          }
+        });
+
         await videoElement.play();
         console.log("✅ Screen video playing");
       } catch (err) {
         if (err.name !== "AbortError") {
           console.error("❌ Screen video play error:", err);
+
           // Retry once after delay
           setTimeout(() => {
             videoElement.play().catch((e) => {
@@ -181,9 +214,46 @@ const InterviewLive = () => {
     playVideo();
 
     return () => {
-      videoElement.srcObject = null;
+      videoElement.onloadedmetadata = null;
+      videoElement.onerror = null;
     };
   }, [screenShareStream]);
+
+  // Debug: Monitor screen video element state
+  useEffect(() => {
+    if (!screenVideoRef.current) return;
+
+    const video = screenVideoRef.current;
+
+    const logStatus = () => {
+      console.log("📺 Screen Video Status:", {
+        hasStream: !!video.srcObject,
+        streamActive: video.srcObject?.active,
+        readyState: video.readyState,
+        paused: video.paused,
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
+      });
+    };
+
+    // Log immediately and on state changes
+    logStatus();
+
+    video.addEventListener("loadedmetadata", logStatus);
+    video.addEventListener("canplay", logStatus);
+    video.addEventListener("playing", logStatus);
+    video.addEventListener("pause", logStatus);
+    video.addEventListener("error", (e) => {
+      console.error("❌ Screen video error:", e);
+    });
+
+    return () => {
+      video.removeEventListener("loadedmetadata", logStatus);
+      video.removeEventListener("canplay", logStatus);
+      video.removeEventListener("playing", logStatus);
+      video.removeEventListener("pause", logStatus);
+    };
+  }, []);
 
   // Debug screen share status
   useEffect(() => {
@@ -526,9 +596,26 @@ const InterviewLive = () => {
   useEffect(() => {
     return () => {
       console.log("🧹 Component unmounting - preserving streams in context");
-      // Don't stop streams here - they're managed in cleanup function
     };
   }, []);
+
+  // MIC logs for debugging
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (interview.socketRef.current) {
+        console.log("🎤 Microphone State:", {
+          micStreamingActive: interview.micStreamingActive,
+          isListening: interview.isListening,
+          canListen: interview.canListen,
+          socketConnected: interview.socketRef.current.connected,
+          hasStarted: interview.hasStarted,
+          serverReady: interview.serverReady,
+        });
+      }
+    }, 5000); // Log every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [interview]);
 
   const secondaryIsActive =
     secondaryCamera.isRecording || mobileCameraConnected;
