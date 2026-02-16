@@ -594,10 +594,16 @@ const InterviewSetup = () => {
                     Scan with Phone
                   </h3>
                   <div className="inline-block p-4 bg-white rounded-2xl mx-auto">
-                    <QRCodeCanvas
-                      value={`${window.location.origin}/mobile-camera?interviewId=${sessionData?.interviewId}&userId=${user?.id}`}
-                      size={256}
-                    />
+                    {sessionData ? (
+                      <QRCodeCanvas
+                        value={`${window.location.origin}/mobile-camera?interviewId=${sessionData.interviewId}&userId=${user?.id}`}
+                        size={256}
+                      />
+                    ) : (
+                      <div className="w-64 h-64 flex items-center justify-center bg-gray-700 rounded-2xl">
+                        <div className="animate-spin w-12 h-12 border-4 border-purple-500/30 border-t-purple-500 rounded-full" />
+                      </div>
+                    )}
                   </div>
                 </div>
 
