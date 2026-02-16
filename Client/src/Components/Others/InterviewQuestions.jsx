@@ -479,12 +479,20 @@ const InterviewQuestions = ({
     (async () => {
       try {
         console.log("Starting desktop recordings");
+
+        // ✅ STEP 1: Start audio first (for TTS playback)
         await audioRecording.startRecording();
-        console.log("Audio recording started");
+        console.log("✅ Audio recording started");
+
+        // ✅ STEP 2: Start primary camera
         await startVideoRecording();
-        console.log("Primary camera recording started");
+        console.log("✅ Primary camera recording started");
+
+        // ✅ STEP 3: Show screen share prompt WITHOUT blocking TTS
         setShowScreenSharePrompt(true);
-        console.log("Screen share prompt shown");
+        console.log("📺 Screen share prompt shown");
+
+        // ✅ Interview can now proceed - TTS will play while waiting for screen share
       } catch (err) {
         console.error("Failed to start recordings:", err);
       }
@@ -529,46 +537,93 @@ const InterviewQuestions = ({
   return (
     <section className="min-h-screen bg-linear-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 p-4 md:p-6">
       {showScreenSharePrompt && !screenRecording.isRecording && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-purple-600 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-4 max-w-lg w-[calc(100%-2rem)]">
-          <svg
-            className="w-6 h-6 shrink-0"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
-            />
-          </svg>
-          <span className="text-sm font-semibold flex-1">
-            Screen sharing is required for this interview
-          </span>
-          <button
-            onClick={async () => {
-              try {
-                await screenRecording.startRecording();
-                setShowScreenSharePrompt(false);
-              } catch (err) {
-                console.error("Screen share denied:", err);
-                setScreenShareAttempts((prev) => prev + 1);
-                if (screenShareAttempts >= 2) {
-                  const skip = confirm(
-                    "Screen sharing failed. Continue interview without screen recording?\n\nNote: This may affect your interview evaluation.",
-                  );
-                  if (skip) setShowScreenSharePrompt(false);
-                } else {
-                  alert("Please allow screen sharing and try again.");
+        <>
+          {/* Semi-transparent overlay - doesn't block UI interaction */}
+          <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40 pointer-events-none" />
+
+          {/* Floating prompt that doesn't block the interview */}
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-linear-to-r from-purple-600 to-indigo-600 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-4 max-w-2xl w-[calc(100%-2rem)] animate-bounce">
+            <div className="flex items-center gap-4 flex-1">
+              <div className="relative">
+                <svg
+                  className="w-8 h-8 shrink-0 animate-pulse"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                  />
+                </svg>
+                <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-yellow-500"></span>
+                </span>
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-bold">⚠️ Screen Sharing Required</p>
+                <p className="text-xs text-purple-100 mt-0.5">
+                  The interview is running. Please share your screen to continue
+                  recording.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={async () => {
+                try {
+                  console.log("🖥️ User clicked Share Screen");
+                  await screenRecording.startRecording();
+                  setShowScreenSharePrompt(false);
+                  setScreenShareAttempts(0);
+                  console.log("✅ Screen recording started successfully");
+                } catch (err) {
+                  console.error("❌ Screen share denied:", err);
+                  setScreenShareAttempts((prev) => prev + 1);
+
+                  if (screenShareAttempts >= 2) {
+                    const forceSkip = confirm(
+                      "⚠️ SCREEN SHARING IS REQUIRED FOR THIS INTERVIEW\n\n" +
+                        "Without screen recording, your interview may be:\n" +
+                        "• Flagged for review\n" +
+                        "• Rejected automatically\n" +
+                        "• Considered incomplete\n\n" +
+                        "Are you SURE you want to continue without screen sharing?\n" +
+                        "(This is your final warning)",
+                    );
+
+                    if (forceSkip) {
+                      setShowScreenSharePrompt(false);
+                      console.warn(
+                        "⚠️ User force-skipped screen recording after 3 attempts",
+                      );
+                      alert(
+                        "⚠️ Interview will continue WITHOUT screen recording. This may affect your evaluation.",
+                      );
+                    } else {
+                      alert(
+                        "Please click 'Share Screen' and allow screen sharing when prompted by your browser.",
+                      );
+                    }
+                  } else {
+                    alert(
+                      `Screen sharing failed (Attempt ${screenShareAttempts + 1}/3)\n\n` +
+                        "Please:\n" +
+                        "1. Click 'Share Screen' again\n" +
+                        "2. Select your ENTIRE SCREEN (not just a window)\n" +
+                        "3. Click 'Share' in your browser's permission dialog",
+                    );
+                  }
                 }
-              }
-            }}
-            className="bg-white text-purple-700 font-bold text-sm px-4 py-2 rounded-lg hover:bg-purple-50 transition-all shrink-0"
-          >
-            Share Screen
-          </button>
-        </div>
+              }}
+              className="bg-white text-purple-700 font-bold text-sm px-6 py-3 rounded-lg hover:bg-purple-50 transition-all shrink-0 shadow-lg hover:shadow-xl transform hover:scale-105"
+            >
+              🖥️ Share Screen
+            </button>
+          </div>
+        </>
       )}
 
       <div className="max-w-7xl mx-auto">
