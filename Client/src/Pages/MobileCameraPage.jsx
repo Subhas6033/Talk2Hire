@@ -8,7 +8,7 @@ const SOCKET_URL = import.meta.env.VITE_WS_URL;
 const MobileCameraPage = () => {
   const [searchParams] = useSearchParams();
   const isMobile = searchParams.get("mobile") === "true";
-  const sessionId = searchParams.get("session");
+  const sessionId = searchParams.get("interviewId");
   const userId = searchParams.get("userId");
 
   const [error, setError] = useState(null);
