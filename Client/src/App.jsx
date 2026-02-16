@@ -23,7 +23,7 @@ import {
   MobileCameraPage,
   RegistrationForm,
 } from "./Pages/index.pages.js";
-import { StreamProvider } from "./Hooks/streamContext.js";
+import { StreamProvider } from "./Hooks/streamContext.jsx";
 
 import { Guidlines, MobileSecurityCamera } from "./Components/index.js";
 import InterviewSetup from "./Components/new/InterviewSetup.jsx";
