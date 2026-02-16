@@ -12,41 +12,6 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
   const isRequestingSessionRef = useRef(false);
   const hasStoppedRef = useRef(false);
 
-  // ✅ Listen for server ready signal
-  /* useEffect(() => {
-    if (!socketRef?.current) return;
-
-    const handleVideoReady = (response) => {
-      console.log("📡 Received video_recording_ready:", response);
-
-      if (response?.videoType === "primary_camera") {
-        console.log("✅ Server ready for video recording");
-        videoSessionReadyRef.current = true;
-        isRequestingSessionRef.current = false;
-
-        if (
-          mediaRecorderRef.current &&
-          mediaRecorderRef.current.state === "inactive"
-        ) {
-          console.log("🎥 Starting MediaRecorder after server confirmation");
-          try {
-            mediaRecorderRef.current.start(CHUNK_DURATION);
-          } catch (error) {
-            console.error("❌ Error starting MediaRecorder:", error);
-          }
-        }
-      }
-    };
-
-    socketRef.current.on("video_recording_ready", handleVideoReady);
-
-    return () => {
-      if (socketRef?.current) {
-        socketRef.current.off("video_recording_ready", handleVideoReady);
-      }
-    };
-  }, [socketRef]); */
-
   // ✅ CRITICAL FIX: Comprehensive MIME type detection
   const findSupportedMimeType = (stream) => {
     console.log("🔍 Starting MIME type detection...");

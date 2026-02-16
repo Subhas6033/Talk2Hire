@@ -46,9 +46,10 @@ function createSTTSession() {
       let openTimeout = null;
       let keepAliveInterval = null;
 
-      // Idle detection state
+      // ✅ FIXED: Idle detection state with better control
       let lastSpeechTime = Date.now();
       let idleCheckInterval = null;
+      let idleAlreadyTriggered = false; // ✅ NEW: Prevent multiple idle triggers
       const IDLE_TIMEOUT = 10000; // 10 seconds of silence triggers idle
 
       // Promise to track connection opening
@@ -168,8 +169,8 @@ function createSTTSession() {
         };
 
         /**
-         * Start idle detection to notify when user stops speaking
-         * Checks every second if user has been silent for IDLE_TIMEOUT
+         * ✅ FIXED: Start idle detection to notify when user stops speaking
+         * Now prevents multiple idle triggers with idleAlreadyTriggered flag
          */
         const startIdleDetection = () => {
           if (idleCheckInterval) {
@@ -177,19 +178,27 @@ function createSTTSession() {
           }
 
           lastSpeechTime = Date.now();
+          idleAlreadyTriggered = false; // ✅ Reset flag
 
-          // Check for idle every second
+          // ✅ OPTIMIZED: Check every 2 seconds instead of 1 (reduces CPU usage)
           idleCheckInterval = setInterval(() => {
-            if (isOpen) {
+            if (isOpen && !idleAlreadyTriggered) {
               const timeSinceLastSpeech = Date.now() - lastSpeechTime;
               if (timeSinceLastSpeech >= IDLE_TIMEOUT) {
                 console.log("⏰ User idle detected (10 seconds of silence)");
+
+                // ✅ CRITICAL: Set flag and pause detection to prevent multiple triggers
+                idleAlreadyTriggered = true;
+
+                if (idleCheckInterval) {
+                  clearInterval(idleCheckInterval);
+                  idleCheckInterval = null;
+                }
+
                 onIdle?.();
-                // Reset timer after triggering idle
-                lastSpeechTime = Date.now();
               }
             }
-          }, 1000);
+          }, 2000); // ✅ Changed from 1000ms to 2000ms
         };
 
         // ================================================================
@@ -228,8 +237,9 @@ function createSTTSession() {
           const isFinal = data.is_final;
           const speechFinal = data.speech_final;
 
-          // Update last speech time when we receive any transcript
+          // ✅ Update last speech time and reset idle flag when we receive any transcript
           lastSpeechTime = Date.now();
+          idleAlreadyTriggered = false;
 
           // Log transcript with type indicator
           const transcriptPreview =
@@ -485,11 +495,12 @@ function createSTTSession() {
          */
         resetIdleTimer() {
           lastSpeechTime = Date.now();
+          idleAlreadyTriggered = false; // ✅ Reset flag
           console.log("🔄 Idle timer manually reset");
         },
 
         /**
-         * Pause idle detection
+         * ✅ FIXED: Pause idle detection
          * Useful when you don't want idle callbacks during certain periods
          */
         pauseIdleDetection() {
@@ -498,25 +509,38 @@ function createSTTSession() {
             idleCheckInterval = null;
             console.log("⏸️ Idle detection paused");
           }
+          // ✅ Also set flag to prevent trigger during pause
+          idleAlreadyTriggered = true;
         },
 
         /**
-         * Resume idle detection
+         * ✅ FIXED: Resume idle detection
          * Restarts idle detection after it was paused
          */
         resumeIdleDetection() {
           if (!idleCheckInterval && isOpen) {
             lastSpeechTime = Date.now();
+            idleAlreadyTriggered = false; // ✅ Reset flag
+
             idleCheckInterval = setInterval(() => {
-              if (isOpen) {
+              if (isOpen && !idleAlreadyTriggered) {
                 const timeSinceLastSpeech = Date.now() - lastSpeechTime;
                 if (timeSinceLastSpeech >= IDLE_TIMEOUT) {
                   console.log("⏰ User idle detected (10 seconds of silence)");
+
+                  // Set flag and pause to prevent multiple triggers
+                  idleAlreadyTriggered = true;
+
+                  if (idleCheckInterval) {
+                    clearInterval(idleCheckInterval);
+                    idleCheckInterval = null;
+                  }
+
                   onIdle?.();
-                  lastSpeechTime = Date.now();
                 }
               }
-            }, 1000);
+            }, 2000); // ✅ 2 second interval
+
             console.log("▶️ Idle detection resumed");
           }
         },

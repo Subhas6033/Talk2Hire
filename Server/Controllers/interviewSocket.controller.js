@@ -773,8 +773,9 @@ function initInterviewSocket(httpServer) {
       }
 
       /**
-       * Handle user idle timeout
+       * ✅ FIXED: Handle user idle timeout
        * Asks if user wants question repeated or moves to next question
+       * Now includes proper connection management
        */
       async function handleIdle() {
         console.log("Handling idle timeout");
@@ -800,15 +801,28 @@ function initInterviewSocket(httpServer) {
           const promptText = "Can I repeat the question?";
           socket.emit("idle_prompt", { text: promptText });
 
-          // OPTIMIZATION: Start Deepgram in parallel BEFORE TTS
-          const deepgramReady = startDeepgramConnection();
+          // ✅ FIXED: Keep old connection, start new one in parallel
+          const oldConnection = deepgramConnection;
+          deepgramConnection = null;
 
-          // Stream TTS immediately
-          await streamTTSToClient(socket, promptText, interviewId);
-
-          // ✅ FIXED: Wait and verify Deepgram is ready
           try {
+            // OPTIMIZATION: Start Deepgram in parallel BEFORE TTS
+            const deepgramReady = startDeepgramConnection();
+
+            // Stream TTS immediately
+            await streamTTSToClient(socket, promptText, interviewId);
+
+            // ✅ FIXED: Wait and verify Deepgram is ready
             await ensureDeepgramReady(deepgramReady, "handleIdle");
+
+            // ✅ Only NOW close old connection (new one is ready)
+            if (oldConnection) {
+              try {
+                oldConnection.finish();
+              } catch (e) {
+                console.error("Error closing old connection:", e);
+              }
+            }
 
             isListeningActive = true;
             socket.emit("listening_enabled");
@@ -818,13 +832,21 @@ function initInterviewSocket(httpServer) {
             }
           } catch (error) {
             console.error("❌ Failed to enable listening:", error);
+
+            // Restore old connection if new one failed
+            if (!deepgramConnection && oldConnection) {
+              deepgramConnection = oldConnection;
+              console.log("⚠️ Restored old Deepgram connection after failure");
+            }
+
             socket.emit("error", { message: "Speech recognition unavailable" });
           }
         }
       }
 
       /**
-       * Move to the next interview question
+       * ✅ FIXED: Move to the next interview question
+       * Now includes proper connection lifecycle management
        */
       async function moveToNextQuestion() {
         if (isProcessing) {
@@ -864,15 +886,28 @@ function initInterviewSocket(httpServer) {
 
           socket.emit("next_question", { question: nextQuestionText });
 
-          // OPTIMIZATION: Start Deepgram in parallel BEFORE TTS
-          const deepgramReady = startDeepgramConnection();
+          // ✅ FIXED: Keep old connection, start new one in parallel
+          const oldConnection = deepgramConnection;
+          deepgramConnection = null;
 
-          // Stream TTS immediately
-          await streamTTSToClient(socket, nextQuestionText, interviewId);
-
-          // ✅ FIXED: Wait and verify Deepgram is ready
           try {
+            // OPTIMIZATION: Start Deepgram in parallel BEFORE TTS
+            const deepgramReady = startDeepgramConnection();
+
+            // Stream TTS immediately
+            await streamTTSToClient(socket, nextQuestionText, interviewId);
+
+            // ✅ FIXED: Wait and verify Deepgram is ready
             await ensureDeepgramReady(deepgramReady, "moveToNextQuestion");
+
+            // ✅ Only NOW close old connection (new one is ready)
+            if (oldConnection) {
+              try {
+                oldConnection.finish();
+              } catch (e) {
+                console.error("Error closing old connection:", e);
+              }
+            }
 
             isListeningActive = true;
             socket.emit("listening_enabled");
@@ -881,6 +916,13 @@ function initInterviewSocket(httpServer) {
             console.log("Moved to next question successfully");
           } catch (error) {
             console.error("❌ Failed to enable listening:", error);
+
+            // Restore old connection if new one failed
+            if (!deepgramConnection && oldConnection) {
+              deepgramConnection = oldConnection;
+              console.log("⚠️ Restored old Deepgram connection after failure");
+            }
+
             socket.emit("error", { message: "Speech recognition unavailable" });
             isProcessing = false;
           }
@@ -1000,8 +1042,9 @@ function initInterviewSocket(httpServer) {
       }
 
       /**
-       * Initialize Deepgram connection for speech recognition
-       * ✅ FIXED: Returns promise that resolves ONLY when WebSocket is actually OPEN
+       * ✅ FULLY FIXED: Initialize Deepgram connection for speech recognition
+       * Returns promise that resolves ONLY when WebSocket is actually OPEN
+       * Includes proper timeout and error handling
        */
       function startDeepgramConnection() {
         if (deepgramConnection) {
@@ -1027,7 +1070,7 @@ function initInterviewSocket(httpServer) {
               hasResolved = true;
               reject(new Error("Deepgram connection timeout"));
             }
-          }, 3000); // 3 second timeout
+          }, 5000); // 5 second timeout (increased from 3s for stability)
 
           const connection = sttSession.startLiveTranscription({
             onTranscript: async (transcript) => {
@@ -1105,7 +1148,7 @@ function initInterviewSocket(httpServer) {
           // Use the waitForReady method from stt.service.js
           if (connection.waitForReady) {
             connection
-              .waitForReady(3000)
+              .waitForReady(5000) // 5 second timeout
               .then(() => {
                 if (!hasResolved) {
                   clearTimeout(connectionTimeout);
@@ -1137,7 +1180,8 @@ function initInterviewSocket(httpServer) {
       }
 
       /**
-       * Handle user response to "repeat question" prompt
+       * ✅ FIXED: Handle user response to "repeat question" prompt
+       * Now includes proper connection lifecycle management
        */
       async function handleRepeatResponse(transcript) {
         console.log("Handling repeat response:", transcript);
@@ -1155,21 +1199,41 @@ function initInterviewSocket(httpServer) {
 
           socket.emit("question", { question: currentQuestionText });
 
-          // OPTIMIZATION: Start Deepgram in parallel BEFORE TTS
-          const deepgramReady = startDeepgramConnection();
+          // ✅ FIXED: Keep old connection, start new one in parallel
+          const oldConnection = deepgramConnection;
+          deepgramConnection = null;
 
-          // Stream TTS immediately
-          await streamTTSToClient(socket, currentQuestionText, interviewId);
-
-          // ✅ FIXED: Wait and verify Deepgram is ready
           try {
+            // OPTIMIZATION: Start Deepgram in parallel BEFORE TTS
+            const deepgramReady = startDeepgramConnection();
+
+            // Stream TTS immediately
+            await streamTTSToClient(socket, currentQuestionText, interviewId);
+
+            // ✅ FIXED: Wait and verify Deepgram is ready
             await ensureDeepgramReady(deepgramReady, "handleRepeatResponse");
+
+            // ✅ Only NOW close old connection (new one is ready)
+            if (oldConnection) {
+              try {
+                oldConnection.finish();
+              } catch (e) {
+                console.error("Error closing old connection:", e);
+              }
+            }
 
             isListeningActive = true;
             socket.emit("listening_enabled");
             isProcessing = false;
           } catch (error) {
             console.error("❌ Failed to enable listening:", error);
+
+            // Restore old connection if new one failed
+            if (!deepgramConnection && oldConnection) {
+              deepgramConnection = oldConnection;
+              console.log("⚠️ Restored old Deepgram connection after failure");
+            }
+
             socket.emit("error", { message: "Speech recognition unavailable" });
             isProcessing = false;
           }
@@ -1189,24 +1253,44 @@ function initInterviewSocket(httpServer) {
 
           socket.emit("idle_prompt", { text: clarificationText });
 
-          // OPTIMIZATION: Start Deepgram in parallel BEFORE TTS
-          const deepgramReady = startDeepgramConnection();
+          // ✅ FIXED: Keep old connection, start new one in parallel
+          const oldConnection = deepgramConnection;
+          deepgramConnection = null;
 
-          // Stream TTS immediately
-          await streamTTSToClient(socket, clarificationText, interviewId);
-
-          // ✅ FIXED: Wait and verify Deepgram is ready
           try {
+            // OPTIMIZATION: Start Deepgram in parallel BEFORE TTS
+            const deepgramReady = startDeepgramConnection();
+
+            // Stream TTS immediately
+            await streamTTSToClient(socket, clarificationText, interviewId);
+
+            // ✅ FIXED: Wait and verify Deepgram is ready
             await ensureDeepgramReady(
               deepgramReady,
               "handleRepeatResponse-clarification",
             );
+
+            // ✅ Only NOW close old connection (new one is ready)
+            if (oldConnection) {
+              try {
+                oldConnection.finish();
+              } catch (e) {
+                console.error("Error closing old connection:", e);
+              }
+            }
 
             isListeningActive = true;
             socket.emit("listening_enabled");
             isProcessing = false;
           } catch (error) {
             console.error("❌ Failed to enable listening:", error);
+
+            // Restore old connection if new one failed
+            if (!deepgramConnection && oldConnection) {
+              deepgramConnection = oldConnection;
+              console.log("⚠️ Restored old Deepgram connection after failure");
+            }
+
             socket.emit("error", { message: "Speech recognition unavailable" });
             isProcessing = false;
           }
@@ -1214,8 +1298,9 @@ function initInterviewSocket(httpServer) {
       }
 
       /**
-       * Process user's transcript and generate next question
-       * OPTIMIZATION: saveAnswer and generateNextQuestion now run in parallel
+       * ✅ FULLY OPTIMIZED: Process user's transcript and generate next question
+       * saveAnswer and generateNextQuestion now run in parallel
+       * Connection lifecycle properly managed
        */
       async function processUserTranscript(text) {
         // FIX: Guard against late Deepgram transcripts arriving after interview ends/terminates
@@ -1308,15 +1393,28 @@ function initInterviewSocket(httpServer) {
 
           socket.emit("next_question", { question: nextQuestion.question });
 
-          // OPTIMIZATION: Start Deepgram in parallel BEFORE TTS
-          const deepgramReady = startDeepgramConnection();
+          // ✅ FIXED: Keep old connection, start new one in parallel
+          const oldConnection = deepgramConnection;
+          deepgramConnection = null;
 
-          // Stream TTS immediately
-          await streamTTSToClient(socket, nextQuestion.question, interviewId);
-
-          // ✅ FIXED: Wait and verify Deepgram is ready
           try {
+            // OPTIMIZATION: Start Deepgram in parallel BEFORE TTS
+            const deepgramReady = startDeepgramConnection();
+
+            // Stream TTS immediately
+            await streamTTSToClient(socket, nextQuestion.question, interviewId);
+
+            // ✅ FIXED: Wait and verify Deepgram is ready
             await ensureDeepgramReady(deepgramReady, "processUserTranscript");
+
+            // ✅ Only NOW close old connection (new one is ready)
+            if (oldConnection) {
+              try {
+                oldConnection.finish();
+              } catch (e) {
+                console.error("Error closing old connection:", e);
+              }
+            }
 
             isListeningActive = true;
             socket.emit("listening_enabled");
@@ -1325,6 +1423,13 @@ function initInterviewSocket(httpServer) {
             console.log("Question cycle complete");
           } catch (error) {
             console.error("❌ Failed to enable listening:", error);
+
+            // Restore old connection if new one failed
+            if (!deepgramConnection && oldConnection) {
+              deepgramConnection = oldConnection;
+              console.log("⚠️ Restored old Deepgram connection after failure");
+            }
+
             socket.emit("error", { message: "Speech recognition unavailable" });
             isProcessing = false;
           }
@@ -1603,13 +1708,31 @@ function initInterviewSocket(httpServer) {
 
 /**
  * ============================================================================
- * OPTIMIZED: streamTTSToClient - ZERO-LATENCY STREAMING
+ * ✅ FULLY OPTIMIZED: streamTTSToClient - ZERO-LATENCY STREAMING
+ * Now includes timeout and retry logic for stability
  * ============================================================================
  */
-async function streamTTSToClient(socket, text, interviewId) {
+async function streamTTSToClient(socket, text, interviewId, retryCount = 0) {
+  const MAX_RETRIES = 2;
+  const TTS_TIMEOUT = 10000; // 10 second timeout
+
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
     console.log("🔊 TTS starting for:", text.substring(0, 50) + "...");
+
+    // ✅ Add timeout for TTS
+    const ttsTimeout = setTimeout(() => {
+      console.error("❌ TTS timeout - no response after 10s");
+
+      if (retryCount < MAX_RETRIES) {
+        console.log(
+          `🔄 Retrying TTS (attempt ${retryCount + 1}/${MAX_RETRIES})`,
+        );
+        resolve(streamTTSToClient(socket, text, interviewId, retryCount + 1));
+      } else {
+        reject(new Error("TTS timeout after retries"));
+      }
+    }, TTS_TIMEOUT);
 
     try {
       const wasInCache = interviewId && ttsInstanceCache.has(interviewId);
@@ -1631,6 +1754,9 @@ async function streamTTSToClient(socket, text, interviewId) {
         if (hasError) return;
 
         if (!chunk) {
+          // ✅ Clear timeout on success
+          clearTimeout(ttsTimeout);
+
           // Stream ended
           const totalTime = Date.now() - startTime;
           console.log(
@@ -1642,6 +1768,11 @@ async function streamTTSToClient(socket, text, interviewId) {
         }
 
         try {
+          // ✅ Clear timeout on first chunk (connection established)
+          if (chunkCount === 0) {
+            clearTimeout(ttsTimeout);
+          }
+
           const buf = Buffer.isBuffer(chunk)
             ? chunk
             : typeof chunk === "string"
@@ -1671,14 +1802,24 @@ async function streamTTSToClient(socket, text, interviewId) {
             );
           }
         } catch (error) {
+          clearTimeout(ttsTimeout);
           console.error("❌ Error sending TTS chunk:", error);
           hasError = true;
           reject(error);
         }
       });
     } catch (error) {
+      clearTimeout(ttsTimeout);
       console.error("❌ Error creating TTS stream:", error);
-      reject(error);
+
+      if (retryCount < MAX_RETRIES) {
+        console.log(
+          `🔄 Retrying TTS after error (attempt ${retryCount + 1}/${MAX_RETRIES})`,
+        );
+        resolve(streamTTSToClient(socket, text, interviewId, retryCount + 1));
+      } else {
+        reject(error);
+      }
     }
   });
 }
