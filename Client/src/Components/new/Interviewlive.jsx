@@ -394,12 +394,12 @@ const InterviewLive = () => {
     });
 
     socket.on("next_question", (d) => {
-      console.log("➡️ Next question:", d.text);
+      console.log("➡️ Next question:", d.question);
       interview.handleNextQuestion(d);
     });
 
     socket.on("idle_prompt", (d) => {
-      console.log("💤 Idle prompt:", d.message);
+      console.log("💤 Idle prompt:", d.text);
       interview.handleIdlePrompt(d);
     });
 

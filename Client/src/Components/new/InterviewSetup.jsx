@@ -724,7 +724,7 @@ const InterviewSetup = () => {
 
       settingsSocketRef.current?.disconnect();
     };
-  }, [micStream, primaryCameraStream, screenShareStream]);
+  }, []);
 
   /* ================= RENDER ================= */
 
