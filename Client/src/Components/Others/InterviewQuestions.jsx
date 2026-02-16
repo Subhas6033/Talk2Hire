@@ -48,7 +48,6 @@ const InterviewQuestions = ({
   interviewId,
   userId,
   cameraStream,
-  // FIX: Removed unused secondaryCameraStream prop — mobile frames arrive via socket, not prop
   onCancel,
   onFinish,
 }) => {
@@ -74,11 +73,9 @@ const InterviewQuestions = ({
   );
 
   const videoRef = useRef(null);
-  const secondaryVideoRef = useRef(null); // kept for future use
   const screenVideoRef = useRef(null);
   const secondaryCanvasRef = useRef(null);
   const isCleaningUpRef = useRef(false);
-  const readyForQuestionSentRef = useRef(false);
   const hasReceivedFrameRef = useRef(false);
 
   const [screenShareAttempts, setScreenShareAttempts] = useState(0);
@@ -196,7 +193,7 @@ const InterviewQuestions = ({
 
     interview.socketRef.current = socket;
 
-    // FIX: Removed verbose event silencing — only silence truly high-frequency events
+    //  Removed verbose event silencing — only silence truly high-frequency events
     const silenced = [
       "user_audio_chunk",
       "video_chunk",
@@ -220,9 +217,6 @@ const InterviewQuestions = ({
       console.log("Server ready signal received");
       interview.setServerReady(true);
       interview.setIsInitializing(false);
-
-      // FIX: Removed duplicate ready_for_question emit — useInterview hook already
-      // sends it via autoStartInterview(). Sending twice causes double-processing.
     });
 
     socket.on("secondary_camera_ready", (data) => {
@@ -317,7 +311,7 @@ const InterviewQuestions = ({
     socket.on("interview_terminated", async (data) => {
       console.error("Interview terminated:", data);
       setIsInterviewTerminated(true);
-      // FIX: Stop mic and disconnect socket so server can clean up the session
+      //  Stop mic and disconnect socket so server can clean up the session
       // immediately — otherwise server keeps session alive processing stray audio
       interview.setMicStreamingActive(false);
       alert(`Interview Terminated: ${data.message}`);
@@ -330,7 +324,6 @@ const InterviewQuestions = ({
     socket.on("audio_recording_ready", (d) =>
       console.log("Audio recording ready:", d),
     );
-    // FIX: Added missing listener — server emits this on audio session create failure
     socket.on("audio_recording_error", (d) =>
       console.error("Audio recording error:", d),
     );
@@ -351,7 +344,7 @@ const InterviewQuestions = ({
     socket.on("video_recording_ready", (d) =>
       console.log("Video recording ready:", d),
     );
-    // FIX: Added missing listener — server emits this on video session create failure
+    //  Added missing listener — server emits this on video session create failure
     socket.on("video_recording_error", (d) => {
       console.error(`Video recording error:`, d);
       alert(`Failed to start ${d.videoType} recording: ${d.error}`);
@@ -372,7 +365,7 @@ const InterviewQuestions = ({
       console.error(`${d.videoType} processing error:`, d);
       alert(`Video processing failed for ${d.videoType}: ${d.error}`);
     });
-    // FIX: Added missing listeners — server emits these after interview ends
+    //  Added missing listeners — server emits these after interview ends
     socket.on("media_merge_complete", (d) =>
       console.log("Media merge complete:", d.finalVideoUrl),
     );
@@ -384,7 +377,7 @@ const InterviewQuestions = ({
     socket.on("evaluation_complete", (d) => {
       setEvaluationStatus("complete");
       setEvaluationResults(d.results);
-      // FIX: Stop mic streaming when evaluation completes — interview is fully over,
+      //  Stop mic streaming when evaluation completes — interview is fully over,
       // no need to keep sending audio chunks (wastes bandwidth + Deepgram credits)
       interview.setMicStreamingActive(false);
     });
@@ -455,7 +448,7 @@ const InterviewQuestions = ({
             .getTracks()
             .forEach((track) => track.stop());
         }
-        // FIX: Remove all listeners before disconnect to prevent any final
+        //  Remove all listeners before disconnect to prevent any final
         // events (like disconnect itself) from firing into an unmounted component
         socket.offAny();
         socket.removeAllListeners();

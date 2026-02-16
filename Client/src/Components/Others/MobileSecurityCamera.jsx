@@ -7,7 +7,7 @@ import { Button } from "../index";
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
 const FRAME_SEND_INTERVAL = 1000;
 
-// FIX (MEDIUM): Max time to wait for a socket ACK before resetting isFramePending.
+//  (MEDIUM): Max time to wait for a socket ACK before resetting isFramePending.
 // Without this, if the server never sends an ACK, isFramePending stays true
 // forever and NO frames are sent after the very first one.
 const FRAME_ACK_TIMEOUT_MS = 3000;
@@ -28,7 +28,7 @@ const MobileSecurityCamera = () => {
   const chunkCountRef = useRef(0);
   const frameSendIntervalRef = useRef(null);
 
-  // FIX: Track pending frame with a ref so the ACK timeout can clear it
+  //  Track pending frame with a ref so the ACK timeout can clear it
   const isFramePendingRef = useRef(false);
   const framePendingTimeoutRef = useRef(null);
 
@@ -131,7 +131,7 @@ const MobileSecurityCamera = () => {
         clearInterval(connectionWaitIntervalRef.current);
         connectionWaitIntervalRef.current = null;
       }
-      // FIX: Clear pending timeout on unmount
+      //  Clear pending timeout on unmount
       if (framePendingTimeoutRef.current) {
         clearTimeout(framePendingTimeoutRef.current);
         framePendingTimeoutRef.current = null;
@@ -288,7 +288,7 @@ const MobileSecurityCamera = () => {
     frameSendIntervalRef.current = setInterval(() => {
       if (!videoRef.current || !socketRef.current?.connected) return;
 
-      // FIX: Check ref instead of local variable (ref persists across interval ticks)
+      //  Check ref instead of local variable (ref persists across interval ticks)
       if (isFramePendingRef.current) return;
 
       try {
@@ -311,7 +311,7 @@ const MobileSecurityCamera = () => {
 
         isFramePendingRef.current = true;
 
-        // FIX: Set a safety timeout to reset isFramePending if ACK never arrives.
+        //  Set a safety timeout to reset isFramePending if ACK never arrives.
         // Without this, one missed ACK permanently stops all future frames.
         if (framePendingTimeoutRef.current) {
           clearTimeout(framePendingTimeoutRef.current);
@@ -352,7 +352,7 @@ const MobileSecurityCamera = () => {
       clearInterval(frameSendIntervalRef.current);
       frameSendIntervalRef.current = null;
     }
-    // FIX: Also clear the ACK timeout on stop
+    //  Also clear the ACK timeout on stop
     if (framePendingTimeoutRef.current) {
       clearTimeout(framePendingTimeoutRef.current);
       framePendingTimeoutRef.current = null;

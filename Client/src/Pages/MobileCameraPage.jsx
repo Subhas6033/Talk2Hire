@@ -21,13 +21,13 @@ const MobileCameraPage = () => {
   const canvasRef = useRef(null);
   const frameIntervalRef = useRef(null);
 
-  // FIX 1 (CRITICAL): Use a REF to control the rAF loop, NOT state.
+  //  1 (CRITICAL): Use a REF to control the rAF loop, NOT state.
   // React state captured in a requestAnimationFrame closure is stale — it
   // freezes at the value from when the closure was created (false).
   // A ref is mutable and always reflects the current value.
   const isStreamingRef = useRef(false);
 
-  // FIX 2 (CRITICAL): Also guard startFrameStreaming with a ref so the
+  //  2 (CRITICAL): Also guard startFrameStreaming with a ref so the
   // "already started" check works correctly (state would always read false).
   const streamingStartedRef = useRef(false);
 
@@ -90,7 +90,7 @@ const MobileCameraPage = () => {
       return;
     }
 
-    // FIX 2: Guard with REF not state (state is always stale false here)
+    //  2: Guard with REF not state (state is always stale false here)
     if (streamingStartedRef.current) {
       console.log("Streaming already active, skipping");
       return;
@@ -105,7 +105,7 @@ const MobileCameraPage = () => {
 
     console.log("Starting frame streaming to desktop");
 
-    // FIX 1: Set REF true BEFORE starting the loop so the closure reads true
+    //  1: Set REF true BEFORE starting the loop so the closure reads true
     isStreamingRef.current = true;
     streamingStartedRef.current = true;
     setIsStreaming(true); // UI display only
@@ -115,7 +115,7 @@ const MobileCameraPage = () => {
     const FRAME_INTERVAL = 100; // 10 FPS
 
     const captureFrame = () => {
-      // FIX 1: Read from REF — always gets current value, never stale
+      //  1: Read from REF — always gets current value, never stale
       if (!isStreamingRef.current) {
         console.log("Streaming stopped (ref=false), ending rAF loop");
         return;
@@ -149,7 +149,7 @@ const MobileCameraPage = () => {
                 const reader = new FileReader();
                 reader.onloadend = () => {
                   if (!isStreamingRef.current) return;
-                  // FIXED: Changed event name from "mobile_camera_frame" to "security_frame_request"
+                  // ED: Changed event name from "mobile_camera_frame" to "security_frame_request"
                   socketRef.current.emit(
                     "security_frame_request",
                     {

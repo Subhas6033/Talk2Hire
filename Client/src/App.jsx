@@ -25,6 +25,8 @@ import {
 } from "./Pages/index.pages.js";
 
 import { Guidlines, MobileSecurityCamera } from "./Components/index.js";
+import InterviewSetup from "./Components/new/InterviewSetup.jsx";
+import InterviewLive from "./Components/new/Interviewlive.jsx";
 
 const App = () => {
   const [isLoading, setIsLoading] = useState(true);
@@ -121,10 +123,20 @@ const App = () => {
                       path="/interview"
                       element={
                         <ProtectedRoute>
-                          <Interview />
+                          <InterviewSetup />
                         </ProtectedRoute>
                       }
                     />
+
+                    <Route
+                      path="/interview/live"
+                      element={
+                        <ProtectedRoute>
+                          <InterviewLive />
+                        </ProtectedRoute>
+                      }
+                    />
+
                     <Route
                       path="/mobile-camera"
                       element={<MobileCameraPage />}

@@ -137,7 +137,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
         return;
       }
 
-      // FIX: Changed ?session= to ?interviewId= to match MobileSecurityCamera.jsx
+      //  Changed ?session= to ?interviewId= to match MobileSecurityCamera.jsx
       // which reads searchParams.get('interviewId') — using 'session' caused interviewId
       // to be null on mobile, making the socket connection fail immediately on server
       const mobileUrl = `${window.location.origin}/mobile-camera?mobile=true&interviewId=${sessionInfo.interviewId}&userId=${user.id}`;
@@ -171,7 +171,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
         query: {
           interviewId: sessionData.interviewId,
           userId: sessionData.userId,
-          // FIX: type field lets server distinguish settings socket from interview socket
+          //  type field lets server distinguish settings socket from interview socket
           // Both have identical interviewId/userId — without type, server treats them the same
           type: "settings",
         },
