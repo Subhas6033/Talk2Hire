@@ -22,10 +22,27 @@ const {
 // FIX: One TTS instance per interview session — eliminates cold start on every question
 const ttsInstanceCache = new Map();
 
+// Log functions to see if the cached TTS instance is being reused or if a new one is created, along with cache size
 function getTTSInstance(interviewId) {
-  if (!ttsInstanceCache.has(interviewId)) {
+  const isExisting = ttsInstanceCache.has(interviewId);
+  const cacheSize = ttsInstanceCache.size;
+
+  if (!isExisting) {
+    console.log(`🆕 Creating NEW TTS instance for interview: ${interviewId}`);
+    console.log(
+      `📊 Cache status BEFORE creation: ${cacheSize} instances cached`,
+    );
     ttsInstanceCache.set(interviewId, createTTSStream());
+    console.log(`✅ TTS instance created and cached for: ${interviewId}`);
+    console.log(
+      `📊 Cache status AFTER creation: ${ttsInstanceCache.size} instances cached`,
+    );
+  } else {
+    console.log(`♻️ REUSING cached TTS instance for interview: ${interviewId}`);
+    console.log(`📊 Cache hit! Total cached instances: ${cacheSize}`);
+    console.log(`⚡ NO cold start - instant TTS ready`);
   }
+
   return ttsInstanceCache.get(interviewId);
 }
 
@@ -81,10 +98,22 @@ function initInterviewSocket(httpServer) {
    * Clean up session data when interview ends
    */
   function cleanupSession(interviewId) {
-    console.log(`Cleaning up session: ${interviewId}`);
+    console.log(`🧹 Cleaning up session: ${interviewId}`);
+
+    const hadTTSInstance = ttsInstanceCache.has(interviewId);
+    const cacheSizeBefore = ttsInstanceCache.size;
+
     interviewSessions.delete(interviewId);
-    // FIX: Clean up cached TTS instance on session end
-    ttsInstanceCache.delete(interviewId);
+
+    if (hadTTSInstance) {
+      ttsInstanceCache.delete(interviewId);
+      console.log(`🗑️ TTS instance removed for: ${interviewId}`);
+      console.log(
+        `📊 Cache size: ${cacheSizeBefore} → ${ttsInstanceCache.size}`,
+      );
+    } else {
+      console.log(`⚠️ No TTS instance found in cache for: ${interviewId}`);
+    }
   }
 
   // Handle new socket connections
@@ -1452,24 +1481,31 @@ function initInterviewSocket(httpServer) {
  */
 async function streamTTSToClient(socket, text, interviewId) {
   return new Promise((resolve, reject) => {
-    console.log("TTS for:", text.substring(0, 50) + "...");
+    const startTime = Date.now();
+    console.log("🔊 TTS starting for:", text.substring(0, 50) + "...");
 
     try {
-      // FIX: Reuse TTS instance instead of creating a new one every call
+      const wasInCache = interviewId && ttsInstanceCache.has(interviewId);
+      console.log(`🔍 TTS Cache Status:`, {
+        interviewId: interviewId || "N/A",
+        inCache: wasInCache,
+        willUseCache: !!interviewId,
+        cacheSize: ttsInstanceCache.size,
+      });
+
       const tts = interviewId ? getTTSInstance(interviewId) : createTTSStream();
 
       let chunkCount = 0;
       let totalBytes = 0;
+      let firstChunkTime = null;
       let hasError = false;
 
-      // FIX: Buffer small chunks before emitting to reduce socket event flood
       let chunkBuffer = [];
       let bufferSize = 0;
-      const BATCH_SIZE = 4096; // 4KB threshold before emitting
+      const BATCH_SIZE = 1024; // 1KB for faster first audio
 
       const flushBuffer = () => {
         if (chunkBuffer.length === 0) return;
-        // FIX: Skip emit if socket disconnected mid-stream — prevents wasting TTS processing
         if (!socket.connected) {
           chunkBuffer = [];
           bufferSize = 0;
@@ -1485,9 +1521,11 @@ async function streamTTSToClient(socket, text, interviewId) {
         if (hasError) return;
 
         if (!chunk) {
-          // FIX: Flush any remaining buffered audio before signaling end
           flushBuffer();
-          console.log(`TTS done — ${totalBytes}B in ${chunkCount} chunks`);
+          const totalTime = Date.now() - startTime;
+          console.log(
+            `✅ TTS complete: ${totalBytes}B in ${chunkCount} chunks (${totalTime}ms total, first chunk: ${firstChunkTime ? firstChunkTime + "ms" : "N/A"})`,
+          );
           socket.emit("tts_end");
           resolve();
           return;
@@ -1505,18 +1543,24 @@ async function streamTTSToClient(socket, text, interviewId) {
           totalBytes += buf.length;
           chunkCount++;
 
-          // FIX: Only emit when buffer reaches threshold — avoids dozens of tiny emits
-          if (bufferSize >= BATCH_SIZE) {
+          // Track first chunk time
+          if (chunkCount === 1) {
+            firstChunkTime = Date.now() - startTime;
+            console.log(`🎵 First chunk ready in ${firstChunkTime}ms`);
+          }
+
+          // OPTIMIZED: Flush first chunk immediately, then batch
+          if (chunkCount === 1 || bufferSize >= BATCH_SIZE) {
             flushBuffer();
           }
         } catch (error) {
-          console.error("Error sending TTS chunk:", error);
+          console.error("❌ Error sending TTS chunk:", error);
           hasError = true;
           reject(error);
         }
       });
     } catch (error) {
-      console.error("Error creating TTS stream:", error);
+      console.error("❌ Error creating TTS stream:", error);
       reject(error);
     }
   });
