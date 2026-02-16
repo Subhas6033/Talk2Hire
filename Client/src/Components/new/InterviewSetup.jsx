@@ -145,13 +145,11 @@ const InterviewSetup = () => {
       return;
     }
 
-    // Stop the animation frame
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
     }
 
-    // Mark cleanup as done
     micTestCleanupRef.current = true;
     analyserRef.current = null;
 
@@ -216,7 +214,7 @@ const InterviewSetup = () => {
     try {
       setIsMicTesting(true);
       setError(null);
-      micTestCleanupRef.current = false; // Prevent cleanup
+      micTestCleanupRef.current = false;
 
       console.log("🎤 Starting microphone test...");
 
@@ -235,7 +233,6 @@ const InterviewSetup = () => {
 
       setMicStream(stream);
 
-      // Create or get AudioContext
       if (!audioContextRef.current) {
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         audioContextRef.current = new AudioContext();
@@ -246,31 +243,26 @@ const InterviewSetup = () => {
 
       console.log("📊 AudioContext state:", audioContext.state);
 
-      // Resume AudioContext if suspended
       if (audioContext.state === "suspended") {
         console.log("▶️ Resuming AudioContext...");
         await audioContext.resume();
         console.log("✅ AudioContext resumed, state:", audioContext.state);
       }
 
-      // Verify AudioContext is now running
       if (audioContext.state !== "running") {
         throw new Error(
           `AudioContext state is ${audioContext.state}, expected 'running'`,
         );
       }
 
-      // Create analyser node
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 256;
       analyserRef.current = analyser;
       console.log("✅ Created analyser node");
 
-      // Create source from microphone stream
       const source = audioContext.createMediaStreamSource(stream);
       console.log("✅ Created MediaStreamSource");
 
-      // Connect source to analyser
       source.connect(analyser);
       console.log("✅ Connected source to analyser");
 
@@ -278,7 +270,6 @@ const InterviewSetup = () => {
 
       let frameCount = 0;
       const updateLevel = () => {
-        // Check if we should stop
         if (!analyserRef.current || micTestCleanupRef.current) {
           console.log("⚠️ Stopping mic test updates");
           return;
@@ -303,7 +294,6 @@ const InterviewSetup = () => {
         animationFrameRef.current = requestAnimationFrame(updateLevel);
       };
 
-      // Start the animation loop
       console.log("🔄 Starting level update loop...");
       updateLevel();
       console.log("✅ Microphone test started successfully");
@@ -420,7 +410,6 @@ const InterviewSetup = () => {
 
       setScreenShareStream(stream);
 
-      // Monitor if user stops sharing
       const track = stream.getVideoTracks()[0];
       track.addEventListener("ended", () => {
         console.log("⚠️ User stopped screen sharing");
@@ -430,7 +419,6 @@ const InterviewSetup = () => {
         );
       });
 
-      // Attach to video element
       if (screenVideoRef.current) {
         screenVideoRef.current.srcObject = stream;
         await screenVideoRef.current.play().catch((err) => {
@@ -462,7 +450,17 @@ const InterviewSetup = () => {
     const initializeInterview = async () => {
       try {
         console.log("🔄 Starting pre-initialization...");
-        console.log("⚠️ SETUP MODE - No media streaming yet");
+
+        // ✅ CRITICAL FIX: Disconnect settings socket FIRST
+        if (settingsSocketRef.current?.connected) {
+          console.log("🔌 Disconnecting settings socket...");
+          settingsSocketRef.current.disconnect();
+          settingsSocketRef.current = null;
+
+          // Wait for socket to fully disconnect
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          console.log("✅ Settings socket disconnected");
+        }
 
         setInitProgress((prev) => ({ ...prev, socket: "connecting" }));
 
@@ -474,9 +472,9 @@ const InterviewSetup = () => {
           },
           transports: ["websocket", "polling"],
           reconnection: true,
-          reconnectionAttempts: 3,
+          reconnectionAttempts: 5, // Increased
           reconnectionDelay: 1000,
-          timeout: 15000,
+          timeout: 20000, // Increased
         });
 
         interviewSocketRef.current = socket;
@@ -484,7 +482,7 @@ const InterviewSetup = () => {
         await new Promise((resolve, reject) => {
           const timeout = setTimeout(
             () => reject(new Error("Socket connection timeout")),
-            15000,
+            20000, // Increased
           );
 
           socket.on("connect", () => {
@@ -512,7 +510,7 @@ const InterviewSetup = () => {
         await new Promise((resolve, reject) => {
           const timeout = setTimeout(
             () => reject(new Error("Server ready timeout")),
-            15000,
+            20000,
           );
 
           socket.on("server_ready", () => {
@@ -524,7 +522,7 @@ const InterviewSetup = () => {
           });
         });
 
-        console.log("📝 Registering recording sessions (NO DATA SENT YET)");
+        console.log("📝 Registering recording sessions");
 
         setInitProgress((prev) => ({ ...prev, audioRecording: "starting" }));
 
@@ -545,10 +543,7 @@ const InterviewSetup = () => {
           socket.on("audio_recording_ready", (data) => {
             if (data.audioType === "mixed_audio") {
               clearTimeout(timeout);
-              console.log(
-                "✅ Audio recording REGISTERED (not streaming yet):",
-                data.audioId,
-              );
+              console.log("✅ Audio recording REGISTERED:", data.audioId);
               if (mounted)
                 setInitProgress((prev) => ({ ...prev, audioRecording: true }));
               resolve();
@@ -581,10 +576,7 @@ const InterviewSetup = () => {
           socket.on("video_recording_ready", (data) => {
             if (data.videoType === "primary_camera") {
               clearTimeout(timeout);
-              console.log(
-                "✅ Primary video REGISTERED (not streaming yet):",
-                data.videoId,
-              );
+              console.log("✅ Primary video REGISTERED:", data.videoId);
               if (mounted)
                 setInitProgress((prev) => ({ ...prev, videoRecording: true }));
               resolve();
@@ -617,10 +609,7 @@ const InterviewSetup = () => {
           socket.on("video_recording_ready", (data) => {
             if (data.videoType === "screen_recording") {
               clearTimeout(timeout);
-              console.log(
-                "✅ Screen recording REGISTERED (not streaming yet):",
-                data.videoId,
-              );
+              console.log("✅ Screen recording REGISTERED:", data.videoId);
               if (mounted)
                 setInitProgress((prev) => ({ ...prev, screenRecording: true }));
               resolve();
@@ -659,10 +648,7 @@ const InterviewSetup = () => {
             socket.on("video_recording_ready", (data) => {
               if (data.videoType === "secondary_camera") {
                 clearTimeout(timeout);
-                console.log(
-                  "✅ Mobile recording REGISTERED (not streaming yet):",
-                  data.videoId,
-                );
+                console.log("✅ Mobile recording REGISTERED:", data.videoId);
                 if (mounted)
                   setInitProgress((prev) => ({
                     ...prev,
@@ -688,12 +674,8 @@ const InterviewSetup = () => {
         }
 
         console.log("✅ Pre-initialization complete!");
-        console.log("📋 Summary:");
-        console.log("   - Socket: Connected");
-        console.log("   - Recordings: Registered (NOT streaming)");
-        console.log("   - Interview: NOT started");
-        console.log("   - TTS/STT: Blocked");
-        // ✅ Store streams in context BEFORE verification
+
+        // ✅ Store streams in context
         streamsRef.current.micStream = micStream;
         streamsRef.current.primaryCameraStream = primaryCameraStream;
         streamsRef.current.screenShareStream = screenShareStream;
@@ -702,10 +684,9 @@ const InterviewSetup = () => {
 
         console.log("✅ Streams stored in context");
 
-        // ✅ CRITICAL: Verify streams are actually stored
+        // ✅ Verify streams
         const verifyStreams = () => {
           return new Promise((resolve) => {
-            // Check immediately
             if (
               streamsRef.current.micStream &&
               streamsRef.current.primaryCameraStream &&
@@ -717,7 +698,6 @@ const InterviewSetup = () => {
               return;
             }
 
-            // Wait a bit for React to process
             setTimeout(() => {
               const success =
                 streamsRef.current.micStream &&
@@ -752,7 +732,6 @@ const InterviewSetup = () => {
           hasNavigatedRef.current = true;
           console.log("🚀 Navigating to /interview/live");
 
-          // Use replace to prevent back button issues
           navigate("/interview/live", { replace: true });
         }
       } catch (error) {
@@ -788,24 +767,20 @@ const InterviewSetup = () => {
 
   useEffect(() => {
     return () => {
-      // Only cleanup when actually leaving the component (navigation successful)
       if (hasNavigatedRef.current) {
         console.log("✅ Navigation successful, streams preserved in context");
-        settingsSocketRef.current?.disconnect();
+        // ✅ Ensure settings socket is disconnected
+        if (settingsSocketRef.current?.connected) {
+          settingsSocketRef.current.disconnect();
+        }
         return;
       }
 
-      // Component unmounting without successful navigation
       console.log("🧹 Cleaning up streams (setup cancelled)");
 
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
-
-      // Don't close AudioContext - let it be reused
-      // if (audioContextRef.current) {
-      //   audioContextRef.current.close().catch(console.error);
-      // }
 
       if (micStream) {
         micStream.getTracks().forEach((t) => t.stop());
@@ -818,6 +793,7 @@ const InterviewSetup = () => {
       }
 
       settingsSocketRef.current?.disconnect();
+      interviewSocketRef.current?.disconnect();
     };
   }, []);
 

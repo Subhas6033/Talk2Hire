@@ -32,21 +32,7 @@ const InterviewLive = () => {
   const screenShareStream = streamsRef.current?.screenShareStream;
   const preInitializedSocket = streamsRef.current?.preInitializedSocket;
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      console.log("🔍 Context Monitor:", {
-        hasContext: !!streamsRef.current,
-        sessionData: !!streamsRef.current?.sessionData,
-        micStream: !!streamsRef.current?.micStream,
-        primaryCamera: !!streamsRef.current?.primaryCameraStream,
-        screenShare: !!streamsRef.current?.screenShareStream,
-        socket: !!streamsRef.current?.preInitializedSocket,
-      });
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, []);
-
+  // ✅ IMPROVED: Better validation with retry logic
   useEffect(() => {
     // Immediate check - if context is null, it's not wrapped properly
     if (!streamsRef?.current) {
@@ -66,6 +52,7 @@ const InterviewLive = () => {
         hasMicStream: !!currentStreams?.micStream,
         hasPrimaryCamera: !!currentStreams?.primaryCameraStream,
         hasScreenShare: !!currentStreams?.screenShareStream,
+        hasSocket: !!currentStreams?.preInitializedSocket,
       });
 
       // Check if all required streams are present
@@ -73,7 +60,8 @@ const InterviewLive = () => {
         currentStreams?.sessionData &&
         currentStreams?.micStream &&
         currentStreams?.primaryCameraStream &&
-        currentStreams?.screenShareStream;
+        currentStreams?.screenShareStream &&
+        currentStreams?.preInitializedSocket;
 
       if (hasAllStreams) {
         console.log("✅ All streams available - setup complete!");
@@ -91,7 +79,8 @@ const InterviewLive = () => {
         currentStreams?.sessionData &&
         currentStreams?.micStream &&
         currentStreams?.primaryCameraStream &&
-        currentStreams?.screenShareStream;
+        currentStreams?.screenShareStream &&
+        currentStreams?.preInitializedSocket;
 
       if (!hasAllStreams) {
         console.error("❌ Timeout: Required streams not available:", {
@@ -99,6 +88,7 @@ const InterviewLive = () => {
           hasMicStream: !!currentStreams?.micStream,
           hasPrimaryCamera: !!currentStreams?.primaryCameraStream,
           hasScreenShare: !!currentStreams?.screenShareStream,
+          hasSocket: !!currentStreams?.preInitializedSocket,
         });
         alert("Invalid session. Please complete setup first.");
         navigate("/interview", { replace: true });
@@ -209,8 +199,7 @@ const InterviewLive = () => {
     }
   }, [primaryCameraStream]);
 
-  // ✅ FIXED: Attach screen share stream with better error handling
-
+  // ✅ Attach screen share stream with better error handling
   useEffect(() => {
     if (!screenVideoRef.current || !screenShareStream) {
       console.log("⏸️ Waiting for screen share stream or video ref");
@@ -294,59 +283,6 @@ const InterviewLive = () => {
     };
   }, [screenShareStream]);
 
-  // Debug: Monitor screen video element state
-  useEffect(() => {
-    if (!screenVideoRef.current) return;
-
-    const video = screenVideoRef.current;
-
-    const logStatus = () => {
-      console.log("📺 Screen Video Status:", {
-        hasStream: !!video.srcObject,
-        streamActive: video.srcObject?.active,
-        readyState: video.readyState,
-        paused: video.paused,
-        videoWidth: video.videoWidth,
-        videoHeight: video.videoHeight,
-      });
-    };
-
-    // Log immediately and on state changes
-    logStatus();
-
-    video.addEventListener("loadedmetadata", logStatus);
-    video.addEventListener("canplay", logStatus);
-    video.addEventListener("playing", logStatus);
-    video.addEventListener("pause", logStatus);
-    video.addEventListener("error", (e) => {
-      console.error("❌ Screen video error:", e);
-    });
-
-    return () => {
-      video.removeEventListener("loadedmetadata", logStatus);
-      video.removeEventListener("canplay", logStatus);
-      video.removeEventListener("playing", logStatus);
-      video.removeEventListener("pause", logStatus);
-    };
-  }, []);
-
-  // Debug screen share status
-  useEffect(() => {
-    if (screenShareStream) {
-      console.log("📊 Screen Share Status:", {
-        active: screenShareStream.active,
-        tracks: screenShareStream.getTracks().length,
-        trackStates: screenShareStream.getTracks().map((t) => ({
-          kind: t.kind,
-          enabled: t.enabled,
-          readyState: t.readyState,
-        })),
-        videoRefAttached: !!screenVideoRef.current?.srcObject,
-        videoRefPaused: screenVideoRef.current?.paused,
-      });
-    }
-  }, [screenShareStream]);
-
   // Initialize canvas for mobile frames
   useEffect(() => {
     if (secondaryCanvasRef.current) {
@@ -356,7 +292,7 @@ const InterviewLive = () => {
     }
   }, []);
 
-  // ✅ USE PRE-INITIALIZED SOCKET
+  // ✅ IMPROVED: Socket initialization with retry logic
   useEffect(() => {
     if (!sessionData || !preInitializedSocket) {
       console.warn("⚠️ No pre-initialized socket available");
@@ -367,45 +303,51 @@ const InterviewLive = () => {
     interview.socketRef.current = socket;
 
     console.log("✅ Using pre-initialized socket:", socket.id);
-    console.log("🎬 NOW STARTING INTERVIEW (will send media + receive TTS)");
-
-    const silenced = [
-      "user_audio_chunk",
-      "video_chunk",
-      "audio_chunk",
-      "holistic_detection_result",
-      "interim_transcript",
-    ];
-
-    socket.onAny((ev, ...args) => {
-      if (!silenced.includes(ev)) {
-        console.log(`📡 Socket: "${ev}"`);
-      }
+    console.log("🎬 Socket state:", {
+      id: socket.id,
+      connected: socket.connected,
+      disconnected: socket.disconnected,
     });
 
-    // Socket is already connected from setup
-    if (socket.connected) {
-      console.log("✅ Socket already connected:", socket.id);
+    // ✅ CRITICAL: Initialize socket with retry logic
+    const initializeSocket = async () => {
+      try {
+        // Wait for socket to be ready
+        let retries = 0;
+        const maxRetries = 10;
 
-      // ✅ CRITICAL: Tell server to START INTERVIEW NOW
-      console.log("🚀 Emitting 'client_ready' - Interview starting...");
-      socket.emit("client_ready", {
-        interviewId: sessionData.interviewId,
-        userId: sessionData.userId,
-        timestamp: Date.now(),
-      });
+        while (!socket.connected && retries < maxRetries) {
+          console.log(
+            `⏳ Waiting for socket connection (attempt ${retries + 1}/${maxRetries})`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          retries++;
+        }
 
-      interview.setStatus("live");
-      interview.setServerReady(true);
-      interview.setIsInitializing(false);
-    } else {
-      console.log("🔄 Socket not connected, reconnecting...");
-      socket.connect();
+        if (!socket.connected) {
+          console.error("❌ Socket failed to connect after retries");
+          alert("Connection failed. Please try again.");
+          navigate("/interview");
+          return;
+        }
 
-      socket.on("connect", () => {
-        console.log("✅ Connected:", socket.id);
+        console.log("✅ Socket connected and ready:", socket.id);
 
-        // ✅ CRITICAL: Tell server to START INTERVIEW NOW
+        const silenced = [
+          "user_audio_chunk",
+          "video_chunk",
+          "audio_chunk",
+          "holistic_detection_result",
+          "interim_transcript",
+        ];
+
+        socket.onAny((ev, ...args) => {
+          if (!silenced.includes(ev)) {
+            console.log(`📡 Socket: "${ev}"`);
+          }
+        });
+
+        // ✅ Tell server to START INTERVIEW NOW
         console.log("🚀 Emitting 'client_ready' - Interview starting...");
         socket.emit("client_ready", {
           interviewId: sessionData.interviewId,
@@ -414,185 +356,230 @@ const InterviewLive = () => {
         });
 
         interview.setStatus("live");
-      });
-
-      socket.on("server_ready", () => {
-        console.log("✅ Server ready");
         interview.setServerReady(true);
         interview.setIsInitializing(false);
-      });
-    }
 
-    // ✅ NOW we can receive TTS and questions
-    socket.on("question", (d) => {
-      console.log("❓ Received question:", d.question);
-      interview.handleQuestion(d);
-    });
+        // ✅ Register all event handlers
+        socket.on("question", (d) => {
+          console.log("❓ Received question:", d.question);
+          interview.handleQuestion(d);
+        });
 
-    socket.on("tts_audio", (chunk) => {
-      if (chunk) {
-        console.log("🔊 Received TTS audio chunk");
-        interview.handleTtsAudio(chunk);
-      }
-    });
-
-    socket.on("tts_end", () => {
-      console.log("🔊 TTS playback ended");
-      interview.handleTtsEnd();
-    });
-
-    socket.on("secondary_camera_ready", (data) => {
-      console.log("✅ Secondary camera ready");
-      setMobileCameraConnected(true);
-    });
-
-    socket.on("secondary_camera_status", (data) => {
-      if (data.connected) {
-        setMobileCameraConnected(true);
-      }
-    });
-
-    socket.on("mobile_camera_frame", (data) => {
-      if (!data?.frame || !secondaryCanvasRef.current) return;
-
-      const canvas = secondaryCanvasRef.current;
-      const ctx = canvas.getContext("2d", { alpha: false });
-      if (!ctx) return;
-
-      const img = new Image();
-      img.onload = () => {
-        try {
-          if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-            if (
-              canvas.width !== img.naturalWidth ||
-              canvas.height !== img.naturalHeight
-            ) {
-              canvas.width = img.naturalWidth;
-              canvas.height = img.naturalHeight;
-            }
+        socket.on("tts_audio", (chunk) => {
+          if (chunk) {
+            console.log("🔊 Received TTS audio chunk");
+            interview.handleTtsAudio(chunk);
           }
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        } catch (error) {
-          console.error("Canvas error:", error);
-        }
-      };
-      img.src = data.frame;
-    });
+        });
 
-    socket.on("interim_transcript", (data) => {
-      console.log("📝 Interim transcript:", data.text);
-      interview.setLiveTranscript(data.text);
-    });
+        socket.on("tts_end", () => {
+          console.log("🔊 TTS playback ended");
+          interview.handleTtsEnd();
+        });
 
-    socket.on("face_violation", (data) => {
-      console.warn("⚠️ Face violation:", data);
-      setFaceViolationWarning(data);
-    });
+        socket.on("secondary_camera_ready", (data) => {
+          console.log("✅ Secondary camera ready");
+          setMobileCameraConnected(true);
+        });
 
-    socket.on("face_violation_cleared", () => {
-      console.log("✅ Face violation cleared");
-      setFaceViolationWarning(null);
-    });
+        socket.on("secondary_camera_status", (data) => {
+          if (data.connected) {
+            setMobileCameraConnected(true);
+          }
+        });
 
-    socket.on("interview_terminated", async (data) => {
-      console.error("❌ Interview terminated:", data);
-      setIsInterviewTerminated(true);
-      interview.setMicStreamingActive(false);
-      alert(`Interview Terminated: ${data.message}`);
-      await cleanupAllRecordings();
-      socket.disconnect();
-      navigate("/dashboard");
-    });
+        socket.on("mobile_camera_frame", (data) => {
+          if (!data?.frame || !secondaryCanvasRef.current) return;
 
-    socket.on("audio_recording_ready", (d) =>
-      console.log("✅ Audio ready:", d),
-    );
-    socket.on("audio_recording_error", (d) =>
-      console.error("❌ Audio error:", d),
-    );
-    socket.on("video_recording_ready", (d) =>
-      console.log("✅ Video ready:", d),
-    );
-    socket.on("video_recording_error", (d) =>
-      console.error("❌ Video error:", d),
-    );
-    socket.on("media_merge_complete", (d) =>
-      console.log("✅ Merge complete:", d.finalVideoUrl),
-    );
+          const canvas = secondaryCanvasRef.current;
+          const ctx = canvas.getContext("2d", { alpha: false });
+          if (!ctx) return;
 
-    socket.on("evaluation_started", () => {
-      console.log("📊 Evaluation started");
-      setEvaluationStatus("started");
-    });
+          const img = new Image();
+          img.onload = () => {
+            try {
+              if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                if (
+                  canvas.width !== img.naturalWidth ||
+                  canvas.height !== img.naturalHeight
+                ) {
+                  canvas.width = img.naturalWidth;
+                  canvas.height = img.naturalHeight;
+                }
+              }
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            } catch (error) {
+              console.error("Canvas error:", error);
+            }
+          };
+          img.src = data.frame;
+        });
 
-    socket.on("evaluation_complete", (d) => {
-      console.log("✅ Evaluation complete:", d);
-      setEvaluationStatus("complete");
-      setEvaluationResults(d.results);
-      interview.setMicStreamingActive(false);
-    });
+        socket.on("interim_transcript", (data) => {
+          console.log("📝 Interim transcript:", data.text);
+          interview.setLiveTranscript(data.text);
+        });
 
-    socket.on("evaluation_error", (d) => {
-      console.error("❌ Evaluation error:", d);
-      setEvaluationStatus("error");
-      alert(`Evaluation failed: ${d.message}`);
-    });
+        socket.on("face_violation", (data) => {
+          console.warn("⚠️ Face violation:", data);
+          setFaceViolationWarning(data);
+        });
 
-    socket.on("next_question", (d) => {
-      console.log("➡️ Next question:", d.question);
-      interview.handleNextQuestion(d);
-    });
+        socket.on("face_violation_cleared", () => {
+          console.log("✅ Face violation cleared");
+          setFaceViolationWarning(null);
+        });
 
-    socket.on("idle_prompt", (d) => {
-      console.log("💤 Idle prompt:", d.text);
-      interview.handleIdlePrompt(d);
-    });
+        socket.on("interview_terminated", async (data) => {
+          console.error("❌ Interview terminated:", data);
+          setIsInterviewTerminated(true);
+          interview.setMicStreamingActive(false);
+          alert(`Interview Terminated: ${data.message}`);
+          await cleanupAllRecordings();
+          socket.disconnect();
+          navigate("/dashboard");
+        });
 
-    socket.on("transcript_received", (d) => {
-      console.log("✅ Transcript received:", d.text);
-      interview.handleTranscriptReceived(d);
-    });
+        socket.on("audio_recording_ready", (d) =>
+          console.log("✅ Audio ready:", d),
+        );
+        socket.on("audio_recording_error", (d) =>
+          console.error("❌ Audio error:", d),
+        );
+        socket.on("video_recording_ready", (d) =>
+          console.log("✅ Video ready:", d),
+        );
+        socket.on("video_recording_error", (d) =>
+          console.error("❌ Video error:", d),
+        );
+        socket.on("media_merge_complete", (d) =>
+          console.log("✅ Merge complete:", d.finalVideoUrl),
+        );
 
-    socket.on("listening_enabled", () => {
-      console.log("🎤 Listening enabled");
-      interview.enableListening();
-    });
+        socket.on("evaluation_started", () => {
+          console.log("📊 Evaluation started");
+          setEvaluationStatus("started");
+        });
 
-    socket.on("listening_disabled", () => {
-      console.log("🎤 Listening disabled");
-      interview.disableListening();
-    });
+        socket.on("evaluation_complete", (d) => {
+          console.log("✅ Evaluation complete:", d);
+          setEvaluationStatus("complete");
+          setEvaluationResults(d.results);
+          interview.setMicStreamingActive(false);
+        });
 
-    socket.on("interview_complete", async (d) => {
-      console.log("✅ Interview complete:", d);
-      interview.handleInterviewComplete(d);
-      await cleanupAllRecordings();
-    });
+        socket.on("evaluation_error", (d) => {
+          console.error("❌ Evaluation error:", d);
+          setEvaluationStatus("error");
+          alert(`Evaluation failed: ${d.message}`);
+        });
 
-    socket.on("connect_error", (err) => {
-      console.error("❌ Connection error:", err.message);
-      interview.setStatus("error");
-      interview.setIsInitializing(false);
-    });
+        socket.on("next_question", (d) => {
+          console.log("➡️ Next question:", d.question);
+          interview.handleNextQuestion(d);
+        });
 
-    socket.on("disconnect", (reason) => {
-      console.log("🔌 Disconnected:", reason);
-      interview.setStatus("disconnected");
-      interview.setMicStreamingActive(false);
-    });
+        socket.on("idle_prompt", (d) => {
+          console.log("💤 Idle prompt:", d.text);
+          interview.handleIdlePrompt(d);
+        });
 
-    socket.on("error", (error) => {
-      console.error("❌ Socket error:", error);
-      interview.setStatus("error");
-    });
+        socket.on("transcript_received", (d) => {
+          console.log("✅ Transcript received:", d.text);
+          interview.handleTranscriptReceived(d);
+        });
 
-    // ✅ Initialize interview
-    console.log("🎬 Initializing interview session");
-    interview.initializeInterview({
-      interviewId: sessionData.interviewId,
-      userId: sessionData.userId,
-      sessionId: sessionData.interviewId,
-    });
+        socket.on("listening_enabled", () => {
+          console.log("🎤 Listening enabled");
+          interview.enableListening();
+        });
+
+        socket.on("listening_disabled", () => {
+          console.log("🎤 Listening disabled");
+          interview.disableListening();
+        });
+
+        socket.on("interview_complete", async (d) => {
+          console.log("✅ Interview complete:", d);
+          interview.handleInterviewComplete(d);
+          await cleanupAllRecordings();
+        });
+
+        // ✅ IMPROVED: Better error handling
+        socket.on("connect_error", (err) => {
+          console.error("❌ Connection error:", err.message);
+
+          // Don't show error immediately - socket might reconnect
+          setTimeout(() => {
+            if (!socket.connected) {
+              alert("Connection lost. Please check your internet and refresh.");
+              navigate("/interview");
+            }
+          }, 3000);
+        });
+
+        socket.on("disconnect", (reason) => {
+          console.log("🔌 Disconnected:", reason);
+
+          if (reason === "io server disconnect") {
+            // Server kicked us out - don't reconnect
+            alert("Disconnected from server. Please start a new interview.");
+            navigate("/interview");
+          } else if (
+            reason === "transport error" ||
+            reason === "transport close"
+          ) {
+            // Network issue - socket.io will auto-reconnect
+            console.log("🔄 Attempting to reconnect...");
+          }
+        });
+
+        // ✅ Handle reconnection
+        socket.on("reconnect", (attemptNumber) => {
+          console.log(`✅ Reconnected after ${attemptNumber} attempts`);
+
+          // Re-send client_ready
+          socket.emit("client_ready", {
+            interviewId: sessionData.interviewId,
+            userId: sessionData.userId,
+            timestamp: Date.now(),
+          });
+        });
+
+        socket.on("reconnect_attempt", (attemptNumber) => {
+          console.log(`🔄 Reconnection attempt ${attemptNumber}`);
+        });
+
+        socket.on("reconnect_error", (err) => {
+          console.error("❌ Reconnection error:", err);
+        });
+
+        socket.on("reconnect_failed", () => {
+          console.error("❌ Reconnection failed");
+          alert("Failed to reconnect. Please start a new interview.");
+          navigate("/interview");
+        });
+
+        socket.on("error", (error) => {
+          console.error("❌ Socket error:", error);
+          interview.setStatus("error");
+        });
+
+        // ✅ Initialize interview
+        console.log("🎬 Initializing interview session");
+        interview.initializeInterview({
+          interviewId: sessionData.interviewId,
+          userId: sessionData.userId,
+          sessionId: sessionData.interviewId,
+        });
+      } catch (error) {
+        console.error("❌ Socket initialization failed:", error);
+        alert("Failed to initialize interview. Please try again.");
+        navigate("/interview");
+      }
+    };
+
+    initializeSocket();
 
     return () => {
       (async () => {
@@ -673,24 +660,6 @@ const InterviewLive = () => {
       console.log("🧹 Component unmounting - preserving streams in context");
     };
   }, []);
-
-  // MIC logs for debugging
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (interview.socketRef.current) {
-        console.log("🎤 Microphone State:", {
-          micStreamingActive: interview.micStreamingActive,
-          isListening: interview.isListening,
-          canListen: interview.canListen,
-          socketConnected: interview.socketRef.current.connected,
-          hasStarted: interview.hasStarted,
-          serverReady: interview.serverReady,
-        });
-      }
-    }, 5000); // Log every 5 seconds
-
-    return () => clearInterval(interval);
-  }, [interview]);
 
   const secondaryIsActive =
     secondaryCamera.isRecording || mobileCameraConnected;

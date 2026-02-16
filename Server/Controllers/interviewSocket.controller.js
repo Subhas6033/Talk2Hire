@@ -59,6 +59,9 @@ function initInterviewSocket(httpServer) {
     maxHttpBufferSize: 10 * 1024 * 1024, // 10MB max message size
     pingTimeout: 60000,
     pingInterval: 25000,
+    perMessageDeflate: false, // Disable compression to reduce CPU load
+    httpCompression: false, // Disable HTTP compression
+    connectTimeout: 45000,
   });
 
   // Store persistent session data across connections
@@ -87,8 +90,8 @@ function initInterviewSocket(httpServer) {
         serverReadySent: false,
         lastMobileFrame: null,
         lastMobileFrameTimestamp: null,
-        isSetupMode: true, // ✅ NEW: Track if in setup mode
-        interviewStarted: false, // ✅ NEW: Track if interview has started
+        isSetupMode: true,
+        interviewStarted: false,
       });
     }
     return interviewSessions.get(interviewId);
@@ -160,23 +163,19 @@ function initInterviewSocket(httpServer) {
 
     // Handle mobile frames
     socket.on("security_frame_request", (data, ack) => {
-      // Cache frame for reconnection
       session.lastMobileFrame = data.frame;
       session.lastMobileFrameTimestamp = data.timestamp || Date.now();
 
-      // Relay to desktop as "mobile_camera_frame"
       socket.to(`interview_${interviewId}`).emit("mobile_camera_frame", {
         frame: data.frame,
         timestamp: data.timestamp || Date.now(),
       });
 
-      // Acknowledge receipt
       if (typeof ack === "function") {
         ack();
       }
     });
 
-    // Backward compatibility: support old event name
     socket.on("mobile_camera_frame", (data, ack) => {
       session.lastMobileFrame = data.frame;
       session.lastMobileFrameTimestamp = data.timestamp || Date.now();
@@ -191,7 +190,6 @@ function initInterviewSocket(httpServer) {
       }
     });
 
-    // Handle status requests
     socket.on("request_secondary_camera_status", () => {
       if (session.secondaryCameraConnected) {
         socket.emit("secondary_camera_ready", {
@@ -203,7 +201,6 @@ function initInterviewSocket(httpServer) {
           metadata: session.secondaryCameraMetadata,
         });
 
-        // Send last cached frame if available
         if (session.lastMobileFrame) {
           socket.emit("mobile_camera_frame", {
             frame: session.lastMobileFrame,
@@ -228,10 +225,8 @@ function initInterviewSocket(httpServer) {
     const session = getOrCreateSession(interviewId);
     const { videoUploads, audioUploads } = session;
 
-    // Join interview room
     socket.join(`interview_${interviewId}`);
 
-    // Send cached state to reconnecting clients
     if (session.secondaryCameraConnected) {
       console.log(
         "✅ Secondary camera already connected, notifying new client",
@@ -268,26 +263,22 @@ function initInterviewSocket(httpServer) {
     let awaitingRepeatResponse = false;
     let currentQuestionText = "";
 
-    // Configuration constants
     const MAX_QUESTIONS = 10;
     const MAX_FACE_VIOLATIONS = 1;
     const FACE_DETECTION_THROTTLE_MS = 1000;
 
-    // Face detection state
     let lastHolisticTime = 0;
     let faceViolationCount = 0;
     let lastFaceViolationTime = null;
     let faceViolationTimeout = null;
 
     try {
-      // Initialize interview session and first question
       const interviewSession = await Interview.getSessionById(interviewId);
       firstQuestion = await Interview.getQuestionByOrder(
         interviewId,
         currentOrder,
       );
 
-      // Create default first question if none exists
       if (!firstQuestion) {
         const defaultQ =
           "Hello! Let's start with an introduction. Can you tell me about yourself, your background, and what brings you here today?";
@@ -320,7 +311,7 @@ function initInterviewSocket(httpServer) {
       console.log("📝 Registering all socket event handlers");
 
       // ================================================================
-      // ✅ NEW: SETUP MODE HANDLER
+      // SETUP MODE HANDLER
       // ================================================================
 
       socket.on("setup_mode", (data) => {
@@ -336,7 +327,6 @@ function initInterviewSocket(httpServer) {
         console.log(`   - Will ONLY register recordings`);
         console.log(`   - Will NOT process media chunks`);
 
-        // Acknowledge setup mode
         socket.emit("server_ready", {
           setupMode: true,
           message: "Server ready in setup mode - recordings can be registered",
@@ -344,7 +334,7 @@ function initInterviewSocket(httpServer) {
       });
 
       // ================================================================
-      // ✅ NEW: CLIENT READY HANDLER (Start Interview)
+      // ✅ OPTIMIZED: CLIENT READY HANDLER (Parallel TTS + Deepgram Init)
       // ================================================================
 
       socket.on("client_ready", async (data) => {
@@ -376,7 +366,6 @@ function initInterviewSocket(httpServer) {
 
           isProcessing = true;
           firstQuestionSent = true;
-
           currentQuestionText = firstQuestion.question;
 
           console.log(
@@ -384,13 +373,66 @@ function initInterviewSocket(httpServer) {
           );
           socket.emit("question", { question: firstQuestion.question });
 
-          console.log(`🔊 Starting TTS for first question`);
-          const deepgramReady = startDeepgramConnection();
-          await streamTTSToClient(socket, firstQuestion.question, interviewId);
-          console.log(`✅ First question TTS completed`);
+          // ✅ CRITICAL OPTIMIZATION: Start Deepgram BEFORE TTS (parallel)
+          console.log(`🎤 Pre-initializing Deepgram STT (parallel with TTS)`);
+          const deepgramReadyPromise = startDeepgramConnection();
 
-          console.log(`🎤 Activating Deepgram STT`);
-          await ensureDeepgramReady(deepgramReady, "client_ready");
+          console.log(`🔊 Starting TTS for first question (parallel)`);
+          const ttsPromise = streamTTSToClient(
+            socket,
+            firstQuestion.question,
+            interviewId,
+          );
+
+          // ✅ Wait for BOTH to complete in parallel
+          const results = await Promise.allSettled([
+            ttsPromise,
+            deepgramReadyPromise,
+          ]);
+
+          // Check results
+          const ttsResult = results[0];
+          const deepgramResult = results[1];
+
+          if (ttsResult.status === "rejected") {
+            console.error("❌ TTS failed:", ttsResult.reason);
+            throw new Error("TTS failed: " + ttsResult.reason.message);
+          }
+
+          console.log(`✅ TTS completed successfully`);
+
+          // Verify Deepgram is ready
+          let deepgramReady = deepgramResult.status === "fulfilled";
+
+          if (!deepgramReady) {
+            console.warn(
+              "⚠️ Deepgram failed during parallel init, retrying...",
+            );
+            console.error("Deepgram error:", deepgramResult.reason);
+
+            // Quick retry
+            try {
+              await ensureDeepgramReady(
+                startDeepgramConnection(),
+                "client_ready-retry",
+              );
+              deepgramReady = true;
+            } catch (retryError) {
+              console.error("❌ Deepgram retry also failed:", retryError);
+              throw new Error("Deepgram initialization failed after retry");
+            }
+          }
+
+          // Final verification
+          if (!deepgramConnection || !deepgramConnection.isConnected()) {
+            console.warn("⚠️ Deepgram connection not verified, final check...");
+            await ensureDeepgramReady(
+              startDeepgramConnection(),
+              "client_ready-final",
+            );
+          }
+
+          console.log(`✅ Both TTS and Deepgram ready!`);
 
           isListeningActive = true;
           socket.emit("listening_enabled");
@@ -399,6 +441,9 @@ function initInterviewSocket(httpServer) {
           isProcessing = false;
 
           console.log(`🎬 Interview started successfully for ${interviewId}`);
+          console.log(
+            `⚡ Total initialization time: ${Date.now() - (data.timestamp || Date.now())}ms`,
+          );
         } catch (error) {
           console.error(`❌ Failed to start interview:`, error);
           socket.emit("error", {
@@ -412,7 +457,7 @@ function initInterviewSocket(httpServer) {
       });
 
       // ================================================================
-      // SECONDARY CAMERA EVENTS (also handle during interview)
+      // SECONDARY CAMERA EVENTS
       // ================================================================
 
       socket.on("secondary_camera_connected", (data) => {
@@ -451,7 +496,6 @@ function initInterviewSocket(httpServer) {
         }
       });
 
-      // Backward compatibility
       socket.on("mobile_camera_frame", (data) => {
         session.lastMobileFrame = data.frame;
         session.lastMobileFrameTimestamp = data.timestamp || Date.now();
@@ -509,7 +553,6 @@ function initInterviewSocket(httpServer) {
             );
           }
 
-          // Reuse existing session if available
           if (videoUploads[videoType]) {
             console.log(
               `♻️ Video session already exists for ${videoType}, reusing:`,
@@ -575,18 +618,11 @@ function initInterviewSocket(httpServer) {
       });
 
       socket.on("video_chunk", async (data) => {
-        // ✅ NEW: Block video chunks in setup mode
         if (session.isSetupMode) {
-          console.warn(
-            `⚠️ [${socket.id}] Received video chunk during SETUP MODE - ignoring`,
-          );
           return;
         }
 
         if (!session.interviewStarted) {
-          console.warn(
-            `⚠️ [${socket.id}] Received video chunk before interview started - ignoring`,
-          );
           return;
         }
 
@@ -785,18 +821,11 @@ function initInterviewSocket(httpServer) {
       });
 
       socket.on("audio_chunk", async (data) => {
-        // ✅ NEW: Block audio chunks in setup mode
         if (session.isSetupMode) {
-          console.warn(
-            `⚠️ [${socket.id}] Received audio chunk during SETUP MODE - ignoring`,
-          );
           return;
         }
 
         if (!session.interviewStarted) {
-          console.warn(
-            `⚠️ [${socket.id}] Received audio chunk before interview started - ignoring`,
-          );
           return;
         }
 
@@ -1538,16 +1567,10 @@ function initInterviewSocket(httpServer) {
       }
 
       // ================================================================
-      // ❌ REMOVED: ready_for_question event
-      // This is now handled by client_ready event
-      // ================================================================
-
-      // ================================================================
       // HOLISTIC DETECTION (Face/Pose Detection)
       // ================================================================
 
       socket.on("holistic_detection_result", async (data) => {
-        // ✅ Block holistic detection processing in setup mode
         if (session.isSetupMode) {
           return;
         }
@@ -1680,13 +1703,9 @@ function initInterviewSocket(httpServer) {
       const WARNING_THROTTLE_MS = 5000;
 
       socket.on("user_audio_chunk", (audioData) => {
-        // ✅ NEW: Block user audio chunks in setup mode
         if (session.isSetupMode) {
           const now = Date.now();
           if (now - lastNoConnectionWarning > WARNING_THROTTLE_MS) {
-            console.warn(
-              `⚠️ [${socket.id}] Received user audio during SETUP MODE - ignoring`,
-            );
             lastNoConnectionWarning = now;
           }
           return;
@@ -1765,7 +1784,6 @@ function initInterviewSocket(httpServer) {
 
       console.log("✅ All event listeners registered");
 
-      // ✅ Send server_ready immediately (setup mode will be activated by client)
       setTimeout(() => {
         socket.emit("server_ready", {
           setupMode: session.isSetupMode,
@@ -1798,10 +1816,8 @@ function initInterviewSocket(httpServer) {
     console.log(`📝 Interview: ${interviewId}, User: ${userId}`);
 
     if (isSettingsSocket) {
-      // Handle settings socket (mobile camera preview during setup)
       handleSettingsSocket(socket, interviewId, userId);
     } else {
-      // Handle interview socket (full interview logic)
       await handleInterviewSocket(socket, interviewId, userId);
     }
   });
