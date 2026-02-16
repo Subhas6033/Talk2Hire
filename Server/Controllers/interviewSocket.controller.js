@@ -1001,7 +1001,7 @@ function initInterviewSocket(httpServer) {
 
       /**
        * Initialize Deepgram connection for speech recognition
-       * OPTIMIZATION: Returns promise that resolves when connection is ready
+       * ✅ FIXED: Returns promise that resolves ONLY when WebSocket is actually OPEN
        */
       function startDeepgramConnection() {
         if (deepgramConnection) {
@@ -1014,12 +1014,22 @@ function initInterviewSocket(httpServer) {
           deepgramConnection = null;
         }
 
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
           console.log("Creating new Deepgram connection");
           const sttSession = createSTTSession();
           let hasReceivedTranscript = false;
+          let hasResolved = false;
 
-          deepgramConnection = sttSession.startLiveTranscription({
+          // ✅ CRITICAL: Set timeout for connection
+          const connectionTimeout = setTimeout(() => {
+            if (!hasResolved) {
+              console.error("❌ Deepgram connection timeout - never opened");
+              hasResolved = true;
+              reject(new Error("Deepgram connection timeout"));
+            }
+          }, 3000); // 3 second timeout
+
+          const connection = sttSession.startLiveTranscription({
             onTranscript: async (transcript) => {
               console.log("Deepgram final transcript:", transcript);
 
@@ -1068,6 +1078,13 @@ function initInterviewSocket(httpServer) {
                 });
               }
               isListeningActive = false;
+
+              // Reject promise if connection fails during setup
+              if (!hasResolved) {
+                clearTimeout(connectionTimeout);
+                hasResolved = true;
+                reject(error);
+              }
             },
 
             onClose: () => {
@@ -1082,8 +1099,40 @@ function initInterviewSocket(httpServer) {
             },
           });
 
-          console.log("Deepgram connection created");
-          resolve(deepgramConnection);
+          deepgramConnection = connection;
+
+          // ✅ CRITICAL FIX: Wait for the connection to actually open
+          // Use the waitForReady method from stt.service.js
+          if (connection.waitForReady) {
+            connection
+              .waitForReady(3000)
+              .then(() => {
+                if (!hasResolved) {
+                  clearTimeout(connectionTimeout);
+                  hasResolved = true;
+                  console.log("✅ Deepgram connection opened and ready");
+                  resolve(connection);
+                }
+              })
+              .catch((error) => {
+                if (!hasResolved) {
+                  clearTimeout(connectionTimeout);
+                  hasResolved = true;
+                  console.error("❌ Deepgram waitForReady failed:", error);
+                  reject(error);
+                }
+              });
+          } else {
+            // Fallback: resolve immediately if waitForReady not available
+            console.warn(
+              "⚠️ waitForReady not available, resolving immediately",
+            );
+            clearTimeout(connectionTimeout);
+            hasResolved = true;
+            resolve(connection);
+          }
+
+          console.log("Deepgram connection created, waiting for OPEN event...");
         });
       }
 
