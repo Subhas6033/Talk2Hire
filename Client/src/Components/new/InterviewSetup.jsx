@@ -100,6 +100,7 @@ const InterviewSetup = () => {
           });
 
           setQuestionsReady(true);
+          setCurrentStep(2);
         })
         .catch(() => {
           setError("Failed to generate questions.");
