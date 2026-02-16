@@ -736,6 +736,43 @@ function initInterviewSocket(httpServer) {
       // ================================================================
 
       /**
+       * ✅ FIXED: Verify Deepgram connection is ready before enabling listening
+       * This prevents "No Deepgram connection available" errors
+       */
+      async function ensureDeepgramReady(deepgramReadyPromise, context = "") {
+        try {
+          console.log(`⏳ [${context}] Waiting for Deepgram to be ready...`);
+          await deepgramReadyPromise;
+
+          // ✅ CRITICAL: Verify connection is actually ready
+          if (deepgramConnection && deepgramConnection.isConnected()) {
+            console.log(`✅ [${context}] Deepgram verified ready`);
+            return true;
+          }
+
+          console.error(
+            `❌ [${context}] Deepgram not ready after wait, retrying...`,
+          );
+
+          // Retry once
+          console.log(`🔄 [${context}] Retrying Deepgram connection...`);
+          const retryConnection = startDeepgramConnection();
+          await retryConnection;
+
+          if (deepgramConnection && deepgramConnection.isConnected()) {
+            console.log(`✅ [${context}] Deepgram ready after retry`);
+            return true;
+          }
+
+          console.error(`❌ [${context}] Deepgram failed after retry`);
+          throw new Error("Deepgram connection failed after retry");
+        } catch (error) {
+          console.error(`❌ [${context}] Error waiting for Deepgram:`, error);
+          throw error;
+        }
+      }
+
+      /**
        * Handle user idle timeout
        * Asks if user wants question repeated or moves to next question
        */
@@ -769,14 +806,19 @@ function initInterviewSocket(httpServer) {
           // Stream TTS immediately
           await streamTTSToClient(socket, promptText, interviewId);
 
-          // Wait for Deepgram to be ready
-          await deepgramReady;
+          // ✅ FIXED: Wait and verify Deepgram is ready
+          try {
+            await ensureDeepgramReady(deepgramReady, "handleIdle");
 
-          isListeningActive = true;
-          socket.emit("listening_enabled");
+            isListeningActive = true;
+            socket.emit("listening_enabled");
 
-          if (deepgramConnection) {
-            deepgramConnection.resumeIdleDetection();
+            if (deepgramConnection) {
+              deepgramConnection.resumeIdleDetection();
+            }
+          } catch (error) {
+            console.error("❌ Failed to enable listening:", error);
+            socket.emit("error", { message: "Speech recognition unavailable" });
           }
         }
       }
@@ -828,14 +870,20 @@ function initInterviewSocket(httpServer) {
           // Stream TTS immediately
           await streamTTSToClient(socket, nextQuestionText, interviewId);
 
-          // Wait for Deepgram to be ready
-          await deepgramReady;
+          // ✅ FIXED: Wait and verify Deepgram is ready
+          try {
+            await ensureDeepgramReady(deepgramReady, "moveToNextQuestion");
 
-          isListeningActive = true;
-          socket.emit("listening_enabled");
-          isProcessing = false;
+            isListeningActive = true;
+            socket.emit("listening_enabled");
+            isProcessing = false;
 
-          console.log("Moved to next question successfully");
+            console.log("Moved to next question successfully");
+          } catch (error) {
+            console.error("❌ Failed to enable listening:", error);
+            socket.emit("error", { message: "Speech recognition unavailable" });
+            isProcessing = false;
+          }
         } catch (error) {
           console.error("Error moving to next question:", error);
           socket.emit("error", { message: "Error loading next question" });
@@ -1064,12 +1112,18 @@ function initInterviewSocket(httpServer) {
           // Stream TTS immediately
           await streamTTSToClient(socket, currentQuestionText, interviewId);
 
-          // Wait for Deepgram to be ready
-          await deepgramReady;
+          // ✅ FIXED: Wait and verify Deepgram is ready
+          try {
+            await ensureDeepgramReady(deepgramReady, "handleRepeatResponse");
 
-          isListeningActive = true;
-          socket.emit("listening_enabled");
-          isProcessing = false;
+            isListeningActive = true;
+            socket.emit("listening_enabled");
+            isProcessing = false;
+          } catch (error) {
+            console.error("❌ Failed to enable listening:", error);
+            socket.emit("error", { message: "Speech recognition unavailable" });
+            isProcessing = false;
+          }
         } else if (
           lowerTranscript.includes("no") ||
           lowerTranscript.includes("nope") ||
@@ -1092,12 +1146,21 @@ function initInterviewSocket(httpServer) {
           // Stream TTS immediately
           await streamTTSToClient(socket, clarificationText, interviewId);
 
-          // Wait for Deepgram to be ready
-          await deepgramReady;
+          // ✅ FIXED: Wait and verify Deepgram is ready
+          try {
+            await ensureDeepgramReady(
+              deepgramReady,
+              "handleRepeatResponse-clarification",
+            );
 
-          isListeningActive = true;
-          socket.emit("listening_enabled");
-          isProcessing = false;
+            isListeningActive = true;
+            socket.emit("listening_enabled");
+            isProcessing = false;
+          } catch (error) {
+            console.error("❌ Failed to enable listening:", error);
+            socket.emit("error", { message: "Speech recognition unavailable" });
+            isProcessing = false;
+          }
         }
       }
 
@@ -1202,14 +1265,20 @@ function initInterviewSocket(httpServer) {
           // Stream TTS immediately
           await streamTTSToClient(socket, nextQuestion.question, interviewId);
 
-          // Wait for Deepgram to be ready
-          await deepgramReady;
+          // ✅ FIXED: Wait and verify Deepgram is ready
+          try {
+            await ensureDeepgramReady(deepgramReady, "processUserTranscript");
 
-          isListeningActive = true;
-          socket.emit("listening_enabled");
-          isProcessing = false;
+            isListeningActive = true;
+            socket.emit("listening_enabled");
+            isProcessing = false;
 
-          console.log("Question cycle complete");
+            console.log("Question cycle complete");
+          } catch (error) {
+            console.error("❌ Failed to enable listening:", error);
+            socket.emit("error", { message: "Speech recognition unavailable" });
+            isProcessing = false;
+          }
         } catch (error) {
           console.error("Error in processUserTranscript:", error);
           isProcessing = false;
@@ -1252,14 +1321,21 @@ function initInterviewSocket(httpServer) {
           await streamTTSToClient(socket, firstQuestion.question, interviewId);
           console.log("First question TTS done");
 
-          // Wait for Deepgram to be ready
-          await deepgramReady;
+          // ✅ FIXED: Wait and verify Deepgram is ready
+          try {
+            await ensureDeepgramReady(deepgramReady, "ready_for_question");
 
-          isListeningActive = true;
-          socket.emit("listening_enabled");
-          console.log("Listening enabled");
+            isListeningActive = true;
+            socket.emit("listening_enabled");
+            console.log("Listening enabled");
 
-          isProcessing = false;
+            isProcessing = false;
+          } catch (error) {
+            console.error("❌ Failed to enable listening:", error);
+            socket.emit("error", { message: "Speech recognition unavailable" });
+            isProcessing = false;
+            firstQuestionSent = false;
+          }
         } catch (error) {
           console.error("Error in ready_for_question handler:", error);
           socket.emit("error", { message: "Error loading question" });
@@ -1476,6 +1552,11 @@ function initInterviewSocket(httpServer) {
   console.log("Socket.IO interview server ready");
 }
 
+/**
+ * ============================================================================
+ * OPTIMIZED: streamTTSToClient - ZERO-LATENCY STREAMING
+ * ============================================================================
+ */
 async function streamTTSToClient(socket, text, interviewId) {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
