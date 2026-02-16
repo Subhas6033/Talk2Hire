@@ -33,6 +33,7 @@ const InterviewSetup = () => {
     { num: 4, label: "Primary Camera" },
     { num: 5, label: "Mobile Camera" },
     { num: 6, label: "Screen Share" },
+    { num: 7, label: "Initializing" },
   ];
 
   /* ================= STATE ================= */
@@ -58,12 +59,23 @@ const InterviewSetup = () => {
   const [screenShareStream, setScreenShareStream] = useState(null);
   const [screenShareError, setScreenShareError] = useState(null);
 
+  const [initProgress, setInitProgress] = useState({
+    socket: false,
+    serverReady: false,
+    audioRecording: false,
+    videoRecording: false,
+    screenRecording: false,
+    mobileRecording: false,
+  });
+  const [initError, setInitError] = useState(null);
+
   /* ================= REFS ================= */
 
   const primaryVideoRef = useRef(null);
   const mobileCanvasRef = useRef(null);
   const screenVideoRef = useRef(null);
   const settingsSocketRef = useRef(null);
+  const interviewSocketRef = useRef(null);
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
   const animationFrameRef = useRef(null);
@@ -72,7 +84,7 @@ const InterviewSetup = () => {
 
   const hasExistingSkills = user?.skill?.trim();
 
-  /* ================= STEP 1 ================= */
+  /* ================= STEP HANDLERS ================= */
 
   const handleStartSetup = () => {
     if (!hasExistingSkills && (!skills || skills.length === 0)) {
@@ -101,7 +113,7 @@ const InterviewSetup = () => {
           });
 
           setQuestionsReady(true);
-          setCurrentStep(2); // ✅ Only set once after success
+          setCurrentStep(2);
         })
         .catch(() => {
           setError("Failed to generate questions.");
@@ -151,6 +163,38 @@ const InterviewSetup = () => {
     }
     setError(null);
     setCurrentStep(6);
+  };
+
+  const handleScreenShareSuccess = () => {
+    if (!questionsReady) {
+      setError("Questions are not ready yet.");
+      return;
+    }
+
+    const isMicActive = micStream?.active;
+    const isCameraActive = primaryCameraStream?.active;
+    const isScreenActive = screenShareStream?.active;
+
+    if (
+      !isMicActive ||
+      !isCameraActive ||
+      !mobileCameraConnected ||
+      !isScreenActive
+    ) {
+      const missing = [];
+      if (!isMicActive) missing.push("microphone");
+      if (!isCameraActive) missing.push("camera");
+      if (!isScreenActive) missing.push("screen share");
+      if (!mobileCameraConnected) missing.push("mobile camera");
+
+      setError(
+        `The following devices are not active: ${missing.join(", ")}. Please configure them again.`,
+      );
+      return;
+    }
+
+    setError(null);
+    setCurrentStep(7);
   };
 
   /* ================= MIC TEST ================= */
@@ -228,7 +272,7 @@ const InterviewSetup = () => {
       query: {
         interviewId: sessionData.interviewId,
         userId: sessionData.userId,
-        type: "settings", // ✅ CRITICAL FIX: Added type parameter
+        type: "settings",
       },
     });
 
@@ -272,6 +316,14 @@ const InterviewSetup = () => {
 
       setScreenShareStream(stream);
 
+      stream.getVideoTracks()[0].addEventListener("ended", () => {
+        console.log("⚠️ User stopped screen sharing");
+        setScreenShareStream(null);
+        setScreenShareError(
+          "Screen sharing was stopped. Please share your screen again.",
+        );
+      });
+
       if (screenVideoRef.current) {
         screenVideoRef.current.srcObject = stream;
         await screenVideoRef.current.play().catch(() => {});
@@ -285,43 +337,258 @@ const InterviewSetup = () => {
     if (currentStep === 6) startScreenShareTest();
   }, [currentStep]);
 
-  /* ================= START INTERVIEW ================= */
+  /* ================= PRE-INITIALIZATION (STEP 7) ================= */
 
-  const handleStartInterview = () => {
-    if (!questionsReady) {
-      setError("Finalizing questions...");
-      return;
-    }
+  useEffect(() => {
+    if (currentStep !== 7 || !sessionData) return;
 
-    if (
-      !micStream ||
-      !primaryCameraStream ||
-      !mobileCameraConnected ||
-      !screenShareStream
-    ) {
-      setError("All devices must be configured.");
-      return;
-    }
+    let mounted = true;
 
-    // Store streams in context ref (not in navigation state)
-    streamsRef.current = {
-      micStream,
-      primaryCameraStream,
-      screenShareStream,
-      sessionData,
+    const initializeInterview = async () => {
+      try {
+        console.log("🔄 Starting pre-initialization...");
+
+        setInitProgress((prev) => ({ ...prev, socket: "connecting" }));
+
+        const socket = io(SOCKET_URL, {
+          query: {
+            interviewId: sessionData.interviewId,
+            userId: sessionData.userId,
+            type: "interview",
+          },
+          transports: ["websocket", "polling"],
+          reconnection: true,
+          reconnectionAttempts: 3,
+          reconnectionDelay: 1000,
+          timeout: 10000,
+        });
+
+        interviewSocketRef.current = socket;
+
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error("Socket connection timeout")),
+            10000,
+          );
+
+          socket.on("connect", () => {
+            clearTimeout(timeout);
+            console.log("✅ Socket connected:", socket.id);
+            if (mounted) setInitProgress((prev) => ({ ...prev, socket: true }));
+            resolve();
+          });
+
+          socket.on("connect_error", (err) => {
+            clearTimeout(timeout);
+            reject(err);
+          });
+        });
+
+        setInitProgress((prev) => ({ ...prev, serverReady: "waiting" }));
+
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error("Server ready timeout")),
+            10000,
+          );
+
+          socket.on("server_ready", () => {
+            clearTimeout(timeout);
+            console.log("✅ Server ready");
+            if (mounted)
+              setInitProgress((prev) => ({ ...prev, serverReady: true }));
+            resolve();
+          });
+        });
+
+        setInitProgress((prev) => ({ ...prev, audioRecording: "starting" }));
+
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error("Audio recording timeout")),
+            10000,
+          );
+
+          socket.emit("audio_recording_start", {
+            audioType: "mixed_audio",
+            metadata: { sampleRate: 48000 },
+            interviewId: sessionData.interviewId,
+            userId: sessionData.userId,
+          });
+
+          socket.on("audio_recording_ready", (data) => {
+            if (data.audioType === "mixed_audio") {
+              clearTimeout(timeout);
+              console.log("✅ Audio recording ready:", data.audioId);
+              if (mounted)
+                setInitProgress((prev) => ({ ...prev, audioRecording: true }));
+              resolve();
+            }
+          });
+
+          socket.on("audio_recording_error", (error) => {
+            clearTimeout(timeout);
+            reject(new Error(error.error || "Audio recording failed"));
+          });
+        });
+
+        setInitProgress((prev) => ({ ...prev, videoRecording: "starting" }));
+
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error("Video recording timeout")),
+            10000,
+          );
+
+          socket.emit("video_recording_start", {
+            videoType: "primary_camera",
+            totalChunks: 0,
+            metadata: { mimeType: "video/webm;codecs=vp9" },
+            interviewId: sessionData.interviewId,
+            userId: sessionData.userId,
+          });
+
+          socket.on("video_recording_ready", (data) => {
+            if (data.videoType === "primary_camera") {
+              clearTimeout(timeout);
+              console.log("✅ Primary video recording ready:", data.videoId);
+              if (mounted)
+                setInitProgress((prev) => ({ ...prev, videoRecording: true }));
+              resolve();
+            }
+          });
+
+          socket.on("video_recording_error", (error) => {
+            clearTimeout(timeout);
+            reject(new Error(error.error || "Video recording failed"));
+          });
+        });
+
+        setInitProgress((prev) => ({ ...prev, screenRecording: "starting" }));
+
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error("Screen recording timeout")),
+            10000,
+          );
+
+          socket.emit("video_recording_start", {
+            videoType: "screen_recording",
+            totalChunks: 0,
+            metadata: { mimeType: "video/webm;codecs=vp9" },
+            interviewId: sessionData.interviewId,
+            userId: sessionData.userId,
+          });
+
+          socket.on("video_recording_ready", (data) => {
+            if (data.videoType === "screen_recording") {
+              clearTimeout(timeout);
+              console.log("✅ Screen recording ready:", data.videoId);
+              if (mounted)
+                setInitProgress((prev) => ({ ...prev, screenRecording: true }));
+              resolve();
+            }
+          });
+
+          socket.on("video_recording_error", (error) => {
+            clearTimeout(timeout);
+            reject(new Error(error.error || "Screen recording failed"));
+          });
+        });
+
+        if (mobileCameraConnected) {
+          setInitProgress((prev) => ({ ...prev, mobileRecording: "starting" }));
+
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(
+              () => reject(new Error("Mobile recording timeout")),
+              10000,
+            );
+
+            socket.emit("video_recording_start", {
+              videoType: "secondary_camera",
+              totalChunks: 0,
+              metadata: { mimeType: "video/webm;codecs=vp9" },
+              interviewId: sessionData.interviewId,
+              userId: sessionData.userId,
+            });
+
+            socket.on("video_recording_ready", (data) => {
+              if (data.videoType === "secondary_camera") {
+                clearTimeout(timeout);
+                console.log("✅ Mobile recording ready:", data.videoId);
+                if (mounted)
+                  setInitProgress((prev) => ({
+                    ...prev,
+                    mobileRecording: true,
+                  }));
+                resolve();
+              }
+            });
+
+            socket.on("video_recording_error", (error) => {
+              clearTimeout(timeout);
+              console.log("⚠️ Mobile recording optional, continuing...");
+              if (mounted)
+                setInitProgress((prev) => ({
+                  ...prev,
+                  mobileRecording: "optional",
+                }));
+              resolve();
+            });
+          });
+        } else {
+          setInitProgress((prev) => ({ ...prev, mobileRecording: "skipped" }));
+        }
+
+        console.log("✅ Pre-initialization complete!");
+
+        streamsRef.current = {
+          micStream,
+          primaryCameraStream,
+          screenShareStream,
+          sessionData,
+          preInitializedSocket: socket,
+        };
+
+        hasNavigatedRef.current = true;
+
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        if (mounted) {
+          navigate("/interview/live");
+        }
+      } catch (error) {
+        console.error("❌ Pre-initialization failed:", error);
+        if (mounted) {
+          setInitError(error.message);
+          if (interviewSocketRef.current) {
+            interviewSocketRef.current.disconnect();
+            interviewSocketRef.current = null;
+          }
+        }
+      }
     };
 
-    hasNavigatedRef.current = true;
+    initializeInterview();
 
-    // Navigate WITHOUT passing streams in state
-    navigate("/interview/live");
-  };
+    return () => {
+      mounted = false;
+    };
+  }, [
+    currentStep,
+    sessionData,
+    mobileCameraConnected,
+    micStream,
+    primaryCameraStream,
+    screenShareStream,
+    navigate,
+  ]);
 
   /* ================= CLEANUP ================= */
 
   useEffect(() => {
     return () => {
-      // Only cleanup if we haven't navigated to the interview
       if (!hasNavigatedRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
         micStream?.getTracks().forEach((t) => t.stop());
@@ -338,7 +605,7 @@ const InterviewSetup = () => {
     }
   }, [primaryCameraStream]);
 
-  /* ================= STEP INDICATOR ================= */
+  /* ================= RENDER ================= */
 
   const renderStepIndicator = () => (
     <div className="flex items-center justify-center gap-2 mb-8 overflow-x-auto pb-4">
@@ -658,7 +925,6 @@ const InterviewSetup = () => {
             </h2>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              {/* QR Code and Instructions */}
               <div className="space-y-6">
                 <div className="text-center">
                   <h3 className="text-lg font-semibold text-white mb-4">
@@ -690,7 +956,6 @@ const InterviewSetup = () => {
                 </div>
               </div>
 
-              {/* Mobile Camera Preview */}
               <div className="space-y-4">
                 <div className="relative w-full aspect-video bg-black rounded-xl overflow-hidden">
                   <canvas
@@ -821,17 +1086,113 @@ const InterviewSetup = () => {
                       />
                     </svg>
                     <span className="text-green-400 text-sm font-medium">
-                      All setup complete!
+                      Screen share ready!
                     </span>
                   </div>
 
                   <p className="text-gray-400 text-sm">
-                    Ready to start your interview
+                    Click continue to initialize the interview
                   </p>
 
-                  <Button onClick={handleStartInterview} className="px-10">
-                    {questionsReady ? "Start Interview" : "Finalizing..."}
+                  <Button onClick={handleScreenShareSuccess} className="px-10">
+                    Continue
                   </Button>
+                </div>
+              </div>
+            )}
+          </Card>
+        )}
+
+        {/* STEP 7: INITIALIZATION */}
+        {currentStep === 7 && (
+          <Card className="p-8">
+            <h2 className="text-xl font-bold text-white mb-6 text-center">
+              Initializing Interview
+            </h2>
+
+            {initError ? (
+              <div className="space-y-6">
+                <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
+                  <p className="text-red-400 text-sm text-center">
+                    {initError}
+                  </p>
+                </div>
+                <div className="flex justify-center">
+                  <Button onClick={() => setCurrentStep(6)} className="px-10">
+                    Go Back
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                <p className="text-center text-gray-400 mb-8">
+                  Setting up audio, video, and connections...
+                </p>
+
+                <div className="space-y-4">
+                  {[
+                    { key: "socket", label: "Connecting to server" },
+                    { key: "serverReady", label: "Server ready" },
+                    { key: "audioRecording", label: "Audio recording" },
+                    { key: "videoRecording", label: "Video recording" },
+                    { key: "screenRecording", label: "Screen recording" },
+                    {
+                      key: "mobileRecording",
+                      label: `Mobile recording ${!mobileCameraConnected ? "(optional)" : ""}`,
+                    },
+                  ].map(({ key, label }) => (
+                    <div
+                      key={key}
+                      className="flex items-center gap-4 p-4 bg-white/5 rounded-lg"
+                    >
+                      {initProgress[key] === true ? (
+                        <svg
+                          className="w-6 h-6 text-green-500 shrink-0"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M5 13l4 4L19 7"
+                          />
+                        </svg>
+                      ) : initProgress[key] === "connecting" ||
+                        initProgress[key] === "waiting" ||
+                        initProgress[key] === "starting" ? (
+                        <div className="animate-spin w-6 h-6 border-2 border-purple-500/30 border-t-purple-500 rounded-full shrink-0" />
+                      ) : initProgress[key] === "skipped" ||
+                        initProgress[key] === "optional" ? (
+                        <svg
+                          className="w-6 h-6 text-gray-500 shrink-0"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M6 18L18 6M6 6l12 12"
+                          />
+                        </svg>
+                      ) : (
+                        <div className="w-6 h-6 border-2 border-gray-600 rounded-full shrink-0" />
+                      )}
+                      <span className="text-white font-medium">{label}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="text-center pt-6">
+                  <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500/20 border border-blue-500/30 rounded-lg">
+                    <div className="animate-spin w-4 h-4 border-2 border-blue-400/30 border-t-blue-400 rounded-full" />
+                    <span className="text-blue-300 text-sm font-medium">
+                      Please wait while we prepare everything...
+                    </span>
+                  </div>
                 </div>
               </div>
             )}

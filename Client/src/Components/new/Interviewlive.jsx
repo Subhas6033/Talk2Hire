@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { io } from "socket.io-client";
 import { useInterview } from "../../Hooks/useInterviewHook";
 import useVideoRecording from "../../Hooks/useVideoRecordingHook";
 import useHolisticDetection from "../../Hooks/useHolisticDetectionHook";
@@ -10,23 +9,36 @@ import { Button } from "../index";
 import { Card } from "../Common/Card";
 import { useStreams } from "../../Hooks/streamContext";
 
-const SOCKET_URL = import.meta.env.VITE_WS_URL;
-
 const InterviewLive = () => {
   const navigate = useNavigate();
   const streamsRef = useStreams();
 
   // Get streams and session from context ref
-  const { sessionData, micStream, primaryCameraStream, screenShareStream } =
-    streamsRef.current || {};
+  const {
+    sessionData,
+    micStream,
+    primaryCameraStream,
+    screenShareStream,
+    preInitializedSocket, // ✅ Get pre-initialized socket
+  } = streamsRef.current || {};
 
-  // Redirect if no session data
+  // Redirect if no session data (with small delay for context to populate)
   useEffect(() => {
-    if (!sessionData || !micStream || !primaryCameraStream) {
-      alert("Invalid session. Please complete setup first.");
-      navigate("/interview");
-    }
-  }, [sessionData, micStream, primaryCameraStream, navigate]);
+    const timer = setTimeout(() => {
+      if (!sessionData || !micStream || !primaryCameraStream) {
+        console.error("❌ Missing required streams:", {
+          hasSessionData: !!sessionData,
+          hasMicStream: !!micStream,
+          hasPrimaryCamera: !!primaryCameraStream,
+          hasScreenShare: !!screenShareStream,
+        });
+        alert("Invalid session. Please complete setup first.");
+        navigate("/interview");
+      }
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, []); // Run only once on mount
 
   const interview = useInterview(
     sessionData?.interviewId,
@@ -62,6 +74,7 @@ const InterviewLive = () => {
   const videoRef = useRef(null);
   const secondaryCanvasRef = useRef(null);
   const screenVideoRef = useRef(null);
+  const recordingsStartedRef = useRef(false); // ✅ Prevent double-start
 
   const [evaluationStatus, setEvaluationStatus] = useState(null);
   const [evaluationResults, setEvaluationResults] = useState(null);
@@ -110,9 +123,10 @@ const InterviewLive = () => {
     console.log("Cleanup complete");
   };
 
-  // Attach primary camera stream
+  // ✅ Attach primary camera stream
   useEffect(() => {
     if (videoRef.current && primaryCameraStream) {
+      console.log("📹 Attaching primary camera stream");
       videoRef.current.srcObject = primaryCameraStream;
       videoRef.current.muted = true;
       videoRef.current.playsInline = true;
@@ -124,6 +138,21 @@ const InterviewLive = () => {
     }
   }, [primaryCameraStream]);
 
+  // ✅ Attach screen share stream
+  useEffect(() => {
+    if (screenVideoRef.current && screenShareStream) {
+      console.log("🖥️ Attaching screen share stream");
+      screenVideoRef.current.srcObject = screenShareStream;
+      screenVideoRef.current.muted = true;
+      screenVideoRef.current.playsInline = true;
+      screenVideoRef.current.play().catch((err) => {
+        if (err.name !== "AbortError") {
+          console.error("Screen video play error:", err);
+        }
+      });
+    }
+  }, [screenShareStream]);
+
   // Initialize canvas for mobile frames
   useEffect(() => {
     if (secondaryCanvasRef.current) {
@@ -133,28 +162,17 @@ const InterviewLive = () => {
     }
   }, []);
 
-  // Main socket connection with proper type parameter
+  // ✅ USE PRE-INITIALIZED SOCKET (Don't create new one)
   useEffect(() => {
-    if (!sessionData) return;
+    if (!sessionData || !preInitializedSocket) {
+      console.warn("⚠️ No pre-initialized socket available");
+      return;
+    }
 
-    console.log("Connecting to interview socket");
-
-    const socket = io(SOCKET_URL, {
-      query: {
-        interviewId: sessionData.interviewId,
-        userId: sessionData.userId,
-        type: "interview",
-      },
-      transports: ["websocket", "polling"],
-      path: "/socket.io",
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
-      timeout: 20000,
-      autoConnect: false,
-    });
-
+    const socket = preInitializedSocket;
     interview.socketRef.current = socket;
+
+    console.log("✅ Using pre-initialized socket:", socket.id);
 
     const silenced = [
       "user_audio_chunk",
@@ -170,16 +188,27 @@ const InterviewLive = () => {
       }
     });
 
-    socket.on("connect", () => {
-      console.log("Connected:", socket.id);
+    // Socket is already connected, just update status
+    if (socket.connected) {
+      console.log("✅ Socket already connected:", socket.id);
       interview.setStatus("live");
-    });
-
-    socket.on("server_ready", () => {
-      console.log("Server ready");
       interview.setServerReady(true);
       interview.setIsInitializing(false);
-    });
+    } else {
+      // Reconnect if disconnected
+      socket.connect();
+
+      socket.on("connect", () => {
+        console.log("Connected:", socket.id);
+        interview.setStatus("live");
+      });
+
+      socket.on("server_ready", () => {
+        console.log("Server ready");
+        interview.setServerReady(true);
+        interview.setIsInitializing(false);
+      });
+    }
 
     socket.on("secondary_camera_ready", (data) => {
       setMobileCameraConnected(true);
@@ -293,12 +322,12 @@ const InterviewLive = () => {
       interview.setStatus("error");
     });
 
+    // ✅ Initialize interview (without re-connecting socket)
     interview.initializeInterview({
       interviewId: sessionData.interviewId,
       userId: sessionData.userId,
       sessionId: sessionData.interviewId,
     });
-    socket.connect();
 
     return () => {
       (async () => {
@@ -308,39 +337,53 @@ const InterviewLive = () => {
         socket.disconnect();
       })();
     };
-  }, [sessionData?.interviewId, sessionData?.userId]);
+  }, [sessionData?.interviewId, sessionData?.userId, preInitializedSocket]);
 
-  // Start recordings when interview is live
+  // ✅ START ACTUAL MEDIA STREAMING (recordings already registered on server)
   useEffect(() => {
+    // Only start if recordings haven't been started yet
+    if (recordingsStartedRef.current) {
+      console.log("⏭️ Recordings already started, skipping");
+      return;
+    }
+
     const shouldStart =
       interview.status === "live" &&
       !interview.isInitializing &&
       interview.serverReady &&
       interview.hasStarted &&
       primaryCameraStream &&
+      micStream &&
       !isVideoRecording;
 
     if (!shouldStart) return;
 
+    recordingsStartedRef.current = true;
+
     (async () => {
       try {
-        console.log("Starting recordings");
+        console.log(
+          "🎬 Starting media streaming (recordings already initialized)",
+        );
 
+        // Start streaming audio chunks
         await audioRecording.startRecording();
-        console.log("✓ Audio started");
+        console.log("✓ Audio streaming started");
 
+        // Start streaming video chunks
         await startVideoRecording();
-        console.log("✓ Primary camera started");
+        console.log("✓ Primary camera streaming started");
 
+        // Start streaming screen chunks
         if (screenShareStream) {
           screenRecording.startRecording(screenShareStream);
-          console.log("✓ Screen recording started");
+          console.log("✓ Screen streaming started");
         }
 
-        // Secondary camera is already streaming from mobile device
-        console.log("✓ All recordings active");
+        console.log("✅ All media streaming active");
       } catch (err) {
-        console.error("Failed to start recordings:", err);
+        console.error("❌ Failed to start media streaming:", err);
+        recordingsStartedRef.current = false;
       }
     })();
   }, [
@@ -349,6 +392,8 @@ const InterviewLive = () => {
     interview.serverReady,
     interview.hasStarted,
     primaryCameraStream,
+    micStream,
+    screenShareStream,
     isVideoRecording,
   ]);
 
@@ -365,7 +410,6 @@ const InterviewLive = () => {
   // Cleanup streams when component unmounts
   useEffect(() => {
     return () => {
-      // Clear the streams from context when leaving the interview
       if (streamsRef.current) {
         streamsRef.current.micStream?.getTracks().forEach((t) => t.stop());
         streamsRef.current.primaryCameraStream
@@ -379,6 +423,7 @@ const InterviewLive = () => {
           primaryCameraStream: null,
           screenShareStream: null,
           sessionData: null,
+          preInitializedSocket: null,
         };
       }
     };
