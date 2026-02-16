@@ -280,7 +280,7 @@ const InterviewLive = () => {
 
     // ✅ NOW we can receive TTS and questions
     socket.on("question", (d) => {
-      console.log("❓ Received question:", d.text);
+      console.log("❓ Received question:", d.question);
       interview.handleQuestion(d);
     });
 

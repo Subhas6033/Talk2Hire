@@ -416,7 +416,7 @@ const InterviewSetup = () => {
             clearTimeout(timeout);
             console.log("✅ Socket connected:", socket.id);
 
-            // ✅ CRITICAL: Tell server we're in SETUP MODE (don't start interview)
+            // ✅ CRITICAL: Tell server we're in SETUP MODE
             socket.emit("setup_mode", {
               setupInProgress: true,
               interviewId: sessionData.interviewId,
@@ -450,16 +450,14 @@ const InterviewSetup = () => {
           });
         });
 
-        // ❌ Block any TTS during setup
+        // Block TTS/Questions during setup
         socket.on("tts_audio", () => {
-          console.warn(
-            "⚠️ Received TTS during setup - this should not happen!",
-          );
+          console.warn("⚠️ Received TTS during setup - should not happen!");
         });
 
         socket.on("question", () => {
           console.warn(
-            "⚠️ Received question during setup - this should not happen!",
+            "⚠️ Received question during setup - should not happen!",
           );
         });
 
@@ -478,7 +476,7 @@ const InterviewSetup = () => {
             metadata: { sampleRate: 48000 },
             interviewId: sessionData.interviewId,
             userId: sessionData.userId,
-            setupMode: true, // ✅ Flag to indicate setup
+            setupMode: true,
           });
 
           socket.on("audio_recording_ready", (data) => {
@@ -514,7 +512,7 @@ const InterviewSetup = () => {
             metadata: { mimeType: "video/webm;codecs=vp9" },
             interviewId: sessionData.interviewId,
             userId: sessionData.userId,
-            setupMode: true, // ✅ Flag to indicate setup
+            setupMode: true,
           });
 
           socket.on("video_recording_ready", (data) => {
@@ -550,7 +548,7 @@ const InterviewSetup = () => {
             metadata: { mimeType: "video/webm;codecs=vp9" },
             interviewId: sessionData.interviewId,
             userId: sessionData.userId,
-            setupMode: true, // ✅ Flag to indicate setup
+            setupMode: true,
           });
 
           socket.on("video_recording_ready", (data) => {
@@ -592,7 +590,7 @@ const InterviewSetup = () => {
               metadata: { mimeType: "video/webm;codecs=vp9" },
               interviewId: sessionData.interviewId,
               userId: sessionData.userId,
-              setupMode: true, // ✅ Flag to indicate setup
+              setupMode: true,
             });
 
             socket.on("video_recording_ready", (data) => {
@@ -633,6 +631,10 @@ const InterviewSetup = () => {
         console.log("   - Interview: NOT started");
         console.log("   - TTS/STT: Blocked");
 
+        // ✅ CRITICAL: Set navigation flag BEFORE storing context
+        hasNavigatedRef.current = true;
+        console.log("✅ Navigation flag set to TRUE");
+
         // Store streams in context SYNCHRONOUSLY
         streamsRef.current = {
           micStream,
@@ -652,10 +654,8 @@ const InterviewSetup = () => {
           socketConnected: socket.connected,
         });
 
-        hasNavigatedRef.current = true;
-
         // Small delay to ensure React state updates
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        await new Promise((resolve) => setTimeout(resolve, 100));
 
         if (mounted) {
           console.log("🚀 Navigating to /interview/live");
@@ -666,6 +666,7 @@ const InterviewSetup = () => {
         console.error("❌ Pre-initialization failed:", error);
         if (mounted) {
           setInitError(error.message);
+          hasNavigatedRef.current = false; // Reset flag on error
           if (socket) {
             socket.disconnect();
             interviewSocketRef.current = null;
@@ -678,10 +679,7 @@ const InterviewSetup = () => {
 
     return () => {
       mounted = false;
-      if (!hasNavigatedRef.current && socket) {
-        console.log("🧹 Cleaning up initialization socket (cancelled)");
-        socket.disconnect();
-      }
+      // Don't disconnect socket here - let cleanup effect handle it
     };
   }, [
     currentStep,
