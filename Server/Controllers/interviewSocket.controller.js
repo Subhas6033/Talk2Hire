@@ -1502,7 +1502,7 @@ async function streamTTSToClient(socket, text, interviewId) {
 
       let chunkBuffer = [];
       let bufferSize = 0;
-      const BATCH_SIZE = 1024; // 1KB for faster first audio
+      const BATCH_SIZE = 512; // 1KB for faster first audio
 
       const flushBuffer = () => {
         if (chunkBuffer.length === 0) return;

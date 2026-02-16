@@ -1,4 +1,5 @@
 const { createClient } = require("@deepgram/sdk");
+require("dotenv").config();
 
 /**
  * Creates a Text-to-Speech service using Deepgram API
@@ -26,7 +27,6 @@ function createTTSStream() {
         return;
       }
 
-      // Trim and validate text
       const trimmedText = text.trim();
       if (trimmedText.length === 0) {
         console.error("❌ Empty text for TTS");
@@ -35,75 +35,90 @@ function createTTSStream() {
       }
 
       const startTime = Date.now();
+      let requestSentTime = null;
+      let responseReceivedTime = null;
+      let streamReadyTime = null;
+      let firstChunkTime = null;
 
       try {
-        console.log("🔊 Starting TTS stream...", {
+        console.log("🔊 Starting TTS request...", {
           textLength: trimmedText.length,
           preview: trimmedText.substring(0, 50) + "...",
         });
 
-        // ✅ FIX: Must await the request to get the response object
+        // ✅ OPTIMIZED: Start request and track timing
+        requestSentTime = Date.now();
+        console.log(
+          `⏱️  [T+${requestSentTime - startTime}ms] Request sent to Deepgram`,
+        );
+
         const response = await deepgram.speak.request(
           { text: trimmedText },
           {
-            model: "aura-asteria-en", // Natural female voice
-            encoding: "linear16", // PCM16 format
-            sample_rate: 48000, // 48kHz for high quality
-            container: "none", // Raw audio, no container
+            model: "aura-asteria-en",
+            encoding: "linear16",
+            sample_rate: 48000,
+            container: "none",
           },
         );
 
+        responseReceivedTime = Date.now();
         console.log(
-          "🔍 Deepgram response received, checking for stream method...",
+          `⏱️  [T+${responseReceivedTime - startTime}ms] Response received (${responseReceivedTime - requestSentTime}ms network latency)`,
         );
 
-        // ✅ FIX: Handle different SDK versions and response formats
+        // ✅ Get stream method
         let stream;
 
-        // Try different methods to get the stream
         if (typeof response.getStream === "function") {
           console.log("✅ Using response.getStream() method");
+          const streamStartGet = Date.now();
           stream = await response.getStream();
+          streamReadyTime = Date.now();
+          console.log(
+            `⏱️  [T+${streamReadyTime - startTime}ms] Stream ready (getStream took ${streamReadyTime - streamStartGet}ms)`,
+          );
         } else if (typeof response.stream === "function") {
           console.log("✅ Using response.stream() method");
           stream = response.stream();
+          streamReadyTime = Date.now();
+          console.log(`⏱️  [T+${streamReadyTime - startTime}ms] Stream ready`);
         } else if (response.readable || response[Symbol.asyncIterator]) {
           console.log("✅ Response itself is a readable stream");
           stream = response;
+          streamReadyTime = Date.now();
+          console.log(`⏱️  [T+${streamReadyTime - startTime}ms] Stream ready`);
         } else if (typeof response.getAudio === "function") {
           console.log(
-            "✅ Using response.getAudio() - will send as single chunk",
+            "⚠️  Using response.getAudio() - single chunk mode (not streaming)",
           );
+          const audioStartTime = Date.now();
           const audioBuffer = await response.getAudio();
+          const audioReadyTime = Date.now();
+
+          console.log(
+            `⏱️  [T+${audioReadyTime - startTime}ms] Audio ready (getAudio took ${audioReadyTime - audioStartTime}ms)`,
+          );
 
           if (audioBuffer) {
             const buffer = Buffer.isBuffer(audioBuffer)
               ? audioBuffer
               : Buffer.from(audioBuffer);
 
-            const firstChunkTime = Date.now();
-            console.log(`🎵 Audio ready (${firstChunkTime - startTime}ms)`);
-            console.log(`✅ TTS complete: ${buffer.length} bytes in 1 chunk`);
-
+            console.log(
+              `✅ TTS complete: ${buffer.length} bytes in 1 chunk (${audioReadyTime - startTime}ms total)`,
+            );
             onChunk(buffer);
           }
 
           onChunk(null);
           return;
         } else {
-          // Debug: show what's available on the response
           console.error("❌ Unknown response format. Available methods:", {
-            type: typeof response,
-            constructor: response?.constructor?.name,
             keys: Object.keys(response || {}),
-            hasGetStream: "getStream" in (response || {}),
-            hasStream: "stream" in (response || {}),
-            hasGetAudio: "getAudio" in (response || {}),
           });
           throw new Error(
-            "Deepgram response does not have a recognized stream method. " +
-              "Available keys: " +
-              Object.keys(response || {}).join(", "),
+            "Deepgram response does not have a recognized stream method",
           );
         }
 
@@ -113,35 +128,38 @@ function createTTSStream() {
           return;
         }
 
-        const streamStartTime = Date.now();
-        console.log(`✅ TTS stream ready (${streamStartTime - startTime}ms)`);
-
         let chunkCount = 0;
         let totalBytes = 0;
-        let firstChunkTime = null;
 
-        // OPTIMIZED: Stream chunks as they arrive - no buffering
+        // ✅ Stream chunks as they arrive
         for await (const chunk of stream) {
           if (chunk && chunk.length > 0) {
             chunkCount++;
             totalBytes += chunk.length;
 
-            // Track first chunk latency
             if (chunkCount === 1) {
               firstChunkTime = Date.now();
+              const networkLatency = responseReceivedTime - requestSentTime;
+              const processingLatency = firstChunkTime - responseReceivedTime;
+
               console.log(
-                `🎵 First chunk received (${firstChunkTime - startTime}ms total latency)`,
+                `🎵 FIRST CHUNK RECEIVED [T+${firstChunkTime - startTime}ms]`,
               );
+              console.log(`   📊 Breakdown:`);
+              console.log(`      - Network latency: ${networkLatency}ms`);
+              console.log(`      - Processing latency: ${processingLatency}ms`);
+              console.log(`      - Total: ${firstChunkTime - startTime}ms`);
+              console.log(`      - Chunk size: ${chunk.length} bytes`);
             }
 
-            // Send chunk immediately to client
+            // ✅ Send immediately - NO buffering
             onChunk(chunk);
 
-            // Log progress every 10 chunks to avoid spam
+            // Log every 10 chunks
             if (chunkCount % 10 === 0) {
               const elapsed = Date.now() - startTime;
               console.log(
-                `📊 TTS Progress: ${chunkCount} chunks, ${totalBytes} bytes, ${elapsed}ms`,
+                `📊 [T+${elapsed}ms] Progress: ${chunkCount} chunks, ${totalBytes} bytes`,
               );
             }
           }
@@ -151,37 +169,34 @@ function createTTSStream() {
         const avgChunkSize =
           chunkCount > 0 ? Math.round(totalBytes / chunkCount) : 0;
 
-        console.log(`✅ TTS stream complete:`, {
-          totalChunks: chunkCount,
-          totalBytes,
-          totalTime: `${totalTime}ms`,
-          avgChunkSize: `${avgChunkSize} bytes`,
-          firstChunkLatency: firstChunkTime
-            ? `${firstChunkTime - startTime}ms`
-            : "N/A",
-        });
+        console.log(`✅ TTS STREAM COMPLETE:`);
+        console.log(`   📊 Summary:`);
+        console.log(`      - Total chunks: ${chunkCount}`);
+        console.log(`      - Total bytes: ${totalBytes}`);
+        console.log(`      - Total time: ${totalTime}ms`);
+        console.log(`      - Avg chunk size: ${avgChunkSize} bytes`);
+        console.log(
+          `      - First chunk latency: ${firstChunkTime ? firstChunkTime - startTime : "N/A"}ms`,
+        );
+        console.log(
+          `      - Throughput: ${Math.round(totalBytes / (totalTime / 1000))} bytes/sec`,
+        );
 
-        // Signal end of stream
         onChunk(null);
       } catch (error) {
-        console.error("❌ TTS streaming error:", {
+        const errorTime = Date.now();
+        console.error(`❌ TTS ERROR [T+${errorTime - startTime}ms]:`, {
           message: error.message,
           code: error.code,
           statusCode: error.statusCode,
-          stack: error.stack, // ✅ Added stack trace for debugging
         });
-
-        // Always signal end even on error
+        console.error("Stack trace:", error.stack);
         onChunk(null);
       }
     },
 
     /**
      * Get complete audio buffer (alternative method for non-streaming use)
-     * NOTE: This is slower than speakStream - only use when you need the full audio upfront
-     *
-     * @param {string} text - Text to convert to speech
-     * @returns {Promise<Buffer>} Complete audio buffer
      */
     speakBuffer: async function (text) {
       if (!text || typeof text !== "string") {
@@ -196,7 +211,7 @@ function createTTSStream() {
       const startTime = Date.now();
 
       try {
-        console.log("🔊 Requesting complete TTS buffer from Deepgram...", {
+        console.log("🔊 Requesting TTS buffer...", {
           textLength: trimmedText.length,
         });
 
@@ -210,7 +225,6 @@ function createTTSStream() {
           },
         );
 
-        // ✅ FIX: Handle different response formats
         let audioData;
 
         if (typeof response.getAudio === "function") {
@@ -239,16 +253,14 @@ function createTTSStream() {
 
         const totalTime = Date.now() - startTime;
 
-        console.log(`✅ TTS buffer complete:`, {
-          bytes: buffer.length,
-          time: `${totalTime}ms`,
-        });
+        console.log(
+          `✅ TTS buffer complete: ${buffer.length} bytes in ${totalTime}ms`,
+        );
 
         return buffer;
       } catch (error) {
         console.error("❌ TTS buffer error:", {
           message: error.message,
-          code: error.code,
           stack: error.stack,
         });
         throw error;
