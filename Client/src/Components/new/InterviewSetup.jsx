@@ -694,39 +694,34 @@ const InterviewSetup = () => {
         console.log("   - Interview: NOT started");
         console.log("   - TTS/STT: Blocked");
 
-        // ✅ CRITICAL: Validate screen stream before navigation
-        if (!screenShareStream || !screenShareStream.active) {
-          throw new Error("Screen share stream is not active");
-        }
+        console.log("✅ Pre-initialization complete!");
 
-        const screenTrack = screenShareStream.getVideoTracks()[0];
-        if (!screenTrack || screenTrack.readyState !== "live") {
-          throw new Error("Screen sharing track is not active");
-        }
+        // ✅ CRITICAL: Store in global context
+        streamsRef.current.micStream = micStream;
+        streamsRef.current.primaryCameraStream = primaryCameraStream;
+        streamsRef.current.screenShareStream = screenShareStream;
+        streamsRef.current.sessionData = sessionData;
+        streamsRef.current.preInitializedSocket = socket;
 
-        console.log("✅ Screen stream verified:", {
-          active: screenShareStream.active,
-          trackState: screenTrack.readyState,
-          trackEnabled: screenTrack.enabled,
+        console.log("✅ Streams stored in GLOBAL context:", {
+          hasMic: !!streamsRef.current.micStream,
+          micActive: streamsRef.current.micStream?.active,
+          hasCamera: !!streamsRef.current.primaryCameraStream,
+          cameraActive: streamsRef.current.primaryCameraStream?.active,
+          hasScreen: !!streamsRef.current.screenShareStream,
+          screenActive: streamsRef.current.screenShareStream?.active,
+          socketConnected: streamsRef.current.preInitializedSocket?.connected,
         });
 
-        // ✅ Store streams in context SYNCHRONOUSLY
-        streamsRef.current = {
-          micStream,
-          primaryCameraStream,
-          screenShareStream,
-          sessionData,
-          preInitializedSocket: socket,
-        };
+        // ✅ Double-check context propagation
+        await new Promise((resolve) => setTimeout(resolve, 100));
 
-        console.log("✅ Streams stored in context:", {
-          hasMic: !!micStream,
-          micActive: micStream?.active,
-          hasCamera: !!primaryCameraStream,
-          cameraActive: primaryCameraStream?.active,
-          hasScreen: !!screenShareStream,
-          screenActive: screenShareStream?.active,
-          socketConnected: socket.connected,
+        // Verify one more time
+        console.log("🔍 Final verification:", {
+          globalMic: !!streamsRef.current.micStream,
+          globalCamera: !!streamsRef.current.primaryCameraStream,
+          globalScreen: !!streamsRef.current.screenShareStream,
+          globalSession: !!streamsRef.current.sessionData,
         });
 
         // ✅ Set navigation flag
@@ -736,6 +731,8 @@ const InterviewSetup = () => {
         if (mounted) {
           console.log("🚀 Navigating to /interview/live");
           console.log("⚡ Interview will START on next page");
+
+          // Use replace to prevent back button issues
           navigate("/interview/live", { replace: true });
         }
       } catch (error) {

@@ -26,42 +26,52 @@ const InterviewLive = () => {
   }, []);
 
   // Get streams and session from context ref
-  const {
-    sessionData,
-    micStream,
-    primaryCameraStream,
-    screenShareStream,
-    preInitializedSocket,
-  } = streamsRef.current || {};
+  const sessionData = streamsRef.current?.sessionData;
+  const micStream = streamsRef.current?.micStream;
+  const primaryCameraStream = streamsRef.current?.primaryCameraStream;
+  const screenShareStream = streamsRef.current?.screenShareStream;
+  const preInitializedSocket = streamsRef.current?.preInitializedSocket;
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      console.log("🔍 Context Monitor:", {
+        hasContext: !!streamsRef.current,
+        sessionData: !!streamsRef.current?.sessionData,
+        micStream: !!streamsRef.current?.micStream,
+        primaryCamera: !!streamsRef.current?.primaryCameraStream,
+        screenShare: !!streamsRef.current?.screenShareStream,
+        socket: !!streamsRef.current?.preInitializedSocket,
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   // ✅ FIXED: Better redirect logic with proper delay
   useEffect(() => {
     const timer = setTimeout(() => {
+      // Check the global ref directly
+      const currentStreams = streamsRef.current;
+
       if (
-        !sessionData ||
-        !micStream ||
-        !primaryCameraStream ||
-        !screenShareStream
+        !currentStreams?.sessionData ||
+        !currentStreams?.micStream ||
+        !currentStreams?.primaryCameraStream ||
+        !currentStreams?.screenShareStream
       ) {
         console.error("❌ Missing required streams:", {
-          hasSessionData: !!sessionData,
-          hasMicStream: !!micStream,
-          hasPrimaryCamera: !!primaryCameraStream,
-          hasScreenShare: !!screenShareStream,
+          hasSessionData: !!currentStreams?.sessionData,
+          hasMicStream: !!currentStreams?.micStream,
+          hasPrimaryCamera: !!currentStreams?.primaryCameraStream,
+          hasScreenShare: !!currentStreams?.screenShareStream,
         });
         alert("Invalid session. Please complete setup first.");
         navigate("/interview");
       }
-    }, 1000); // Increased from 500ms to 1000ms
+    }, 2000); // Increased to 2000ms for safety
 
     return () => clearTimeout(timer);
-  }, [
-    sessionData,
-    micStream,
-    primaryCameraStream,
-    screenShareStream,
-    navigate,
-  ]);
+  }, []); // ✅ Empty dependencies - only run once on mount
 
   const interview = useInterview(
     sessionData?.interviewId,

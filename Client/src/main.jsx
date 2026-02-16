@@ -8,13 +8,13 @@ import { store } from "./Store/store.js";
 import { AuthProvider } from "./Components/index.js";
 
 createRoot(document.getElementById("root")).render(
-  <StrictMode>
-    <Provider store={store}>
-      <AuthProvider>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
-      </AuthProvider>
-    </Provider>
-  </StrictMode>,
+  //<StrictMode>
+  <Provider store={store}>
+    <AuthProvider>
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </AuthProvider>
+  </Provider>,
+  // </StrictMode>
 );
