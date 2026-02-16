@@ -7,7 +7,6 @@ const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
 const MobileCameraPage = () => {
   const [searchParams] = useSearchParams();
-  const isMobile = searchParams.get("mobile");
   const sessionId = searchParams.get("interviewId");
   const userId = searchParams.get("userId");
 
@@ -34,7 +33,7 @@ const MobileCameraPage = () => {
   const secondaryCamera = useSecondaryCamera(sessionId, userId, socketRef);
 
   useEffect(() => {
-    if (!isMobile || !sessionId || !userId) {
+    if (!sessionId || !userId) {
       setError("Invalid mobile camera link. Please scan the QR code again.");
       return;
     }
@@ -82,7 +81,7 @@ const MobileCameraPage = () => {
       streamingStartedRef.current = false;
       socket.disconnect();
     };
-  }, [isMobile, sessionId, userId]);
+  }, [sessionId, userId]);
 
   const startFrameStreaming = (stream) => {
     if (!canvasRef.current || !videoRef.current || !socketRef.current) {
@@ -321,7 +320,7 @@ const MobileCameraPage = () => {
     };
   }, []);
 
-  if (!isMobile || !sessionId || !userId) {
+  if (!sessionId || !userId) {
     return (
       <div className="min-h-screen bg-linear-to-br from-gray-900 to-gray-800 flex items-center justify-center p-4">
         <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 max-w-md text-center shadow-2xl">
