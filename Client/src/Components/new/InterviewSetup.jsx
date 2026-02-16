@@ -237,7 +237,8 @@ const InterviewSetup = () => {
       };
 
       updateLevel();
-    } catch {
+    } catch (err) {
+      console.error("Microphone error:", err);
       setError("Microphone permission denied.");
       setIsMicTesting(false);
     }
@@ -254,7 +255,8 @@ const InterviewSetup = () => {
       });
 
       setPrimaryCameraStream(stream);
-    } catch {
+    } catch (err) {
+      console.error("Camera error:", err);
       setPrimaryCameraError("Camera permission denied.");
     }
   };
@@ -262,6 +264,19 @@ const InterviewSetup = () => {
   useEffect(() => {
     if (currentStep === 4) startPrimaryCameraTest();
   }, [currentStep]);
+
+  /* ================= ATTACH PRIMARY CAMERA TO VIDEO ================= */
+
+  useEffect(() => {
+    if (primaryVideoRef.current && primaryCameraStream) {
+      primaryVideoRef.current.srcObject = primaryCameraStream;
+      primaryVideoRef.current.play().catch((err) => {
+        if (err.name !== "AbortError") {
+          console.error("Primary video play error:", err);
+        }
+      });
+    }
+  }, [primaryCameraStream]);
 
   /* ================= MOBILE CAMERA SOCKET ================= */
 
@@ -278,6 +293,10 @@ const InterviewSetup = () => {
 
     settingsSocketRef.current = socket;
 
+    socket.on("connect", () => {
+      console.log("✅ Settings socket connected:", socket.id);
+    });
+
     socket.on("secondary_camera_ready", () => {
       console.log("✅ Mobile camera connected");
       setMobileCameraConnected(true);
@@ -289,34 +308,46 @@ const InterviewSetup = () => {
       const img = new Image();
       img.onload = () => {
         const ctx = mobileCanvasRef.current.getContext("2d");
-        ctx.drawImage(img, 0, 0);
-        setMobileFramesReceived((prev) => prev + 1);
+        if (ctx) {
+          ctx.drawImage(
+            img,
+            0,
+            0,
+            mobileCanvasRef.current.width,
+            mobileCanvasRef.current.height,
+          );
+          setMobileFramesReceived((prev) => prev + 1);
+        }
       };
       img.src = data.frame;
     });
 
     socket.on("connect_error", (err) => {
-      console.error("Socket connection error:", err);
+      console.error("Settings socket connection error:", err);
       setError("Failed to connect to server for mobile camera.");
     });
 
     return () => {
-      console.log("Disconnecting settings socket");
+      console.log("🧹 Disconnecting settings socket");
       socket.disconnect();
     };
-  }, [currentStep, sessionData, user?.id]);
+  }, [currentStep, sessionData]);
 
   /* ================= SCREEN SHARE ================= */
 
   const startScreenShareTest = async () => {
     try {
+      setScreenShareError(null);
+
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
       });
 
       setScreenShareStream(stream);
 
-      stream.getVideoTracks()[0].addEventListener("ended", () => {
+      // Monitor if user stops sharing
+      const track = stream.getVideoTracks()[0];
+      track.addEventListener("ended", () => {
         console.log("⚠️ User stopped screen sharing");
         setScreenShareStream(null);
         setScreenShareError(
@@ -324,17 +355,25 @@ const InterviewSetup = () => {
         );
       });
 
+      // Attach to video element
       if (screenVideoRef.current) {
         screenVideoRef.current.srcObject = stream;
-        await screenVideoRef.current.play().catch(() => {});
+        await screenVideoRef.current.play().catch((err) => {
+          if (err.name !== "AbortError") {
+            console.error("Screen video play error:", err);
+          }
+        });
       }
-    } catch {
-      setScreenShareError("Screen share denied.");
+    } catch (err) {
+      console.error("Screen share error:", err);
+      setScreenShareError("Screen share denied or cancelled.");
     }
   };
 
   useEffect(() => {
-    if (currentStep === 6) startScreenShareTest();
+    if (currentStep === 6) {
+      startScreenShareTest();
+    }
   }, [currentStep]);
 
   /* ================= PRE-INITIALIZATION (STEP 7) ================= */
@@ -343,14 +382,16 @@ const InterviewSetup = () => {
     if (currentStep !== 7 || !sessionData) return;
 
     let mounted = true;
+    let socket = null;
 
     const initializeInterview = async () => {
       try {
         console.log("🔄 Starting pre-initialization...");
+        console.log("⚠️ SETUP MODE - No media streaming yet");
 
         setInitProgress((prev) => ({ ...prev, socket: "connecting" }));
 
-        const socket = io(SOCKET_URL, {
+        socket = io(SOCKET_URL, {
           query: {
             interviewId: sessionData.interviewId,
             userId: sessionData.userId,
@@ -360,7 +401,7 @@ const InterviewSetup = () => {
           reconnection: true,
           reconnectionAttempts: 3,
           reconnectionDelay: 1000,
-          timeout: 10000,
+          timeout: 15000,
         });
 
         interviewSocketRef.current = socket;
@@ -368,12 +409,20 @@ const InterviewSetup = () => {
         await new Promise((resolve, reject) => {
           const timeout = setTimeout(
             () => reject(new Error("Socket connection timeout")),
-            10000,
+            15000,
           );
 
           socket.on("connect", () => {
             clearTimeout(timeout);
             console.log("✅ Socket connected:", socket.id);
+
+            // ✅ CRITICAL: Tell server we're in SETUP MODE (don't start interview)
+            socket.emit("setup_mode", {
+              setupInProgress: true,
+              interviewId: sessionData.interviewId,
+              userId: sessionData.userId,
+            });
+
             if (mounted) setInitProgress((prev) => ({ ...prev, socket: true }));
             resolve();
           });
@@ -389,24 +438,39 @@ const InterviewSetup = () => {
         await new Promise((resolve, reject) => {
           const timeout = setTimeout(
             () => reject(new Error("Server ready timeout")),
-            10000,
+            15000,
           );
 
           socket.on("server_ready", () => {
             clearTimeout(timeout);
-            console.log("✅ Server ready");
+            console.log("✅ Server ready (SETUP MODE)");
             if (mounted)
               setInitProgress((prev) => ({ ...prev, serverReady: true }));
             resolve();
           });
         });
 
+        // ❌ Block any TTS during setup
+        socket.on("tts_audio", () => {
+          console.warn(
+            "⚠️ Received TTS during setup - this should not happen!",
+          );
+        });
+
+        socket.on("question", () => {
+          console.warn(
+            "⚠️ Received question during setup - this should not happen!",
+          );
+        });
+
+        console.log("📝 Registering recording sessions (NO DATA SENT YET)");
+
         setInitProgress((prev) => ({ ...prev, audioRecording: "starting" }));
 
         await new Promise((resolve, reject) => {
           const timeout = setTimeout(
             () => reject(new Error("Audio recording timeout")),
-            10000,
+            15000,
           );
 
           socket.emit("audio_recording_start", {
@@ -414,12 +478,16 @@ const InterviewSetup = () => {
             metadata: { sampleRate: 48000 },
             interviewId: sessionData.interviewId,
             userId: sessionData.userId,
+            setupMode: true, // ✅ Flag to indicate setup
           });
 
           socket.on("audio_recording_ready", (data) => {
             if (data.audioType === "mixed_audio") {
               clearTimeout(timeout);
-              console.log("✅ Audio recording ready:", data.audioId);
+              console.log(
+                "✅ Audio recording REGISTERED (not streaming yet):",
+                data.audioId,
+              );
               if (mounted)
                 setInitProgress((prev) => ({ ...prev, audioRecording: true }));
               resolve();
@@ -437,7 +505,7 @@ const InterviewSetup = () => {
         await new Promise((resolve, reject) => {
           const timeout = setTimeout(
             () => reject(new Error("Video recording timeout")),
-            10000,
+            15000,
           );
 
           socket.emit("video_recording_start", {
@@ -446,12 +514,16 @@ const InterviewSetup = () => {
             metadata: { mimeType: "video/webm;codecs=vp9" },
             interviewId: sessionData.interviewId,
             userId: sessionData.userId,
+            setupMode: true, // ✅ Flag to indicate setup
           });
 
           socket.on("video_recording_ready", (data) => {
             if (data.videoType === "primary_camera") {
               clearTimeout(timeout);
-              console.log("✅ Primary video recording ready:", data.videoId);
+              console.log(
+                "✅ Primary video REGISTERED (not streaming yet):",
+                data.videoId,
+              );
               if (mounted)
                 setInitProgress((prev) => ({ ...prev, videoRecording: true }));
               resolve();
@@ -469,7 +541,7 @@ const InterviewSetup = () => {
         await new Promise((resolve, reject) => {
           const timeout = setTimeout(
             () => reject(new Error("Screen recording timeout")),
-            10000,
+            15000,
           );
 
           socket.emit("video_recording_start", {
@@ -478,12 +550,16 @@ const InterviewSetup = () => {
             metadata: { mimeType: "video/webm;codecs=vp9" },
             interviewId: sessionData.interviewId,
             userId: sessionData.userId,
+            setupMode: true, // ✅ Flag to indicate setup
           });
 
           socket.on("video_recording_ready", (data) => {
             if (data.videoType === "screen_recording") {
               clearTimeout(timeout);
-              console.log("✅ Screen recording ready:", data.videoId);
+              console.log(
+                "✅ Screen recording REGISTERED (not streaming yet):",
+                data.videoId,
+              );
               if (mounted)
                 setInitProgress((prev) => ({ ...prev, screenRecording: true }));
               resolve();
@@ -500,10 +576,15 @@ const InterviewSetup = () => {
           setInitProgress((prev) => ({ ...prev, mobileRecording: "starting" }));
 
           await new Promise((resolve, reject) => {
-            const timeout = setTimeout(
-              () => reject(new Error("Mobile recording timeout")),
-              10000,
-            );
+            const timeout = setTimeout(() => {
+              console.log("⚠️ Mobile recording timeout, continuing...");
+              if (mounted)
+                setInitProgress((prev) => ({
+                  ...prev,
+                  mobileRecording: "optional",
+                }));
+              resolve();
+            }, 10000);
 
             socket.emit("video_recording_start", {
               videoType: "secondary_camera",
@@ -511,12 +592,16 @@ const InterviewSetup = () => {
               metadata: { mimeType: "video/webm;codecs=vp9" },
               interviewId: sessionData.interviewId,
               userId: sessionData.userId,
+              setupMode: true, // ✅ Flag to indicate setup
             });
 
             socket.on("video_recording_ready", (data) => {
               if (data.videoType === "secondary_camera") {
                 clearTimeout(timeout);
-                console.log("✅ Mobile recording ready:", data.videoId);
+                console.log(
+                  "✅ Mobile recording REGISTERED (not streaming yet):",
+                  data.videoId,
+                );
                 if (mounted)
                   setInitProgress((prev) => ({
                     ...prev,
@@ -542,7 +627,13 @@ const InterviewSetup = () => {
         }
 
         console.log("✅ Pre-initialization complete!");
+        console.log("📋 Summary:");
+        console.log("   - Socket: Connected");
+        console.log("   - Recordings: Registered (NOT streaming)");
+        console.log("   - Interview: NOT started");
+        console.log("   - TTS/STT: Blocked");
 
+        // Store streams in context SYNCHRONOUSLY
         streamsRef.current = {
           micStream,
           primaryCameraStream,
@@ -551,19 +642,32 @@ const InterviewSetup = () => {
           preInitializedSocket: socket,
         };
 
+        console.log("✅ Streams stored in context:", {
+          hasMic: !!micStream,
+          micActive: micStream?.active,
+          hasCamera: !!primaryCameraStream,
+          cameraActive: primaryCameraStream?.active,
+          hasScreen: !!screenShareStream,
+          screenActive: screenShareStream?.active,
+          socketConnected: socket.connected,
+        });
+
         hasNavigatedRef.current = true;
 
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        // Small delay to ensure React state updates
+        await new Promise((resolve) => setTimeout(resolve, 200));
 
         if (mounted) {
+          console.log("🚀 Navigating to /interview/live");
+          console.log("⚡ Interview will START on next page");
           navigate("/interview/live");
         }
       } catch (error) {
         console.error("❌ Pre-initialization failed:", error);
         if (mounted) {
           setInitError(error.message);
-          if (interviewSocketRef.current) {
-            interviewSocketRef.current.disconnect();
+          if (socket) {
+            socket.disconnect();
             interviewSocketRef.current = null;
           }
         }
@@ -574,6 +678,10 @@ const InterviewSetup = () => {
 
     return () => {
       mounted = false;
+      if (!hasNavigatedRef.current && socket) {
+        console.log("🧹 Cleaning up initialization socket (cancelled)");
+        socket.disconnect();
+      }
     };
   }, [
     currentStep,
@@ -589,21 +697,34 @@ const InterviewSetup = () => {
 
   useEffect(() => {
     return () => {
+      // Only cleanup if we DIDN'T navigate successfully
       if (!hasNavigatedRef.current) {
+        console.log("🧹 Cleaning up streams (setup cancelled)");
         cancelAnimationFrame(animationFrameRef.current);
-        micStream?.getTracks().forEach((t) => t.stop());
-        primaryCameraStream?.getTracks().forEach((t) => t.stop());
-        screenShareStream?.getTracks().forEach((t) => t.stop());
+
+        if (audioContextRef.current) {
+          audioContextRef.current.close().catch(console.error);
+        }
+
+        micStream?.getTracks().forEach((t) => {
+          console.log("🛑 Stopping mic track");
+          t.stop();
+        });
+        primaryCameraStream?.getTracks().forEach((t) => {
+          console.log("🛑 Stopping camera track");
+          t.stop();
+        });
+        screenShareStream?.getTracks().forEach((t) => {
+          console.log("🛑 Stopping screen track");
+          t.stop();
+        });
+      } else {
+        console.log("✅ Navigation successful, streams preserved in context");
       }
+
       settingsSocketRef.current?.disconnect();
     };
-  }, []);
-
-  useEffect(() => {
-    if (primaryVideoRef.current && primaryCameraStream) {
-      primaryVideoRef.current.srcObject = primaryCameraStream;
-    }
-  }, [primaryCameraStream]);
+  }, [micStream, primaryCameraStream, screenShareStream]);
 
   /* ================= RENDER ================= */
 

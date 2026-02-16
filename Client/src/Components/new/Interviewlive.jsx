@@ -13,16 +13,28 @@ const InterviewLive = () => {
   const navigate = useNavigate();
   const streamsRef = useStreams();
 
+  // Initial context check
+  useEffect(() => {
+    console.log("🔍 INITIAL CONTEXT CHECK:", {
+      streamsRef: streamsRef.current,
+      hasSessionData: !!streamsRef.current?.sessionData,
+      hasMic: !!streamsRef.current?.micStream,
+      hasCamera: !!streamsRef.current?.primaryCameraStream,
+      hasScreen: !!streamsRef.current?.screenShareStream,
+      hasSocket: !!streamsRef.current?.preInitializedSocket,
+    });
+  }, []);
+
   // Get streams and session from context ref
   const {
     sessionData,
     micStream,
     primaryCameraStream,
     screenShareStream,
-    preInitializedSocket, // ✅ Get pre-initialized socket
+    preInitializedSocket,
   } = streamsRef.current || {};
 
-  // Redirect if no session data (with small delay for context to populate)
+  // Redirect if no session data (with delay for context to populate)
   useEffect(() => {
     const timer = setTimeout(() => {
       if (!sessionData || !micStream || !primaryCameraStream) {
@@ -35,10 +47,10 @@ const InterviewLive = () => {
         alert("Invalid session. Please complete setup first.");
         navigate("/interview");
       }
-    }, 100);
+    }, 500); // Increased timeout
 
     return () => clearTimeout(timer);
-  }, []); // Run only once on mount
+  }, [navigate]); // Only run once with navigate dependency
 
   const interview = useInterview(
     sessionData?.interviewId,
@@ -74,7 +86,7 @@ const InterviewLive = () => {
   const videoRef = useRef(null);
   const secondaryCanvasRef = useRef(null);
   const screenVideoRef = useRef(null);
-  const recordingsStartedRef = useRef(false); // ✅ Prevent double-start
+  const recordingsStartedRef = useRef(false);
 
   const [evaluationStatus, setEvaluationStatus] = useState(null);
   const [evaluationResults, setEvaluationResults] = useState(null);
@@ -95,7 +107,7 @@ const InterviewLive = () => {
   );
 
   const cleanupAllRecordings = async () => {
-    console.log("Cleaning up recordings");
+    console.log("🧹 Cleaning up recordings");
     const promises = [];
 
     if (isVideoRecording) {
@@ -120,7 +132,7 @@ const InterviewLive = () => {
     }
 
     await Promise.allSettled(promises);
-    console.log("Cleanup complete");
+    console.log("✅ Cleanup complete");
   };
 
   // ✅ Attach primary camera stream
@@ -132,23 +144,60 @@ const InterviewLive = () => {
       videoRef.current.playsInline = true;
       videoRef.current.play().catch((err) => {
         if (err.name !== "AbortError") {
-          console.error("Video play error:", err);
+          console.error("❌ Video play error:", err);
         }
       });
     }
   }, [primaryCameraStream]);
 
-  // ✅ Attach screen share stream
+  // ✅ Attach screen share stream with retry logic
   useEffect(() => {
-    if (screenVideoRef.current && screenShareStream) {
-      console.log("🖥️ Attaching screen share stream");
-      screenVideoRef.current.srcObject = screenShareStream;
-      screenVideoRef.current.muted = true;
-      screenVideoRef.current.playsInline = true;
-      screenVideoRef.current.play().catch((err) => {
+    if (!screenVideoRef.current || !screenShareStream) return;
+
+    console.log("🖥️ Attaching screen share stream");
+
+    const videoElement = screenVideoRef.current;
+    videoElement.srcObject = screenShareStream;
+    videoElement.muted = true;
+    videoElement.playsInline = true;
+
+    const playVideo = async () => {
+      try {
+        await videoElement.play();
+        console.log("✅ Screen video playing");
+      } catch (err) {
         if (err.name !== "AbortError") {
-          console.error("Screen video play error:", err);
+          console.error("❌ Screen video play error:", err);
+          // Retry once after delay
+          setTimeout(() => {
+            videoElement.play().catch((e) => {
+              console.error("❌ Screen video retry failed:", e);
+            });
+          }, 500);
         }
+      }
+    };
+
+    playVideo();
+
+    return () => {
+      videoElement.srcObject = null;
+    };
+  }, [screenShareStream]);
+
+  // Debug screen share status
+  useEffect(() => {
+    if (screenShareStream) {
+      console.log("📊 Screen Share Status:", {
+        active: screenShareStream.active,
+        tracks: screenShareStream.getTracks().length,
+        trackStates: screenShareStream.getTracks().map((t) => ({
+          kind: t.kind,
+          enabled: t.enabled,
+          readyState: t.readyState,
+        })),
+        videoRefAttached: !!screenVideoRef.current?.srcObject,
+        videoRefPaused: screenVideoRef.current?.paused,
       });
     }
   }, [screenShareStream]);
@@ -162,7 +211,7 @@ const InterviewLive = () => {
     }
   }, []);
 
-  // ✅ USE PRE-INITIALIZED SOCKET (Don't create new one)
+  // ✅ USE PRE-INITIALIZED SOCKET
   useEffect(() => {
     if (!sessionData || !preInitializedSocket) {
       console.warn("⚠️ No pre-initialized socket available");
@@ -173,6 +222,7 @@ const InterviewLive = () => {
     interview.socketRef.current = socket;
 
     console.log("✅ Using pre-initialized socket:", socket.id);
+    console.log("🎬 NOW STARTING INTERVIEW (will send media + receive TTS)");
 
     const silenced = [
       "user_audio_chunk",
@@ -184,33 +234,70 @@ const InterviewLive = () => {
 
     socket.onAny((ev, ...args) => {
       if (!silenced.includes(ev)) {
-        console.log(`Socket: "${ev}"`);
+        console.log(`📡 Socket: "${ev}"`);
       }
     });
 
-    // Socket is already connected, just update status
+    // Socket is already connected from setup
     if (socket.connected) {
       console.log("✅ Socket already connected:", socket.id);
+
+      // ✅ CRITICAL: Tell server to START INTERVIEW NOW
+      console.log("🚀 Emitting 'client_ready' - Interview starting...");
+      socket.emit("client_ready", {
+        interviewId: sessionData.interviewId,
+        userId: sessionData.userId,
+        timestamp: Date.now(),
+      });
+
       interview.setStatus("live");
       interview.setServerReady(true);
       interview.setIsInitializing(false);
     } else {
-      // Reconnect if disconnected
+      console.log("🔄 Socket not connected, reconnecting...");
       socket.connect();
 
       socket.on("connect", () => {
-        console.log("Connected:", socket.id);
+        console.log("✅ Connected:", socket.id);
+
+        // ✅ CRITICAL: Tell server to START INTERVIEW NOW
+        console.log("🚀 Emitting 'client_ready' - Interview starting...");
+        socket.emit("client_ready", {
+          interviewId: sessionData.interviewId,
+          userId: sessionData.userId,
+          timestamp: Date.now(),
+        });
+
         interview.setStatus("live");
       });
 
       socket.on("server_ready", () => {
-        console.log("Server ready");
+        console.log("✅ Server ready");
         interview.setServerReady(true);
         interview.setIsInitializing(false);
       });
     }
 
+    // ✅ NOW we can receive TTS and questions
+    socket.on("question", (d) => {
+      console.log("❓ Received question:", d.text);
+      interview.handleQuestion(d);
+    });
+
+    socket.on("tts_audio", (chunk) => {
+      if (chunk) {
+        console.log("🔊 Received TTS audio chunk");
+        interview.handleTtsAudio(chunk);
+      }
+    });
+
+    socket.on("tts_end", () => {
+      console.log("🔊 TTS playback ended");
+      interview.handleTtsEnd();
+    });
+
     socket.on("secondary_camera_ready", (data) => {
+      console.log("✅ Secondary camera ready");
       setMobileCameraConnected(true);
     });
 
@@ -247,18 +334,23 @@ const InterviewLive = () => {
       img.src = data.frame;
     });
 
-    socket.on("interim_transcript", (data) =>
-      interview.setLiveTranscript(data.text),
-    );
+    socket.on("interim_transcript", (data) => {
+      console.log("📝 Interim transcript:", data.text);
+      interview.setLiveTranscript(data.text);
+    });
 
     socket.on("face_violation", (data) => {
+      console.warn("⚠️ Face violation:", data);
       setFaceViolationWarning(data);
     });
 
-    socket.on("face_violation_cleared", () => setFaceViolationWarning(null));
+    socket.on("face_violation_cleared", () => {
+      console.log("✅ Face violation cleared");
+      setFaceViolationWarning(null);
+    });
 
     socket.on("interview_terminated", async (data) => {
-      console.error("Interview terminated:", data);
+      console.error("❌ Interview terminated:", data);
       setIsInterviewTerminated(true);
       interview.setMicStreamingActive(false);
       alert(`Interview Terminated: ${data.message}`);
@@ -267,62 +359,90 @@ const InterviewLive = () => {
       navigate("/dashboard");
     });
 
-    socket.on("audio_recording_ready", (d) => console.log("Audio ready:", d));
-    socket.on("audio_recording_error", (d) => console.error("Audio error:", d));
-    socket.on("video_recording_ready", (d) => console.log("Video ready:", d));
-    socket.on("video_recording_error", (d) => console.error("Video error:", d));
+    socket.on("audio_recording_ready", (d) =>
+      console.log("✅ Audio ready:", d),
+    );
+    socket.on("audio_recording_error", (d) =>
+      console.error("❌ Audio error:", d),
+    );
+    socket.on("video_recording_ready", (d) =>
+      console.log("✅ Video ready:", d),
+    );
+    socket.on("video_recording_error", (d) =>
+      console.error("❌ Video error:", d),
+    );
     socket.on("media_merge_complete", (d) =>
-      console.log("Merge complete:", d.finalVideoUrl),
+      console.log("✅ Merge complete:", d.finalVideoUrl),
     );
 
-    socket.on("evaluation_started", () => setEvaluationStatus("started"));
+    socket.on("evaluation_started", () => {
+      console.log("📊 Evaluation started");
+      setEvaluationStatus("started");
+    });
+
     socket.on("evaluation_complete", (d) => {
+      console.log("✅ Evaluation complete:", d);
       setEvaluationStatus("complete");
       setEvaluationResults(d.results);
       interview.setMicStreamingActive(false);
     });
+
     socket.on("evaluation_error", (d) => {
+      console.error("❌ Evaluation error:", d);
       setEvaluationStatus("error");
       alert(`Evaluation failed: ${d.message}`);
     });
 
-    socket.on("question", (d) => interview.handleQuestion(d));
-    socket.on("next_question", (d) => interview.handleNextQuestion(d));
-    socket.on("idle_prompt", (d) => interview.handleIdlePrompt(d));
-    socket.on("transcript_received", (d) =>
-      interview.handleTranscriptReceived(d),
-    );
-    socket.on("listening_enabled", () => interview.enableListening());
-    socket.on("listening_disabled", () => interview.disableListening());
-    socket.on("tts_audio", (chunk) => {
-      if (chunk) interview.handleTtsAudio(chunk);
+    socket.on("next_question", (d) => {
+      console.log("➡️ Next question:", d.text);
+      interview.handleNextQuestion(d);
     });
-    socket.on("tts_end", () => interview.handleTtsEnd());
+
+    socket.on("idle_prompt", (d) => {
+      console.log("💤 Idle prompt:", d.message);
+      interview.handleIdlePrompt(d);
+    });
+
+    socket.on("transcript_received", (d) => {
+      console.log("✅ Transcript received:", d.text);
+      interview.handleTranscriptReceived(d);
+    });
+
+    socket.on("listening_enabled", () => {
+      console.log("🎤 Listening enabled");
+      interview.enableListening();
+    });
+
+    socket.on("listening_disabled", () => {
+      console.log("🎤 Listening disabled");
+      interview.disableListening();
+    });
 
     socket.on("interview_complete", async (d) => {
-      console.log("Interview complete:", d);
+      console.log("✅ Interview complete:", d);
       interview.handleInterviewComplete(d);
       await cleanupAllRecordings();
     });
 
     socket.on("connect_error", (err) => {
-      console.error("Connection error:", err.message);
+      console.error("❌ Connection error:", err.message);
       interview.setStatus("error");
       interview.setIsInitializing(false);
     });
 
     socket.on("disconnect", (reason) => {
-      console.log("Disconnected:", reason);
+      console.log("🔌 Disconnected:", reason);
       interview.setStatus("disconnected");
       interview.setMicStreamingActive(false);
     });
 
     socket.on("error", (error) => {
-      console.error("Socket error:", error);
+      console.error("❌ Socket error:", error);
       interview.setStatus("error");
     });
 
-    // ✅ Initialize interview (without re-connecting socket)
+    // ✅ Initialize interview
+    console.log("🎬 Initializing interview session");
     interview.initializeInterview({
       interviewId: sessionData.interviewId,
       userId: sessionData.userId,
@@ -331,6 +451,7 @@ const InterviewLive = () => {
 
     return () => {
       (async () => {
+        console.log("🧹 Component unmounting - cleaning up");
         await cleanupAllRecordings();
         socket.offAny();
         socket.removeAllListeners();
@@ -339,9 +460,8 @@ const InterviewLive = () => {
     };
   }, [sessionData?.interviewId, sessionData?.userId, preInitializedSocket]);
 
-  // ✅ START ACTUAL MEDIA STREAMING (recordings already registered on server)
+  // ✅ START MEDIA STREAMING
   useEffect(() => {
-    // Only start if recordings haven't been started yet
     if (recordingsStartedRef.current) {
       console.log("⏭️ Recordings already started, skipping");
       return;
@@ -362,19 +482,14 @@ const InterviewLive = () => {
 
     (async () => {
       try {
-        console.log(
-          "🎬 Starting media streaming (recordings already initialized)",
-        );
+        console.log("🎬 Starting media streaming");
 
-        // Start streaming audio chunks
         await audioRecording.startRecording();
         console.log("✓ Audio streaming started");
 
-        // Start streaming video chunks
         await startVideoRecording();
         console.log("✓ Primary camera streaming started");
 
-        // Start streaming screen chunks
         if (screenShareStream) {
           screenRecording.startRecording(screenShareStream);
           console.log("✓ Screen streaming started");
@@ -407,25 +522,11 @@ const InterviewLive = () => {
     }
   }, [evaluationStatus, evaluationResults, navigate]);
 
-  // Cleanup streams when component unmounts
+  // Cleanup streams when component unmounts (NOT on navigation)
   useEffect(() => {
     return () => {
-      if (streamsRef.current) {
-        streamsRef.current.micStream?.getTracks().forEach((t) => t.stop());
-        streamsRef.current.primaryCameraStream
-          ?.getTracks()
-          .forEach((t) => t.stop());
-        streamsRef.current.screenShareStream
-          ?.getTracks()
-          .forEach((t) => t.stop());
-        streamsRef.current = {
-          micStream: null,
-          primaryCameraStream: null,
-          screenShareStream: null,
-          sessionData: null,
-          preInitializedSocket: null,
-        };
-      }
+      console.log("🧹 Component unmounting - preserving streams in context");
+      // Don't stop streams here - they're managed in cleanup function
     };
   }, []);
 
@@ -455,7 +556,14 @@ const InterviewLive = () => {
   };
 
   if (!sessionData) {
-    return null;
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin w-12 h-12 border-4 border-purple-500/30 border-t-purple-500 rounded-full mx-auto mb-4" />
+          <p className="text-white">Loading interview...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
