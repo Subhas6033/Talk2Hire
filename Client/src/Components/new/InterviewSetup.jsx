@@ -450,16 +450,7 @@ const InterviewSetup = () => {
           });
         });
 
-        // Block TTS/Questions during setup
-        socket.on("tts_audio", () => {
-          console.warn("⚠️ Received TTS during setup - should not happen!");
-        });
-
-        socket.on("question", () => {
-          console.warn(
-            "⚠️ Received question during setup - should not happen!",
-          );
-        });
+        // ✅ DON'T register tts_audio or question listeners - backend blocks them
 
         console.log("📝 Registering recording sessions (NO DATA SENT YET)");
 
@@ -660,7 +651,7 @@ const InterviewSetup = () => {
         if (mounted) {
           console.log("🚀 Navigating to /interview/live");
           console.log("⚡ Interview will START on next page");
-          navigate("/interview/live");
+          navigate("/interview/live", { replace: true }); // ✅ Use replace
         }
       } catch (error) {
         console.error("❌ Pre-initialization failed:", error);
