@@ -1627,18 +1627,38 @@ function initInterviewSocket(httpServer) {
       // AUDIO STREAMING (Deepgram STT)
       // ================================================================
 
+      // ✅ CRITICAL FIX: Throttle console logging to prevent event loop blocking
+      let lastNoConnectionWarning = 0;
+      let lastSendFailureWarning = 0;
+      const WARNING_THROTTLE_MS = 5000; // Only log once every 5 seconds
+
       socket.on("user_audio_chunk", (audioData) => {
         if (!isListeningActive) return;
 
         if (!deepgramConnection) {
-          console.log("No Deepgram connection available");
+          // ✅ FIXED: Only log once every 5 seconds to prevent console spam
+          const now = Date.now();
+          if (now - lastNoConnectionWarning > WARNING_THROTTLE_MS) {
+            console.log(
+              `⚠️ No Deepgram connection for interview ${interviewId}`,
+            );
+            lastNoConnectionWarning = now;
+          }
           return;
         }
 
         const sent = deepgramConnection.send(audioData);
         if (!sent) {
           const state = deepgramConnection.getReadyState();
-          console.log("Failed to send audio. State:", state);
+
+          // ✅ FIXED: Also throttle send failure warnings
+          const now = Date.now();
+          if (now - lastSendFailureWarning > WARNING_THROTTLE_MS) {
+            console.log(
+              `⚠️ Failed to send audio for ${interviewId}. State: ${state}`,
+            );
+            lastSendFailureWarning = now;
+          }
         }
       });
 
