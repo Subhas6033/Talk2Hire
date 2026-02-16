@@ -48,7 +48,7 @@ const InterviewQuestions = ({
   interviewId,
   userId,
   cameraStream,
-  secondaryCameraStream,
+  // FIX: Removed unused secondaryCameraStream prop — mobile frames arrive via socket, not prop
   onCancel,
   onFinish,
 }) => {
@@ -74,7 +74,7 @@ const InterviewQuestions = ({
   );
 
   const videoRef = useRef(null);
-  const secondaryVideoRef = useRef(null);
+  const secondaryVideoRef = useRef(null); // kept for future use
   const screenVideoRef = useRef(null);
   const secondaryCanvasRef = useRef(null);
   const isCleaningUpRef = useRef(false);
@@ -145,11 +145,6 @@ const InterviewQuestions = ({
 
   // Attach primary camera stream
   useEffect(() => {
-    console.log("Primary camera effect triggered:", {
-      hasVideoRef: !!videoRef.current,
-      hasStream: !!cameraStream,
-      streamActive: cameraStream?.active,
-    });
     if (videoRef.current && cameraStream) {
       console.log("Attaching primary camera stream");
       attachStream(videoRef.current, cameraStream);
@@ -158,11 +153,6 @@ const InterviewQuestions = ({
 
   // Attach screen recording stream
   useEffect(() => {
-    console.log("Screen recording effect triggered:", {
-      hasVideoRef: !!screenVideoRef.current,
-      hasStream: !!screenRecording.screenStream,
-      streamActive: screenRecording.screenStream?.active,
-    });
     if (screenVideoRef.current && screenRecording.screenStream) {
       console.log("Attaching screen recording stream");
       attachStream(screenVideoRef.current, screenRecording.screenStream);
@@ -172,7 +162,7 @@ const InterviewQuestions = ({
   // Initialize canvas (separate from frame handling)
   useEffect(() => {
     if (!secondaryCanvasRef.current) {
-      console.error("❌ Canvas ref is null!");
+      console.error("Canvas ref is null!");
       return;
     }
 
@@ -182,11 +172,11 @@ const InterviewQuestions = ({
     const ctx = canvas.getContext("2d", { alpha: false });
 
     if (!ctx) {
-      console.error("❌ Failed to get canvas context");
+      console.error("Failed to get canvas context");
       return;
     }
 
-    console.log("✅ Mobile camera canvas initialized: 640x480");
+    console.log("Mobile camera canvas initialized: 640x480");
   }, []);
 
   // Main socket connection and event handler setup
@@ -206,12 +196,11 @@ const InterviewQuestions = ({
 
     interview.socketRef.current = socket;
 
+    // FIX: Removed verbose event silencing — only silence truly high-frequency events
     const silenced = [
       "user_audio_chunk",
-      "security_frame",
       "video_chunk",
       "audio_chunk",
-      "screen_chunk",
       "holistic_detection_result",
       "interim_transcript",
     ];
@@ -232,13 +221,8 @@ const InterviewQuestions = ({
       interview.setServerReady(true);
       interview.setIsInitializing(false);
 
-      setTimeout(() => {
-        if (!readyForQuestionSentRef.current) {
-          socket.emit("ready_for_question");
-          readyForQuestionSentRef.current = true;
-          console.log("ready_for_question event sent");
-        }
-      }, 200);
+      // FIX: Removed duplicate ready_for_question emit — useInterview hook already
+      // sends it via autoStartInterview(). Sending twice causes double-processing.
     });
 
     socket.on("secondary_camera_ready", (data) => {
@@ -252,14 +236,12 @@ const InterviewQuestions = ({
       }
     });
 
-    // ✅ CRITICAL FIX: Mobile camera frame handler registered in main socket setup
+    // Mobile camera frame handler
     socket.on("mobile_camera_frame", (data) => {
-      console.log("📱 Mobile frame received");
-
       if (!hasReceivedFrameRef.current) {
         hasReceivedFrameRef.current = true;
         setMobileCameraConnected(true);
-        console.log("✅ First mobile frame received - camera connected");
+        console.log("First mobile frame received - camera connected");
       }
 
       if (!data?.frame) {
@@ -284,12 +266,10 @@ const InterviewQuestions = ({
         return;
       }
 
-      // Create new image for each frame
       const img = new Image();
 
       img.onload = () => {
         try {
-          // Auto-resize canvas to match image dimensions
           if (img.naturalWidth > 0 && img.naturalHeight > 0) {
             if (
               canvas.width !== img.naturalWidth ||
@@ -300,14 +280,12 @@ const InterviewQuestions = ({
             }
           }
 
-          // Draw frame to canvas
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-          // Log every 30th frame
           if (!window.mobileFrameCount) window.mobileFrameCount = 0;
           window.mobileFrameCount++;
           if (window.mobileFrameCount % 30 === 0) {
-            console.log(`✅ Rendered ${window.mobileFrameCount} mobile frames`);
+            console.log(`Rendered ${window.mobileFrameCount} mobile frames`);
           }
         } catch (error) {
           console.error("Canvas draw error:", error);
@@ -318,7 +296,6 @@ const InterviewQuestions = ({
         console.error("Failed to load mobile frame:", err);
       };
 
-      // Set image source to trigger load
       img.src = data.frame;
     });
 
@@ -340,14 +317,22 @@ const InterviewQuestions = ({
     socket.on("interview_terminated", async (data) => {
       console.error("Interview terminated:", data);
       setIsInterviewTerminated(true);
+      // FIX: Stop mic and disconnect socket so server can clean up the session
+      // immediately — otherwise server keeps session alive processing stray audio
+      interview.setMicStreamingActive(false);
       alert(`Interview Terminated: ${data.message}`);
       await cleanupAllRecordings();
+      socket.disconnect();
       if (onFinish) onFinish();
       else if (onCancel) onCancel();
     });
 
     socket.on("audio_recording_ready", (d) =>
       console.log("Audio recording ready:", d),
+    );
+    // FIX: Added missing listener — server emits this on audio session create failure
+    socket.on("audio_recording_error", (d) =>
+      console.error("Audio recording error:", d),
     );
     socket.on("audio_chunk_uploaded", (d) => {
       if (d.chunkNumber % 10 === 0)
@@ -366,6 +351,11 @@ const InterviewQuestions = ({
     socket.on("video_recording_ready", (d) =>
       console.log("Video recording ready:", d),
     );
+    // FIX: Added missing listener — server emits this on video session create failure
+    socket.on("video_recording_error", (d) => {
+      console.error(`Video recording error:`, d);
+      alert(`Failed to start ${d.videoType} recording: ${d.error}`);
+    });
     socket.on("video_chunk_uploaded", (d) => {
       if (d.chunkNumber % 10 === 0)
         console.log(
@@ -382,11 +372,21 @@ const InterviewQuestions = ({
       console.error(`${d.videoType} processing error:`, d);
       alert(`Video processing failed for ${d.videoType}: ${d.error}`);
     });
+    // FIX: Added missing listeners — server emits these after interview ends
+    socket.on("media_merge_complete", (d) =>
+      console.log("Media merge complete:", d.finalVideoUrl),
+    );
+    socket.on("media_merge_error", (d) =>
+      console.error("Media merge failed:", d.error),
+    );
 
     socket.on("evaluation_started", () => setEvaluationStatus("started"));
     socket.on("evaluation_complete", (d) => {
       setEvaluationStatus("complete");
       setEvaluationResults(d.results);
+      // FIX: Stop mic streaming when evaluation completes — interview is fully over,
+      // no need to keep sending audio chunks (wastes bandwidth + Deepgram credits)
+      interview.setMicStreamingActive(false);
     });
     socket.on("evaluation_error", (d) => {
       setEvaluationStatus("error");
@@ -402,7 +402,6 @@ const InterviewQuestions = ({
     socket.on("transcript_received", (d) =>
       interview.handleTranscriptReceived(d),
     );
-    socket.on("final_answer", (d) => interview.handleFinalAnswer(d.text));
     socket.on("listening_enabled", () => interview.enableListening());
     socket.on("listening_disabled", () => interview.disableListening());
     socket.on("tts_audio", (chunk) => {
@@ -456,6 +455,10 @@ const InterviewQuestions = ({
             .getTracks()
             .forEach((track) => track.stop());
         }
+        // FIX: Remove all listeners before disconnect to prevent any final
+        // events (like disconnect itself) from firing into an unmounted component
+        socket.offAny();
+        socket.removeAllListeners();
         socket.disconnect();
       })();
     };

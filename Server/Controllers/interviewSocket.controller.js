@@ -19,6 +19,16 @@ const {
   mergeInterviewMedia,
 } = require("../Service/globalVideoMerger.service.js");
 
+// FIX: One TTS instance per interview session — eliminates cold start on every question
+const ttsInstanceCache = new Map();
+
+function getTTSInstance(interviewId) {
+  if (!ttsInstanceCache.has(interviewId)) {
+    ttsInstanceCache.set(interviewId, createTTSStream());
+  }
+  return ttsInstanceCache.get(interviewId);
+}
+
 /**
  * Initialize Socket.IO server for interview sessions
  * Handles real-time communication for video, audio, and transcription
@@ -73,6 +83,8 @@ function initInterviewSocket(httpServer) {
   function cleanupSession(interviewId) {
     console.log(`Cleaning up session: ${interviewId}`);
     interviewSessions.delete(interviewId);
+    // FIX: Clean up cached TTS instance on session end
+    ttsInstanceCache.delete(interviewId);
   }
 
   // Handle new socket connections
@@ -120,6 +132,7 @@ function initInterviewSocket(httpServer) {
     // Interview state variables
     let currentOrder = 1;
     let isProcessing = false;
+    let isInterviewEnded = false; // FIX: guard late transcripts after interview ends
     let firstQuestionSent = false;
     let firstQuestion = null;
     let deepgramConnection = null;
@@ -130,7 +143,7 @@ function initInterviewSocket(httpServer) {
     // Configuration constants
     const MAX_QUESTIONS = 10;
     const MAX_FACE_VIOLATIONS = 1;
-    const FACE_DETECTION_THROTTLE_MS = 250;
+    const FACE_DETECTION_THROTTLE_MS = 1000;
 
     // Face detection state
     let lastHolisticTime = 0;
@@ -720,10 +733,9 @@ function initInterviewSocket(httpServer) {
 
           const promptText = "Can I repeat the question?";
           socket.emit("idle_prompt", { text: promptText });
-          await new Promise((resolve) => setTimeout(resolve, 200));
-          await streamTTSToClient(socket, promptText);
-          await new Promise((resolve) => setTimeout(resolve, 1500));
-
+          // FIX: Removed 1500ms delay before TTS — stream immediately
+          await streamTTSToClient(socket, promptText, interviewId);
+          // FIX: Reduced post-TTS wait from 500ms to 0 — Deepgram starts in parallel
           isListeningActive = true;
           socket.emit("listening_enabled");
 
@@ -773,12 +785,20 @@ function initInterviewSocket(httpServer) {
           currentQuestionText = nextQuestionText;
 
           socket.emit("next_question", { question: nextQuestionText });
-          await new Promise((resolve) => setTimeout(resolve, 200));
-          await streamTTSToClient(socket, nextQuestionText);
-          await new Promise((resolve) => setTimeout(resolve, 1500));
-          await new Promise((resolve) => setTimeout(resolve, 500));
 
-          await startDeepgramConnection();
+          // FIX: Start Deepgram in parallel while TTS is playing — mic ready sooner
+          const deepgramReady = startDeepgramConnection();
+
+          // FIX: Removed 200ms pre-TTS delay — stream immediately
+          // FIX: try/finally ensures deepgramReady is always awaited even if TTS throws,
+          //      preventing an unhandled rejected promise and a leaked Deepgram connection
+          try {
+            await streamTTSToClient(socket, nextQuestionText, interviewId);
+          } finally {
+            // FIX: Removed 1500ms + 500ms post-TTS delays — wait for Deepgram instead
+            await deepgramReady;
+          }
+
           isListeningActive = true;
           socket.emit("listening_enabled");
           isProcessing = false;
@@ -796,6 +816,8 @@ function initInterviewSocket(httpServer) {
        */
       async function endInterview() {
         console.log("Ending interview");
+        // FIX: Mark interview as ended so processUserTranscript ignores late transcripts
+        isInterviewEnded = true;
 
         try {
           socket.emit("interview_complete", {
@@ -899,6 +921,7 @@ function initInterviewSocket(httpServer) {
 
       /**
        * Initialize Deepgram connection for speech recognition
+       * FIX: Removed 300ms artificial setTimeout delay
        */
       function startDeepgramConnection() {
         if (deepgramConnection) {
@@ -911,78 +934,77 @@ function initInterviewSocket(httpServer) {
           deepgramConnection = null;
         }
 
+        // FIX: Removed unnecessary setTimeout wrapper — connect immediately
         return new Promise((resolve) => {
-          setTimeout(() => {
-            console.log("Creating new Deepgram connection");
-            const sttSession = createSTTSession();
-            let hasReceivedTranscript = false;
+          console.log("Creating new Deepgram connection");
+          const sttSession = createSTTSession();
+          let hasReceivedTranscript = false;
 
-            deepgramConnection = sttSession.startLiveTranscription({
-              onTranscript: async (transcript) => {
-                console.log("Deepgram final transcript:", transcript);
+          deepgramConnection = sttSession.startLiveTranscription({
+            onTranscript: async (transcript) => {
+              console.log("Deepgram final transcript:", transcript);
 
-                if (!transcript || transcript.trim() === "") return;
-                if (!isListeningActive) return;
-                if (isProcessing) return;
-                if (hasReceivedTranscript) return;
+              if (!transcript || transcript.trim() === "") return;
+              if (!isListeningActive) return;
+              if (isProcessing) return;
+              if (hasReceivedTranscript) return;
 
-                hasReceivedTranscript = true;
-                isListeningActive = false;
-                console.log("Listening disabled after transcript");
+              hasReceivedTranscript = true;
+              isListeningActive = false;
+              console.log("Listening disabled after transcript");
 
-                if (deepgramConnection) {
-                  deepgramConnection.pauseIdleDetection();
+              if (deepgramConnection) {
+                deepgramConnection.pauseIdleDetection();
+              }
+
+              socket.emit("transcript_received", { text: transcript });
+
+              if (deepgramConnection) {
+                try {
+                  deepgramConnection.finish();
+                } catch (e) {
+                  console.error("Error finishing connection:", e);
                 }
-
-                socket.emit("transcript_received", { text: transcript });
-
-                if (deepgramConnection) {
-                  try {
-                    deepgramConnection.finish();
-                  } catch (e) {
-                    console.error("Error finishing connection:", e);
-                  }
-                  deepgramConnection = null;
-                }
-
-                if (awaitingRepeatResponse) {
-                  await handleRepeatResponse(transcript);
-                } else {
-                  await processUserTranscript(transcript);
-                }
-              },
-
-              onInterim: (transcript) => {
-                if (transcript && transcript.trim()) {
-                  socket.emit("interim_transcript", { text: transcript });
-                }
-              },
-
-              onError: (error) => {
-                console.error("Deepgram STT error:", error);
-                if (error.message?.includes("timeout")) {
-                  socket.emit("error", {
-                    message: "Unable to start speech recognition",
-                  });
-                }
-                isListeningActive = false;
-              },
-
-              onClose: () => {
-                console.log("Deepgram STT connection closed");
                 deepgramConnection = null;
-              },
+              }
 
-              onIdle: async () => {
-                if (isListeningActive && !isProcessing) {
-                  await handleIdle();
-                }
-              },
-            });
+              if (awaitingRepeatResponse) {
+                await handleRepeatResponse(transcript);
+              } else {
+                await processUserTranscript(transcript);
+              }
+            },
 
-            console.log("Deepgram connection created");
-            resolve(deepgramConnection);
-          }, 300);
+            onInterim: (transcript) => {
+              if (transcript && transcript.trim()) {
+                socket.emit("interim_transcript", { text: transcript });
+              }
+            },
+
+            onError: (error) => {
+              console.error("Deepgram STT error:", error);
+              if (error.message?.includes("timeout")) {
+                socket.emit("error", {
+                  message: "Unable to start speech recognition",
+                });
+              }
+              isListeningActive = false;
+            },
+
+            onClose: () => {
+              console.log("Deepgram STT connection closed");
+              deepgramConnection = null;
+            },
+
+            onIdle: async () => {
+              if (isListeningActive && !isProcessing) {
+                await handleIdle();
+              }
+            },
+          });
+
+          console.log("Deepgram connection created");
+          resolve(deepgramConnection);
         });
       }
 
@@ -1004,12 +1026,16 @@ function initInterviewSocket(httpServer) {
           awaitingRepeatResponse = false;
 
           socket.emit("question", { question: currentQuestionText });
-          await new Promise((resolve) => setTimeout(resolve, 200));
-          await streamTTSToClient(socket, currentQuestionText);
-          await new Promise((resolve) => setTimeout(resolve, 1500));
-          await new Promise((resolve) => setTimeout(resolve, 500));
 
-          await startDeepgramConnection();
+          // FIX: Start Deepgram in parallel while TTS plays
+          const deepgramReady = startDeepgramConnection();
+
+          // FIX: Removed 200ms pre-TTS delay
+          await streamTTSToClient(socket, currentQuestionText, interviewId);
+
+          // FIX: Removed 1500ms + 500ms post-TTS delays
+          await deepgramReady;
+
           isListeningActive = true;
           socket.emit("listening_enabled");
           isProcessing = false;
@@ -1028,12 +1054,16 @@ function initInterviewSocket(httpServer) {
             "I didn't understand. Would you like me to repeat the question? Please say yes or no.";
 
           socket.emit("idle_prompt", { text: clarificationText });
-          await new Promise((resolve) => setTimeout(resolve, 200));
-          await streamTTSToClient(socket, clarificationText);
-          await new Promise((resolve) => setTimeout(resolve, 1500));
-          await new Promise((resolve) => setTimeout(resolve, 500));
 
-          await startDeepgramConnection();
+          // FIX: Start Deepgram in parallel while TTS plays
+          const deepgramReady = startDeepgramConnection();
+
+          // FIX: Removed 200ms pre-TTS delay
+          await streamTTSToClient(socket, clarificationText, interviewId);
+
+          // FIX: Removed 1500ms + 500ms post-TTS delays
+          await deepgramReady;
+
           isListeningActive = true;
           socket.emit("listening_enabled");
           isProcessing = false;
@@ -1042,8 +1072,14 @@ function initInterviewSocket(httpServer) {
 
       /**
        * Process user's transcript and generate next question
+       * FIX: saveAnswer and generateNextQuestion now run in parallel
        */
       async function processUserTranscript(text) {
+        // FIX: Guard against late Deepgram transcripts arriving after interview ends/terminates
+        if (isInterviewEnded) {
+          console.log("Interview ended, ignoring late transcript");
+          return;
+        }
         if (isProcessing) {
           console.log("Already processing, ignoring transcript");
           return;
@@ -1066,59 +1102,78 @@ function initInterviewSocket(httpServer) {
             return;
           }
 
-          // Save user's answer
-          await Interview.saveAnswer({
-            interviewId,
-            questionId: currentQuestion.id,
-            answer: text,
-          });
-
-          // Check if interview is complete
+          // Check if interview is complete before doing extra work
           if (currentOrder >= MAX_QUESTIONS) {
+            // Still save the answer, then end
+            await Interview.saveAnswer({
+              interviewId,
+              questionId: currentQuestion.id,
+              answer: text,
+            });
             await endInterview();
             return;
           }
 
           const nextOrder = currentOrder + 1;
-          let nextQuestion = await Interview.getQuestionByOrder(
-            interviewId,
-            nextOrder,
-          );
 
-          // Generate next question if not already exists
-          if (!nextQuestion) {
-            const nextQuestionText = await generateNextQuestionWithAI({
+          // FIX: Run saveAnswer and fetch/generate next question in parallel
+          const [_, nextQuestion] = await Promise.all([
+            // Save user's answer
+            Interview.saveAnswer({
+              interviewId,
+              questionId: currentQuestion.id,
               answer: text,
-              questionOrder: nextOrder,
-              previousQuestion: currentQuestion.question,
-            });
+            }),
+            // Simultaneously fetch or generate next question
+            (async () => {
+              let nextQ = await Interview.getQuestionByOrder(
+                interviewId,
+                nextOrder,
+              );
 
-            await Interview.saveQuestion({
-              interviewId,
-              question: nextQuestionText,
-              questionOrder: nextOrder,
-              technology: null,
-              difficulty: null,
-            });
+              if (!nextQ) {
+                const nextQuestionText = await generateNextQuestionWithAI({
+                  answer: text,
+                  questionOrder: nextOrder,
+                  previousQuestion: currentQuestion.question,
+                });
 
-            nextQuestion = await Interview.getQuestionByOrder(
-              interviewId,
-              nextOrder,
-            );
-          } else {
-            console.log("Next question already exists, using cached version");
-          }
+                await Interview.saveQuestion({
+                  interviewId,
+                  question: nextQuestionText,
+                  questionOrder: nextOrder,
+                  technology: null,
+                  difficulty: null,
+                });
+
+                nextQ = await Interview.getQuestionByOrder(
+                  interviewId,
+                  nextOrder,
+                );
+              } else {
+                console.log(
+                  "Next question already exists, using cached version",
+                );
+              }
+
+              return nextQ;
+            })(),
+          ]);
 
           currentOrder = nextOrder;
           currentQuestionText = nextQuestion.question;
 
           socket.emit("next_question", { question: nextQuestion.question });
-          await new Promise((resolve) => setTimeout(resolve, 200));
-          await streamTTSToClient(socket, nextQuestion.question);
-          await new Promise((resolve) => setTimeout(resolve, 1500));
-          await new Promise((resolve) => setTimeout(resolve, 500));
 
-          await startDeepgramConnection();
+          // FIX: Start Deepgram in parallel while TTS plays — mic ready by the time speech ends
+          const deepgramReady = startDeepgramConnection();
+
+          // FIX: Removed 200ms pre-TTS delay — stream immediately
+          await streamTTSToClient(socket, nextQuestion.question, interviewId);
+
+          // FIX: Removed 1500ms + 500ms post-TTS delays — await Deepgram instead
+          await deepgramReady;
+
           isListeningActive = true;
           socket.emit("listening_enabled");
           isProcessing = false;
@@ -1159,14 +1214,16 @@ function initInterviewSocket(httpServer) {
           socket.emit("question", { question: firstQuestion.question });
           console.log("'question' event emitted");
 
-          await new Promise((resolve) => setTimeout(resolve, 200));
-          await streamTTSToClient(socket, firstQuestion.question);
+          // FIX: Start Deepgram in parallel while TTS is playing
+          const deepgramReady = startDeepgramConnection();
+
+          // FIX: Removed 200ms pre-TTS delay — stream immediately
+          await streamTTSToClient(socket, firstQuestion.question, interviewId);
           console.log("First question TTS done");
 
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          // FIX: Removed 1000ms + 500ms post-TTS delays — await Deepgram instead
+          await deepgramReady;
 
-          await startDeepgramConnection();
           isListeningActive = true;
           socket.emit("listening_enabled");
           console.log("Listening enabled");
@@ -1390,22 +1447,46 @@ function initInterviewSocket(httpServer) {
 
 /**
  * Stream TTS audio to client
- * Converts text to speech and sends audio chunks
+ * FIX: Reuses cached TTS instance per interview — no cold start on every question
+ * FIX: Batches small audio chunks before emitting — reduces socket event flood
  */
-async function streamTTSToClient(socket, text) {
+async function streamTTSToClient(socket, text, interviewId) {
   return new Promise((resolve, reject) => {
     console.log("TTS for:", text.substring(0, 50) + "...");
 
     try {
-      const tts = createTTSStream();
+      // FIX: Reuse TTS instance instead of creating a new one every call
+      const tts = interviewId ? getTTSInstance(interviewId) : createTTSStream();
+
       let chunkCount = 0;
       let totalBytes = 0;
       let hasError = false;
+
+      // FIX: Buffer small chunks before emitting to reduce socket event flood
+      let chunkBuffer = [];
+      let bufferSize = 0;
+      const BATCH_SIZE = 4096; // 4KB threshold before emitting
+
+      const flushBuffer = () => {
+        if (chunkBuffer.length === 0) return;
+        // FIX: Skip emit if socket disconnected mid-stream — prevents wasting TTS processing
+        if (!socket.connected) {
+          chunkBuffer = [];
+          bufferSize = 0;
+          return;
+        }
+        const combined = Buffer.concat(chunkBuffer);
+        socket.emit("tts_audio", { audio: combined.toString("base64") });
+        chunkBuffer = [];
+        bufferSize = 0;
+      };
 
       tts.speakStream(text, (chunk) => {
         if (hasError) return;
 
         if (!chunk) {
+          // FIX: Flush any remaining buffered audio before signaling end
+          flushBuffer();
           console.log(`TTS done — ${totalBytes}B in ${chunkCount} chunks`);
           socket.emit("tts_end");
           resolve();
@@ -1413,18 +1494,21 @@ async function streamTTSToClient(socket, text) {
         }
 
         try {
-          let base64Chunk;
-          if (Buffer.isBuffer(chunk)) {
-            base64Chunk = chunk.toString("base64");
-          } else if (typeof chunk === "string") {
-            base64Chunk = chunk;
-          } else {
-            base64Chunk = Buffer.from(chunk).toString("base64");
-          }
+          const buf = Buffer.isBuffer(chunk)
+            ? chunk
+            : typeof chunk === "string"
+              ? Buffer.from(chunk, "base64")
+              : Buffer.from(chunk);
 
-          socket.emit("tts_audio", { audio: base64Chunk });
+          chunkBuffer.push(buf);
+          bufferSize += buf.length;
+          totalBytes += buf.length;
           chunkCount++;
-          totalBytes += chunk.length;
+
+          // FIX: Only emit when buffer reaches threshold — avoids dozens of tiny emits
+          if (bufferSize >= BATCH_SIZE) {
+            flushBuffer();
+          }
         } catch (error) {
           console.error("Error sending TTS chunk:", error);
           hasError = true;

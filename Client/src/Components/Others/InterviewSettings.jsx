@@ -64,7 +64,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
   // Start question generation in the background
   const startQuestionGeneration = async () => {
     if (questionGenerationStartedRef.current) {
-      console.log("⚠️ Question generation already started, skipping");
+      console.log("Question generation already started, skipping");
       return;
     }
 
@@ -72,7 +72,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
     setIsGeneratingQuestions(true);
 
     try {
-      console.log("🎯 Starting question generation in background...");
+      console.log("Starting question generation in background...");
       const result = await dispatch(
         startInterview({
           skills: !hasExistingSkills ? selectedSkillsRef.current : undefined,
@@ -88,15 +88,12 @@ const InterviewSettings = ({ onInterviewReady }) => {
         userId: user.id,
       };
 
-      console.log(
-        "✅ Questions generated, session data created:",
-        newSessionData,
-      );
+      console.log("Questions generated, session data created:", newSessionData);
       setSessionData(newSessionData);
       setQuestionsReady(true);
       setIsGeneratingQuestions(false);
     } catch (err) {
-      console.error("❌ Question generation error:", err);
+      console.error("Question generation error:", err);
       setError(err?.message || "Failed to generate interview questions");
       setIsGeneratingQuestions(false);
       questionGenerationStartedRef.current = false;
@@ -125,7 +122,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
       setOpenGuideLines(true);
       setStatus("succeeded");
     } catch (err) {
-      console.error("❌ Submit error:", err);
+      console.error("Submit error:", err);
       setError(err?.message || "Failed to start interview");
       setStatus("failed");
     }
@@ -133,15 +130,18 @@ const InterviewSettings = ({ onInterviewReady }) => {
 
   const generateQRCode = async (sessionInfo) => {
     try {
-      console.log("📱 generateQRCode called with:", sessionInfo);
+      console.log("generateQRCode called with:", sessionInfo);
 
       if (!sessionInfo?.interviewId || !user?.id) {
         setError("Session not ready. Please try again.");
         return;
       }
 
-      const mobileUrl = `${window.location.origin}/mobile-camera?mobile=true&session=${sessionInfo.interviewId}&userId=${user.id}`;
-      console.log("📱 Generating QR code for:", mobileUrl);
+      // FIX: Changed ?session= to ?interviewId= to match MobileSecurityCamera.jsx
+      // which reads searchParams.get('interviewId') — using 'session' caused interviewId
+      // to be null on mobile, making the socket connection fail immediately on server
+      const mobileUrl = `${window.location.origin}/mobile-camera?mobile=true&interviewId=${sessionInfo.interviewId}&userId=${user.id}`;
+      console.log("Generating QR code for:", mobileUrl);
 
       const qrDataUrl = await QRCode.toDataURL(mobileUrl, {
         width: 280,
@@ -150,10 +150,10 @@ const InterviewSettings = ({ onInterviewReady }) => {
       });
 
       setQrCodeDataUrl(qrDataUrl);
-      console.log("✅ QR code generated successfully");
+      console.log("QR code generated successfully");
       return qrDataUrl;
     } catch (err) {
-      console.error("❌ QR code generation error:", err);
+      console.error("QR code generation error:", err);
       setError("Failed to generate QR code");
       throw err;
     }
@@ -166,11 +166,14 @@ const InterviewSettings = ({ onInterviewReady }) => {
     socketInitializedRef.current = true;
 
     try {
-      console.log("📡 Initializing socket for mobile frames...");
+      console.log("Initializing socket for mobile frames...");
       const socket = io(SOCKET_URL, {
         query: {
           interviewId: sessionData.interviewId,
           userId: sessionData.userId,
+          // FIX: type field lets server distinguish settings socket from interview socket
+          // Both have identical interviewId/userId — without type, server treats them the same
+          type: "settings",
         },
         transports: ["websocket", "polling"],
         path: "/socket.io",
@@ -188,25 +191,25 @@ const InterviewSettings = ({ onInterviewReady }) => {
 
         socket.once("connect", () => {
           clearTimeout(timeout);
-          console.log("✅ Settings socket connected:", socket.id);
+          console.log("Settings socket connected:", socket.id);
           resolve();
         });
 
         socket.on("connect_error", (err) => {
           clearTimeout(timeout);
-          console.error("❌ Socket connection failed:", err);
+          console.error("Socket connection failed:", err);
           reject(err);
         });
       });
 
       socket.on("secondary_camera_ready", (data) => {
-        console.log("📱 Mobile camera confirmed by server:", data);
+        console.log("Mobile camera confirmed by server:", data);
         setSecondaryCameraConnected(true);
       });
 
       socket.on("secondary_camera_status", (data) => {
         if (data.connected) {
-          console.log("📱 Secondary camera status update:", data);
+          console.log("Secondary camera status update:", data);
           setSecondaryCameraConnected(true);
         }
       });
@@ -216,9 +219,9 @@ const InterviewSettings = ({ onInterviewReady }) => {
       });
 
       await generateQRCode(sessionData);
-      console.log("✅ Socket and QR code ready");
+      console.log("Socket and QR code ready");
     } catch (err) {
-      console.error("❌ Socket/QR initialization error:", err);
+      console.error("Socket/QR initialization error:", err);
       setError(err?.message || "Failed to initialize connection");
       socketInitializedRef.current = false;
     }
@@ -237,7 +240,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
   }, [questionsReady, sessionData, showQRModal]);
 
   const handleCameraSuccess = async (stream) => {
-    console.log("📹 Primary camera stream received");
+    console.log("Primary camera stream received");
     cameraStreamRef.current = stream;
 
     const videoTrack = stream.getVideoTracks()[0];
@@ -245,14 +248,13 @@ const InterviewSettings = ({ onInterviewReady }) => {
       videoTrack.addEventListener(
         "ended",
         () => {
-          console.error("❌ CRITICAL: Primary camera track ended!");
+          console.error("CRITICAL: Primary camera track ended!");
           alert("Primary camera stopped. Please refresh and try again.");
         },
         { once: true },
       );
     }
 
-    // Just show QR modal immediately, we'll wait for questions there
     setIsCameraOpen(false);
     setShowQRModal(true);
   };
@@ -266,7 +268,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
       !isGeneratingQuestions &&
       !hasStartedInterviewRef.current;
 
-    console.log("🔍 tryStartInterview check:", {
+    console.log("tryStartInterview check:", {
       questionsReady,
       hasSessionData: !!sessionData,
       hasPrimaryStream: !!cameraStreamRef.current,
@@ -303,12 +305,12 @@ const InterviewSettings = ({ onInterviewReady }) => {
       return;
     }
 
-    console.log("✅ ALL CHECKS PASSED - Starting interview");
+    console.log("ALL CHECKS PASSED - Starting interview");
     setError(null);
     setShowQRModal(false);
 
     if (settingsSocketRef.current) {
-      console.log("🔌 Disconnecting settings socket before interview starts");
+      console.log("Disconnecting settings socket before interview starts");
       settingsSocketRef.current.disconnect();
       settingsSocketRef.current = null;
     }
@@ -320,7 +322,7 @@ const InterviewSettings = ({ onInterviewReady }) => {
         secondaryCameraStream: null,
       });
     } catch (err) {
-      console.error("❌ Error starting interview:", err);
+      console.error("Error starting interview:", err);
       alert("Failed to start interview: " + err.message);
       hasStartedInterviewRef.current = false;
     }
@@ -328,14 +330,14 @@ const InterviewSettings = ({ onInterviewReady }) => {
 
   useEffect(() => {
     if (questionsReady && secondaryCameraConnected && !isGeneratingQuestions) {
-      console.log("✅ All conditions met, attempting to start interview...");
+      console.log("All conditions met, attempting to start interview...");
       tryStartInterview();
     }
   }, [questionsReady, secondaryCameraConnected, isGeneratingQuestions]);
 
   useEffect(() => {
     return () => {
-      console.log("🧹 InterviewSettings cleanup");
+      console.log("InterviewSettings cleanup");
 
       if (settingsSocketRef.current) {
         settingsSocketRef.current.disconnect();

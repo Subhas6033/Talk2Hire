@@ -17,7 +17,7 @@ import {
   setCurrentQuestion,
   receiveNextQuestion,
   setUserText,
-  receiveFinalAnswer,
+  // receiveFinalAnswer removed — handleFinalAnswer was dead code
   setIdlePrompt,
   startRecording,
   updateRecordingDuration,
@@ -27,12 +27,14 @@ import {
 } from "../API/interviewApi";
 import useAudioRecording from "./useAudioRecording";
 
-// OPTIMIZED: Audio configuration with reduced delays for faster response times
+// Audio configuration
+// FIX: Reduced recognition delay to match server-driven flow — server now controls
+// listening state via listening_enabled/disabled events, so client delay just adds lag
 const AUDIO_CONFIG = {
   MIN_BUFFER_SIZE: 3,
   SAMPLE_RATE: 48000,
-  RECOGNITION_DELAY: 800, // Reduced from 2000ms for faster STT activation
-  MAX_RECOGNITION_WAIT: 3000, // Reduced from 5000ms for better responsiveness
+  RECOGNITION_DELAY: 300, // Reduced from 800ms — server signals when to listen
+  MAX_RECOGNITION_WAIT: 2000, // Reduced from 3000ms
 };
 
 export const useInterview = (interviewId, userId, cameraStream) => {
@@ -69,11 +71,13 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const micStreamingActiveRef = useRef(false);
 
   // Synchronize Redux state to refs for use in callbacks
+  // FIX: hasStartedRef deliberately NOT synced from Redux here — it is set
+  // directly in autoStartInterview() BEFORE the dispatch, so syncing it back
+  // from Redux would overwrite it during the async gap and break reconnect guard.
   useEffect(() => {
     isPlayingRef.current = interview.isPlaying;
     isListeningRef.current = interview.isListening;
     canListenRef.current = interview.canListen;
-    hasStartedRef.current = interview.hasStarted;
     serverReadyRef.current = interview.serverReady;
     ttsStreamActiveRef.current = interview.ttsStreamActive;
     micStreamingActiveRef.current = interview.micStreamingActive;
@@ -127,17 +131,21 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   }, [interview.isInitializing, interview.status, dispatch]);
 
   // Auto-start interview when server becomes ready
+  // FIX: Reduced delay from 500ms to 100ms — mic setup is the real wait, not a timer
+  // FIX: hasStartedRef guards against reconnect firing this a second time,
+  //      because Redux hasStarted resets on disconnect but ref persists
   useEffect(() => {
     if (
       interview.serverReady &&
       !interview.hasStarted &&
-      !interview.isInitializing
+      !interview.isInitializing &&
+      !hasStartedRef.current // ref-level guard survives reconnects
     ) {
       console.log("Server ready detected - auto-starting interview");
 
       const timer = setTimeout(() => {
         autoStartInterview();
-      }, 500);
+      }, 100);
 
       return () => clearTimeout(timer);
     }
@@ -182,7 +190,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       Date.now() - (lastChunkReceivedTimeRef.current || 0);
 
     // Wait if we recently received a chunk and TTS is still active
-    if (timeSinceLastChunk < 1000 && ttsStreamActiveRef.current) {
+    if (timeSinceLastChunk < 500 && ttsStreamActiveRef.current) {
       console.log(
         "Recently received chunk, waiting before enabling recognition",
       );
@@ -191,7 +199,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       setTimeout(() => {
         waitingForMoreChunksRef.current = false;
         enableRecognitionAfterDelay();
-      }, 1000);
+      }, 500);
       return;
     }
 
@@ -208,7 +216,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         console.log("Conditions not met, will check again");
 
         if (timeSinceLastChunk < AUDIO_CONFIG.MAX_RECOGNITION_WAIT) {
-          setTimeout(() => enableRecognitionAfterDelay(), 1000);
+          setTimeout(() => enableRecognitionAfterDelay(), 500);
         } else {
           console.warn("Recognition wait timeout - forcing enable");
           dispatch(enableListening());
@@ -327,7 +335,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     return audioCtxRef.current;
   };
 
-  // IMPROVED: Handle incoming TTS audio with batching to prevent stuttering
+  // Handle incoming TTS audio with batching to prevent stuttering
   const handleTtsAudio = useCallback(
     async (data) => {
       try {
@@ -392,8 +400,8 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         if (!isPlayingRef.current && !playbackScheduledRef.current) {
           playbackScheduledRef.current = true;
 
-          // Shorter delay if queue is building up (prevents buffer overflow)
-          const batchDelay = audioQueueRef.current.length > 3 ? 20 : 50;
+          // FIX: Shorter batch delay — server already batches chunks, so less wait needed
+          const batchDelay = audioQueueRef.current.length > 3 ? 10 : 30;
 
           await new Promise((resolve) => setTimeout(resolve, batchDelay));
           playbackScheduledRef.current = false;
@@ -576,15 +584,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch],
   );
 
-  // Event handler for final answer
-  const handleFinalAnswer = useCallback(
-    (text) => {
-      console.log("Final answer received:", text);
-      dispatch(receiveFinalAnswer(text));
-    },
-    [dispatch],
-  );
-
   // Initialize audio recording on mount
   useEffect(() => {
     const initAudio = async () => {
@@ -620,10 +619,13 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   // Auto-start interview when all prerequisites are met
   const autoStartInterview = useCallback(async () => {
+    // FIX: Set ref IMMEDIATELY before any await — prevents reconnect from
+    // triggering a second autoStartInterview while this one is still running
     if (hasStartedRef.current) {
       console.log("Interview already started");
       return;
     }
+    hasStartedRef.current = true;
 
     try {
       console.log("Auto-starting interview");
@@ -647,29 +649,33 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       // Verify prerequisites
       if (!serverReadyRef.current) {
         console.error("Server not ready");
+        hasStartedRef.current = false;
         return;
       }
 
       if (!socketRef.current?.connected) {
         console.error("Socket not connected");
+        hasStartedRef.current = false;
         return;
       }
 
       console.log("All prerequisites met, setting hasStarted flag");
       dispatch(setHasStarted(true));
 
-      await new Promise((resolve) => setTimeout(resolve, 300));
-
-      // Request first question
+      // FIX: Removed 300ms dead wait — mic is already ready at this point
       console.log("Emitting ready_for_question event");
       socketRef.current.emit("ready_for_question");
       console.log("ready_for_question emitted successfully");
     } catch (error) {
       console.error("Auto-start error:", error);
+      hasStartedRef.current = false;
       dispatch(setHasStarted(false));
       alert("Failed to start interview: " + error.message);
     }
-  }, [dispatch, startMicStreaming, interview.isInitializing]);
+    // FIX: Removed interview.isInitializing from deps — it was causing stale closures
+    // since the useEffect calling this doesn't re-register when autoStartInterview changes.
+    // isInitializing is checked via the useEffect condition before this is called.
+  }, [dispatch, startMicStreaming]);
 
   // Return interview state and methods
   return {
@@ -681,7 +687,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     handleNextQuestion,
     handleIdlePrompt,
     handleTranscriptReceived,
-    handleFinalAnswer,
     handleTtsAudio,
     handleTtsEnd,
     audioRecording,
