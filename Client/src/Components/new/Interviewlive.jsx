@@ -47,31 +47,69 @@ const InterviewLive = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // ✅ FIXED: Better redirect logic with proper delay
   useEffect(() => {
-    const timer = setTimeout(() => {
-      // Check the global ref directly
+    // Immediate check - if context is null, it's not wrapped properly
+    if (!streamsRef?.current) {
+      console.error("❌ CRITICAL: StreamContext not available!");
+      alert("Setup error: Context not initialized. Please restart.");
+      navigate("/interview", { replace: true });
+      return;
+    }
+
+    // Give context time to populate (after navigation from setup)
+    const checkInterval = setInterval(() => {
       const currentStreams = streamsRef.current;
 
-      if (
-        !currentStreams?.sessionData ||
-        !currentStreams?.micStream ||
-        !currentStreams?.primaryCameraStream ||
-        !currentStreams?.screenShareStream
-      ) {
-        console.error("❌ Missing required streams:", {
+      console.log("🔍 Checking streams availability:", {
+        hasContext: !!currentStreams,
+        hasSessionData: !!currentStreams?.sessionData,
+        hasMicStream: !!currentStreams?.micStream,
+        hasPrimaryCamera: !!currentStreams?.primaryCameraStream,
+        hasScreenShare: !!currentStreams?.screenShareStream,
+      });
+
+      // Check if all required streams are present
+      const hasAllStreams =
+        currentStreams?.sessionData &&
+        currentStreams?.micStream &&
+        currentStreams?.primaryCameraStream &&
+        currentStreams?.screenShareStream;
+
+      if (hasAllStreams) {
+        console.log("✅ All streams available - setup complete!");
+        clearInterval(checkInterval);
+        return;
+      }
+    }, 500);
+
+    // Timeout after 5 seconds - if streams still not available, redirect
+    const timeout = setTimeout(() => {
+      clearInterval(checkInterval);
+
+      const currentStreams = streamsRef.current;
+      const hasAllStreams =
+        currentStreams?.sessionData &&
+        currentStreams?.micStream &&
+        currentStreams?.primaryCameraStream &&
+        currentStreams?.screenShareStream;
+
+      if (!hasAllStreams) {
+        console.error("❌ Timeout: Required streams not available:", {
           hasSessionData: !!currentStreams?.sessionData,
           hasMicStream: !!currentStreams?.micStream,
           hasPrimaryCamera: !!currentStreams?.primaryCameraStream,
           hasScreenShare: !!currentStreams?.screenShareStream,
         });
         alert("Invalid session. Please complete setup first.");
-        navigate("/interview");
+        navigate("/interview", { replace: true });
       }
-    }, 2000); // Increased to 2000ms for safety
+    }, 5000);
 
-    return () => clearTimeout(timer);
-  }, []); // ✅ Empty dependencies - only run once on mount
+    return () => {
+      clearInterval(checkInterval);
+      clearTimeout(timeout);
+    };
+  }, [navigate, streamsRef]);
 
   const interview = useInterview(
     sessionData?.interviewId,
@@ -172,6 +210,7 @@ const InterviewLive = () => {
   }, [primaryCameraStream]);
 
   // ✅ FIXED: Attach screen share stream with better error handling
+
   useEffect(() => {
     if (!screenVideoRef.current || !screenShareStream) {
       console.log("⏸️ Waiting for screen share stream or video ref");
@@ -182,10 +221,19 @@ const InterviewLive = () => {
 
     const videoElement = screenVideoRef.current;
 
+    // Verify stream is active
+    const tracks = screenShareStream.getVideoTracks();
+    if (tracks.length === 0 || !tracks[0].enabled) {
+      console.error("❌ Screen share track not active");
+      return;
+    }
+
     // Clear any previous stream
     if (videoElement.srcObject) {
       const oldStream = videoElement.srcObject;
-      oldStream.getTracks().forEach((track) => track.stop());
+      if (oldStream !== screenShareStream) {
+        oldStream.getTracks().forEach((track) => track.stop());
+      }
     }
 
     videoElement.srcObject = screenShareStream;
@@ -194,38 +242,55 @@ const InterviewLive = () => {
 
     const playVideo = async () => {
       try {
-        // Wait for metadata to load
-        await new Promise((resolve, reject) => {
-          if (videoElement.readyState >= 2) {
-            resolve();
-          } else {
-            videoElement.onloadedmetadata = resolve;
-            videoElement.onerror = reject;
-            setTimeout(() => reject(new Error("Metadata timeout")), 5000);
-          }
-        });
-
-        await videoElement.play();
-        console.log("✅ Screen video playing");
-      } catch (err) {
-        if (err.name !== "AbortError") {
-          console.error("❌ Screen video play error:", err);
-
-          // Retry once after delay
-          setTimeout(() => {
-            videoElement.play().catch((e) => {
-              console.error("❌ Screen video retry failed:", e);
-            });
-          }, 500);
+        // Wait for loadedmetadata
+        if (videoElement.readyState < 2) {
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(
+              () => reject(new Error("Metadata timeout")),
+              5000,
+            );
+            videoElement.onloadedmetadata = () => {
+              clearTimeout(timeout);
+              resolve();
+            };
+            videoElement.onerror = (e) => {
+              clearTimeout(timeout);
+              reject(e);
+            };
+          });
         }
+
+        console.log("📺 Screen video metadata loaded, attempting play...");
+        await videoElement.play();
+        console.log("✅ Screen video playing successfully");
+      } catch (err) {
+        console.error("❌ Screen video play error:", err);
+
+        // Retry once after 500ms
+        setTimeout(async () => {
+          try {
+            await videoElement.play();
+            console.log("✅ Screen video playing (after retry)");
+          } catch (retryErr) {
+            console.error("❌ Screen video retry failed:", retryErr);
+          }
+        }, 500);
       }
     };
 
     playVideo();
 
+    // Monitor track end
+    const track = tracks[0];
+    const handleEnded = () => {
+      console.log("⚠️ Screen share track ended");
+    };
+    track.addEventListener("ended", handleEnded);
+
     return () => {
       videoElement.onloadedmetadata = null;
       videoElement.onerror = null;
+      track.removeEventListener("ended", handleEnded);
     };
   }, [screenShareStream]);
 

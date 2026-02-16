@@ -693,44 +693,64 @@ const InterviewSetup = () => {
         console.log("   - Recordings: Registered (NOT streaming)");
         console.log("   - Interview: NOT started");
         console.log("   - TTS/STT: Blocked");
-
-        console.log("✅ Pre-initialization complete!");
-
-        // ✅ CRITICAL: Store in global context
+        // ✅ Store streams in context BEFORE verification
         streamsRef.current.micStream = micStream;
         streamsRef.current.primaryCameraStream = primaryCameraStream;
         streamsRef.current.screenShareStream = screenShareStream;
         streamsRef.current.sessionData = sessionData;
         streamsRef.current.preInitializedSocket = socket;
 
-        console.log("✅ Streams stored in GLOBAL context:", {
-          hasMic: !!streamsRef.current.micStream,
-          micActive: streamsRef.current.micStream?.active,
-          hasCamera: !!streamsRef.current.primaryCameraStream,
-          cameraActive: streamsRef.current.primaryCameraStream?.active,
-          hasScreen: !!streamsRef.current.screenShareStream,
-          screenActive: streamsRef.current.screenShareStream?.active,
-          socketConnected: streamsRef.current.preInitializedSocket?.connected,
-        });
+        console.log("✅ Streams stored in context");
 
-        // ✅ Double-check context propagation
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        // ✅ CRITICAL: Verify streams are actually stored
+        const verifyStreams = () => {
+          return new Promise((resolve) => {
+            // Check immediately
+            if (
+              streamsRef.current.micStream &&
+              streamsRef.current.primaryCameraStream &&
+              streamsRef.current.screenShareStream &&
+              streamsRef.current.sessionData
+            ) {
+              console.log("✅ Immediate verification passed");
+              resolve(true);
+              return;
+            }
 
-        // Verify one more time
-        console.log("🔍 Final verification:", {
-          globalMic: !!streamsRef.current.micStream,
-          globalCamera: !!streamsRef.current.primaryCameraStream,
-          globalScreen: !!streamsRef.current.screenShareStream,
-          globalSession: !!streamsRef.current.sessionData,
-        });
+            // Wait a bit for React to process
+            setTimeout(() => {
+              const success =
+                streamsRef.current.micStream &&
+                streamsRef.current.primaryCameraStream &&
+                streamsRef.current.screenShareStream &&
+                streamsRef.current.sessionData;
 
-        // ✅ Set navigation flag
-        hasNavigatedRef.current = true;
-        console.log("✅ Navigation flag set to TRUE");
+              console.log(
+                success
+                  ? "✅ Delayed verification passed"
+                  : "❌ Verification failed",
+                {
+                  hasMic: !!streamsRef.current.micStream,
+                  hasCamera: !!streamsRef.current.primaryCameraStream,
+                  hasScreen: !!streamsRef.current.screenShareStream,
+                  hasSession: !!streamsRef.current.sessionData,
+                },
+              );
+
+              resolve(success);
+            }, 100);
+          });
+        };
+
+        const verified = await verifyStreams();
+
+        if (!verified) {
+          throw new Error("Failed to store streams in context");
+        }
 
         if (mounted) {
+          hasNavigatedRef.current = true;
           console.log("🚀 Navigating to /interview/live");
-          console.log("⚡ Interview will START on next page");
 
           // Use replace to prevent back button issues
           navigate("/interview/live", { replace: true });

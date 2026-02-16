@@ -6,15 +6,18 @@ import { BrowserRouter } from "react-router-dom";
 import { Provider } from "react-redux";
 import { store } from "./Store/store.js";
 import { AuthProvider } from "./Components/index.js";
+import { StreamProvider } from "./Hooks/streamContext.jsx";
 
 createRoot(document.getElementById("root")).render(
   //<StrictMode>
   <Provider store={store}>
-    <AuthProvider>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
-    </AuthProvider>
+    <StreamProvider>
+      <AuthProvider>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </AuthProvider>
+    </StreamProvider>
   </Provider>,
   // </StrictMode>
 );
