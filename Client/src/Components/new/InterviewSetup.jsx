@@ -142,8 +142,8 @@ const InterviewSetup = () => {
     { num: 2, label: "Guidelines" },
     { num: 3, label: "Microphone" },
     { num: 4, label: "Camera" },
-    { num: 5, label: "Mobile" },
-    { num: 6, label: "Screen" },
+    { num: 5, label: "Screen" },
+    { num: 6, label: "Mobile" },
     { num: 7, label: "Launch" },
   ];
 
@@ -266,17 +266,13 @@ const InterviewSetup = () => {
 
   const handlePrimaryCameraSuccess = () => {
     setError(null);
-    setCurrentStep(5);
+    setCurrentStep(5); // → Screen Share
+    // getDisplayMedia is called directly here — this IS inside a click handler
+    // so it satisfies the browser's user-gesture requirement
+    startScreenShareTest();
   };
 
-  /* ── STEP 5 ─────────────────────────────────────────────────────────────── */
-
-  const handleMobileCameraSuccess = () => {
-    setError(null);
-    setCurrentStep(6);
-  };
-
-  /* ── STEP 6 — no longer blocks on questions ─────────────────────────────── */
+  /* ── STEP 5: Screen Share success → Mobile Camera ──────────────────────── */
 
   const handleScreenShareSuccess = () => {
     const isMicActive = micStream?.active;
@@ -297,7 +293,14 @@ const InterviewSetup = () => {
     }
 
     setError(null);
-    setCurrentStep(7); // ✅ always proceed — Step 7 will await questions
+    setCurrentStep(6); // → Mobile Camera
+  };
+
+  /* ── STEP 6: Mobile Camera success → Launch ────────────────────────────── */
+
+  const handleMobileCameraSuccess = () => {
+    setError(null);
+    setCurrentStep(7); // → Launch (Step 7 will await questions)
   };
 
   /* ── MIC TEST ────────────────────────────────────────────────────────────── */
@@ -376,7 +379,7 @@ const InterviewSetup = () => {
   /* ── MOBILE CAMERA SOCKET ───────────────────────────────────────────────── */
 
   useEffect(() => {
-    if (currentStep !== 5) return;
+    if (currentStep !== 6) return; // Mobile Camera is now step 6
 
     // sessionData may still be null if API is slow — poll via ref
     let socket = null;
@@ -463,13 +466,17 @@ const InterviewSetup = () => {
         });
       }
     } catch (err) {
-      setScreenShareError("Screen share denied or cancelled.");
+      setScreenShareError(
+        err.name === "NotAllowedError"
+          ? "Screen share permission denied. Please allow access and try again."
+          : "Screen share cancelled. Please try again.",
+      );
     }
   };
 
-  useEffect(() => {
-    if (currentStep === 6) startScreenShareTest();
-  }, [currentStep]);
+  // ✅ Do NOT auto-trigger getDisplayMedia from useEffect —
+  // browsers require it to come from a direct user gesture (button click).
+  // The Step 6 UI renders a "Share Screen" button instead.
 
   /* ── STEP 7: PRE-INITIALIZATION ─────────────────────────────────────────── */
 
@@ -1244,8 +1251,124 @@ const InterviewSetup = () => {
           </Card>
         )}
 
-        {/* ── STEP 5: Mobile Camera ───────────────────────────────────────────── */}
+        {/* ── STEP 5: Screen Share ─────────────────────────────────────────────── */}
         {currentStep === 5 && (
+          <Card className="p-7 bg-slate-900/60 border-slate-800/60 backdrop-blur-sm">
+            <h2 className="text-lg font-semibold text-white mb-1">
+              Screen Sharing
+            </h2>
+            <p className="text-slate-500 text-sm mb-6">
+              Share your entire screen for the interview session
+            </p>
+
+            {!SCREEN_SHARE_SUPPORTED ? (
+              <div className="space-y-5 text-center">
+                <div className="px-4 py-4 bg-amber-500/8 border border-amber-500/20 rounded-xl">
+                  <p className="text-amber-300 text-sm font-medium mb-1">
+                    📱 Screen sharing unavailable on mobile
+                  </p>
+                  <p className="text-slate-500 text-xs">
+                    Use a desktop browser to enable screen recording.
+                  </p>
+                </div>
+                <Button
+                  onClick={handleScreenShareSuccess}
+                  className="px-10 h-11"
+                >
+                  Continue Without Screen Share
+                </Button>
+              </div>
+            ) : screenShareError ? (
+              <div className="space-y-5">
+                <InfoBadge variant="red">
+                  <svg
+                    className="w-4 h-4"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  {screenShareError}
+                </InfoBadge>
+                <div className="flex justify-center">
+                  <Button onClick={startScreenShareTest} className="px-10 h-11">
+                    Try Again
+                  </Button>
+                </div>
+              </div>
+            ) : !screenShareStream ? (
+              /* Picker was already triggered by the "Looks Good" button click above.
+                 Show a waiting state — if the user cancelled, screenShareError will appear. */
+              <div className="text-center space-y-6 py-6">
+                <div className="w-16 h-16 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center mx-auto">
+                  <Spinner size="lg" color="violet" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-slate-300 text-sm font-medium">
+                    Choose what to share in the browser dialog
+                  </p>
+                  <p className="text-slate-500 text-xs">
+                    Select your entire screen, then click Share
+                  </p>
+                </div>
+                <button
+                  onClick={startScreenShareTest}
+                  className="text-xs text-slate-600 underline underline-offset-2 hover:text-slate-400 transition-colors"
+                >
+                  Reopen dialog
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                <div className="relative w-full aspect-video bg-black rounded-xl overflow-hidden ring-1 ring-slate-700/50">
+                  <video
+                    ref={screenVideoRef}
+                    autoPlay
+                    muted
+                    playsInline
+                    className="w-full h-full object-contain"
+                  />
+                  <div className="absolute top-3 left-3">
+                    <LiveBadge color="violet" label="SHARING" />
+                  </div>
+                </div>
+                <div className="text-center space-y-4">
+                  <InfoBadge variant="green">
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 13l4 4L19 7"
+                      />
+                    </svg>
+                    Screen share active
+                  </InfoBadge>
+                  <Button
+                    onClick={handleScreenShareSuccess}
+                    className="px-10 h-11"
+                  >
+                    Continue
+                  </Button>
+                </div>
+              </div>
+            )}
+          </Card>
+        )}
+
+        {/* ── STEP 6: Mobile Camera ───────────────────────────────────────────── */}
+        {currentStep === 6 && (
           <Card className="p-7 bg-slate-900/60 border-slate-800/60 backdrop-blur-sm">
             <h2 className="text-lg font-semibold text-white mb-1 text-center">
               Mobile Camera
@@ -1264,7 +1387,7 @@ const InterviewSetup = () => {
                       size={200}
                     />
                   ) : (
-                    <div className="w-[200px] h-[200px] flex items-center justify-center bg-slate-100 rounded-xl">
+                    <div className="w-50 h-50 flex items-center justify-center bg-slate-100 rounded-xl">
                       <Spinner size="lg" color="violet" />
                     </div>
                   )}
@@ -1338,121 +1461,16 @@ const InterviewSetup = () => {
                     <p className="text-slate-500 text-xs">
                       Waiting for your phone to connect…
                     </p>
-                    {/* <button
+                    <button
                       onClick={handleMobileCameraSuccess}
                       className="text-xs text-slate-600 underline underline-offset-2 hover:text-slate-400 transition-colors"
                     >
                       Skip mobile camera
-                    </button> */}
+                    </button>
                   </div>
                 )}
               </div>
             </div>
-          </Card>
-        )}
-
-        {/* ── STEP 6: Screen Share ─────────────────────────────────────────────── */}
-        {currentStep === 6 && (
-          <Card className="p-7 bg-slate-900/60 border-slate-800/60 backdrop-blur-sm">
-            <h2 className="text-lg font-semibold text-white mb-1">
-              Screen Sharing
-            </h2>
-            <p className="text-slate-500 text-sm mb-6">
-              Share your entire screen for the interview session
-            </p>
-
-            {!SCREEN_SHARE_SUPPORTED ? (
-              <div className="space-y-5 text-center">
-                <div className="px-4 py-4 bg-amber-500/8 border border-amber-500/20 rounded-xl">
-                  <p className="text-amber-300 text-sm font-medium mb-1">
-                    📱 Screen sharing unavailable on mobile
-                  </p>
-                  <p className="text-slate-500 text-xs">
-                    Use a desktop browser to enable screen recording.
-                  </p>
-                </div>
-                <Button
-                  onClick={handleScreenShareSuccess}
-                  className="px-10 h-11"
-                >
-                  Continue Without Screen Share
-                </Button>
-              </div>
-            ) : screenShareError ? (
-              <div className="space-y-5">
-                <InfoBadge variant="red">
-                  <svg
-                    className="w-4 h-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
-                  </svg>
-                  {screenShareError}
-                </InfoBadge>
-                <div className="flex justify-center">
-                  <Button onClick={startScreenShareTest} className="px-10 h-11">
-                    Try Again
-                  </Button>
-                </div>
-              </div>
-            ) : !screenShareStream ? (
-              <div className="text-center py-12 space-y-4">
-                <Spinner size="lg" color="violet" />
-                <p className="text-slate-400 text-sm">
-                  Opening screen share picker…
-                </p>
-                <p className="text-slate-600 text-xs">
-                  Select your entire screen when prompted
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-5">
-                <div className="relative w-full aspect-video bg-black rounded-xl overflow-hidden ring-1 ring-slate-700/50">
-                  <video
-                    ref={screenVideoRef}
-                    autoPlay
-                    muted
-                    playsInline
-                    className="w-full h-full object-contain"
-                  />
-                  <div className="absolute top-3 left-3">
-                    <LiveBadge color="violet" label="SHARING" />
-                  </div>
-                </div>
-                <div className="text-center space-y-4">
-                  <InfoBadge variant="green">
-                    <svg
-                      className="w-4 h-4"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M5 13l4 4L19 7"
-                      />
-                    </svg>
-                    Screen share active
-                  </InfoBadge>
-                  {/* ✅ No longer blocked by question generation */}
-                  <Button
-                    onClick={handleScreenShareSuccess}
-                    className="px-10 h-11"
-                  >
-                    Continue
-                  </Button>
-                </div>
-              </div>
-            )}
           </Card>
         )}
 
