@@ -40,7 +40,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const recordingTimerRef = useRef(null);
 
   const playbackQueueRef = useRef([]);
-
   const isPlayingRef = useRef(false);
   const isListeningRef = useRef(false);
   const canListenRef = useRef(false);
@@ -48,6 +47,28 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const serverReadyRef = useRef(false);
   const ttsStreamActiveRef = useRef(false);
   const micStreamingActiveRef = useRef(false);
+
+  // ── FIX: Audio recording init guard — only call ONCE ever ──────────────────
+  // The original code had useEffect([audioRecording]) which re-ran every render
+  // because audioRecording is a new object each time. This caused the
+  // "⚠️ Audio context already initialized" spam.
+  const audioRecordingInitRef = useRef(false);
+  useEffect(() => {
+    if (audioRecordingInitRef.current) return;
+    audioRecordingInitRef.current = true;
+
+    const initAudio = async () => {
+      try {
+        await audioRecording.initializeAudioRecording();
+        console.log("✅ Audio recording initialized (once)");
+      } catch (error) {
+        console.error("❌ Failed to init audio recording:", error);
+        audioRecordingInitRef.current = false; // allow retry on error
+      }
+    };
+    initAudio();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Empty deps — runs once only
 
   useEffect(() => {
     isPlayingRef.current = interview.isPlaying;
@@ -59,7 +80,11 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   }, [interview]);
 
   // ── Pre-warm AudioContext on mount ─────────────────────────────────────────
+  const audioCtxInitRef = useRef(false);
   useEffect(() => {
+    if (audioCtxInitRef.current) return;
+    audioCtxInitRef.current = true;
+
     const initAudioContext = async () => {
       if (audioCtxRef.current) return;
 
@@ -74,11 +99,9 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         await audioCtx.resume();
       }
 
-      console.log(" AudioContext pre-warmed:", {
+      console.log("✅ AudioContext pre-warmed:", {
         state: audioCtx.state,
         sampleRate: audioCtx.sampleRate,
-        baseLatency: audioCtx.baseLatency,
-        outputLatency: audioCtx.outputLatency,
       });
     };
 
@@ -95,11 +118,11 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
     return () => {
       document.removeEventListener("click", handleUserGesture);
-      if (audioCtxRef.current?.state !== "closed") {
-        audioCtxRef.current?.close();
-      }
+      // Do NOT close the AudioContext here — cleanup is handled by InterviewLive
+      // Closing it here on re-renders was breaking TTS playback
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Empty deps — runs once only
 
   // ── Recording timer ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -140,10 +163,23 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }
 
     const audioCtx = audioCtxRef.current;
-    if (!audioCtx) return;
+    if (!audioCtx) {
+      console.error("❌ No AudioContext for playback");
+      return;
+    }
 
     if (audioCtx.state === "suspended") {
-      await audioCtx.resume();
+      try {
+        await audioCtx.resume();
+        console.log("✅ AudioContext resumed for playback");
+      } catch (e) {
+        console.error("❌ Failed to resume AudioContext:", e);
+      }
+    }
+
+    if (audioCtx.state === "closed") {
+      console.error("❌ AudioContext is closed — cannot play TTS");
+      return;
     }
 
     isPlayingRef.current = true;
@@ -190,15 +226,23 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         } else if (data?.audio) {
           base64Audio = data.audio;
         } else {
+          console.warn("⚠️ TTS audio event has no audio data:", data);
           return;
         }
 
         if (!base64Audio || base64Audio.length === 0) return;
 
         const audioCtx = audioCtxRef.current;
-        if (!audioCtx) return;
+        if (!audioCtx) {
+          console.error("❌ No AudioContext when TTS audio arrived");
+          return;
+        }
 
-        // Resume if needed (browser autoplay policy)
+        if (audioCtx.state === "closed") {
+          console.error("❌ AudioContext closed — TTS chunk dropped");
+          return;
+        }
+
         if (audioCtx.state === "suspended") {
           await audioCtx.resume();
         }
@@ -239,15 +283,10 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   }, [dispatch, playNextChunk]);
 
   // ── Microphone streaming ────────────────────────────────────────────────────
-  /**
-   * FIX: Accept an existing stream so we never call getUserMedia twice.
-   * If existingStream is provided, skip getUserMedia entirely.
-   */
   const startMicStreaming = useCallback(
     async (existingStream = null) => {
-      // Already streaming — do nothing
       if (micStreamRef.current) {
-        console.log("🎤 Mic already streaming");
+        console.log("🎤 Mic already streaming — skipping duplicate call");
         return;
       }
 
@@ -262,7 +301,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         if (stream) {
           console.log("🎤 Reusing pre-acquired microphone stream");
         } else {
-          console.log("🎤 Requesting microphone access");
+          console.log("🎤 Requesting new microphone access");
           stream = await navigator.mediaDevices.getUserMedia({
             audio: {
               echoCancellation: true,
@@ -278,11 +317,16 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         dispatch(setMicPermissionGranted(true));
 
         const audioCtx = audioCtxRef.current;
+        if (!audioCtx) {
+          console.error("❌ No AudioContext when starting mic");
+          return;
+        }
 
         if (audioCtx.state === "suspended") {
           await audioCtx.resume();
         }
 
+        // ScriptProcessor for PCM → Deepgram (STT)
         const source = audioCtx.createMediaStreamSource(stream);
         const processor = audioCtx.createScriptProcessor(4096, 1, 1);
         micProcessorRef.current = processor;
@@ -292,13 +336,11 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
         if (audioRecording.connectMicrophoneAudio) {
           await audioRecording.connectMicrophoneAudio(stream);
-          console.log("🔗 Microphone connected to audio recording");
+          console.log("🔗 Microphone connected to audio recording mix");
         }
 
         dispatch(setMicStreamingActive(true));
         console.log("✅ Mic streaming started");
-
-        let audioChunksSent = 0;
 
         processor.onaudioprocess = (e) => {
           if (!micStreamingActiveRef.current) return;
@@ -317,11 +359,10 @@ export const useInterview = (interviewId, userId, cameraStream) => {
             canListenRef.current
           ) {
             socketRef.current.emit("user_audio_chunk", pcm16.buffer);
-            audioChunksSent++;
           }
         };
 
-        console.log("🎤 Microphone audio connected to recording mix");
+        console.log("🎤 ScriptProcessor connected — STT streaming active");
       } catch (err) {
         console.error("❌ Microphone error:", err);
         alert("Microphone access denied or unavailable.");
@@ -370,18 +411,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch],
   );
 
-  useEffect(() => {
-    const initAudio = async () => {
-      try {
-        await audioRecording.initializeAudioRecording();
-        console.log(" Audio recording initialized");
-      } catch (error) {
-        console.error("❌ Failed to init audio recording:", error);
-      }
-    };
-    initAudio();
-  }, [audioRecording]);
-
   const handleInterviewComplete = useCallback(
     (data) => {
       dispatch(completeInterview({ totalQuestions: data.totalQuestions }));
@@ -398,51 +427,47 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   );
 
   /**
-   * FIX: Accept optional existingMicStream parameter.
-   * This is passed from InterviewLive which already has the stream
-   * from the setup phase — avoids a second getUserMedia call that
-   * can fail or produce a duplicate ScriptProcessorNode.
+   * autoStartInterview — call ONCE from InterviewLive after client_ready.
+   * Accepts existingMicStream from setup phase to avoid double getUserMedia.
+   *
+   * NOTE: The hasStartedRef guard here prevents double-calls within the same
+   * hook instance. InterviewLive also has its own socketInitializedRef guard
+   * to prevent this from being called at all on re-renders.
    */
   const autoStartInterview = useCallback(
     async (existingMicStream = null) => {
       if (hasStartedRef.current) {
-        console.log("⚠️ Interview already started");
+        console.log("⚠️ autoStartInterview: already started, skipping");
         return;
       }
       hasStartedRef.current = true;
 
       try {
-        console.log("🚀 Auto-starting interview");
+        console.log("🚀 autoStartInterview: beginning mic setup");
 
         if (audioCtxRef.current?.state === "suspended") {
           await audioCtxRef.current.resume();
         }
 
-        // Pass the pre-acquired stream (or null to request a new one)
-        console.log("🎤 Starting microphone");
         await startMicStreaming(existingMicStream);
-        console.log(" Microphone started");
+        console.log("✅ Mic setup complete");
 
         if (!serverReadyRef.current) {
-          console.error("❌ Server not ready");
+          console.error("❌ Server not ready after mic setup");
           hasStartedRef.current = false;
           return;
         }
 
         if (!socketRef.current?.connected) {
-          console.error("❌ Socket not connected");
+          console.error("❌ Socket disconnected after mic setup");
           hasStartedRef.current = false;
           return;
         }
 
-        console.log(" All prerequisites met, setting hasStarted flag");
         dispatch(setHasStarted(true));
-
-        console.log("📤 Emitting ready_for_question event");
-        socketRef.current.emit("ready_for_question");
-        console.log(" ready_for_question emitted successfully");
+        console.log("✅ autoStartInterview complete — interview is live");
       } catch (error) {
-        console.error("❌ Auto-start error:", error);
+        console.error("❌ autoStartInterview error:", error);
         hasStartedRef.current = false;
         dispatch(setHasStarted(false));
         alert("Failed to start interview: " + error.message);

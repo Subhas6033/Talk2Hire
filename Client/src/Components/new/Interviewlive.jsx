@@ -8,32 +8,20 @@ import { Button } from "../index";
 import { Card } from "../Common/Card";
 import { useStreams } from "../../Hooks/streamContext";
 
-/**
- * InterviewLive — FIXED VERSION
- *
- * FIXES APPLIED:
- *
- * 1. SECONDARY CAMERA: Removed useSecondaryCamera hook entirely.
- *    Mobile frames arrive via "mobile_camera_frame" socket event and are
- *    drawn directly onto secondaryCanvasRef. No getUserMedia on desktop.
- *    The canvas stream is captured via captureStream() for recording.
- *
- * 2. TTS: autoStartInterview now receives the pre-acquired micStream so it
- *    never calls getUserMedia again. The hook's startMicStreaming accepts an
- *    optional existing stream parameter.
- *
- * 3. STT: "Socket not connected" was caused by video recording hooks calling
- *    socket.on("video_recording_ready") AFTER client_ready was emitted, racing
- *    with server responses. Fix: emit client_ready only after ALL handlers AND
- *    all recording registrations are done.
- *
- * 4. QUESTION GENERATION WAIT: Removed - setup can proceed independently.
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// MODULE-LEVEL guard — survives React StrictMode's double-invoke of effects.
+// A ref inside the component resets to false between the two invocations in
+// StrictMode; a module-level variable does NOT reset.
+// This ensures socket init and client_ready fire exactly once per page load.
+// ─────────────────────────────────────────────────────────────────────────────
+let _globalSocketInitialized = false;
+let _globalClientReadyEmitted = false;
+
 const InterviewLive = () => {
   const navigate = useNavigate();
   const streamsRef = useStreams();
 
-  // ── Stable snapshot of setup-phase streams ───────────────────────────────
+  // ── Stable snapshot — read ONCE from context ──────────────────────────────
   const stableRef = useRef(null);
   if (!stableRef.current && streamsRef.current?.sessionData) {
     stableRef.current = {
@@ -51,7 +39,7 @@ const InterviewLive = () => {
   const screenShareStream = stableRef.current?.screenShareStream ?? null;
   const preInitializedSocket = stableRef.current?.preInitializedSocket ?? null;
 
-  // ── Hooks ─────────────────────────────────────────────────────────────────
+  // ── Core hooks ─────────────────────────────────────────────────────────────
   const interview = useInterview(
     sessionData?.interviewId,
     sessionData?.userId,
@@ -77,33 +65,43 @@ const InterviewLive = () => {
     interview.socketRef,
   );
 
-  // ── DOM refs ──────────────────────────────────────────────────────────────
+  // ── DOM refs ───────────────────────────────────────────────────────────────
   const videoRef = useRef(null);
-  const secondaryCanvasRef = useRef(null); // Mobile frames drawn here
+  const secondaryCanvasRef = useRef(null);
   const screenVideoRef = useRef(null);
-  const socketInitializedRef = useRef(false);
-  const recordingsStartedRef = useRef(false);
 
-  // ── Secondary camera recording (canvas → MediaRecorder) ──────────────────
+  // ── Local one-time guards (component-level) ────────────────────────────────
+  const recordingsStartedRef = useRef(false);
+  const isLeavingRef = useRef(false);
+
+  // ── Secondary canvas recorder ──────────────────────────────────────────────
   const secondaryMediaRecorderRef = useRef(null);
   const secondaryChunkCountRef = useRef(0);
   const secondarySessionReadyRef = useRef(false);
   const [isSecondaryRecording, setIsSecondaryRecording] = useState(false);
 
-  // ── UI state ──────────────────────────────────────────────────────────────
+  // ── UI state ───────────────────────────────────────────────────────────────
   const [evaluationStatus, setEvaluationStatus] = useState(null);
   const [evaluationResults, setEvaluationResults] = useState(null);
   const [faceViolationWarning, setFaceViolationWarning] = useState(null);
   const [isInterviewTerminated, setIsInterviewTerminated] = useState(false);
   const [mobileCameraConnected, setMobileCameraConnected] = useState(false);
 
-  const { isInitialized: isHolisticReady } = useHolisticDetection(
+  useHolisticDetection(
     videoRef,
     interview.socketRef,
     interview.status === "live" && !interview.isInitializing,
   );
 
-  // ── Validation ────────────────────────────────────────────────────────────
+  // ── Reset module globals on unmount so re-mounting works ──────────────────
+  useEffect(() => {
+    return () => {
+      _globalSocketInitialized = false;
+      _globalClientReadyEmitted = false;
+    };
+  }, []);
+
+  // ── Redirect if no session ─────────────────────────────────────────────────
   useEffect(() => {
     if (!sessionData) {
       const t = setTimeout(() => {
@@ -115,19 +113,21 @@ const InterviewLive = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Cleanup helper ────────────────────────────────────────────────────────
+  // ── Stop all recordings ────────────────────────────────────────────────────
   const cleanupAllRecordings = useCallback(async () => {
     const jobs = [];
+
     if (isVideoRecording) jobs.push(stopVideoRecording().catch(console.error));
+
     if (audioRecording?.isRecording) {
       try {
         audioRecording.stopRecording();
       } catch (_) {}
     }
+
     if (screenRecording.isRecording)
       jobs.push(screenRecording.stopRecording().catch(console.error));
 
-    // Stop secondary canvas recorder
     if (
       secondaryMediaRecorderRef.current &&
       secondaryMediaRecorderRef.current.state !== "inactive"
@@ -135,52 +135,46 @@ const InterviewLive = () => {
       jobs.push(
         new Promise((resolve) => {
           secondaryMediaRecorderRef.current.onstop = () => resolve();
-          secondaryMediaRecorderRef.current.stop();
+          try {
+            secondaryMediaRecorderRef.current.stop();
+          } catch (_) {
+            resolve();
+          }
         }).catch(console.error),
       );
     }
 
     await Promise.allSettled(jobs);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isVideoRecording, audioRecording, screenRecording]);
 
-  // ── Attach primary camera to <video> ─────────────────────────────────────
+  // ── Attach primary camera ─────────────────────────────────────────────────
   useEffect(() => {
     if (!videoRef.current || !primaryCameraStream) return;
     videoRef.current.srcObject = primaryCameraStream;
     videoRef.current.muted = true;
     videoRef.current.play().catch((e) => {
-      if (e.name !== "AbortError") console.error(e);
+      if (e.name !== "AbortError") console.error("Primary video play:", e);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Attach screen stream to preview <video> ───────────────────────────────
+  // ── Attach screen stream ───────────────────────────────────────────────────
   useEffect(() => {
-    if (!screenVideoRef.current || !screenShareStream) return;
-    screenVideoRef.current.srcObject = screenShareStream;
-    screenVideoRef.current.muted = true;
-    screenVideoRef.current
-      .play()
-      .then(() => console.log("✅ Screen video playing successfully"))
-      .catch((e) => {
-        if (e.name !== "AbortError") console.error(e);
+    const vid = screenVideoRef.current;
+    if (!vid || !screenShareStream) return;
+    vid.srcObject = screenShareStream;
+    vid.muted = true;
+    const tryPlay = () =>
+      vid.play().catch((e) => {
+        if (e.name !== "AbortError") console.error("Screen video play:", e);
       });
-
-    const handleMetadata = () => {
-      console.log("📺 Screen video metadata loaded, attempting play...");
-      screenVideoRef.current?.play().catch(() => {});
-    };
-    screenVideoRef.current.addEventListener("loadedmetadata", handleMetadata);
-    return () =>
-      screenVideoRef.current?.removeEventListener(
-        "loadedmetadata",
-        handleMetadata,
-      );
+    vid.addEventListener("loadedmetadata", tryPlay);
+    tryPlay();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Init canvas dimensions ────────────────────────────────────────────────
+  // ── Init canvas ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (secondaryCanvasRef.current) {
       secondaryCanvasRef.current.width = 640;
@@ -188,34 +182,26 @@ const InterviewLive = () => {
     }
   }, []);
 
-  // ── Start secondary canvas recording ─────────────────────────────────────
-  /**
-   * FIX: Secondary camera video is captured from the canvas that receives
-   * mobile frames, via captureStream(). This avoids any getUserMedia call
-   * on the desktop and works regardless of mobile connection timing.
-   */
+  // ── Secondary canvas recorder ──────────────────────────────────────────────
   const startSecondaryCanvasRecording = useCallback(async (socket) => {
-    if (!secondaryCanvasRef.current) return;
-    if (secondaryMediaRecorderRef.current) return; // already started
+    if (!secondaryCanvasRef.current || secondaryMediaRecorderRef.current)
+      return;
 
     const canvas = secondaryCanvasRef.current;
-
-    // captureStream at 10fps matches the mobile frame rate
     const canvasStream = canvas.captureStream(10);
 
-    const mimeTypesToTry = [
+    const mimeTypes = [
       "video/webm;codecs=vp9",
       "video/webm;codecs=vp8",
       "video/webm",
       "",
     ];
-
     let mediaRecorder;
-    for (const mimeType of mimeTypesToTry) {
+    for (const mimeType of mimeTypes) {
       try {
-        const options = {};
-        if (mimeType) options.mimeType = mimeType;
-        mediaRecorder = new MediaRecorder(canvasStream, options);
+        const opts = {};
+        if (mimeType) opts.mimeType = mimeType;
+        mediaRecorder = new MediaRecorder(canvasStream, opts);
         console.log(`✅ Secondary canvas recorder: ${mimeType || "default"}`);
         break;
       } catch (_) {
@@ -224,33 +210,30 @@ const InterviewLive = () => {
     }
 
     if (!mediaRecorder) {
-      console.error("❌ Cannot create MediaRecorder for secondary canvas");
+      console.error("❌ No MediaRecorder for secondary canvas");
       return;
     }
 
     secondaryMediaRecorderRef.current = mediaRecorder;
     secondaryChunkCountRef.current = 0;
 
-    mediaRecorder.ondataavailable = (event) => {
-      if (!event.data || event.data.size === 0) return;
-
+    mediaRecorder.ondataavailable = (e) => {
+      if (!e.data || e.data.size === 0) return;
       secondaryChunkCountRef.current++;
-      const currentChunk = secondaryChunkCountRef.current;
-
+      const chunkNum = secondaryChunkCountRef.current;
       const reader = new FileReader();
       reader.onloadend = () => {
         if (socket?.connected && secondarySessionReadyRef.current) {
-          const base64Data = reader.result.split(",")[1];
           socket.emit("video_chunk", {
             videoType: "secondary_camera",
-            chunkNumber: currentChunk,
-            chunkData: base64Data,
+            chunkNumber: chunkNum,
+            chunkData: reader.result.split(",")[1],
             isLastChunk: false,
             timestamp: Date.now(),
           });
         }
       };
-      reader.readAsDataURL(event.data);
+      reader.readAsDataURL(e.data);
     };
 
     mediaRecorder.onstart = () => {
@@ -260,11 +243,10 @@ const InterviewLive = () => {
 
     mediaRecorder.onstop = () => {
       console.log(
-        `🛑 Secondary canvas recording stopped. Chunks: ${secondaryChunkCountRef.current}`,
+        `🛑 Secondary canvas stopped. Chunks: ${secondaryChunkCountRef.current}`,
       );
       setIsSecondaryRecording(false);
       secondarySessionReadyRef.current = false;
-
       if (socket?.connected) {
         socket.emit("video_recording_stop", {
           videoType: "secondary_camera",
@@ -273,7 +255,6 @@ const InterviewLive = () => {
       }
     };
 
-    // Request server session
     if (socket?.connected) {
       socket.emit("video_recording_start", {
         videoType: "secondary_camera",
@@ -283,55 +264,59 @@ const InterviewLive = () => {
 
       await new Promise((resolve) => {
         const timeout = setTimeout(() => {
-          console.warn(
-            "⚠️ Secondary camera server confirm timeout, starting anyway",
-          );
+          console.warn("⚠️ Secondary camera confirm timeout, starting anyway");
           secondarySessionReadyRef.current = true;
           resolve();
         }, 5000);
-
         const handler = (data) => {
           if (data.videoType === "secondary_camera") {
             clearTimeout(timeout);
             socket.off("video_recording_ready", handler);
             secondarySessionReadyRef.current = true;
-            console.log("✅ Secondary camera session confirmed");
+            console.log("✅ Secondary canvas session confirmed");
             resolve();
           }
         };
-
         socket.on("video_recording_ready", handler);
       });
     } else {
       secondarySessionReadyRef.current = true;
     }
 
-    mediaRecorder.start(20000); // 20s chunks
+    mediaRecorder.start(20000);
   }, []);
 
-  // ── Socket init — runs ONCE ───────────────────────────────────────────────
+  // ==========================================================================
+  // MAIN SOCKET INIT — exactly once, guarded by module-level variable
+  // ==========================================================================
   useEffect(() => {
-    if (socketInitializedRef.current || !sessionData || !preInitializedSocket)
+    // ✅ Module-level guard — immune to React StrictMode double-invoke
+    if (_globalSocketInitialized || !sessionData || !preInitializedSocket)
       return;
-    socketInitializedRef.current = true;
+    _globalSocketInitialized = true;
 
     const socket = preInitializedSocket;
     interview.socketRef.current = socket;
 
     const init = async () => {
       try {
-        // Wait for socket to be connected
+        // Wait for connection
         let retries = 0;
-        while (!socket.connected && retries < 15) {
-          await new Promise((r) => setTimeout(r, 300));
+        while (!socket.connected && retries < 30) {
+          await new Promise((r) => setTimeout(r, 200));
           retries++;
         }
+
         if (!socket.connected) {
-          alert("Connection failed. Please try again.");
+          console.error("❌ Socket never connected");
+          _globalSocketInitialized = false;
           navigate("/interview");
           return;
         }
 
+        console.log(`✅ Socket ready: ${socket.id}`);
+
+        // Silence noisy events
         const silenced = new Set([
           "user_audio_chunk",
           "video_chunk",
@@ -340,14 +325,22 @@ const InterviewLive = () => {
           "interim_transcript",
         ]);
         socket.onAny((ev) => {
-          if (!silenced.has(ev)) console.log(`📡 Socket: "${ev}"`);
+          if (!silenced.has(ev)) console.log(`📡 [socket] "${ev}"`);
         });
 
-        // ── Register ALL socket.on() handlers FIRST ───────────────────────
+        // ── Register ALL listeners BEFORE emitting client_ready ───────────
+        // Server may send tts_audio within milliseconds of receiving client_ready.
+        // If the listener isn't registered, those chunks are lost forever.
+
         socket.on("question", (d) => interview.handleQuestion(d));
         socket.on("next_question", (d) => interview.handleNextQuestion(d));
         socket.on("tts_audio", (d) => {
-          if (d) interview.handleTtsAudio(d);
+          if (d) {
+            console.log(
+              `🔊 TTS chunk received (${typeof d === "object" ? d.audio?.length || 0 : d.length} b64 chars)`,
+            );
+            interview.handleTtsAudio(d);
+          }
         });
         socket.on("tts_end", () => interview.handleTtsEnd());
         socket.on("idle_prompt", (d) => interview.handleIdlePrompt(d));
@@ -355,14 +348,17 @@ const InterviewLive = () => {
         socket.on("transcript_received", (d) =>
           interview.handleTranscriptReceived(d),
         );
-        socket.on("listening_enabled", () => interview.enableListening());
+        socket.on("listening_enabled", () => {
+          console.log("✅ listening_enabled received");
+          interview.enableListening();
+        });
         socket.on("listening_disabled", () => interview.disableListening());
+
         socket.on("interview_complete", async (d) => {
           interview.handleInterviewComplete(d);
           await cleanupAllRecordings();
         });
 
-        // ── FIX: Secondary camera frames drawn directly to canvas ─────────
         socket.on("secondary_camera_ready", () => {
           console.log("✅ Mobile camera connected");
           setMobileCameraConnected(true);
@@ -370,7 +366,6 @@ const InterviewLive = () => {
         socket.on("secondary_camera_status", (d) => {
           if (d.connected) setMobileCameraConnected(true);
         });
-
         socket.on("mobile_camera_frame", (data) => {
           if (!data?.frame || !secondaryCanvasRef.current) return;
           const canvas = secondaryCanvasRef.current;
@@ -393,53 +388,44 @@ const InterviewLive = () => {
         socket.on("face_violation_cleared", () =>
           setFaceViolationWarning(null),
         );
-
-        socket.on("interview_terminated", async (d) => {
+        socket.on("interview_terminated", async () => {
           setIsInterviewTerminated(true);
           interview.setMicStreamingActive(false);
           await cleanupAllRecordings();
+          isLeavingRef.current = true;
           socket.disconnect();
           navigate("/dashboard");
         });
-
-        socket.on("audio_recording_error", (d) =>
-          console.error("❌ Audio error:", d),
-        );
-        socket.on("video_recording_error", (d) =>
-          console.error("❌ Video error:", d),
-        );
-        socket.on("media_merge_complete", (d) =>
-          console.log("✅ Merge:", d.finalVideoUrl),
-        );
-
         socket.on("evaluation_started", () => setEvaluationStatus("started"));
         socket.on("evaluation_complete", (d) => {
           setEvaluationStatus("complete");
           setEvaluationResults(d.results);
           interview.setMicStreamingActive(false);
         });
-        socket.on("evaluation_error", (d) => {
-          setEvaluationStatus("error");
-          console.error("❌ Evaluation error:", d.message);
-        });
+        socket.on("evaluation_error", () => setEvaluationStatus("error"));
+        socket.on("media_merge_complete", (d) =>
+          console.log("✅ Media merge complete:", d.finalVideoUrl),
+        );
+        socket.on("audio_recording_error", (d) =>
+          console.error("❌ Audio error:", d),
+        );
+        socket.on("video_recording_error", (d) =>
+          console.error("❌ Video error:", d),
+        );
 
         socket.on("disconnect", (reason) => {
-          if (reason === "io server disconnect") {
-            alert("Server disconnected.");
+          console.log("🔌 Socket disconnect:", reason);
+          if (reason === "io server disconnect" && !isLeavingRef.current) {
+            alert("Server disconnected unexpectedly.");
             navigate("/interview");
           }
-        });
-        socket.on("reconnect", () => console.log("✅ Reconnected"));
-        socket.on("reconnect_failed", () => {
-          alert("Reconnection failed.");
-          navigate("/interview");
         });
         socket.on("connect_error", (e) =>
           console.error("❌ Connect error:", e.message),
         );
         socket.on("error", () => interview.setStatus("error"));
 
-        // ── State setup ───────────────────────────────────────────────────
+        // ── Set state ─────────────────────────────────────────────────────
         interview.setStatus("live");
         interview.setServerReady(true);
         interview.setIsInitializing(false);
@@ -448,37 +434,44 @@ const InterviewLive = () => {
           userId: sessionData.userId,
         });
 
-        console.log("🚀 Emitting 'client_ready' - Interview starting...");
-        socket.emit("client_ready", {
-          interviewId: sessionData.interviewId,
-          userId: sessionData.userId,
-          timestamp: Date.now(),
-        });
+        // ── Emit client_ready EXACTLY ONCE ────────────────────────────────
+        // ✅ Module-level guard prevents double-emit from StrictMode
+        if (!_globalClientReadyEmitted) {
+          _globalClientReadyEmitted = true;
+          console.log("🚀 Emitting client_ready (once)");
+          socket.emit("client_ready", {
+            interviewId: sessionData.interviewId,
+            userId: sessionData.userId,
+            timestamp: Date.now(),
+          });
+        }
 
-        console.log("🎬 Initializing interview session");
-
-        // ── FIX: Pass existing micStream to avoid second getUserMedia ─────
+        // ── Start mic with pre-acquired stream ────────────────────────────
+        // Done AFTER client_ready so mic is ready when server sends
+        // listening_enabled shortly after.
         await interview.autoStartInterview(micStream);
       } catch (err) {
         console.error("❌ Socket init failed:", err);
+        _globalSocketInitialized = false;
         navigate("/interview");
       }
     };
 
     init();
 
+    // Cleanup: only disconnect if truly leaving
     return () => {
-      (async () => {
-        await cleanupAllRecordings();
-        socket.offAny();
-        socket.removeAllListeners();
-        socket.disconnect();
-      })();
+      if (isLeavingRef.current) {
+        cleanupAllRecordings();
+        socket?.offAny();
+        socket?.removeAllListeners();
+        socket?.disconnect();
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // runs once
+  }, []); // Empty deps — must run once
 
-  // ── Start all recordings once interview is live ───────────────────────────
+  // ── Start recordings when interview goes live ──────────────────────────────
   useEffect(() => {
     if (recordingsStartedRef.current) return;
     if (
@@ -496,18 +489,20 @@ const InterviewLive = () => {
 
     (async () => {
       try {
-        console.log("🎬 Starting media streaming");
+        console.log("🎬 Starting all media streams");
 
         await audioRecording.startRecording();
+        console.log("✓ Audio streaming started");
+
         await startVideoRecording();
+        console.log("✓ Primary camera streaming started");
 
         if (screenShareStream) {
           await screenRecording.startRecording(screenShareStream);
+          console.log("✓ Screen streaming started");
         }
 
-        // ── FIX: Always start canvas recording — works even before mobile connects
         await startSecondaryCanvasRecording(socket);
-
         console.log("✅ All media streaming active");
       } catch (err) {
         console.error("❌ Recording startup failed:", err);
@@ -522,19 +517,28 @@ const InterviewLive = () => {
     isVideoRecording,
   ]);
 
-  // ── Navigate on evaluation complete ──────────────────────────────────────
+  // ── Navigate when evaluation completes ────────────────────────────────────
   useEffect(() => {
     if (evaluationStatus === "complete" && evaluationResults) {
       setTimeout(() => navigate("/dashboard"), 2000);
     }
   }, [evaluationStatus, evaluationResults, navigate]);
 
+  // ── End interview ──────────────────────────────────────────────────────────
   const handleEndInterview = async () => {
     if (!confirm("End the interview?")) return;
+    isLeavingRef.current = true;
     await cleanupAllRecordings();
+    const socket = interview.socketRef.current;
+    if (socket) {
+      socket.offAny();
+      socket.removeAllListeners();
+      socket.disconnect();
+    }
     navigate("/dashboard");
   };
 
+  // ── Loading state ──────────────────────────────────────────────────────────
   if (!sessionData) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
@@ -552,7 +556,9 @@ const InterviewLive = () => {
       ${active ? `bg-${color}-900/30 text-${color}-300` : "bg-gray-800 text-gray-500"}`}
     >
       <span
-        className={`w-1.5 h-1.5 rounded-full ${active ? `bg-${color}-400 animate-pulse` : "bg-gray-600"}`}
+        className={`w-1.5 h-1.5 rounded-full ${
+          active ? `bg-${color}-400 animate-pulse` : "bg-gray-600"
+        }`}
       />
       {label}
     </div>
@@ -562,21 +568,24 @@ const InterviewLive = () => {
     <section className="min-h-screen bg-gray-900 p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
-          {/* ── Main panel ─────────────────────────────────────────────── */}
+          {/* ── Main interview panel ──────────────────────────────────── */}
           <div className="lg:col-span-2">
             <Card className="flex flex-col overflow-hidden shadow-xl border border-gray-700 bg-gray-800 min-h-[600px]">
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700 flex-wrap gap-3">
                 <div className="flex items-center gap-3">
                   <div
-                    className={`w-10 h-10 rounded-xl flex items-center justify-center
-                    ${interview.isPlaying ? "bg-blue-600" : interview.isListening ? "bg-emerald-600" : "bg-gray-700"}`}
+                    className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                      interview.isPlaying
+                        ? "bg-blue-600"
+                        : interview.isListening
+                          ? "bg-emerald-600"
+                          : "bg-gray-700"
+                    }`}
                   >
-                    {interview.isPlaying ? (
-                      <span className="text-white text-sm font-bold">AI</span>
-                    ) : (
-                      <span className="text-white text-sm font-bold">🎤</span>
-                    )}
+                    <span className="text-white text-sm font-bold">
+                      {interview.isPlaying ? "AI" : "🎤"}
+                    </span>
                   </div>
                   <div>
                     <h2 className="text-sm font-bold text-white">
@@ -591,6 +600,7 @@ const InterviewLive = () => {
                     </p>
                   </div>
                 </div>
+
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <StatusBadge
                     label="Audio"
@@ -620,7 +630,7 @@ const InterviewLive = () => {
                 </div>
               </div>
 
-              {/* Face violation */}
+              {/* Face violation banner */}
               {faceViolationWarning && (
                 <div className="px-5 py-3 bg-red-900/20 border-b border-red-800">
                   <p className="text-sm font-semibold text-red-300">
@@ -642,9 +652,9 @@ const InterviewLive = () => {
                 </div>
               )}
 
-              {/* Question area */}
+              {/* Question / answer area */}
               <div className="flex-1 p-6 flex flex-col justify-center space-y-6">
-                {interview.currentQuestion && (
+                {interview.currentQuestion ? (
                   <>
                     {interview.idlePrompt && (
                       <div className="p-3 bg-amber-900/20 border border-amber-800 rounded-xl">
@@ -653,6 +663,7 @@ const InterviewLive = () => {
                         </p>
                       </div>
                     )}
+
                     <div className="space-y-3">
                       <div className="flex items-center gap-2">
                         <span className="w-7 h-7 rounded-lg bg-purple-600 flex items-center justify-center text-xs font-bold text-white">
@@ -666,6 +677,7 @@ const InterviewLive = () => {
                         {interview.currentQuestion}
                       </p>
                     </div>
+
                     {interview.isListening && (
                       <div className="flex items-center gap-2">
                         {[0, 1, 2].map((i) => (
@@ -680,6 +692,7 @@ const InterviewLive = () => {
                         </span>
                       </div>
                     )}
+
                     {interview.liveTranscript && (
                       <div className="p-3 bg-gray-700/60 rounded-xl border border-gray-600">
                         <p className="text-sm text-gray-300 italic">
@@ -688,10 +701,14 @@ const InterviewLive = () => {
                       </div>
                     )}
                   </>
+                ) : (
+                  <div className="text-center text-gray-500 text-sm">
+                    Waiting for first question…
+                  </div>
                 )}
               </div>
 
-              {/* Answer */}
+              {/* User answer */}
               {interview.userText && (
                 <div className="border-t border-gray-700 p-5 bg-gray-800/80">
                   <div className="flex items-start gap-3">
@@ -722,7 +739,7 @@ const InterviewLive = () => {
             </Card>
           </div>
 
-          {/* ── Camera sidebar ───────────────────────────────────────────── */}
+          {/* ── Camera sidebar ────────────────────────────────────────── */}
           <div className="lg:col-span-1 space-y-3">
             {/* Primary camera */}
             <Card className="overflow-hidden border border-gray-700 bg-gray-800">
@@ -731,7 +748,11 @@ const InterviewLive = () => {
                   Primary Camera
                 </span>
                 <span
-                  className={`text-xs font-semibold px-2 py-0.5 rounded ${isVideoRecording ? "text-red-300 bg-red-900/30" : "text-gray-500 bg-gray-700"}`}
+                  className={`text-xs font-semibold px-2 py-0.5 rounded ${
+                    isVideoRecording
+                      ? "text-red-300 bg-red-900/30"
+                      : "text-gray-500 bg-gray-700"
+                  }`}
                 >
                   {isVideoRecording ? "● REC" : "STANDBY"}
                 </span>
@@ -748,21 +769,23 @@ const InterviewLive = () => {
               </div>
             </Card>
 
-            {/* Mobile camera — canvas receives frames directly from socket */}
+            {/* Mobile camera — canvas painted from socket frames */}
             <Card className="overflow-hidden border border-gray-700 bg-gray-800">
               <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
                 <span className="text-xs font-bold text-gray-300">
                   Mobile Camera
                 </span>
                 <span
-                  className={`text-xs font-semibold px-2 py-0.5 rounded
-                  ${mobileCameraConnected ? "text-orange-300 bg-orange-900/30" : "text-gray-500 bg-gray-700"}`}
+                  className={`text-xs font-semibold px-2 py-0.5 rounded ${
+                    mobileCameraConnected
+                      ? "text-orange-300 bg-orange-900/30"
+                      : "text-gray-500 bg-gray-700"
+                  }`}
                 >
                   {mobileCameraConnected ? "● LIVE" : "WAITING"}
                 </span>
               </div>
               <div className="relative aspect-video bg-black">
-                {/* Canvas always mounted — frames painted when mobile connects */}
                 <canvas
                   ref={secondaryCanvasRef}
                   className="w-full h-full object-cover"
@@ -779,13 +802,16 @@ const InterviewLive = () => {
               </div>
             </Card>
 
-            {/* Screen recording */}
+            {/* Screen */}
             <Card className="overflow-hidden border border-gray-700 bg-gray-800">
               <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
                 <span className="text-xs font-bold text-gray-300">Screen</span>
                 <span
-                  className={`text-xs font-semibold px-2 py-0.5 rounded
-                  ${screenRecording.isRecording ? "text-purple-300 bg-purple-900/30" : "text-gray-500 bg-gray-700"}`}
+                  className={`text-xs font-semibold px-2 py-0.5 rounded ${
+                    screenRecording.isRecording
+                      ? "text-purple-300 bg-purple-900/30"
+                      : "text-gray-500 bg-gray-700"
+                  }`}
                 >
                   {screenRecording.isRecording ? "● REC" : "STANDBY"}
                 </span>
