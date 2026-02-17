@@ -14,13 +14,13 @@ dotenv.config();
 
 const app = express();
 
-const allowedOrigins = [process.env.CORS_ORIGIN, "https://cueaadyfcr.loclx.io"];
+const allowedOrigins = [process.env.CORS_ORIGIN];
 
 app.use(
   cors({
     origin: (origin, callback) => {
       if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
+        callback(null, origin);
       } else {
         callback(new Error("Not allowed by CORS"));
       }

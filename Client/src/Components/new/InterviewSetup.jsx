@@ -37,8 +37,6 @@ const InterviewSetup = () => {
   const [currentStep, setCurrentStep] = useState(1);
   const [error, setError] = useState(null);
 
-  // ── Question generation state ─────────────────────────────────────────────
-  // Questions generate in the background — only STEP 7 (init) waits for them.
   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
   const [questionsReady, setQuestionsReady] = useState(false);
   const [sessionData, setSessionData] = useState(null);
@@ -123,8 +121,6 @@ const InterviewSetup = () => {
   };
 
   const handleAcceptGuidelines = () => {
-    // FIX: Don't block on question generation here.
-    // Questions run in the background; we only need sessionData to exist.
     if (!sessionData) {
       setError("Session not ready yet. Please wait a moment.");
       return;
@@ -140,7 +136,6 @@ const InterviewSetup = () => {
     }
     micTestCleanupRef.current = true;
     analyserRef.current = null;
-    console.log("✅ Mic test complete, moving to next step");
     setError(null);
     setCurrentStep(4);
   };
@@ -155,11 +150,6 @@ const InterviewSetup = () => {
     setCurrentStep(6);
   };
 
-  /**
-   * FIX: Screen share step only checks that screen share itself is ready.
-   * Question generation is allowed to still be running — it finishes before
-   * step 7 (init) starts, which is when we actually need sessionData.
-   */
   const handleScreenShareSuccess = () => {
     const isMicActive = micStream?.active;
     const isCameraActive = primaryCameraStream?.active;
@@ -176,7 +166,6 @@ const InterviewSetup = () => {
       return;
     }
 
-    // If questions are still generating, wait for them here (last moment)
     if (isGeneratingQuestions) {
       setError(
         "Questions are still generating. Please wait a moment and try again.",
@@ -201,8 +190,6 @@ const InterviewSetup = () => {
       setError(null);
       micTestCleanupRef.current = false;
 
-      console.log("🎤 Starting microphone test...");
-
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -211,57 +198,36 @@ const InterviewSetup = () => {
         },
       });
 
-      console.log("✅ Got microphone stream:", stream);
       setMicStream(stream);
 
       if (!audioContextRef.current) {
         audioContextRef.current = new (
           window.AudioContext || window.webkitAudioContext
         )();
-        console.log("✅ Created new AudioContext");
       }
 
       const audioContext = audioContextRef.current;
-      console.log("📊 AudioContext state:", audioContext.state);
-
-      if (audioContext.state === "suspended") {
-        await audioContext.resume();
-      }
+      if (audioContext.state === "suspended") await audioContext.resume();
 
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 256;
       analyserRef.current = analyser;
-      console.log("✅ Created analyser node");
 
       const source = audioContext.createMediaStreamSource(stream);
       source.connect(analyser);
-      console.log("✅ Connected source to analyser");
 
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      let frameCount = 0;
 
       const updateLevel = () => {
         if (!analyserRef.current || micTestCleanupRef.current) return;
-
         analyser.getByteFrequencyData(dataArray);
         const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
         const level = Math.min(100, (avg / 128) * 100);
         setMicLevel(level);
-
-        frameCount++;
-        if (frameCount === 1)
-          console.log("✅ First level update:", level.toFixed(1));
-        if (frameCount % 60 === 0)
-          console.log(
-            `🎤 Mic level: ${level.toFixed(1)}%, avg: ${avg.toFixed(1)}`,
-          );
-
         animationFrameRef.current = requestAnimationFrame(updateLevel);
       };
 
-      console.log("🔄 Starting level update loop...");
       updateLevel();
-      console.log("✅ Microphone test started successfully");
     } catch (err) {
       console.error("❌ Microphone error:", err);
       setError(`Microphone error: ${err.message}`);
@@ -386,6 +352,11 @@ const InterviewSetup = () => {
   }, [currentStep]);
 
   /* ── PRE-INITIALIZATION (STEP 7) ────────────────────────────────────────── */
+  // KEY FIX: We now capture the videoId/audioId returned from each
+  // registration and store them in streamsRef.current.preWarmSessionIds.
+  // InterviewLive reads these to RESUME the same sessions rather than
+  // creating new ones — eliminating the duplicate-session conflict that
+  // caused screen/secondary recording to fail and TTS to lag on startup.
 
   useEffect(() => {
     if (currentStep !== 7 || !sessionData) return;
@@ -393,16 +364,119 @@ const InterviewSetup = () => {
     let mounted = true;
     let socket = null;
 
+    const registerVideoSession = (
+      videoType,
+      timeoutMs = 15000,
+      optional = false,
+    ) =>
+      new Promise((resolve, reject) => {
+        let settled = false;
+
+        const cleanup = () => {
+          socket.off("video_recording_ready", onReady);
+          socket.off("video_recording_error", onError);
+        };
+
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          const msg = `${videoType} registration timeout`;
+          console.warn("⚠️", msg);
+          if (optional) resolve({ timedOut: true });
+          else reject(new Error(msg));
+        }, timeoutMs);
+
+        const onReady = (data) => {
+          if (data.videoType !== videoType) return;
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          cleanup();
+          console.log(`✅ ${videoType} REGISTERED: videoId=${data.videoId}`);
+          resolve(data); // data.videoId is the pre-warm session ID we need
+        };
+
+        const onError = (err) => {
+          if (err?.videoType && err.videoType !== videoType) return;
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          cleanup();
+          const msg = err?.error || `${videoType} registration failed`;
+          console.error(`❌ ${videoType} error:`, msg);
+          if (optional) resolve({ error: msg });
+          else reject(new Error(msg));
+        };
+
+        socket.on("video_recording_ready", onReady);
+        socket.on("video_recording_error", onError);
+
+        socket.emit("video_recording_start", {
+          videoType,
+          totalChunks: 0,
+          metadata: { mimeType: "video/webm;codecs=vp9" },
+          interviewId: sessionData.interviewId,
+          userId: sessionData.userId,
+          setupMode: true,
+        });
+      });
+
+    const registerAudioSession = () =>
+      new Promise((resolve, reject) => {
+        let settled = false;
+
+        const cleanup = () => {
+          socket.off("audio_recording_ready", onReady);
+          socket.off("audio_recording_error", onError);
+        };
+
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(new Error("Audio recording registration timeout"));
+        }, 15000);
+
+        const onReady = (data) => {
+          if (data.audioType !== "mixed_audio") return;
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          cleanup();
+          console.log("✅ Audio REGISTERED: audioId=", data.audioId);
+          resolve(data); // data.audioId is the pre-warm session ID we need
+        };
+
+        const onError = (err) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          cleanup();
+          reject(new Error(err?.error || "Audio registration failed"));
+        };
+
+        socket.on("audio_recording_ready", onReady);
+        socket.on("audio_recording_error", onError);
+
+        socket.emit("audio_recording_start", {
+          audioType: "mixed_audio",
+          metadata: { sampleRate: 48000 },
+          interviewId: sessionData.interviewId,
+          userId: sessionData.userId,
+          setupMode: true,
+        });
+      });
+
     const initializeInterview = async () => {
       try {
         console.log("🔄 Starting pre-initialization...");
 
-        // Disconnect settings socket first
         if (settingsSocketRef.current?.connected) {
           console.log("🧹 Disconnecting settings socket");
           settingsSocketRef.current.disconnect();
           settingsSocketRef.current = null;
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          await new Promise((r) => setTimeout(r, 300));
         }
 
         setInitProgress((prev) => ({ ...prev, socket: "connecting" }));
@@ -423,198 +497,124 @@ const InterviewSetup = () => {
         interviewSocketRef.current = socket;
 
         await new Promise((resolve, reject) => {
-          const timeout = setTimeout(
+          const timer = setTimeout(
             () => reject(new Error("Socket connection timeout")),
             20000,
           );
-
-          socket.on("connect", () => {
-            clearTimeout(timeout);
+          socket.once("connect", () => {
+            clearTimeout(timer);
             console.log("✅ Socket connected:", socket.id);
-
             socket.emit("setup_mode", {
               setupInProgress: true,
               interviewId: sessionData.interviewId,
               userId: sessionData.userId,
             });
-
             if (mounted) setInitProgress((prev) => ({ ...prev, socket: true }));
             resolve();
           });
-
-          socket.on("connect_error", (err) => {
-            clearTimeout(timeout);
+          socket.once("connect_error", (err) => {
+            clearTimeout(timer);
             reject(err);
           });
         });
 
         setInitProgress((prev) => ({ ...prev, serverReady: "waiting" }));
-
         await new Promise((resolve, reject) => {
-          const timeout = setTimeout(
+          const timer = setTimeout(
             () => reject(new Error("Server ready timeout")),
             20000,
           );
-
-          socket.on("server_ready", () => {
-            clearTimeout(timeout);
-            console.log("✅ Server ready (SETUP MODE)");
+          socket.once("server_ready", () => {
+            clearTimeout(timer);
+            console.log("✅ Server ready");
             if (mounted)
               setInitProgress((prev) => ({ ...prev, serverReady: true }));
             resolve();
           });
         });
 
-        console.log("📝 Registering recording sessions");
+        console.log("📝 Registering recording sessions (isolated handlers)");
 
-        // Audio
+        // ── Audio — capture audioId for InterviewLive to reuse ────────────────
         setInitProgress((prev) => ({ ...prev, audioRecording: "starting" }));
-        await new Promise((resolve, reject) => {
-          const timeout = setTimeout(
-            () => reject(new Error("Audio recording timeout")),
-            15000,
-          );
-          socket.emit("audio_recording_start", {
-            audioType: "mixed_audio",
-            metadata: { sampleRate: 48000 },
-            interviewId: sessionData.interviewId,
-            userId: sessionData.userId,
-            setupMode: true,
-          });
-          socket.on("audio_recording_ready", (data) => {
-            if (data.audioType === "mixed_audio") {
-              clearTimeout(timeout);
-              console.log("✅ Audio recording REGISTERED:", data.audioId);
-              if (mounted)
-                setInitProgress((prev) => ({ ...prev, audioRecording: true }));
-              resolve();
-            }
-          });
-          socket.on("audio_recording_error", (error) => {
-            clearTimeout(timeout);
-            reject(new Error(error.error || "Audio recording failed"));
-          });
-        });
+        const audioResult = await registerAudioSession();
+        if (mounted) {
+          setInitProgress((prev) => ({ ...prev, audioRecording: true }));
+          // KEY FIX: Store pre-warmed session ID
+          streamsRef.current.preWarmSessionIds.audioId =
+            audioResult.audioId ?? null;
+          streamsRef.current.preWarmComplete.audio = true;
+          console.log("📦 Stored pre-warm audioId:", audioResult.audioId);
+        }
 
-        // Primary video
+        // ── Primary camera — capture videoId for InterviewLive to reuse ───────
         setInitProgress((prev) => ({ ...prev, videoRecording: "starting" }));
-        await new Promise((resolve, reject) => {
-          const timeout = setTimeout(
-            () => reject(new Error("Video recording timeout")),
-            15000,
+        const primaryResult = await registerVideoSession("primary_camera");
+        if (mounted) {
+          setInitProgress((prev) => ({ ...prev, videoRecording: true }));
+          // KEY FIX: Store pre-warmed session ID
+          streamsRef.current.preWarmSessionIds.primaryCameraId =
+            primaryResult.videoId ?? null;
+          streamsRef.current.preWarmComplete.primaryCamera = true;
+          console.log(
+            "📦 Stored pre-warm primaryCameraId:",
+            primaryResult.videoId,
           );
-          socket.emit("video_recording_start", {
-            videoType: "primary_camera",
-            totalChunks: 0,
-            metadata: { mimeType: "video/webm;codecs=vp9" },
-            interviewId: sessionData.interviewId,
-            userId: sessionData.userId,
-            setupMode: true,
-          });
-          socket.on("video_recording_ready", (data) => {
-            if (data.videoType === "primary_camera") {
-              clearTimeout(timeout);
-              console.log("✅ Primary video REGISTERED:", data.videoId);
-              if (mounted)
-                setInitProgress((prev) => ({ ...prev, videoRecording: true }));
-              resolve();
-            }
-          });
-          socket.on("video_recording_error", (error) => {
-            clearTimeout(timeout);
-            reject(new Error(error.error || "Video recording failed"));
-          });
-        });
+        }
 
-        // Screen recording
+        // ── Screen recording — capture videoId for InterviewLive to reuse ─────
         setInitProgress((prev) => ({ ...prev, screenRecording: "starting" }));
-        await new Promise((resolve, reject) => {
-          const timeout = setTimeout(
-            () => reject(new Error("Screen recording timeout")),
-            15000,
+        const screenResult = await registerVideoSession("screen_recording");
+        if (mounted) {
+          setInitProgress((prev) => ({ ...prev, screenRecording: true }));
+          // KEY FIX: Store pre-warmed session ID
+          streamsRef.current.preWarmSessionIds.screenRecordingId =
+            screenResult.videoId ?? null;
+          streamsRef.current.preWarmComplete.screenRecording = true;
+          console.log(
+            "📦 Stored pre-warm screenRecordingId:",
+            screenResult.videoId,
           );
-          socket.emit("video_recording_start", {
-            videoType: "screen_recording",
-            totalChunks: 0,
-            metadata: { mimeType: "video/webm;codecs=vp9" },
-            interviewId: sessionData.interviewId,
-            userId: sessionData.userId,
-            setupMode: true,
-          });
-          socket.on("video_recording_ready", (data) => {
-            if (data.videoType === "screen_recording") {
-              clearTimeout(timeout);
-              console.log("✅ Screen recording REGISTERED:", data.videoId);
-              if (mounted)
-                setInitProgress((prev) => ({ ...prev, screenRecording: true }));
-              resolve();
-            }
-          });
-          socket.on("video_recording_error", (error) => {
-            clearTimeout(timeout);
-            reject(new Error(error.error || "Screen recording failed"));
-          });
-        });
+        }
 
-        // Mobile (optional)
+        // ── Mobile (optional) ─────────────────────────────────────────────────
         if (mobileCameraConnected) {
           setInitProgress((prev) => ({ ...prev, mobileRecording: "starting" }));
-          await new Promise((resolve) => {
-            const timeout = setTimeout(() => {
-              console.log("⚠️ Mobile recording timeout, continuing...");
-              if (mounted)
-                setInitProgress((prev) => ({
-                  ...prev,
-                  mobileRecording: "optional",
-                }));
-              resolve();
-            }, 10000);
-
-            socket.emit("video_recording_start", {
-              videoType: "secondary_camera",
-              totalChunks: 0,
-              metadata: { mimeType: "video/webm;codecs=vp9" },
-              interviewId: sessionData.interviewId,
-              userId: sessionData.userId,
-              setupMode: true,
-            });
-
-            socket.on("video_recording_ready", (data) => {
-              if (data.videoType === "secondary_camera") {
-                clearTimeout(timeout);
-                console.log("✅ Mobile recording REGISTERED:", data.videoId);
-                if (mounted)
-                  setInitProgress((prev) => ({
-                    ...prev,
-                    mobileRecording: true,
-                  }));
-                resolve();
-              }
-            });
-            socket.on("video_recording_error", () => {
-              clearTimeout(timeout);
-              if (mounted)
-                setInitProgress((prev) => ({
-                  ...prev,
-                  mobileRecording: "optional",
-                }));
-              resolve();
-            });
-          });
+          const secondaryResult = await registerVideoSession(
+            "secondary_camera",
+            10000,
+            true,
+          );
+          if (mounted) {
+            const succeeded =
+              !secondaryResult?.timedOut && !secondaryResult?.error;
+            setInitProgress((prev) => ({
+              ...prev,
+              mobileRecording: succeeded ? true : "optional",
+            }));
+            if (succeeded) {
+              // KEY FIX: Store pre-warmed session ID
+              streamsRef.current.preWarmSessionIds.secondaryCameraId =
+                secondaryResult.videoId ?? null;
+              streamsRef.current.preWarmComplete.secondaryCamera = true;
+              console.log(
+                "📦 Stored pre-warm secondaryCameraId:",
+                secondaryResult.videoId,
+              );
+            }
+          }
         } else {
           setInitProgress((prev) => ({ ...prev, mobileRecording: "skipped" }));
         }
 
         console.log("✅ Pre-initialization complete!");
 
+        // ── Store everything in context for InterviewLive ─────────────────────
         streamsRef.current.micStream = micStream;
         streamsRef.current.primaryCameraStream = primaryCameraStream;
         streamsRef.current.screenShareStream = screenShareStream;
         streamsRef.current.sessionData = sessionData;
         streamsRef.current.preInitializedSocket = socket;
-
-        console.log("✅ Streams stored in context");
-        console.log("✅ Immediate verification passed");
 
         if (mounted) {
           hasNavigatedRef.current = true;
@@ -627,6 +627,7 @@ const InterviewSetup = () => {
           setInitError(error.message);
           hasNavigatedRef.current = false;
           if (socket) {
+            socket.removeAllListeners();
             socket.disconnect();
             interviewSocketRef.current = null;
           }
@@ -727,7 +728,6 @@ const InterviewSetup = () => {
           </div>
         )}
 
-        {/* Background question generation indicator (shown on steps 2-6) */}
         {isGeneratingQuestions && currentStep > 1 && currentStep < 7 && (
           <div className="mb-4 p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl">
             <div className="flex items-center gap-3">
@@ -845,7 +845,6 @@ const InterviewSetup = () => {
             </div>
 
             <div className="flex justify-center">
-              {/* FIX: No longer blocked by question generation */}
               <Button onClick={handleAcceptGuidelines} className="px-10">
                 Accept and Continue
               </Button>
@@ -876,7 +875,7 @@ const InterviewSetup = () => {
                   </p>
                   <div className="w-full h-8 bg-gray-700 rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-gradient-to-r from-green-500 to-emerald-500 transition-all duration-100"
+                      className="h-full bg-linear-to-r from-green-500 to-emerald-500 transition-all duration-100"
                       style={{ width: `${micLevel}%` }}
                     />
                   </div>
@@ -1073,7 +1072,6 @@ const InterviewSetup = () => {
                       <p className="text-gray-400 text-sm">
                         Waiting for connection...
                       </p>
-                      {/* Allow skipping mobile camera */}
                       <button
                         onClick={handleMobileCameraSuccess}
                         className="text-xs text-gray-500 underline hover:text-gray-300"
@@ -1154,7 +1152,6 @@ const InterviewSetup = () => {
                     </span>
                   </div>
 
-                  {/* Show question generation status if still running */}
                   {isGeneratingQuestions && (
                     <div className="flex items-center justify-center gap-2 text-blue-300 text-sm">
                       <div className="animate-spin w-4 h-4 border-2 border-blue-400/30 border-t-blue-400 rounded-full" />

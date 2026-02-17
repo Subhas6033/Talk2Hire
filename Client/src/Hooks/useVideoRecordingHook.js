@@ -2,7 +2,20 @@ import { useRef, useState, useCallback, useEffect } from "react";
 
 const CHUNK_DURATION = 20000;
 
-const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
+/**
+ * KEY FIX: Hook now accepts an optional `preWarmVideoId` constructor argument.
+ * When provided, startRecording() skips emitting video_recording_start and
+ * immediately begins chunking to the already-confirmed server session.
+ * This removes the ~500ms–1s registration round-trip that was delaying
+ * primary camera recording on InterviewLive mount.
+ */
+const useVideoRecording = (
+  interviewId,
+  userId,
+  cameraStream,
+  socketRef,
+  preWarmVideoId = null,
+) => {
   const [isRecording, setIsRecording] = useState(false);
   const [recordedChunks, setRecordedChunks] = useState([]);
 
@@ -12,90 +25,58 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
   const isRequestingSessionRef = useRef(false);
   const hasStoppedRef = useRef(false);
 
-  //  CRITICAL FIX: Comprehensive MIME type detection
+  // Keep preWarmVideoId fresh in a ref
+  const preWarmVideoIdRef = useRef(preWarmVideoId);
+  useEffect(() => {
+    preWarmVideoIdRef.current = preWarmVideoId;
+  }, [preWarmVideoId]);
+
   const findSupportedMimeType = (stream) => {
     console.log("🔍 Starting MIME type detection...");
 
-    // Get track info
     const videoTrack = stream.getVideoTracks()[0];
     if (!videoTrack) {
       console.error("❌ No video track for MIME detection");
       return null;
     }
 
-    const settings = videoTrack.getSettings();
-    console.log("📹 Video track settings:", settings);
-
-    //  Comprehensive list ordered by preference
     const mimeTypesToTry = [
-      // WebM with VP9 (best quality)
       { type: "video/webm;codecs=vp9", bitrate: 2500000 },
       { type: "video/webm;codecs=vp9", bitrate: 1500000 },
-
-      // WebM with VP8 (better compatibility)
       { type: "video/webm;codecs=vp8", bitrate: 2500000 },
       { type: "video/webm;codecs=vp8", bitrate: 1500000 },
-
-      // WebM with H264 (Safari)
       { type: "video/webm;codecs=h264", bitrate: 2500000 },
       { type: "video/webm;codecs=h264", bitrate: 1500000 },
-
-      // WebM without codec specified
       { type: "video/webm", bitrate: 2500000 },
       { type: "video/webm", bitrate: 1500000 },
       { type: "video/webm", bitrate: 1000000 },
-
-      // MP4 fallback
       { type: "video/mp4", bitrate: 2500000 },
       { type: "video/mp4", bitrate: 1500000 },
-
-      // Last resort - no type specified
       { type: "", bitrate: 1000000 },
     ];
 
-    console.log(
-      `🧪 Testing ${mimeTypesToTry.length} MIME type configurations...`,
-    );
-
     for (let i = 0; i < mimeTypesToTry.length; i++) {
       const config = mimeTypesToTry[i];
-      const mimeType = config.type;
-      const bitrate = config.bitrate;
+      const { type: mimeType, bitrate } = config;
 
-      // Skip empty type check for isTypeSupported
       if (mimeType && !MediaRecorder.isTypeSupported(mimeType)) {
         console.log(
-          `⚠️ [${i + 1}/${mimeTypesToTry.length}] ${mimeType} - NOT supported by browser`,
+          `⚠️ [${i + 1}/${mimeTypesToTry.length}] ${mimeType} - NOT supported`,
         );
         continue;
       }
 
-      // Try to actually create MediaRecorder with this config
       try {
         const options = {};
-        if (mimeType) {
-          options.mimeType = mimeType;
-        }
-        if (bitrate) {
-          options.videoBitsPerSecond = bitrate;
-        }
-
-        console.log(
-          `🧪 [${i + 1}/${mimeTypesToTry.length}] Testing: ${mimeType || "default"} @ ${bitrate}bps`,
-        );
+        if (mimeType) options.mimeType = mimeType;
+        if (bitrate) options.videoBitsPerSecond = bitrate;
 
         const testRecorder = new MediaRecorder(stream, options);
+        if (testRecorder.state !== "inactive") testRecorder.stop();
 
-        // If we got here, it worked!
         console.log(
           ` SUCCESS! MIME type works: ${mimeType || "default"} @ ${bitrate}bps`,
         );
-
-        // Clean up test recorder
-        if (testRecorder.state !== "inactive") {
-          testRecorder.stop();
-        }
-
         return { mimeType: mimeType || "default", bitrate, options };
       } catch (error) {
         console.log(
@@ -106,7 +87,7 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
       }
     }
 
-    console.error("❌ No compatible MIME type found after testing all options");
+    console.error("❌ No compatible MIME type found");
     return null;
   };
 
@@ -119,23 +100,12 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
       return;
     }
 
-    //  Verify stream is active
     if (!cameraStream.active) {
       console.error("❌ FATAL: Camera stream is not active!");
-      console.error("Stream state:", {
-        active: cameraStream.active,
-        id: cameraStream.id,
-        tracks: cameraStream.getTracks().map((t) => ({
-          kind: t.kind,
-          readyState: t.readyState,
-          enabled: t.enabled,
-        })),
-      });
       alert("Camera stream is not active. Please refresh and try again.");
       return;
     }
 
-    //  Verify video track exists and is live
     const videoTrack = cameraStream.getVideoTracks()[0];
     if (!videoTrack) {
       console.error("❌ FATAL: No video track in stream!");
@@ -153,16 +123,6 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
       );
       return;
     }
-
-    console.log(" Stream verification passed:", {
-      active: cameraStream.active,
-      videoTrack: {
-        label: videoTrack.label,
-        enabled: videoTrack.enabled,
-        readyState: videoTrack.readyState,
-        settings: videoTrack.getSettings(),
-      },
-    });
 
     if (!socketRef?.current?.connected) {
       console.error("❌ Socket not connected");
@@ -187,30 +147,21 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
       videoSessionReadyRef.current = false;
       chunkCountRef.current = 0;
 
-      //  Find supported MIME type
       const mimeConfig = findSupportedMimeType(cameraStream);
-
       if (!mimeConfig) {
         throw new Error(
-          "No supported video MIME type found. Your browser may not support video recording. Please try Chrome, Edge, or Firefox.",
+          "No supported video MIME type found. Please try Chrome, Edge, or Firefox.",
         );
       }
 
-      console.log(" Using MIME configuration:", mimeConfig);
-
-      //  Create MediaRecorder with found config
       let mediaRecorder;
       try {
         mediaRecorder = new MediaRecorder(cameraStream, mimeConfig.options);
-        console.log(" MediaRecorder created successfully with:", mimeConfig);
       } catch (createError) {
         console.error("❌ Failed to create MediaRecorder:", createError);
-
-        //  Absolute last resort - no options at all
         try {
           console.log("🔄 Last resort: creating with NO options...");
           mediaRecorder = new MediaRecorder(cameraStream);
-          console.log(" MediaRecorder created with default browser settings");
         } catch (finalError) {
           console.error(
             "❌ All MediaRecorder creation attempts failed:",
@@ -218,7 +169,7 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
           );
           isRequestingSessionRef.current = false;
           alert(
-            "Failed to initialize video recorder. Your browser may not support this feature. Please try Chrome or Firefox.",
+            "Failed to initialize video recorder. Please try Chrome or Firefox.",
           );
           return;
         }
@@ -226,12 +177,8 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
 
       mediaRecorderRef.current = mediaRecorder;
 
-      //  Set up event handlers
       mediaRecorder.ondataavailable = (event) => {
-        if (!event.data || event.data.size === 0) {
-          console.log("⚠️ Empty video chunk, skipping");
-          return;
-        }
+        if (!event.data || event.data.size === 0) return;
 
         chunkCountRef.current++;
         const currentChunkNumber = chunkCountRef.current;
@@ -246,7 +193,6 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
         reader.onloadend = () => {
           if (socketRef.current?.connected && videoSessionReadyRef.current) {
             const base64Data = reader.result.split(",")[1];
-
             socketRef.current.emit("video_chunk", {
               videoType: "primary_camera",
               chunkNumber: currentChunkNumber,
@@ -263,14 +209,12 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
             }
           }
         };
-
         reader.onerror = (error) => {
           console.error(
             `❌ Error reading chunk #${currentChunkNumber}:`,
             error,
           );
         };
-
         reader.readAsDataURL(event.data);
         setRecordedChunks((prev) => [...prev, event.data]);
       };
@@ -283,13 +227,11 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
       mediaRecorder.onstop = () => {
         if (hasStoppedRef.current) return;
         hasStoppedRef.current = true;
-
         console.log(
           `🛑 Recording stopped. Total chunks: ${chunkCountRef.current}`,
         );
         setIsRecording(false);
         videoSessionReadyRef.current = false;
-
         if (socketRef.current?.connected) {
           socketRef.current.emit("video_recording_stop", {
             videoType: "primary_camera",
@@ -300,18 +242,26 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
 
       mediaRecorder.onerror = (event) => {
         console.error("❌ MediaRecorder error:", event.error);
-        console.error("Error details:", {
-          name: event.error?.name,
-          message: event.error?.message,
-          state: mediaRecorder.state,
-        });
         isRequestingSessionRef.current = false;
         setIsRecording(false);
       };
 
-      //  FIXED: Request server session with promise-based waiting
-      console.log("📤 Requesting video session from server...");
+      // KEY FIX: Pre-warmed path — session already confirmed during setup step 7.
+      // Skip video_recording_start entirely and begin recording immediately.
+      if (preWarmVideoIdRef.current) {
+        console.log(
+          "♻️ Primary camera session pre-warmed, skipping registration. videoId:",
+          preWarmVideoIdRef.current,
+        );
+        videoSessionReadyRef.current = true;
+        isRequestingSessionRef.current = false;
+        mediaRecorder.start(CHUNK_DURATION);
+        console.log(" MediaRecorder started (pre-warmed path)");
+        return;
+      }
 
+      // Fallback: request a new server session
+      console.log("📤 Requesting video session from server...");
       socketRef.current.emit("video_recording_start", {
         videoType: "primary_camera",
         totalChunks: 0,
@@ -321,7 +271,6 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
         },
       });
 
-      //  FIXED: Accept ANY video_recording_ready response
       const serverResponsePromise = new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
           socketRef.current.off("video_recording_ready", handler);
@@ -330,11 +279,8 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
         }, 10000);
 
         const handler = (response) => {
-          //  FIX: Accept if it's for primary_camera OR if no videoType specified
-          if (response?.videoType && response.videoType !== "primary_camera") {
-            return; // Ignore other video types
-          }
-
+          if (response?.videoType && response.videoType !== "primary_camera")
+            return;
           clearTimeout(timeout);
           socketRef.current.off("video_recording_error", errorHandler);
           console.log(" Server confirmed ready:", response);
@@ -342,11 +288,7 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
         };
 
         const errorHandler = (error) => {
-          //  FIX: Accept error if it's for this type OR unspecified
-          if (error?.videoType && error.videoType !== "primary_camera") {
-            return;
-          }
-
+          if (error?.videoType && error.videoType !== "primary_camera") return;
           clearTimeout(timeout);
           socketRef.current.off("video_recording_ready", handler);
           console.error("❌ Server error:", error);
@@ -363,22 +305,14 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
         videoSessionReadyRef.current = true;
         isRequestingSessionRef.current = false;
         mediaRecorder.start(CHUNK_DURATION);
-
         console.log(" MediaRecorder started after server confirmation");
       } catch (serverError) {
         console.error("❌ Server did not confirm session:", serverError);
         isRequestingSessionRef.current = false;
 
-        // Try to proceed anyway if MediaRecorder is ready
         if (mediaRecorder && mediaRecorder.state === "inactive") {
           console.warn("⚠️ Proceeding without server confirmation (risky!)");
-          alert(
-            "Server not responding, but starting recording anyway. Video may not save properly.",
-          );
-
-          // Manually set ready flag
           videoSessionReadyRef.current = true;
-
           try {
             mediaRecorder.start(CHUNK_DURATION);
             console.log(" Started recording without server confirmation");
@@ -392,7 +326,6 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
       }
     } catch (err) {
       console.error("❌ Recording setup error:", err);
-      console.error("Error stack:", err.stack);
       isRequestingSessionRef.current = false;
       setIsRecording(false);
       alert("Failed to setup video recording: " + err.message);
@@ -409,13 +342,11 @@ const useVideoRecording = (interviewId, userId, cameraStream, socketRef) => {
 
     return new Promise((resolve) => {
       const recorder = mediaRecorderRef.current;
-
       recorder.onstop = () => {
         setIsRecording(false);
         videoSessionReadyRef.current = false;
         resolve(chunkCountRef.current);
       };
-
       if (recorder.state !== "inactive") {
         recorder.stop();
       } else {

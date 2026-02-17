@@ -8,12 +8,7 @@ import { Button } from "../index";
 import { Card } from "../Common/Card";
 import { useStreams } from "../../Hooks/streamContext";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MODULE-LEVEL guard — survives React StrictMode's double-invoke of effects.
-// A ref inside the component resets to false between the two invocations in
-// StrictMode; a module-level variable does NOT reset.
-// This ensures socket init and client_ready fire exactly once per page load.
-// ─────────────────────────────────────────────────────────────────────────────
+// Module-level guards — survive React StrictMode double-invoke
 let _globalSocketInitialized = false;
 let _globalClientReadyEmitted = false;
 
@@ -21,7 +16,7 @@ const InterviewLive = () => {
   const navigate = useNavigate();
   const streamsRef = useStreams();
 
-  // ── Stable snapshot — read ONCE from context ──────────────────────────────
+  // Stable snapshot — read ONCE from context
   const stableRef = useRef(null);
   if (!stableRef.current && streamsRef.current?.sessionData) {
     stableRef.current = {
@@ -30,6 +25,9 @@ const InterviewLive = () => {
       primaryCameraStream: streamsRef.current.primaryCameraStream,
       screenShareStream: streamsRef.current.screenShareStream,
       preInitializedSocket: streamsRef.current.preInitializedSocket,
+      // KEY FIX: Capture pre-warm IDs so recording hooks can skip re-registration
+      preWarmSessionIds: { ...streamsRef.current.preWarmSessionIds },
+      preWarmComplete: { ...streamsRef.current.preWarmComplete },
     };
   }
 
@@ -38,8 +36,10 @@ const InterviewLive = () => {
   const primaryCameraStream = stableRef.current?.primaryCameraStream ?? null;
   const screenShareStream = stableRef.current?.screenShareStream ?? null;
   const preInitializedSocket = stableRef.current?.preInitializedSocket ?? null;
+  const preWarmSessionIds = stableRef.current?.preWarmSessionIds ?? {};
+  const preWarmComplete = stableRef.current?.preWarmComplete ?? {};
 
-  // ── Core hooks ─────────────────────────────────────────────────────────────
+  // Core hooks
   const interview = useInterview(
     sessionData?.interviewId,
     sessionData?.userId,
@@ -55,6 +55,7 @@ const InterviewLive = () => {
     sessionData?.userId,
     primaryCameraStream,
     interview.socketRef,
+    preWarmSessionIds.primaryCameraId, // KEY FIX: pass pre-warm ID
   );
 
   const audioRecording = interview.audioRecording;
@@ -63,24 +64,25 @@ const InterviewLive = () => {
     sessionData?.interviewId,
     sessionData?.userId,
     interview.socketRef,
+    preWarmSessionIds.screenRecordingId, // KEY FIX: pass pre-warm ID
   );
 
-  // ── DOM refs ───────────────────────────────────────────────────────────────
+  // DOM refs
   const videoRef = useRef(null);
   const secondaryCanvasRef = useRef(null);
   const screenVideoRef = useRef(null);
 
-  // ── Local one-time guards (component-level) ────────────────────────────────
+  // Local one-time guards
   const recordingsStartedRef = useRef(false);
   const isLeavingRef = useRef(false);
 
-  // ── Secondary canvas recorder ──────────────────────────────────────────────
+  // Secondary canvas recorder
   const secondaryMediaRecorderRef = useRef(null);
   const secondaryChunkCountRef = useRef(0);
   const secondarySessionReadyRef = useRef(false);
   const [isSecondaryRecording, setIsSecondaryRecording] = useState(false);
 
-  // ── UI state ───────────────────────────────────────────────────────────────
+  // UI state
   const [evaluationStatus, setEvaluationStatus] = useState(null);
   const [evaluationResults, setEvaluationResults] = useState(null);
   const [faceViolationWarning, setFaceViolationWarning] = useState(null);
@@ -93,7 +95,7 @@ const InterviewLive = () => {
     interview.status === "live" && !interview.isInitializing,
   );
 
-  // ── Reset module globals on unmount so re-mounting works ──────────────────
+  // Reset module globals on unmount so re-mounting works
   useEffect(() => {
     return () => {
       _globalSocketInitialized = false;
@@ -101,7 +103,7 @@ const InterviewLive = () => {
     };
   }, []);
 
-  // ── Redirect if no session ─────────────────────────────────────────────────
+  // Redirect if no session
   useEffect(() => {
     if (!sessionData) {
       const t = setTimeout(() => {
@@ -113,7 +115,7 @@ const InterviewLive = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Stop all recordings ────────────────────────────────────────────────────
+  // Stop all recordings
   const cleanupAllRecordings = useCallback(async () => {
     const jobs = [];
 
@@ -148,7 +150,7 @@ const InterviewLive = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isVideoRecording, audioRecording, screenRecording]);
 
-  // ── Attach primary camera ─────────────────────────────────────────────────
+  // Attach primary camera
   useEffect(() => {
     if (!videoRef.current || !primaryCameraStream) return;
     videoRef.current.srcObject = primaryCameraStream;
@@ -159,7 +161,8 @@ const InterviewLive = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Attach screen stream ───────────────────────────────────────────────────
+  // Attach screen stream — KEY FIX: the stream is already active from setup,
+  // just assign srcObject directly. No need to call requestScreenShare() again.
   useEffect(() => {
     const vid = screenVideoRef.current;
     if (!vid || !screenShareStream) return;
@@ -174,7 +177,7 @@ const InterviewLive = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Init canvas ────────────────────────────────────────────────────────────
+  // Init canvas
   useEffect(() => {
     if (secondaryCanvasRef.current) {
       secondaryCanvasRef.current.width = 640;
@@ -182,115 +185,134 @@ const InterviewLive = () => {
     }
   }, []);
 
-  // ── Secondary canvas recorder ──────────────────────────────────────────────
-  const startSecondaryCanvasRecording = useCallback(async (socket) => {
-    if (!secondaryCanvasRef.current || secondaryMediaRecorderRef.current)
-      return;
+  // ── Secondary canvas recorder ────────────────────────────────────────────
+  // KEY FIX: If the server session was pre-warmed, skip video_recording_start
+  // entirely and just mark the session as ready, then start the MediaRecorder.
+  // This eliminates the duplicate-registration conflict on secondary camera.
+  const startSecondaryCanvasRecording = useCallback(
+    async (socket) => {
+      if (!secondaryCanvasRef.current || secondaryMediaRecorderRef.current)
+        return;
 
-    const canvas = secondaryCanvasRef.current;
-    const canvasStream = canvas.captureStream(10);
+      const canvas = secondaryCanvasRef.current;
+      const canvasStream = canvas.captureStream(10);
 
-    const mimeTypes = [
-      "video/webm;codecs=vp9",
-      "video/webm;codecs=vp8",
-      "video/webm",
-      "",
-    ];
-    let mediaRecorder;
-    for (const mimeType of mimeTypes) {
-      try {
-        const opts = {};
-        if (mimeType) opts.mimeType = mimeType;
-        mediaRecorder = new MediaRecorder(canvasStream, opts);
-        console.log(`✅ Secondary canvas recorder: ${mimeType || "default"}`);
-        break;
-      } catch (_) {
-        continue;
+      const mimeTypes = [
+        "video/webm;codecs=vp9",
+        "video/webm;codecs=vp8",
+        "video/webm",
+        "",
+      ];
+      let mediaRecorder;
+      for (const mimeType of mimeTypes) {
+        try {
+          const opts = {};
+          if (mimeType) opts.mimeType = mimeType;
+          mediaRecorder = new MediaRecorder(canvasStream, opts);
+          console.log(`✅ Secondary canvas recorder: ${mimeType || "default"}`);
+          break;
+        } catch (_) {
+          continue;
+        }
       }
-    }
 
-    if (!mediaRecorder) {
-      console.error("❌ No MediaRecorder for secondary canvas");
-      return;
-    }
+      if (!mediaRecorder) {
+        console.error("❌ No MediaRecorder for secondary canvas");
+        return;
+      }
 
-    secondaryMediaRecorderRef.current = mediaRecorder;
-    secondaryChunkCountRef.current = 0;
+      secondaryMediaRecorderRef.current = mediaRecorder;
+      secondaryChunkCountRef.current = 0;
 
-    mediaRecorder.ondataavailable = (e) => {
-      if (!e.data || e.data.size === 0) return;
-      secondaryChunkCountRef.current++;
-      const chunkNum = secondaryChunkCountRef.current;
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (socket?.connected && secondarySessionReadyRef.current) {
-          socket.emit("video_chunk", {
+      mediaRecorder.ondataavailable = (e) => {
+        if (!e.data || e.data.size === 0) return;
+        secondaryChunkCountRef.current++;
+        const chunkNum = secondaryChunkCountRef.current;
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (socket?.connected && secondarySessionReadyRef.current) {
+            socket.emit("video_chunk", {
+              videoType: "secondary_camera",
+              chunkNumber: chunkNum,
+              chunkData: reader.result.split(",")[1],
+              isLastChunk: false,
+              timestamp: Date.now(),
+            });
+          }
+        };
+        reader.readAsDataURL(e.data);
+      };
+
+      mediaRecorder.onstart = () => {
+        console.log("✅ Secondary canvas recording started");
+        setIsSecondaryRecording(true);
+      };
+
+      mediaRecorder.onstop = () => {
+        console.log(
+          `🛑 Secondary canvas stopped. Chunks: ${secondaryChunkCountRef.current}`,
+        );
+        setIsSecondaryRecording(false);
+        secondarySessionReadyRef.current = false;
+        if (socket?.connected) {
+          socket.emit("video_recording_stop", {
             videoType: "secondary_camera",
-            chunkNumber: chunkNum,
-            chunkData: reader.result.split(",")[1],
-            isLastChunk: false,
-            timestamp: Date.now(),
+            totalChunks: secondaryChunkCountRef.current,
           });
         }
       };
-      reader.readAsDataURL(e.data);
-    };
 
-    mediaRecorder.onstart = () => {
-      console.log("✅ Secondary canvas recording started");
-      setIsSecondaryRecording(true);
-    };
-
-    mediaRecorder.onstop = () => {
-      console.log(
-        `🛑 Secondary canvas stopped. Chunks: ${secondaryChunkCountRef.current}`,
-      );
-      setIsSecondaryRecording(false);
-      secondarySessionReadyRef.current = false;
-      if (socket?.connected) {
-        socket.emit("video_recording_stop", {
+      // KEY FIX: Pre-warmed path — session already exists on the server.
+      // Just mark ready and start recording immediately. Zero extra round-trips.
+      if (
+        preWarmComplete.secondaryCamera &&
+        preWarmSessionIds.secondaryCameraId
+      ) {
+        console.log(
+          "♻️ Secondary camera session pre-warmed, skipping re-registration",
+        );
+        secondarySessionReadyRef.current = true;
+      } else if (socket?.connected) {
+        // Fallback: request new session (e.g. mobile was not connected during setup)
+        console.log("📤 Requesting secondary camera session (no pre-warm)...");
+        socket.emit("video_recording_start", {
           videoType: "secondary_camera",
-          totalChunks: secondaryChunkCountRef.current,
+          totalChunks: 0,
+          metadata: { mimeType: "video/webm;codecs=vp9" },
         });
-      }
-    };
 
-    if (socket?.connected) {
-      socket.emit("video_recording_start", {
-        videoType: "secondary_camera",
-        totalChunks: 0,
-        metadata: { mimeType: "video/webm;codecs=vp9" },
-      });
-
-      await new Promise((resolve) => {
-        const timeout = setTimeout(() => {
-          console.warn("⚠️ Secondary camera confirm timeout, starting anyway");
-          secondarySessionReadyRef.current = true;
-          resolve();
-        }, 5000);
-        const handler = (data) => {
-          if (data.videoType === "secondary_camera") {
-            clearTimeout(timeout);
-            socket.off("video_recording_ready", handler);
+        await new Promise((resolve) => {
+          const timeout = setTimeout(() => {
+            console.warn(
+              "⚠️ Secondary camera confirm timeout, starting anyway",
+            );
             secondarySessionReadyRef.current = true;
-            console.log("✅ Secondary canvas session confirmed");
             resolve();
-          }
-        };
-        socket.on("video_recording_ready", handler);
-      });
-    } else {
-      secondarySessionReadyRef.current = true;
-    }
+          }, 5000);
+          const handler = (data) => {
+            if (data.videoType === "secondary_camera") {
+              clearTimeout(timeout);
+              socket.off("video_recording_ready", handler);
+              secondarySessionReadyRef.current = true;
+              console.log("✅ Secondary canvas session confirmed");
+              resolve();
+            }
+          };
+          socket.on("video_recording_ready", handler);
+        });
+      } else {
+        secondarySessionReadyRef.current = true;
+      }
 
-    mediaRecorder.start(20000);
-  }, []);
+      mediaRecorder.start(20000);
+    },
+    [preWarmComplete, preWarmSessionIds],
+  );
 
   // ==========================================================================
-  // MAIN SOCKET INIT — exactly once, guarded by module-level variable
+  // MAIN SOCKET INIT — exactly once
   // ==========================================================================
   useEffect(() => {
-    // ✅ Module-level guard — immune to React StrictMode double-invoke
     if (_globalSocketInitialized || !sessionData || !preInitializedSocket)
       return;
     _globalSocketInitialized = true;
@@ -300,7 +322,6 @@ const InterviewLive = () => {
 
     const init = async () => {
       try {
-        // Wait for connection
         let retries = 0;
         while (!socket.connected && retries < 30) {
           await new Promise((r) => setTimeout(r, 200));
@@ -316,7 +337,6 @@ const InterviewLive = () => {
 
         console.log(`✅ Socket ready: ${socket.id}`);
 
-        // Silence noisy events
         const silenced = new Set([
           "user_audio_chunk",
           "video_chunk",
@@ -328,10 +348,7 @@ const InterviewLive = () => {
           if (!silenced.has(ev)) console.log(`📡 [socket] "${ev}"`);
         });
 
-        // ── Register ALL listeners BEFORE emitting client_ready ───────────
-        // Server may send tts_audio within milliseconds of receiving client_ready.
-        // If the listener isn't registered, those chunks are lost forever.
-
+        // Register ALL listeners BEFORE emitting client_ready
         socket.on("question", (d) => interview.handleQuestion(d));
         socket.on("next_question", (d) => interview.handleNextQuestion(d));
         socket.on("tts_audio", (d) => {
@@ -425,7 +442,7 @@ const InterviewLive = () => {
         );
         socket.on("error", () => interview.setStatus("error"));
 
-        // ── Set state ─────────────────────────────────────────────────────
+        // Set state
         interview.setStatus("live");
         interview.setServerReady(true);
         interview.setIsInitializing(false);
@@ -434,8 +451,7 @@ const InterviewLive = () => {
           userId: sessionData.userId,
         });
 
-        // ── Emit client_ready EXACTLY ONCE ────────────────────────────────
-        // ✅ Module-level guard prevents double-emit from StrictMode
+        // Emit client_ready EXACTLY ONCE
         if (!_globalClientReadyEmitted) {
           _globalClientReadyEmitted = true;
           console.log("🚀 Emitting client_ready (once)");
@@ -446,9 +462,6 @@ const InterviewLive = () => {
           });
         }
 
-        // ── Start mic with pre-acquired stream ────────────────────────────
-        // Done AFTER client_ready so mic is ready when server sends
-        // listening_enabled shortly after.
         await interview.autoStartInterview(micStream);
       } catch (err) {
         console.error("❌ Socket init failed:", err);
@@ -459,7 +472,6 @@ const InterviewLive = () => {
 
     init();
 
-    // Cleanup: only disconnect if truly leaving
     return () => {
       if (isLeavingRef.current) {
         cleanupAllRecordings();
@@ -469,9 +481,12 @@ const InterviewLive = () => {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Empty deps — must run once
+  }, []);
 
-  // ── Start recordings when interview goes live ──────────────────────────────
+  // ── Start recordings when interview goes live ─────────────────────────────
+  // KEY FIX: useVideoRecording and useScreenRecording now receive their
+  // pre-warm session IDs and will skip video_recording_start internally,
+  // so we can begin chunking immediately with zero server round-trips.
   useEffect(() => {
     if (recordingsStartedRef.current) return;
     if (
@@ -491,13 +506,17 @@ const InterviewLive = () => {
       try {
         console.log("🎬 Starting all media streams");
 
-        await audioRecording.startRecording();
+        // KEY FIX: Pass pre-warm audioId to avoid re-registering the audio session
+        await audioRecording.startRecording(preWarmSessionIds.audioId);
         console.log("✓ Audio streaming started");
 
         await startVideoRecording();
         console.log("✓ Primary camera streaming started");
 
         if (screenShareStream) {
+          // KEY FIX: Pass the already-active stream — useScreenRecording will
+          // skip requestScreenShare() and use this stream directly.
+          // The pre-warm ID is already stored in the hook via constructor arg.
           await screenRecording.startRecording(screenShareStream);
           console.log("✓ Screen streaming started");
         }
@@ -517,14 +536,14 @@ const InterviewLive = () => {
     isVideoRecording,
   ]);
 
-  // ── Navigate when evaluation completes ────────────────────────────────────
+  // Navigate when evaluation completes
   useEffect(() => {
     if (evaluationStatus === "complete" && evaluationResults) {
       setTimeout(() => navigate("/dashboard"), 2000);
     }
   }, [evaluationStatus, evaluationResults, navigate]);
 
-  // ── End interview ──────────────────────────────────────────────────────────
+  // End interview
   const handleEndInterview = async () => {
     if (!confirm("End the interview?")) return;
     isLeavingRef.current = true;
@@ -538,7 +557,7 @@ const InterviewLive = () => {
     navigate("/dashboard");
   };
 
-  // ── Loading state ──────────────────────────────────────────────────────────
+  // Loading state
   if (!sessionData) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
@@ -568,9 +587,9 @@ const InterviewLive = () => {
     <section className="min-h-screen bg-gray-900 p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
-          {/* ── Main interview panel ──────────────────────────────────── */}
+          {/* Main interview panel */}
           <div className="lg:col-span-2">
-            <Card className="flex flex-col overflow-hidden shadow-xl border border-gray-700 bg-gray-800 min-h-[600px]">
+            <Card className="flex flex-col overflow-hidden shadow-xl border border-gray-700 bg-gray-800 min-h-150">
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700 flex-wrap gap-3">
                 <div className="flex items-center gap-3">
@@ -739,7 +758,7 @@ const InterviewLive = () => {
             </Card>
           </div>
 
-          {/* ── Camera sidebar ────────────────────────────────────────── */}
+          {/* Camera sidebar */}
           <div className="lg:col-span-1 space-y-3">
             {/* Primary camera */}
             <Card className="overflow-hidden border border-gray-700 bg-gray-800">
