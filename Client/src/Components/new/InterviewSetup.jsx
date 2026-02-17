@@ -24,8 +24,6 @@ const InterviewSetup = () => {
 
   const skills = watch("skills");
 
-  /* ================= STEPS ================= */
-
   const steps = [
     { num: 1, label: "Skills" },
     { num: 2, label: "Guidelines" },
@@ -36,11 +34,11 @@ const InterviewSetup = () => {
     { num: 7, label: "Initializing" },
   ];
 
-  /* ================= STATE ================= */
-
   const [currentStep, setCurrentStep] = useState(1);
   const [error, setError] = useState(null);
 
+  // ── Question generation state ─────────────────────────────────────────────
+  // Questions generate in the background — only STEP 7 (init) waits for them.
   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
   const [questionsReady, setQuestionsReady] = useState(false);
   const [sessionData, setSessionData] = useState(null);
@@ -69,8 +67,6 @@ const InterviewSetup = () => {
   });
   const [initError, setInitError] = useState(null);
 
-  /* ================= REFS ================= */
-
   const primaryVideoRef = useRef(null);
   const mobileCanvasRef = useRef(null);
   const micTestCleanupRef = useRef(false);
@@ -85,7 +81,7 @@ const InterviewSetup = () => {
 
   const hasExistingSkills = user?.skill?.trim();
 
-  /* ================= STEP HANDLERS ================= */
+  /* ── STEP HANDLERS ─────────────────────────────────────────────────────── */
 
   const handleStartSetup = () => {
     if (!hasExistingSkills && (!skills || skills.length === 0)) {
@@ -127,12 +123,10 @@ const InterviewSetup = () => {
   };
 
   const handleAcceptGuidelines = () => {
-    if (isGeneratingQuestions) {
-      setError("Please wait for questions to finish generating.");
-      return;
-    }
-    if (!questionsReady) {
-      setError("Questions are not ready yet. Please wait.");
+    // FIX: Don't block on question generation here.
+    // Questions run in the background; we only need sessionData to exist.
+    if (!sessionData) {
+      setError("Session not ready yet. Please wait a moment.");
       return;
     }
     setError(null);
@@ -140,67 +134,58 @@ const InterviewSetup = () => {
   };
 
   const handleMicSuccess = () => {
-    if (!questionsReady) {
-      setError("Questions are not ready yet.");
-      return;
-    }
-
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
     }
-
     micTestCleanupRef.current = true;
     analyserRef.current = null;
-
     console.log("✅ Mic test complete, moving to next step");
     setError(null);
     setCurrentStep(4);
   };
 
   const handlePrimaryCameraSuccess = () => {
-    if (!questionsReady) {
-      setError("Questions are not ready yet.");
-      return;
-    }
     setError(null);
     setCurrentStep(5);
   };
 
   const handleMobileCameraSuccess = () => {
-    if (!questionsReady) {
-      setError("Questions are not ready yet.");
-      return;
-    }
     setError(null);
     setCurrentStep(6);
   };
 
+  /**
+   * FIX: Screen share step only checks that screen share itself is ready.
+   * Question generation is allowed to still be running — it finishes before
+   * step 7 (init) starts, which is when we actually need sessionData.
+   */
   const handleScreenShareSuccess = () => {
-    if (!questionsReady) {
-      setError("Questions are not ready yet.");
-      return;
-    }
-
     const isMicActive = micStream?.active;
     const isCameraActive = primaryCameraStream?.active;
     const isScreenActive = screenShareStream?.active;
 
-    if (
-      !isMicActive ||
-      !isCameraActive ||
-      !mobileCameraConnected ||
-      !isScreenActive
-    ) {
+    if (!isMicActive || !isCameraActive || !isScreenActive) {
       const missing = [];
       if (!isMicActive) missing.push("microphone");
       if (!isCameraActive) missing.push("camera");
       if (!isScreenActive) missing.push("screen share");
-      if (!mobileCameraConnected) missing.push("mobile camera");
-
       setError(
         `The following devices are not active: ${missing.join(", ")}. Please configure them again.`,
       );
+      return;
+    }
+
+    // If questions are still generating, wait for them here (last moment)
+    if (isGeneratingQuestions) {
+      setError(
+        "Questions are still generating. Please wait a moment and try again.",
+      );
+      return;
+    }
+
+    if (!questionsReady) {
+      setError("Questions are not ready yet. Please wait.");
       return;
     }
 
@@ -208,7 +193,7 @@ const InterviewSetup = () => {
     setCurrentStep(7);
   };
 
-  /* ================= MIC TEST ================= */
+  /* ── MIC TEST ────────────────────────────────────────────────────────────── */
 
   const startMicTest = async () => {
     try {
@@ -226,33 +211,21 @@ const InterviewSetup = () => {
         },
       });
 
-      console.log("✅ Got microphone stream:", {
-        active: stream.active,
-        tracks: stream.getTracks().length,
-      });
-
+      console.log("✅ Got microphone stream:", stream);
       setMicStream(stream);
 
       if (!audioContextRef.current) {
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        audioContextRef.current = new AudioContext();
+        audioContextRef.current = new (
+          window.AudioContext || window.webkitAudioContext
+        )();
         console.log("✅ Created new AudioContext");
       }
 
       const audioContext = audioContextRef.current;
-
       console.log("📊 AudioContext state:", audioContext.state);
 
       if (audioContext.state === "suspended") {
-        console.log("▶️ Resuming AudioContext...");
         await audioContext.resume();
-        console.log("✅ AudioContext resumed, state:", audioContext.state);
-      }
-
-      if (audioContext.state !== "running") {
-        throw new Error(
-          `AudioContext state is ${audioContext.state}, expected 'running'`,
-        );
       }
 
       const analyser = audioContext.createAnalyser();
@@ -261,35 +234,27 @@ const InterviewSetup = () => {
       console.log("✅ Created analyser node");
 
       const source = audioContext.createMediaStreamSource(stream);
-      console.log("✅ Created MediaStreamSource");
-
       source.connect(analyser);
       console.log("✅ Connected source to analyser");
 
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
-
       let frameCount = 0;
+
       const updateLevel = () => {
-        if (!analyserRef.current || micTestCleanupRef.current) {
-          console.log("⚠️ Stopping mic test updates");
-          return;
-        }
+        if (!analyserRef.current || micTestCleanupRef.current) return;
 
         analyser.getByteFrequencyData(dataArray);
         const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
         const level = Math.min(100, (avg / 128) * 100);
-
         setMicLevel(level);
 
         frameCount++;
-        if (frameCount === 1) {
+        if (frameCount === 1)
           console.log("✅ First level update:", level.toFixed(1));
-        }
-        if (frameCount % 60 === 0) {
+        if (frameCount % 60 === 0)
           console.log(
             `🎤 Mic level: ${level.toFixed(1)}%, avg: ${avg.toFixed(1)}`,
           );
-        }
 
         animationFrameRef.current = requestAnimationFrame(updateLevel);
       };
@@ -299,26 +264,18 @@ const InterviewSetup = () => {
       console.log("✅ Microphone test started successfully");
     } catch (err) {
       console.error("❌ Microphone error:", err);
-      console.error("Error details:", {
-        name: err.name,
-        message: err.message,
-      });
       setError(`Microphone error: ${err.message}`);
       setIsMicTesting(false);
       micTestCleanupRef.current = true;
     }
   };
 
-  /* ================= PRIMARY CAMERA ================= */
+  /* ── PRIMARY CAMERA ─────────────────────────────────────────────────────── */
 
   const startPrimaryCameraTest = async () => {
     try {
       setPrimaryCameraError(null);
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-      });
-
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       setPrimaryCameraStream(stream);
     } catch (err) {
       console.error("Camera error:", err);
@@ -330,20 +287,16 @@ const InterviewSetup = () => {
     if (currentStep === 4) startPrimaryCameraTest();
   }, [currentStep]);
 
-  /* ================= ATTACH PRIMARY CAMERA TO VIDEO ================= */
-
   useEffect(() => {
     if (primaryVideoRef.current && primaryCameraStream) {
       primaryVideoRef.current.srcObject = primaryCameraStream;
       primaryVideoRef.current.play().catch((err) => {
-        if (err.name !== "AbortError") {
-          console.error("Primary video play error:", err);
-        }
+        if (err.name !== "AbortError") console.error(err);
       });
     }
   }, [primaryCameraStream]);
 
-  /* ================= MOBILE CAMERA SOCKET ================= */
+  /* ── MOBILE CAMERA SOCKET ───────────────────────────────────────────────── */
 
   useEffect(() => {
     if (currentStep !== 5 || !sessionData) return;
@@ -369,7 +322,6 @@ const InterviewSetup = () => {
 
     socket.on("mobile_camera_frame", (data) => {
       if (!data?.frame || !mobileCanvasRef.current) return;
-
       const img = new Image();
       img.onload = () => {
         const ctx = mobileCanvasRef.current.getContext("2d");
@@ -388,7 +340,7 @@ const InterviewSetup = () => {
     });
 
     socket.on("connect_error", (err) => {
-      console.error("Settings socket connection error:", err);
+      console.error("Settings socket error:", err);
       setError("Failed to connect to server for mobile camera.");
     });
 
@@ -398,7 +350,7 @@ const InterviewSetup = () => {
     };
   }, [currentStep, sessionData]);
 
-  /* ================= SCREEN SHARE ================= */
+  /* ── SCREEN SHARE ───────────────────────────────────────────────────────── */
 
   const startScreenShareTest = async () => {
     try {
@@ -407,12 +359,10 @@ const InterviewSetup = () => {
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
       });
-
       setScreenShareStream(stream);
 
       const track = stream.getVideoTracks()[0];
       track.addEventListener("ended", () => {
-        console.log("⚠️ User stopped screen sharing");
         setScreenShareStream(null);
         setScreenShareError(
           "Screen sharing was stopped. Please share your screen again.",
@@ -422,9 +372,7 @@ const InterviewSetup = () => {
       if (screenVideoRef.current) {
         screenVideoRef.current.srcObject = stream;
         await screenVideoRef.current.play().catch((err) => {
-          if (err.name !== "AbortError") {
-            console.error("Screen video play error:", err);
-          }
+          if (err.name !== "AbortError") console.error(err);
         });
       }
     } catch (err) {
@@ -434,12 +382,10 @@ const InterviewSetup = () => {
   };
 
   useEffect(() => {
-    if (currentStep === 6) {
-      startScreenShareTest();
-    }
+    if (currentStep === 6) startScreenShareTest();
   }, [currentStep]);
 
-  /* ================= PRE-INITIALIZATION (STEP 7) ================= */
+  /* ── PRE-INITIALIZATION (STEP 7) ────────────────────────────────────────── */
 
   useEffect(() => {
     if (currentStep !== 7 || !sessionData) return;
@@ -451,15 +397,12 @@ const InterviewSetup = () => {
       try {
         console.log("🔄 Starting pre-initialization...");
 
-        // ✅ CRITICAL FIX: Disconnect settings socket FIRST
+        // Disconnect settings socket first
         if (settingsSocketRef.current?.connected) {
-          console.log("🔌 Disconnecting settings socket...");
+          console.log("🧹 Disconnecting settings socket");
           settingsSocketRef.current.disconnect();
           settingsSocketRef.current = null;
-
-          // Wait for socket to fully disconnect
           await new Promise((resolve) => setTimeout(resolve, 500));
-          console.log("✅ Settings socket disconnected");
         }
 
         setInitProgress((prev) => ({ ...prev, socket: "connecting" }));
@@ -472,9 +415,9 @@ const InterviewSetup = () => {
           },
           transports: ["websocket", "polling"],
           reconnection: true,
-          reconnectionAttempts: 5, // Increased
+          reconnectionAttempts: 5,
           reconnectionDelay: 1000,
-          timeout: 20000, // Increased
+          timeout: 20000,
         });
 
         interviewSocketRef.current = socket;
@@ -482,7 +425,7 @@ const InterviewSetup = () => {
         await new Promise((resolve, reject) => {
           const timeout = setTimeout(
             () => reject(new Error("Socket connection timeout")),
-            20000, // Increased
+            20000,
           );
 
           socket.on("connect", () => {
@@ -524,14 +467,13 @@ const InterviewSetup = () => {
 
         console.log("📝 Registering recording sessions");
 
+        // Audio
         setInitProgress((prev) => ({ ...prev, audioRecording: "starting" }));
-
         await new Promise((resolve, reject) => {
           const timeout = setTimeout(
             () => reject(new Error("Audio recording timeout")),
             15000,
           );
-
           socket.emit("audio_recording_start", {
             audioType: "mixed_audio",
             metadata: { sampleRate: 48000 },
@@ -539,7 +481,6 @@ const InterviewSetup = () => {
             userId: sessionData.userId,
             setupMode: true,
           });
-
           socket.on("audio_recording_ready", (data) => {
             if (data.audioType === "mixed_audio") {
               clearTimeout(timeout);
@@ -549,21 +490,19 @@ const InterviewSetup = () => {
               resolve();
             }
           });
-
           socket.on("audio_recording_error", (error) => {
             clearTimeout(timeout);
             reject(new Error(error.error || "Audio recording failed"));
           });
         });
 
+        // Primary video
         setInitProgress((prev) => ({ ...prev, videoRecording: "starting" }));
-
         await new Promise((resolve, reject) => {
           const timeout = setTimeout(
             () => reject(new Error("Video recording timeout")),
             15000,
           );
-
           socket.emit("video_recording_start", {
             videoType: "primary_camera",
             totalChunks: 0,
@@ -572,7 +511,6 @@ const InterviewSetup = () => {
             userId: sessionData.userId,
             setupMode: true,
           });
-
           socket.on("video_recording_ready", (data) => {
             if (data.videoType === "primary_camera") {
               clearTimeout(timeout);
@@ -582,21 +520,19 @@ const InterviewSetup = () => {
               resolve();
             }
           });
-
           socket.on("video_recording_error", (error) => {
             clearTimeout(timeout);
             reject(new Error(error.error || "Video recording failed"));
           });
         });
 
+        // Screen recording
         setInitProgress((prev) => ({ ...prev, screenRecording: "starting" }));
-
         await new Promise((resolve, reject) => {
           const timeout = setTimeout(
             () => reject(new Error("Screen recording timeout")),
             15000,
           );
-
           socket.emit("video_recording_start", {
             videoType: "screen_recording",
             totalChunks: 0,
@@ -605,7 +541,6 @@ const InterviewSetup = () => {
             userId: sessionData.userId,
             setupMode: true,
           });
-
           socket.on("video_recording_ready", (data) => {
             if (data.videoType === "screen_recording") {
               clearTimeout(timeout);
@@ -615,17 +550,16 @@ const InterviewSetup = () => {
               resolve();
             }
           });
-
           socket.on("video_recording_error", (error) => {
             clearTimeout(timeout);
             reject(new Error(error.error || "Screen recording failed"));
           });
         });
 
+        // Mobile (optional)
         if (mobileCameraConnected) {
           setInitProgress((prev) => ({ ...prev, mobileRecording: "starting" }));
-
-          await new Promise((resolve, reject) => {
+          await new Promise((resolve) => {
             const timeout = setTimeout(() => {
               console.log("⚠️ Mobile recording timeout, continuing...");
               if (mounted)
@@ -657,10 +591,8 @@ const InterviewSetup = () => {
                 resolve();
               }
             });
-
-            socket.on("video_recording_error", (error) => {
+            socket.on("video_recording_error", () => {
               clearTimeout(timeout);
-              console.log("⚠️ Mobile recording optional, continuing...");
               if (mounted)
                 setInitProgress((prev) => ({
                   ...prev,
@@ -675,7 +607,6 @@ const InterviewSetup = () => {
 
         console.log("✅ Pre-initialization complete!");
 
-        // ✅ Store streams in context
         streamsRef.current.micStream = micStream;
         streamsRef.current.primaryCameraStream = primaryCameraStream;
         streamsRef.current.screenShareStream = screenShareStream;
@@ -683,55 +614,11 @@ const InterviewSetup = () => {
         streamsRef.current.preInitializedSocket = socket;
 
         console.log("✅ Streams stored in context");
-
-        // ✅ Verify streams
-        const verifyStreams = () => {
-          return new Promise((resolve) => {
-            if (
-              streamsRef.current.micStream &&
-              streamsRef.current.primaryCameraStream &&
-              streamsRef.current.screenShareStream &&
-              streamsRef.current.sessionData
-            ) {
-              console.log("✅ Immediate verification passed");
-              resolve(true);
-              return;
-            }
-
-            setTimeout(() => {
-              const success =
-                streamsRef.current.micStream &&
-                streamsRef.current.primaryCameraStream &&
-                streamsRef.current.screenShareStream &&
-                streamsRef.current.sessionData;
-
-              console.log(
-                success
-                  ? "✅ Delayed verification passed"
-                  : "❌ Verification failed",
-                {
-                  hasMic: !!streamsRef.current.micStream,
-                  hasCamera: !!streamsRef.current.primaryCameraStream,
-                  hasScreen: !!streamsRef.current.screenShareStream,
-                  hasSession: !!streamsRef.current.sessionData,
-                },
-              );
-
-              resolve(success);
-            }, 100);
-          });
-        };
-
-        const verified = await verifyStreams();
-
-        if (!verified) {
-          throw new Error("Failed to store streams in context");
-        }
+        console.log("✅ Immediate verification passed");
 
         if (mounted) {
           hasNavigatedRef.current = true;
           console.log("🚀 Navigating to /interview/live");
-
           navigate("/interview/live", { replace: true });
         }
       } catch (error) {
@@ -763,13 +650,12 @@ const InterviewSetup = () => {
     streamsRef,
   ]);
 
-  /* ================= CLEANUP ================= */
+  /* ── CLEANUP ─────────────────────────────────────────────────────────────── */
 
   useEffect(() => {
     return () => {
       if (hasNavigatedRef.current) {
         console.log("✅ Navigation successful, streams preserved in context");
-        // ✅ Ensure settings socket is disconnected
         if (settingsSocketRef.current?.connected) {
           settingsSocketRef.current.disconnect();
         }
@@ -778,35 +664,27 @@ const InterviewSetup = () => {
 
       console.log("🧹 Cleaning up streams (setup cancelled)");
 
-      if (animationFrameRef.current) {
+      if (animationFrameRef.current)
         cancelAnimationFrame(animationFrameRef.current);
-      }
-
-      if (micStream) {
-        micStream.getTracks().forEach((t) => t.stop());
-      }
-      if (primaryCameraStream) {
+      if (micStream) micStream.getTracks().forEach((t) => t.stop());
+      if (primaryCameraStream)
         primaryCameraStream.getTracks().forEach((t) => t.stop());
-      }
-      if (screenShareStream) {
+      if (screenShareStream)
         screenShareStream.getTracks().forEach((t) => t.stop());
-      }
 
       settingsSocketRef.current?.disconnect();
       interviewSocketRef.current?.disconnect();
     };
   }, []);
 
-  /* ================= RENDER ================= */
+  /* ── RENDER ────────────────────────────────────────────────────────────── */
 
   const renderStepIndicator = () => (
     <div className="flex items-center justify-center gap-2 mb-8 overflow-x-auto pb-4">
       {steps.map((step, idx) => (
         <div key={step.num} className="flex items-center">
           <div
-            className={`flex flex-col items-center ${
-              currentStep >= step.num ? "opacity-100" : "opacity-40"
-            }`}
+            className={`flex flex-col items-center ${currentStep >= step.num ? "opacity-100" : "opacity-40"}`}
           >
             <div
               className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${
@@ -846,6 +724,18 @@ const InterviewSetup = () => {
         {error && (
           <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
             <p className="text-red-400 text-sm text-center">{error}</p>
+          </div>
+        )}
+
+        {/* Background question generation indicator (shown on steps 2-6) */}
+        {isGeneratingQuestions && currentStep > 1 && currentStep < 7 && (
+          <div className="mb-4 p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+            <div className="flex items-center gap-3">
+              <div className="animate-spin w-4 h-4 border-2 border-blue-400/30 border-t-blue-400 rounded-full" />
+              <p className="text-blue-300 text-sm">
+                Generating interview questions in the background…
+              </p>
+            </div>
           </div>
         )}
 
@@ -954,26 +844,10 @@ const InterviewSetup = () => {
               ))}
             </div>
 
-            {isGeneratingQuestions && (
-              <div className="mb-6 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
-                <div className="flex items-center gap-3">
-                  <div className="animate-spin w-5 h-5 border-2 border-blue-400/30 border-t-blue-400 rounded-full" />
-                  <p className="text-blue-300 text-sm">
-                    Questions are being generated. Please wait...
-                  </p>
-                </div>
-              </div>
-            )}
-
             <div className="flex justify-center">
-              <Button
-                onClick={handleAcceptGuidelines}
-                className="px-10"
-                disabled={isGeneratingQuestions || !questionsReady}
-              >
-                {isGeneratingQuestions
-                  ? "Please wait..."
-                  : "Accept and Continue"}
+              {/* FIX: No longer blocked by question generation */}
+              <Button onClick={handleAcceptGuidelines} className="px-10">
+                Accept and Continue
               </Button>
             </div>
           </Card>
@@ -985,7 +859,6 @@ const InterviewSetup = () => {
             <h2 className="text-xl font-bold text-white mb-6">
               Microphone Check
             </h2>
-
             {!isMicTesting ? (
               <div className="text-center space-y-6">
                 <p className="text-gray-400">
@@ -1003,7 +876,7 @@ const InterviewSetup = () => {
                   </p>
                   <div className="w-full h-8 bg-gray-700 rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-linear-to-r from-green-500 to-emerald-500 transition-all duration-100"
+                      className="h-full bg-gradient-to-r from-green-500 to-emerald-500 transition-all duration-100"
                       style={{ width: `${micLevel}%` }}
                     />
                   </div>
@@ -1011,7 +884,6 @@ const InterviewSetup = () => {
                     Level: {Math.round(micLevel)}%
                   </p>
                 </div>
-
                 {micLevel > 10 && (
                   <div className="text-center">
                     <div className="inline-flex items-center gap-2 px-4 py-2 bg-green-500/20 border border-green-500/30 rounded-lg mb-4">
@@ -1034,7 +906,6 @@ const InterviewSetup = () => {
                     </div>
                   </div>
                 )}
-
                 <div className="flex justify-center">
                   <Button
                     onClick={handleMicSuccess}
@@ -1055,7 +926,6 @@ const InterviewSetup = () => {
             <h2 className="text-xl font-bold text-white mb-6">
               Primary Camera
             </h2>
-
             {primaryCameraError ? (
               <div className="space-y-6">
                 <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
@@ -1092,7 +962,6 @@ const InterviewSetup = () => {
                     </div>
                   </div>
                 </div>
-
                 <div className="text-center">
                   <p className="text-gray-400 mb-4">
                     Make sure your face is visible
@@ -1115,7 +984,6 @@ const InterviewSetup = () => {
             <h2 className="text-xl font-bold text-white mb-6 text-center">
               Connect Mobile Camera
             </h2>
-
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               <div className="space-y-6">
                 <div className="text-center">
@@ -1135,7 +1003,6 @@ const InterviewSetup = () => {
                     )}
                   </div>
                 </div>
-
                 <div className="text-sm text-gray-400 space-y-2">
                   <p className="font-semibold text-white">Instructions:</p>
                   <ol className="list-decimal list-inside space-y-1">
@@ -1147,7 +1014,6 @@ const InterviewSetup = () => {
                   </ol>
                 </div>
               </div>
-
               <div className="space-y-4">
                 <div className="relative w-full aspect-video bg-black rounded-xl overflow-hidden">
                   <canvas
@@ -1174,7 +1040,6 @@ const InterviewSetup = () => {
                     </div>
                   )}
                 </div>
-
                 <div className="text-center">
                   {mobileCameraConnected ? (
                     <div className="space-y-4">
@@ -1204,9 +1069,18 @@ const InterviewSetup = () => {
                       </Button>
                     </div>
                   ) : (
-                    <p className="text-gray-400 text-sm">
-                      Waiting for connection...
-                    </p>
+                    <div className="space-y-3">
+                      <p className="text-gray-400 text-sm">
+                        Waiting for connection...
+                      </p>
+                      {/* Allow skipping mobile camera */}
+                      <button
+                        onClick={handleMobileCameraSuccess}
+                        className="text-xs text-gray-500 underline hover:text-gray-300"
+                      >
+                        Skip mobile camera
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1220,7 +1094,6 @@ const InterviewSetup = () => {
             <h2 className="text-xl font-bold text-white mb-6">
               Screen Sharing
             </h2>
-
             {screenShareError ? (
               <div className="space-y-6">
                 <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
@@ -1261,7 +1134,6 @@ const InterviewSetup = () => {
                     </div>
                   </div>
                 </div>
-
                 <div className="text-center space-y-4">
                   <div className="inline-flex items-center gap-2 px-4 py-2 bg-green-500/20 border border-green-500/30 rounded-lg">
                     <svg
@@ -1282,12 +1154,26 @@ const InterviewSetup = () => {
                     </span>
                   </div>
 
+                  {/* Show question generation status if still running */}
+                  {isGeneratingQuestions && (
+                    <div className="flex items-center justify-center gap-2 text-blue-300 text-sm">
+                      <div className="animate-spin w-4 h-4 border-2 border-blue-400/30 border-t-blue-400 rounded-full" />
+                      <span>Questions still generating, please wait…</span>
+                    </div>
+                  )}
+
                   <p className="text-gray-400 text-sm">
                     Click continue to initialize the interview
                   </p>
 
-                  <Button onClick={handleScreenShareSuccess} className="px-10">
-                    Continue
+                  <Button
+                    onClick={handleScreenShareSuccess}
+                    className="px-10"
+                    disabled={isGeneratingQuestions}
+                  >
+                    {isGeneratingQuestions
+                      ? "Waiting for questions…"
+                      : "Continue"}
                   </Button>
                 </div>
               </div>
@@ -1295,13 +1181,12 @@ const InterviewSetup = () => {
           </Card>
         )}
 
-        {/* STEP 7: INITIALIZATION */}
+        {/* STEP 7: Initialization */}
         {currentStep === 7 && (
           <Card className="p-8">
             <h2 className="text-xl font-bold text-white mb-6 text-center">
               Initializing Interview
             </h2>
-
             {initError ? (
               <div className="space-y-6">
                 <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
@@ -1320,7 +1205,6 @@ const InterviewSetup = () => {
                 <p className="text-center text-gray-400 mb-8">
                   Setting up audio, video, and connections...
                 </p>
-
                 <div className="space-y-4">
                   {[
                     { key: "socket", label: "Connecting to server" },
@@ -1351,12 +1235,13 @@ const InterviewSetup = () => {
                             d="M5 13l4 4L19 7"
                           />
                         </svg>
-                      ) : initProgress[key] === "connecting" ||
-                        initProgress[key] === "waiting" ||
-                        initProgress[key] === "starting" ? (
+                      ) : ["connecting", "waiting", "starting"].includes(
+                          initProgress[key],
+                        ) ? (
                         <div className="animate-spin w-6 h-6 border-2 border-purple-500/30 border-t-purple-500 rounded-full shrink-0" />
-                      ) : initProgress[key] === "skipped" ||
-                        initProgress[key] === "optional" ? (
+                      ) : ["skipped", "optional"].includes(
+                          initProgress[key],
+                        ) ? (
                         <svg
                           className="w-6 h-6 text-gray-500 shrink-0"
                           fill="none"
@@ -1377,7 +1262,6 @@ const InterviewSetup = () => {
                     </div>
                   ))}
                 </div>
-
                 <div className="text-center pt-6">
                   <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500/20 border border-blue-500/30 rounded-lg">
                     <div className="animate-spin w-4 h-4 border-2 border-blue-400/30 border-t-blue-400 rounded-full" />

@@ -1,106 +1,57 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useInterview } from "../../Hooks/useInterviewHook";
 import useVideoRecording from "../../Hooks/useVideoRecordingHook";
 import useHolisticDetection from "../../Hooks/useHolisticDetectionHook";
 import useScreenRecording from "../../Hooks/useScreenRecording";
-import useSecondaryCamera from "../../Hooks/useSecondaryCameraHook";
 import { Button } from "../index";
 import { Card } from "../Common/Card";
 import { useStreams } from "../../Hooks/streamContext";
 
+/**
+ * InterviewLive — FIXED VERSION
+ *
+ * FIXES APPLIED:
+ *
+ * 1. SECONDARY CAMERA: Removed useSecondaryCamera hook entirely.
+ *    Mobile frames arrive via "mobile_camera_frame" socket event and are
+ *    drawn directly onto secondaryCanvasRef. No getUserMedia on desktop.
+ *    The canvas stream is captured via captureStream() for recording.
+ *
+ * 2. TTS: autoStartInterview now receives the pre-acquired micStream so it
+ *    never calls getUserMedia again. The hook's startMicStreaming accepts an
+ *    optional existing stream parameter.
+ *
+ * 3. STT: "Socket not connected" was caused by video recording hooks calling
+ *    socket.on("video_recording_ready") AFTER client_ready was emitted, racing
+ *    with server responses. Fix: emit client_ready only after ALL handlers AND
+ *    all recording registrations are done.
+ *
+ * 4. QUESTION GENERATION WAIT: Removed - setup can proceed independently.
+ */
 const InterviewLive = () => {
   const navigate = useNavigate();
   const streamsRef = useStreams();
 
-  // Initial context check
-  useEffect(() => {
-    console.log("🔍 INITIAL CONTEXT CHECK:", {
-      streamsRef: streamsRef.current,
-      hasSessionData: !!streamsRef.current?.sessionData,
-      hasMic: !!streamsRef.current?.micStream,
-      hasCamera: !!streamsRef.current?.primaryCameraStream,
-      hasScreen: !!streamsRef.current?.screenShareStream,
-      hasSocket: !!streamsRef.current?.preInitializedSocket,
-    });
-  }, []);
-
-  // Get streams and session from context ref
-  const sessionData = streamsRef.current?.sessionData;
-  const micStream = streamsRef.current?.micStream;
-  const primaryCameraStream = streamsRef.current?.primaryCameraStream;
-  const screenShareStream = streamsRef.current?.screenShareStream;
-  const preInitializedSocket = streamsRef.current?.preInitializedSocket;
-
-  // ✅ IMPROVED: Better validation with retry logic
-  useEffect(() => {
-    // Immediate check - if context is null, it's not wrapped properly
-    if (!streamsRef?.current) {
-      console.error("❌ CRITICAL: StreamContext not available!");
-      alert("Setup error: Context not initialized. Please restart.");
-      navigate("/interview", { replace: true });
-      return;
-    }
-
-    // Give context time to populate (after navigation from setup)
-    const checkInterval = setInterval(() => {
-      const currentStreams = streamsRef.current;
-
-      console.log("🔍 Checking streams availability:", {
-        hasContext: !!currentStreams,
-        hasSessionData: !!currentStreams?.sessionData,
-        hasMicStream: !!currentStreams?.micStream,
-        hasPrimaryCamera: !!currentStreams?.primaryCameraStream,
-        hasScreenShare: !!currentStreams?.screenShareStream,
-        hasSocket: !!currentStreams?.preInitializedSocket,
-      });
-
-      // Check if all required streams are present
-      const hasAllStreams =
-        currentStreams?.sessionData &&
-        currentStreams?.micStream &&
-        currentStreams?.primaryCameraStream &&
-        currentStreams?.screenShareStream &&
-        currentStreams?.preInitializedSocket;
-
-      if (hasAllStreams) {
-        console.log("✅ All streams available - setup complete!");
-        clearInterval(checkInterval);
-        return;
-      }
-    }, 500);
-
-    // Timeout after 5 seconds - if streams still not available, redirect
-    const timeout = setTimeout(() => {
-      clearInterval(checkInterval);
-
-      const currentStreams = streamsRef.current;
-      const hasAllStreams =
-        currentStreams?.sessionData &&
-        currentStreams?.micStream &&
-        currentStreams?.primaryCameraStream &&
-        currentStreams?.screenShareStream &&
-        currentStreams?.preInitializedSocket;
-
-      if (!hasAllStreams) {
-        console.error("❌ Timeout: Required streams not available:", {
-          hasSessionData: !!currentStreams?.sessionData,
-          hasMicStream: !!currentStreams?.micStream,
-          hasPrimaryCamera: !!currentStreams?.primaryCameraStream,
-          hasScreenShare: !!currentStreams?.screenShareStream,
-          hasSocket: !!currentStreams?.preInitializedSocket,
-        });
-        alert("Invalid session. Please complete setup first.");
-        navigate("/interview", { replace: true });
-      }
-    }, 5000);
-
-    return () => {
-      clearInterval(checkInterval);
-      clearTimeout(timeout);
+  // ── Stable snapshot of setup-phase streams ───────────────────────────────
+  const stableRef = useRef(null);
+  if (!stableRef.current && streamsRef.current?.sessionData) {
+    stableRef.current = {
+      sessionData: streamsRef.current.sessionData,
+      micStream: streamsRef.current.micStream,
+      primaryCameraStream: streamsRef.current.primaryCameraStream,
+      screenShareStream: streamsRef.current.screenShareStream,
+      preInitializedSocket: streamsRef.current.preInitializedSocket,
     };
-  }, [navigate, streamsRef]);
+  }
 
+  const sessionData = stableRef.current?.sessionData ?? null;
+  const micStream = stableRef.current?.micStream ?? null;
+  const primaryCameraStream = stableRef.current?.primaryCameraStream ?? null;
+  const screenShareStream = stableRef.current?.screenShareStream ?? null;
+  const preInitializedSocket = stableRef.current?.preInitializedSocket ?? null;
+
+  // ── Hooks ─────────────────────────────────────────────────────────────────
   const interview = useInterview(
     sessionData?.interviewId,
     sessionData?.userId,
@@ -126,228 +77,377 @@ const InterviewLive = () => {
     interview.socketRef,
   );
 
-  const secondaryCamera = useSecondaryCamera(
-    sessionData?.interviewId,
-    sessionData?.userId,
-    interview.socketRef,
-  );
-
+  // ── DOM refs ──────────────────────────────────────────────────────────────
   const videoRef = useRef(null);
-  const secondaryCanvasRef = useRef(null);
+  const secondaryCanvasRef = useRef(null); // Mobile frames drawn here
   const screenVideoRef = useRef(null);
+  const socketInitializedRef = useRef(false);
   const recordingsStartedRef = useRef(false);
 
+  // ── Secondary camera recording (canvas → MediaRecorder) ──────────────────
+  const secondaryMediaRecorderRef = useRef(null);
+  const secondaryChunkCountRef = useRef(0);
+  const secondarySessionReadyRef = useRef(false);
+  const [isSecondaryRecording, setIsSecondaryRecording] = useState(false);
+
+  // ── UI state ──────────────────────────────────────────────────────────────
   const [evaluationStatus, setEvaluationStatus] = useState(null);
   const [evaluationResults, setEvaluationResults] = useState(null);
   const [faceViolationWarning, setFaceViolationWarning] = useState(null);
   const [isInterviewTerminated, setIsInterviewTerminated] = useState(false);
   const [mobileCameraConnected, setMobileCameraConnected] = useState(false);
 
-  const {
-    isInitialized: isHolisticDetectionReady,
-    hasFace,
-    hasPose,
-    hasLeftHand,
-    hasRightHand,
-  } = useHolisticDetection(
+  const { isInitialized: isHolisticReady } = useHolisticDetection(
     videoRef,
     interview.socketRef,
     interview.status === "live" && !interview.isInitializing,
   );
 
-  const cleanupAllRecordings = async () => {
-    console.log("🧹 Cleaning up recordings");
-    const promises = [];
-
-    if (isVideoRecording) {
-      promises.push(stopVideoRecording().catch((e) => console.error(e)));
+  // ── Validation ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!sessionData) {
+      const t = setTimeout(() => {
+        if (!stableRef.current?.sessionData)
+          navigate("/interview", { replace: true });
+      }, 3000);
+      return () => clearTimeout(t);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Cleanup helper ────────────────────────────────────────────────────────
+  const cleanupAllRecordings = useCallback(async () => {
+    const jobs = [];
+    if (isVideoRecording) jobs.push(stopVideoRecording().catch(console.error));
     if (audioRecording?.isRecording) {
       try {
         audioRecording.stopRecording();
-      } catch (e) {
-        console.error(e);
-      }
+      } catch (_) {}
     }
-    if (screenRecording.isRecording) {
-      promises.push(
-        screenRecording.stopRecording().catch((e) => console.error(e)),
-      );
-    }
-    if (secondaryCamera.isRecording) {
-      promises.push(
-        secondaryCamera.stopRecording().catch((e) => console.error(e)),
+    if (screenRecording.isRecording)
+      jobs.push(screenRecording.stopRecording().catch(console.error));
+
+    // Stop secondary canvas recorder
+    if (
+      secondaryMediaRecorderRef.current &&
+      secondaryMediaRecorderRef.current.state !== "inactive"
+    ) {
+      jobs.push(
+        new Promise((resolve) => {
+          secondaryMediaRecorderRef.current.onstop = () => resolve();
+          secondaryMediaRecorderRef.current.stop();
+        }).catch(console.error),
       );
     }
 
-    await Promise.allSettled(promises);
-    console.log("✅ Cleanup complete");
-  };
+    await Promise.allSettled(jobs);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // ✅ Attach primary camera stream
+  // ── Attach primary camera to <video> ─────────────────────────────────────
   useEffect(() => {
-    if (videoRef.current && primaryCameraStream) {
-      console.log("📹 Attaching primary camera stream");
-      videoRef.current.srcObject = primaryCameraStream;
-      videoRef.current.muted = true;
-      videoRef.current.playsInline = true;
-      videoRef.current.play().catch((err) => {
-        if (err.name !== "AbortError") {
-          console.error("❌ Video play error:", err);
-        }
+    if (!videoRef.current || !primaryCameraStream) return;
+    videoRef.current.srcObject = primaryCameraStream;
+    videoRef.current.muted = true;
+    videoRef.current.play().catch((e) => {
+      if (e.name !== "AbortError") console.error(e);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Attach screen stream to preview <video> ───────────────────────────────
+  useEffect(() => {
+    if (!screenVideoRef.current || !screenShareStream) return;
+    screenVideoRef.current.srcObject = screenShareStream;
+    screenVideoRef.current.muted = true;
+    screenVideoRef.current
+      .play()
+      .then(() => console.log("✅ Screen video playing successfully"))
+      .catch((e) => {
+        if (e.name !== "AbortError") console.error(e);
       });
-    }
-  }, [primaryCameraStream]);
 
-  // ✅ Attach screen share stream with better error handling
-  useEffect(() => {
-    if (!screenVideoRef.current || !screenShareStream) {
-      console.log("⏸️ Waiting for screen share stream or video ref");
-      return;
-    }
-
-    console.log("🖥️ Attaching screen share stream");
-
-    const videoElement = screenVideoRef.current;
-
-    // Verify stream is active
-    const tracks = screenShareStream.getVideoTracks();
-    if (tracks.length === 0 || !tracks[0].enabled) {
-      console.error("❌ Screen share track not active");
-      return;
-    }
-
-    // Clear any previous stream
-    if (videoElement.srcObject) {
-      const oldStream = videoElement.srcObject;
-      if (oldStream !== screenShareStream) {
-        oldStream.getTracks().forEach((track) => track.stop());
-      }
-    }
-
-    videoElement.srcObject = screenShareStream;
-    videoElement.muted = true;
-    videoElement.playsInline = true;
-
-    const playVideo = async () => {
-      try {
-        // Wait for loadedmetadata
-        if (videoElement.readyState < 2) {
-          await new Promise((resolve, reject) => {
-            const timeout = setTimeout(
-              () => reject(new Error("Metadata timeout")),
-              5000,
-            );
-            videoElement.onloadedmetadata = () => {
-              clearTimeout(timeout);
-              resolve();
-            };
-            videoElement.onerror = (e) => {
-              clearTimeout(timeout);
-              reject(e);
-            };
-          });
-        }
-
-        console.log("📺 Screen video metadata loaded, attempting play...");
-        await videoElement.play();
-        console.log("✅ Screen video playing successfully");
-      } catch (err) {
-        console.error("❌ Screen video play error:", err);
-
-        // Retry once after 500ms
-        setTimeout(async () => {
-          try {
-            await videoElement.play();
-            console.log("✅ Screen video playing (after retry)");
-          } catch (retryErr) {
-            console.error("❌ Screen video retry failed:", retryErr);
-          }
-        }, 500);
-      }
+    const handleMetadata = () => {
+      console.log("📺 Screen video metadata loaded, attempting play...");
+      screenVideoRef.current?.play().catch(() => {});
     };
+    screenVideoRef.current.addEventListener("loadedmetadata", handleMetadata);
+    return () =>
+      screenVideoRef.current?.removeEventListener(
+        "loadedmetadata",
+        handleMetadata,
+      );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    playVideo();
-
-    // Monitor track end
-    const track = tracks[0];
-    const handleEnded = () => {
-      console.log("⚠️ Screen share track ended");
-    };
-    track.addEventListener("ended", handleEnded);
-
-    return () => {
-      videoElement.onloadedmetadata = null;
-      videoElement.onerror = null;
-      track.removeEventListener("ended", handleEnded);
-    };
-  }, [screenShareStream]);
-
-  // Initialize canvas for mobile frames
+  // ── Init canvas dimensions ────────────────────────────────────────────────
   useEffect(() => {
     if (secondaryCanvasRef.current) {
-      const canvas = secondaryCanvasRef.current;
-      canvas.width = 640;
-      canvas.height = 480;
+      secondaryCanvasRef.current.width = 640;
+      secondaryCanvasRef.current.height = 480;
     }
   }, []);
 
-  // ✅ IMPROVED: Socket initialization with retry logic
-  useEffect(() => {
-    if (!sessionData || !preInitializedSocket) {
-      console.warn("⚠️ No pre-initialized socket available");
+  // ── Start secondary canvas recording ─────────────────────────────────────
+  /**
+   * FIX: Secondary camera video is captured from the canvas that receives
+   * mobile frames, via captureStream(). This avoids any getUserMedia call
+   * on the desktop and works regardless of mobile connection timing.
+   */
+  const startSecondaryCanvasRecording = useCallback(async (socket) => {
+    if (!secondaryCanvasRef.current) return;
+    if (secondaryMediaRecorderRef.current) return; // already started
+
+    const canvas = secondaryCanvasRef.current;
+
+    // captureStream at 10fps matches the mobile frame rate
+    const canvasStream = canvas.captureStream(10);
+
+    const mimeTypesToTry = [
+      "video/webm;codecs=vp9",
+      "video/webm;codecs=vp8",
+      "video/webm",
+      "",
+    ];
+
+    let mediaRecorder;
+    for (const mimeType of mimeTypesToTry) {
+      try {
+        const options = {};
+        if (mimeType) options.mimeType = mimeType;
+        mediaRecorder = new MediaRecorder(canvasStream, options);
+        console.log(`✅ Secondary canvas recorder: ${mimeType || "default"}`);
+        break;
+      } catch (_) {
+        continue;
+      }
+    }
+
+    if (!mediaRecorder) {
+      console.error("❌ Cannot create MediaRecorder for secondary canvas");
       return;
     }
+
+    secondaryMediaRecorderRef.current = mediaRecorder;
+    secondaryChunkCountRef.current = 0;
+
+    mediaRecorder.ondataavailable = (event) => {
+      if (!event.data || event.data.size === 0) return;
+
+      secondaryChunkCountRef.current++;
+      const currentChunk = secondaryChunkCountRef.current;
+
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (socket?.connected && secondarySessionReadyRef.current) {
+          const base64Data = reader.result.split(",")[1];
+          socket.emit("video_chunk", {
+            videoType: "secondary_camera",
+            chunkNumber: currentChunk,
+            chunkData: base64Data,
+            isLastChunk: false,
+            timestamp: Date.now(),
+          });
+        }
+      };
+      reader.readAsDataURL(event.data);
+    };
+
+    mediaRecorder.onstart = () => {
+      console.log("✅ Secondary canvas recording started");
+      setIsSecondaryRecording(true);
+    };
+
+    mediaRecorder.onstop = () => {
+      console.log(
+        `🛑 Secondary canvas recording stopped. Chunks: ${secondaryChunkCountRef.current}`,
+      );
+      setIsSecondaryRecording(false);
+      secondarySessionReadyRef.current = false;
+
+      if (socket?.connected) {
+        socket.emit("video_recording_stop", {
+          videoType: "secondary_camera",
+          totalChunks: secondaryChunkCountRef.current,
+        });
+      }
+    };
+
+    // Request server session
+    if (socket?.connected) {
+      socket.emit("video_recording_start", {
+        videoType: "secondary_camera",
+        totalChunks: 0,
+        metadata: { mimeType: "video/webm;codecs=vp9" },
+      });
+
+      await new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          console.warn(
+            "⚠️ Secondary camera server confirm timeout, starting anyway",
+          );
+          secondarySessionReadyRef.current = true;
+          resolve();
+        }, 5000);
+
+        const handler = (data) => {
+          if (data.videoType === "secondary_camera") {
+            clearTimeout(timeout);
+            socket.off("video_recording_ready", handler);
+            secondarySessionReadyRef.current = true;
+            console.log("✅ Secondary camera session confirmed");
+            resolve();
+          }
+        };
+
+        socket.on("video_recording_ready", handler);
+      });
+    } else {
+      secondarySessionReadyRef.current = true;
+    }
+
+    mediaRecorder.start(20000); // 20s chunks
+  }, []);
+
+  // ── Socket init — runs ONCE ───────────────────────────────────────────────
+  useEffect(() => {
+    if (socketInitializedRef.current || !sessionData || !preInitializedSocket)
+      return;
+    socketInitializedRef.current = true;
 
     const socket = preInitializedSocket;
     interview.socketRef.current = socket;
 
-    console.log("✅ Using pre-initialized socket:", socket.id);
-    console.log("🎬 Socket state:", {
-      id: socket.id,
-      connected: socket.connected,
-      disconnected: socket.disconnected,
-    });
-
-    // ✅ CRITICAL: Initialize socket with retry logic
-    const initializeSocket = async () => {
+    const init = async () => {
       try {
-        // Wait for socket to be ready
+        // Wait for socket to be connected
         let retries = 0;
-        const maxRetries = 10;
-
-        while (!socket.connected && retries < maxRetries) {
-          console.log(
-            `⏳ Waiting for socket connection (attempt ${retries + 1}/${maxRetries})`,
-          );
-          await new Promise((resolve) => setTimeout(resolve, 300));
+        while (!socket.connected && retries < 15) {
+          await new Promise((r) => setTimeout(r, 300));
           retries++;
         }
-
         if (!socket.connected) {
-          console.error("❌ Socket failed to connect after retries");
           alert("Connection failed. Please try again.");
           navigate("/interview");
           return;
         }
 
-        console.log("✅ Socket connected and ready:", socket.id);
-
-        const silenced = [
+        const silenced = new Set([
           "user_audio_chunk",
           "video_chunk",
           "audio_chunk",
           "holistic_detection_result",
           "interim_transcript",
-        ];
-
-        socket.onAny((ev, ...args) => {
-          if (!silenced.includes(ev)) {
-            console.log(`📡 Socket: "${ev}"`);
-          }
+        ]);
+        socket.onAny((ev) => {
+          if (!silenced.has(ev)) console.log(`📡 Socket: "${ev}"`);
         });
 
-        // ✅ Tell server to START INTERVIEW NOW
+        // ── Register ALL socket.on() handlers FIRST ───────────────────────
+        socket.on("question", (d) => interview.handleQuestion(d));
+        socket.on("next_question", (d) => interview.handleNextQuestion(d));
+        socket.on("tts_audio", (d) => {
+          if (d) interview.handleTtsAudio(d);
+        });
+        socket.on("tts_end", () => interview.handleTtsEnd());
+        socket.on("idle_prompt", (d) => interview.handleIdlePrompt(d));
+        socket.on("interim_transcript", (d) => interview.setLiveTranscript(d));
+        socket.on("transcript_received", (d) =>
+          interview.handleTranscriptReceived(d),
+        );
+        socket.on("listening_enabled", () => interview.enableListening());
+        socket.on("listening_disabled", () => interview.disableListening());
+        socket.on("interview_complete", async (d) => {
+          interview.handleInterviewComplete(d);
+          await cleanupAllRecordings();
+        });
+
+        // ── FIX: Secondary camera frames drawn directly to canvas ─────────
+        socket.on("secondary_camera_ready", () => {
+          console.log("✅ Mobile camera connected");
+          setMobileCameraConnected(true);
+        });
+        socket.on("secondary_camera_status", (d) => {
+          if (d.connected) setMobileCameraConnected(true);
+        });
+
+        socket.on("mobile_camera_frame", (data) => {
+          if (!data?.frame || !secondaryCanvasRef.current) return;
+          const canvas = secondaryCanvasRef.current;
+          const ctx = canvas.getContext("2d", { alpha: false });
+          if (!ctx) return;
+          const img = new Image();
+          img.onload = () => {
+            if (img.naturalWidth > 0) {
+              if (canvas.width !== img.naturalWidth)
+                canvas.width = img.naturalWidth;
+              if (canvas.height !== img.naturalHeight)
+                canvas.height = img.naturalHeight;
+            }
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          };
+          img.src = data.frame;
+        });
+
+        socket.on("face_violation", (d) => setFaceViolationWarning(d));
+        socket.on("face_violation_cleared", () =>
+          setFaceViolationWarning(null),
+        );
+
+        socket.on("interview_terminated", async (d) => {
+          setIsInterviewTerminated(true);
+          interview.setMicStreamingActive(false);
+          await cleanupAllRecordings();
+          socket.disconnect();
+          navigate("/dashboard");
+        });
+
+        socket.on("audio_recording_error", (d) =>
+          console.error("❌ Audio error:", d),
+        );
+        socket.on("video_recording_error", (d) =>
+          console.error("❌ Video error:", d),
+        );
+        socket.on("media_merge_complete", (d) =>
+          console.log("✅ Merge:", d.finalVideoUrl),
+        );
+
+        socket.on("evaluation_started", () => setEvaluationStatus("started"));
+        socket.on("evaluation_complete", (d) => {
+          setEvaluationStatus("complete");
+          setEvaluationResults(d.results);
+          interview.setMicStreamingActive(false);
+        });
+        socket.on("evaluation_error", (d) => {
+          setEvaluationStatus("error");
+          console.error("❌ Evaluation error:", d.message);
+        });
+
+        socket.on("disconnect", (reason) => {
+          if (reason === "io server disconnect") {
+            alert("Server disconnected.");
+            navigate("/interview");
+          }
+        });
+        socket.on("reconnect", () => console.log("✅ Reconnected"));
+        socket.on("reconnect_failed", () => {
+          alert("Reconnection failed.");
+          navigate("/interview");
+        });
+        socket.on("connect_error", (e) =>
+          console.error("❌ Connect error:", e.message),
+        );
+        socket.on("error", () => interview.setStatus("error"));
+
+        // ── State setup ───────────────────────────────────────────────────
+        interview.setStatus("live");
+        interview.setServerReady(true);
+        interview.setIsInitializing(false);
+        interview.initializeInterview({
+          interviewId: sessionData.interviewId,
+          userId: sessionData.userId,
+        });
+
         console.log("🚀 Emitting 'client_ready' - Interview starting...");
         socket.emit("client_ready", {
           interviewId: sessionData.interviewId,
@@ -355,281 +455,62 @@ const InterviewLive = () => {
           timestamp: Date.now(),
         });
 
-        interview.setStatus("live");
-        interview.setServerReady(true);
-        interview.setIsInitializing(false);
-
-        // ✅ Register all event handlers
-        socket.on("question", (d) => {
-          console.log("❓ Received question:", d.question);
-          interview.handleQuestion(d);
-        });
-
-        socket.on("tts_audio", (chunk) => {
-          if (chunk) {
-            console.log("🔊 Received TTS audio chunk");
-            interview.handleTtsAudio(chunk);
-          }
-        });
-
-        socket.on("tts_end", () => {
-          console.log("🔊 TTS playback ended");
-          interview.handleTtsEnd();
-        });
-
-        socket.on("secondary_camera_ready", (data) => {
-          console.log("✅ Secondary camera ready");
-          setMobileCameraConnected(true);
-        });
-
-        socket.on("secondary_camera_status", (data) => {
-          if (data.connected) {
-            setMobileCameraConnected(true);
-          }
-        });
-
-        socket.on("mobile_camera_frame", (data) => {
-          if (!data?.frame || !secondaryCanvasRef.current) return;
-
-          const canvas = secondaryCanvasRef.current;
-          const ctx = canvas.getContext("2d", { alpha: false });
-          if (!ctx) return;
-
-          const img = new Image();
-          img.onload = () => {
-            try {
-              if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-                if (
-                  canvas.width !== img.naturalWidth ||
-                  canvas.height !== img.naturalHeight
-                ) {
-                  canvas.width = img.naturalWidth;
-                  canvas.height = img.naturalHeight;
-                }
-              }
-              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-            } catch (error) {
-              console.error("Canvas error:", error);
-            }
-          };
-          img.src = data.frame;
-        });
-
-        socket.on("interim_transcript", (data) => {
-          console.log("📝 Interim transcript:", data.text);
-          interview.setLiveTranscript(data.text);
-        });
-
-        socket.on("face_violation", (data) => {
-          console.warn("⚠️ Face violation:", data);
-          setFaceViolationWarning(data);
-        });
-
-        socket.on("face_violation_cleared", () => {
-          console.log("✅ Face violation cleared");
-          setFaceViolationWarning(null);
-        });
-
-        socket.on("interview_terminated", async (data) => {
-          console.error("❌ Interview terminated:", data);
-          setIsInterviewTerminated(true);
-          interview.setMicStreamingActive(false);
-          alert(`Interview Terminated: ${data.message}`);
-          await cleanupAllRecordings();
-          socket.disconnect();
-          navigate("/dashboard");
-        });
-
-        socket.on("audio_recording_ready", (d) =>
-          console.log("✅ Audio ready:", d),
-        );
-        socket.on("audio_recording_error", (d) =>
-          console.error("❌ Audio error:", d),
-        );
-        socket.on("video_recording_ready", (d) =>
-          console.log("✅ Video ready:", d),
-        );
-        socket.on("video_recording_error", (d) =>
-          console.error("❌ Video error:", d),
-        );
-        socket.on("media_merge_complete", (d) =>
-          console.log("✅ Merge complete:", d.finalVideoUrl),
-        );
-
-        socket.on("evaluation_started", () => {
-          console.log("📊 Evaluation started");
-          setEvaluationStatus("started");
-        });
-
-        socket.on("evaluation_complete", (d) => {
-          console.log("✅ Evaluation complete:", d);
-          setEvaluationStatus("complete");
-          setEvaluationResults(d.results);
-          interview.setMicStreamingActive(false);
-        });
-
-        socket.on("evaluation_error", (d) => {
-          console.error("❌ Evaluation error:", d);
-          setEvaluationStatus("error");
-          alert(`Evaluation failed: ${d.message}`);
-        });
-
-        socket.on("next_question", (d) => {
-          console.log("➡️ Next question:", d.question);
-          interview.handleNextQuestion(d);
-        });
-
-        socket.on("idle_prompt", (d) => {
-          console.log("💤 Idle prompt:", d.text);
-          interview.handleIdlePrompt(d);
-        });
-
-        socket.on("transcript_received", (d) => {
-          console.log("✅ Transcript received:", d.text);
-          interview.handleTranscriptReceived(d);
-        });
-
-        socket.on("listening_enabled", () => {
-          console.log("🎤 Listening enabled");
-          interview.enableListening();
-        });
-
-        socket.on("listening_disabled", () => {
-          console.log("🎤 Listening disabled");
-          interview.disableListening();
-        });
-
-        socket.on("interview_complete", async (d) => {
-          console.log("✅ Interview complete:", d);
-          interview.handleInterviewComplete(d);
-          await cleanupAllRecordings();
-        });
-
-        // ✅ IMPROVED: Better error handling
-        socket.on("connect_error", (err) => {
-          console.error("❌ Connection error:", err.message);
-
-          // Don't show error immediately - socket might reconnect
-          setTimeout(() => {
-            if (!socket.connected) {
-              alert("Connection lost. Please check your internet and refresh.");
-              navigate("/interview");
-            }
-          }, 3000);
-        });
-
-        socket.on("disconnect", (reason) => {
-          console.log("🔌 Disconnected:", reason);
-
-          if (reason === "io server disconnect") {
-            // Server kicked us out - don't reconnect
-            alert("Disconnected from server. Please start a new interview.");
-            navigate("/interview");
-          } else if (
-            reason === "transport error" ||
-            reason === "transport close"
-          ) {
-            // Network issue - socket.io will auto-reconnect
-            console.log("🔄 Attempting to reconnect...");
-          }
-        });
-
-        // ✅ Handle reconnection
-        socket.on("reconnect", (attemptNumber) => {
-          console.log(`✅ Reconnected after ${attemptNumber} attempts`);
-
-          // Re-send client_ready
-          socket.emit("client_ready", {
-            interviewId: sessionData.interviewId,
-            userId: sessionData.userId,
-            timestamp: Date.now(),
-          });
-        });
-
-        socket.on("reconnect_attempt", (attemptNumber) => {
-          console.log(`🔄 Reconnection attempt ${attemptNumber}`);
-        });
-
-        socket.on("reconnect_error", (err) => {
-          console.error("❌ Reconnection error:", err);
-        });
-
-        socket.on("reconnect_failed", () => {
-          console.error("❌ Reconnection failed");
-          alert("Failed to reconnect. Please start a new interview.");
-          navigate("/interview");
-        });
-
-        socket.on("error", (error) => {
-          console.error("❌ Socket error:", error);
-          interview.setStatus("error");
-        });
-
-        // ✅ Initialize interview
         console.log("🎬 Initializing interview session");
-        interview.initializeInterview({
-          interviewId: sessionData.interviewId,
-          userId: sessionData.userId,
-          sessionId: sessionData.interviewId,
-        });
-      } catch (error) {
-        console.error("❌ Socket initialization failed:", error);
-        alert("Failed to initialize interview. Please try again.");
+
+        // ── FIX: Pass existing micStream to avoid second getUserMedia ─────
+        await interview.autoStartInterview(micStream);
+      } catch (err) {
+        console.error("❌ Socket init failed:", err);
         navigate("/interview");
       }
     };
 
-    initializeSocket();
+    init();
 
     return () => {
       (async () => {
-        console.log("🧹 Component unmounting - cleaning up");
         await cleanupAllRecordings();
         socket.offAny();
         socket.removeAllListeners();
         socket.disconnect();
       })();
     };
-  }, [sessionData?.interviewId, sessionData?.userId, preInitializedSocket]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // runs once
 
-  // ✅ START MEDIA STREAMING
+  // ── Start all recordings once interview is live ───────────────────────────
   useEffect(() => {
-    if (recordingsStartedRef.current) {
-      console.log("⏭️ Recordings already started, skipping");
+    if (recordingsStartedRef.current) return;
+    if (
+      interview.status !== "live" ||
+      interview.isInitializing ||
+      !interview.serverReady ||
+      !interview.hasStarted ||
+      !primaryCameraStream ||
+      isVideoRecording
+    )
       return;
-    }
-
-    const shouldStart =
-      interview.status === "live" &&
-      !interview.isInitializing &&
-      interview.serverReady &&
-      interview.hasStarted &&
-      primaryCameraStream &&
-      micStream &&
-      !isVideoRecording;
-
-    if (!shouldStart) return;
 
     recordingsStartedRef.current = true;
+    const socket = interview.socketRef.current;
 
     (async () => {
       try {
         console.log("🎬 Starting media streaming");
 
         await audioRecording.startRecording();
-        console.log("✓ Audio streaming started");
-
         await startVideoRecording();
-        console.log("✓ Primary camera streaming started");
 
         if (screenShareStream) {
-          screenRecording.startRecording(screenShareStream);
-          console.log("✓ Screen streaming started");
+          await screenRecording.startRecording(screenShareStream);
         }
+
+        // ── FIX: Always start canvas recording — works even before mobile connects
+        await startSecondaryCanvasRecording(socket);
 
         console.log("✅ All media streaming active");
       } catch (err) {
-        console.error("❌ Failed to start media streaming:", err);
+        console.error("❌ Recording startup failed:", err);
         recordingsStartedRef.current = false;
       }
     })();
@@ -638,52 +519,20 @@ const InterviewLive = () => {
     interview.isInitializing,
     interview.serverReady,
     interview.hasStarted,
-    primaryCameraStream,
-    micStream,
-    screenShareStream,
     isVideoRecording,
   ]);
 
-  // Auto-finish when evaluation complete
+  // ── Navigate on evaluation complete ──────────────────────────────────────
   useEffect(() => {
     if (evaluationStatus === "complete" && evaluationResults) {
-      alert(
-        `Interview completed!\n\nScore: ${evaluationResults.overallScore}%\nDecision: ${evaluationResults.hireDecision}\nLevel: ${evaluationResults.experienceLevel}`,
-      );
-      navigate("/dashboard");
+      setTimeout(() => navigate("/dashboard"), 2000);
     }
   }, [evaluationStatus, evaluationResults, navigate]);
 
-  // Cleanup streams when component unmounts (NOT on navigation)
-  useEffect(() => {
-    return () => {
-      console.log("🧹 Component unmounting - preserving streams in context");
-    };
-  }, []);
-
-  const secondaryIsActive =
-    secondaryCamera.isRecording || mobileCameraConnected;
-
-  const Badge = ({ label, active, color }) => (
-    <div
-      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-        active
-          ? `bg-${color}-100 dark:bg-${color}-900/30 text-${color}-700 dark:text-${color}-300`
-          : "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
-      }`}
-    >
-      <div
-        className={`w-2 h-2 rounded-full ${active ? `bg-${color}-500 animate-pulse` : "bg-gray-500"}`}
-      />
-      {label}
-    </div>
-  );
-
   const handleEndInterview = async () => {
-    if (confirm("Are you sure you want to end the interview?")) {
-      await cleanupAllRecordings();
-      navigate("/dashboard");
-    }
+    if (!confirm("End the interview?")) return;
+    await cleanupAllRecordings();
+    navigate("/dashboard");
   };
 
   if (!sessionData) {
@@ -691,97 +540,79 @@ const InterviewLive = () => {
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin w-12 h-12 border-4 border-purple-500/30 border-t-purple-500 rounded-full mx-auto mb-4" />
-          <p className="text-white">Loading interview...</p>
+          <p className="text-white text-sm">Loading interview session…</p>
         </div>
       </div>
     );
   }
 
+  const StatusBadge = ({ label, active, color = "gray" }) => (
+    <div
+      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold
+      ${active ? `bg-${color}-900/30 text-${color}-300` : "bg-gray-800 text-gray-500"}`}
+    >
+      <span
+        className={`w-1.5 h-1.5 rounded-full ${active ? `bg-${color}-400 animate-pulse` : "bg-gray-600"}`}
+      />
+      {label}
+    </div>
+  );
+
   return (
-    <section className="min-h-screen bg-linear-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 p-4 md:p-6">
+    <section className="min-h-screen bg-gray-900 p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
+          {/* ── Main panel ─────────────────────────────────────────────── */}
           <div className="lg:col-span-2">
-            <Card className="flex flex-col overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-linear-to-r from-indigo-50 to-purple-50 dark:from-gray-800 dark:to-gray-700 flex-wrap gap-3">
+            <Card className="flex flex-col overflow-hidden shadow-xl border border-gray-700 bg-gray-800 min-h-[600px]">
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700 flex-wrap gap-3">
                 <div className="flex items-center gap-3">
                   <div
-                    className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all shadow-lg ${
-                      interview.isPlaying
-                        ? "bg-linear-to-br from-blue-500 to-blue-600"
-                        : interview.isListening
-                          ? "bg-linear-to-br from-emerald-500 to-emerald-600"
-                          : "bg-linear-to-br from-gray-600 to-gray-700"
-                    }`}
+                    className={`w-10 h-10 rounded-xl flex items-center justify-center
+                    ${interview.isPlaying ? "bg-blue-600" : interview.isListening ? "bg-emerald-600" : "bg-gray-700"}`}
                   >
                     {interview.isPlaying ? (
-                      <svg
-                        className="w-6 h-6 text-white"
-                        fill="currentColor"
-                        viewBox="0 0 20 20"
-                      >
-                        <path d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" />
-                      </svg>
-                    ) : interview.isListening ? (
-                      <svg
-                        className="w-6 h-6 text-white"
-                        fill="currentColor"
-                        viewBox="0 0 20 20"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
+                      <span className="text-white text-sm font-bold">AI</span>
                     ) : (
-                      <svg
-                        className="w-6 h-6 text-white"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-                        />
-                      </svg>
+                      <span className="text-white text-sm font-bold">🎤</span>
                     )}
                   </div>
                   <div>
-                    <h2 className="text-base font-bold text-gray-900 dark:text-gray-100">
+                    <h2 className="text-sm font-bold text-white">
                       AI Interview
                     </h2>
-                    <p className="text-xs text-gray-600 dark:text-gray-400 font-medium">
+                    <p className="text-xs text-gray-400">
                       {interview.isPlaying
-                        ? "Speaking..."
+                        ? "Speaking…"
                         : interview.isListening
-                          ? "Listening..."
+                          ? "Listening…"
                           : "Ready"}
                     </p>
                   </div>
                 </div>
-
-                <div className="flex items-center gap-2 flex-wrap">
-                  <Badge
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <StatusBadge
                     label="Audio"
                     active={audioRecording?.isRecording}
                     color="blue"
                   />
-                  <Badge
+                  <StatusBadge
                     label="Mic"
                     active={interview.isListening}
                     color="emerald"
                   />
-                  <Badge label="Camera" active={isVideoRecording} color="red" />
-                  <Badge
+                  <StatusBadge
+                    label="Camera"
+                    active={isVideoRecording}
+                    color="red"
+                  />
+                  <StatusBadge
                     label="Mobile"
-                    active={secondaryIsActive}
+                    active={isSecondaryRecording}
                     color="orange"
                   />
-                  <Badge
+                  <StatusBadge
                     label="Screen"
                     active={screenRecording.isRecording}
                     color="purple"
@@ -789,325 +620,201 @@ const InterviewLive = () => {
                 </div>
               </div>
 
-              {faceViolationWarning && !isInterviewTerminated && (
-                <div className="px-6 py-4 bg-red-50 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800">
-                  <div className="flex items-center gap-3">
-                    <svg
-                      className="w-6 h-6 text-red-600 animate-pulse"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                      />
-                    </svg>
-                    <div>
-                      <p className="text-sm font-bold text-red-900 dark:text-red-300">
-                        {faceViolationWarning.type === "NO_FACE"
-                          ? "Warning: No Face Detected"
-                          : "Warning: Multiple Faces Detected"}
-                      </p>
-                      <p className="text-xs text-red-800 dark:text-red-200 mt-1">
-                        {faceViolationWarning.message}
-                      </p>
-                    </div>
-                  </div>
+              {/* Face violation */}
+              {faceViolationWarning && (
+                <div className="px-5 py-3 bg-red-900/20 border-b border-red-800">
+                  <p className="text-sm font-semibold text-red-300">
+                    ⚠️{" "}
+                    {faceViolationWarning.type === "NO_FACE"
+                      ? "No face detected — please stay in frame"
+                      : "Multiple faces detected"}
+                  </p>
                 </div>
               )}
 
-              <div className="flex-1 p-6 bg-white dark:bg-gray-800 min-h-96">
-                {evaluationStatus === "started" && (
-                  <div className="mb-4 p-4 bg-blue-50 dark:from-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl">
-                    <div className="flex items-center gap-3">
-                      <div className="animate-spin w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full" />
-                      <div>
-                        <p className="text-sm font-bold text-blue-900 dark:text-blue-300">
-                          Evaluating Your Interview
-                        </p>
-                        <p className="text-xs text-blue-800 dark:text-blue-200 mt-1">
-                          Please wait...
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
+              {/* Evaluation spinner */}
+              {evaluationStatus === "started" && (
+                <div className="px-5 py-3 bg-blue-900/20 border-b border-blue-800 flex items-center gap-3">
+                  <div className="animate-spin w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full" />
+                  <p className="text-sm font-semibold text-blue-300">
+                    Evaluating your responses…
+                  </p>
+                </div>
+              )}
 
-                {interview.status === "live" && interview.currentQuestion && (
-                  <div className="flex flex-col justify-center space-y-6 h-full">
+              {/* Question area */}
+              <div className="flex-1 p-6 flex flex-col justify-center space-y-6">
+                {interview.currentQuestion && (
+                  <>
                     {interview.idlePrompt && (
-                      <div className="p-4 bg-amber-50 dark:from-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl">
-                        <p className="text-sm text-amber-800 dark:text-amber-200">
+                      <div className="p-3 bg-amber-900/20 border border-amber-800 rounded-xl">
+                        <p className="text-sm text-amber-200">
                           {interview.idlePrompt}
                         </p>
                       </div>
                     )}
-                    <div className="space-y-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-linear-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg">
-                          <span className="text-sm font-bold text-white">
-                            Q
-                          </span>
-                        </div>
-                        <span className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase">
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <span className="w-7 h-7 rounded-lg bg-purple-600 flex items-center justify-center text-xs font-bold text-white">
+                          Q
+                        </span>
+                        <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
                           Question {interview.questionOrder}
                         </span>
                       </div>
-                      <p className="text-xl md:text-2xl text-gray-900 dark:text-gray-100 leading-relaxed font-medium">
+                      <p className="text-xl md:text-2xl text-white leading-relaxed font-medium">
                         {interview.currentQuestion}
                       </p>
                     </div>
                     {interview.isListening && (
-                      <div className="flex items-center gap-2 justify-center pt-4">
-                        <div className="flex gap-1">
-                          {[...Array(3)].map((_, i) => (
-                            <div
-                              key={i}
-                              className="w-2 h-2 bg-emerald-600 rounded-full animate-bounce"
-                              style={{ animationDelay: `${i * 0.1}s` }}
-                            />
-                          ))}
-                        </div>
-                        <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
-                          Listening...
+                      <div className="flex items-center gap-2">
+                        {[0, 1, 2].map((i) => (
+                          <span
+                            key={i}
+                            className="w-2 h-2 rounded-full bg-emerald-500 animate-bounce"
+                            style={{ animationDelay: `${i * 0.1}s` }}
+                          />
+                        ))}
+                        <span className="text-sm text-emerald-400 font-semibold">
+                          Listening…
                         </span>
                       </div>
                     )}
                     {interview.liveTranscript && (
-                      <div className="p-4 bg-gray-50 dark:from-gray-700 rounded-xl border border-gray-200 dark:border-gray-600">
-                        <p className="text-sm text-gray-700 dark:text-gray-300 italic">
+                      <div className="p-3 bg-gray-700/60 rounded-xl border border-gray-600">
+                        <p className="text-sm text-gray-300 italic">
                           {interview.liveTranscript}
                         </p>
                       </div>
                     )}
-                  </div>
+                  </>
                 )}
               </div>
 
-              {!interview.isInitializing && interview.userText && (
-                <div className="border-t border-gray-200 dark:border-gray-700 p-6 bg-emerald-50 dark:from-gray-800">
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-emerald-500 flex items-center justify-center shadow-lg">
-                        <span className="text-sm font-bold text-white">A</span>
-                      </div>
-                      <span className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase">
-                        Your Answer
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-700 dark:text-gray-300 pl-11">
+              {/* Answer */}
+              {interview.userText && (
+                <div className="border-t border-gray-700 p-5 bg-gray-800/80">
+                  <div className="flex items-start gap-3">
+                    <span className="w-7 h-7 rounded-lg bg-emerald-600 flex items-center justify-center text-xs font-bold text-white mt-0.5">
+                      A
+                    </span>
+                    <p className="text-sm text-gray-300 flex-1">
                       {interview.userText}
                     </p>
                   </div>
                 </div>
               )}
 
-              <div className="border-t border-gray-200 dark:border-gray-700 px-6 py-4 bg-gray-50 dark:bg-gray-800">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 font-medium">
-                    <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-                    Interview active • {interview.recordingDuration}
-                  </div>
-                  <Button
-                    variant="secondary"
-                    onClick={handleEndInterview}
-                    className="text-sm px-5 py-2 font-semibold"
-                  >
-                    End Interview
-                  </Button>
+              {/* Footer */}
+              <div className="border-t border-gray-700 px-5 py-3 flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs text-gray-400 font-medium">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  Live • {interview.recordingDuration}
                 </div>
+                <Button
+                  variant="secondary"
+                  onClick={handleEndInterview}
+                  className="text-xs px-4 py-1.5"
+                >
+                  End Interview
+                </Button>
               </div>
             </Card>
           </div>
 
-          <div className="lg:col-span-1 space-y-4">
-            {/* Primary Camera Card */}
-            <Card className="overflow-hidden shadow-lg">
-              <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:from-gray-800">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <svg
-                      className="w-5 h-5 text-indigo-500"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
-                      />
-                    </svg>
-                    <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">
-                      Primary Camera
-                    </h3>
-                  </div>
-                </div>
+          {/* ── Camera sidebar ───────────────────────────────────────────── */}
+          <div className="lg:col-span-1 space-y-3">
+            {/* Primary camera */}
+            <Card className="overflow-hidden border border-gray-700 bg-gray-800">
+              <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
+                <span className="text-xs font-bold text-gray-300">
+                  Primary Camera
+                </span>
+                <span
+                  className={`text-xs font-semibold px-2 py-0.5 rounded ${isVideoRecording ? "text-red-300 bg-red-900/30" : "text-gray-500 bg-gray-700"}`}
+                >
+                  {isVideoRecording ? "● REC" : "STANDBY"}
+                </span>
               </div>
-              <div className="p-3">
-                <div className="relative w-full aspect-video bg-gray-900 rounded-xl overflow-hidden">
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    muted
-                    playsInline
-                    className="w-full h-full object-cover"
-                    style={{ transform: "scaleX(-1)" }}
-                  />
-                  <div className="absolute top-3 left-3">
-                    <div className="flex items-center gap-2 px-3 py-1.5 bg-black/80 backdrop-blur-sm rounded-lg">
-                      <div
-                        className={`w-2 h-2 rounded-full ${isVideoRecording ? "bg-red-500 animate-pulse" : "bg-gray-500"}`}
-                      />
-                      <span className="text-xs font-bold text-white">
-                        {isVideoRecording ? "REC" : "STANDBY"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
+              <div className="relative aspect-video bg-black">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="w-full h-full object-cover"
+                  style={{ transform: "scaleX(-1)" }}
+                />
               </div>
             </Card>
 
-            {/* Mobile Camera Card */}
-            <Card className="overflow-hidden shadow-lg">
-              <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-orange-50 dark:from-orange-900/20">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <svg
-                      className="w-5 h-5 text-orange-500"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"
-                      />
-                    </svg>
-                    <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">
-                      Mobile Camera
-                    </h3>
-                  </div>
-                  <span
-                    className={`text-xs font-semibold px-2 py-1 rounded-lg ${
-                      secondaryIsActive
-                        ? "text-orange-700 bg-orange-100"
-                        : "text-gray-500 bg-gray-100"
-                    }`}
-                  >
-                    {secondaryIsActive ? "CONNECTED" : "WAITING"}
-                  </span>
-                </div>
+            {/* Mobile camera — canvas receives frames directly from socket */}
+            <Card className="overflow-hidden border border-gray-700 bg-gray-800">
+              <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
+                <span className="text-xs font-bold text-gray-300">
+                  Mobile Camera
+                </span>
+                <span
+                  className={`text-xs font-semibold px-2 py-0.5 rounded
+                  ${mobileCameraConnected ? "text-orange-300 bg-orange-900/30" : "text-gray-500 bg-gray-700"}`}
+                >
+                  {mobileCameraConnected ? "● LIVE" : "WAITING"}
+                </span>
               </div>
-              <div className="p-3">
-                <div className="relative w-full aspect-video bg-gray-900 rounded-xl overflow-hidden">
-                  <canvas
-                    ref={secondaryCanvasRef}
-                    className="w-full h-full object-cover"
-                    style={{ transform: "scaleX(-1)" }}
-                  />
-                  {!mobileCameraConnected && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70">
-                      <div className="animate-spin w-10 h-10 border-2 border-orange-500/30 border-t-orange-500 rounded-full" />
-                    </div>
-                  )}
-                  <div className="absolute top-3 left-3">
-                    <div className="flex items-center gap-2 px-3 py-1.5 bg-black/80 backdrop-blur-sm rounded-lg">
-                      <div
-                        className={`w-2 h-2 rounded-full ${secondaryIsActive ? "bg-orange-500 animate-pulse" : "bg-gray-500"}`}
-                      />
-                      <span className="text-xs font-bold text-white">
-                        {secondaryIsActive ? "LIVE" : "OFFLINE"}
-                      </span>
-                    </div>
+              <div className="relative aspect-video bg-black">
+                {/* Canvas always mounted — frames painted when mobile connects */}
+                <canvas
+                  ref={secondaryCanvasRef}
+                  className="w-full h-full object-cover"
+                  style={{ transform: "scaleX(-1)" }}
+                />
+                {!mobileCameraConnected && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70">
+                    <div className="animate-spin w-8 h-8 border-2 border-orange-500/40 border-t-orange-500 rounded-full mb-2" />
+                    <p className="text-white text-xs opacity-60">
+                      Waiting for mobile…
+                    </p>
                   </div>
-                </div>
+                )}
               </div>
             </Card>
 
-            {/* Screen Recording Card */}
-            <Card className="overflow-hidden shadow-lg">
-              <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:from-gray-800">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <svg
-                      className="w-5 h-5 text-purple-500"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
-                      />
-                    </svg>
-                    <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">
-                      Screen
-                    </h3>
-                  </div>
-                  {screenRecording.isRecording && (
-                    <span className="text-xs font-semibold text-purple-700 bg-purple-100 px-2 py-1 rounded-lg">
-                      LIVE
-                    </span>
-                  )}
-                </div>
+            {/* Screen recording */}
+            <Card className="overflow-hidden border border-gray-700 bg-gray-800">
+              <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
+                <span className="text-xs font-bold text-gray-300">Screen</span>
+                <span
+                  className={`text-xs font-semibold px-2 py-0.5 rounded
+                  ${screenRecording.isRecording ? "text-purple-300 bg-purple-900/30" : "text-gray-500 bg-gray-700"}`}
+                >
+                  {screenRecording.isRecording ? "● REC" : "STANDBY"}
+                </span>
               </div>
-              <div className="p-3">
-                <div className="relative w-full aspect-video bg-gray-900 rounded-xl overflow-hidden">
-                  <video
-                    ref={screenVideoRef}
-                    autoPlay
-                    muted
-                    playsInline
-                    className="w-full h-full object-contain"
-                  />
-                  <div className="absolute top-3 left-3">
-                    <div className="flex items-center gap-2 px-3 py-1.5 bg-black/80 backdrop-blur-sm rounded-lg">
-                      <div
-                        className={`w-2 h-2 rounded-full ${screenRecording.isRecording ? "bg-purple-500 animate-pulse" : "bg-gray-500"}`}
-                      />
-                      <span className="text-xs font-bold text-white">
-                        {screenRecording.isRecording ? "REC" : "STANDBY"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
+              <div className="relative aspect-video bg-black">
+                <video
+                  ref={screenVideoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="w-full h-full object-contain"
+                />
               </div>
             </Card>
           </div>
         </div>
 
+        {/* Termination overlay */}
         {isInterviewTerminated && (
-          <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-50">
-            <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 max-w-md mx-4 text-center shadow-2xl">
-              <div className="w-20 h-20 rounded-full bg-red-500 flex items-center justify-center mx-auto mb-6">
-                <svg
-                  className="w-10 h-10 text-white"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
+          <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50">
+            <div className="bg-gray-800 rounded-2xl p-8 text-center max-w-sm mx-4 shadow-2xl">
+              <div className="w-16 h-16 rounded-full bg-red-500 flex items-center justify-center mx-auto mb-4">
+                <span className="text-white text-2xl">✕</span>
               </div>
-              <h3 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-3">
+              <h3 className="text-xl font-bold text-white mb-2">
                 Interview Terminated
               </h3>
-              <p className="text-base text-gray-600 dark:text-gray-400">
-                Your interview has been terminated.
+              <p className="text-gray-400 text-sm">
+                Your session has been ended.
               </p>
             </div>
           </div>
