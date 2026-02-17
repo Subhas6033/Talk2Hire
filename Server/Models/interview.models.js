@@ -5,9 +5,8 @@ const Interview = {
   async createSession(userId) {
     if (!userId) throw new APIERR(400, "User ID is required");
 
-    let db;
     try {
-      db = await pool;
+      const db = await pool;
       const [result] = await db.execute(
         "INSERT INTO interviews (user_id) VALUES (?)",
         [userId],
@@ -16,14 +15,12 @@ const Interview = {
     } catch (error) {
       console.error("❌ Database error in createSession:", error);
       throw error;
-    } finally {
     }
   },
 
   async getSessionById(interviewId) {
-    let db;
     try {
-      db = await pool;
+      const db = await pool;
       const [rows] = await db.execute(
         `SELECT id, user_id, created_at
          FROM interviews
@@ -40,7 +37,6 @@ const Interview = {
     } catch (error) {
       console.error("❌ Database error in getSessionById:", error);
       throw error;
-    } finally {
     }
   },
 
@@ -57,9 +53,8 @@ const Interview = {
       throw new APIERR(400, "Question order is required");
     }
 
-    let db;
     try {
-      db = await pool;
+      const db = await pool;
 
       console.log("💾 Attempting to save question:", {
         interviewId,
@@ -89,7 +84,6 @@ const Interview = {
         sqlMessage: error.sqlMessage,
       });
 
-      // Provide better error message for duplicate entries
       if (error.code === "ER_DUP_ENTRY") {
         throw new APIERR(
           409,
@@ -98,7 +92,6 @@ const Interview = {
       }
 
       throw error;
-    } finally {
     }
   },
 
@@ -107,9 +100,8 @@ const Interview = {
       throw new APIERR(400, "Interview ID and Question ID are required");
     }
 
-    let db;
     try {
-      db = await pool;
+      const db = await pool;
 
       console.log("💾 Attempting to save answer:", {
         interviewId,
@@ -140,14 +132,12 @@ const Interview = {
         errno: error.errno,
       });
       throw error;
-    } finally {
     }
   },
 
   async getSessionHistory(interviewId) {
-    let db;
     try {
-      db = await pool;
+      const db = await pool;
       const [rows] = await db.execute(
         `SELECT id,
                 question,
@@ -166,14 +156,12 @@ const Interview = {
     } catch (error) {
       console.error("❌ Database error in getSessionHistory:", error);
       throw error;
-    } finally {
     }
   },
 
   async getQuestionByOrder(interviewId, questionOrder) {
-    let db;
     try {
-      db = await pool;
+      const db = await pool;
       const [rows] = await db.execute(
         `SELECT id,
                 question,
@@ -191,15 +179,12 @@ const Interview = {
     } catch (error) {
       console.error("❌ Database error in getQuestionByOrder:", error);
       throw error;
-    } finally {
-      //  Changed from db.end()
     }
   },
 
   async getLastAnsweredQuestion(interviewId) {
-    let db;
     try {
-      db = await pool;
+      const db = await pool;
       const [rows] = await db.execute(
         `SELECT id,
                 question,
@@ -219,14 +204,12 @@ const Interview = {
     } catch (error) {
       console.error("❌ Database error in getLastAnsweredQuestion:", error);
       throw error;
-    } finally {
     }
   },
 
   async getNextQuestionOrder(interviewId) {
-    let db;
     try {
-      db = await pool;
+      const db = await pool;
       const [rows] = await db.execute(
         `SELECT COALESCE(MAX(question_order), 0) + 1 AS nextOrder
          FROM interview_questions
@@ -238,7 +221,30 @@ const Interview = {
     } catch (error) {
       console.error("❌ Database error in getNextQuestionOrder:", error);
       throw error;
-    } finally {
+    }
+  },
+
+  /**
+   * FIX: saveViolation was called by safeRecordViolation() in the socket
+   * controller but never implemented — violations were silently dropped.
+   * Requires the interview_violations table from migration.sql (Fix 2).
+   */
+  async saveViolation({ interviewId, violationType, details, timestamp }) {
+    try {
+      const db = await pool;
+      await db.execute(
+        `INSERT INTO interview_violations
+         (interview_id, violation_type, details, occurred_at)
+         VALUES (?, ?, ?, ?)`,
+        [interviewId, violationType, details, timestamp],
+      );
+
+      console.log(
+        `🚨 Violation saved: ${violationType} for interview ${interviewId}`,
+      );
+    } catch (error) {
+      // Non-fatal — log but don't throw so the socket handler never crashes
+      console.error("❌ Database error in saveViolation:", error.message);
     }
   },
 };

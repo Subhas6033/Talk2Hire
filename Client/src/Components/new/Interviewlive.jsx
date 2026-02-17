@@ -451,6 +451,11 @@ const InterviewLive = () => {
           userId: sessionData.userId,
         });
 
+        // FIX #3: Request secondary camera status AFTER all listeners registered
+        socket.emit("request_secondary_camera_status", {
+          interviewId: sessionData.interviewId,
+        });
+
         // Emit client_ready EXACTLY ONCE
         if (!_globalClientReadyEmitted) {
           _globalClientReadyEmitted = true;
@@ -513,12 +518,18 @@ const InterviewLive = () => {
         await startVideoRecording();
         console.log("✓ Primary camera streaming started");
 
-        if (screenShareStream) {
-          // KEY FIX: Pass the already-active stream — useScreenRecording will
-          // skip requestScreenShare() and use this stream directly.
-          // The pre-warm ID is already stored in the hook via constructor arg.
+        // Screen recording:
+        // • Desktop with active stream  → reuse it, no dialog
+        // • Desktop with inactive stream → stream died in transit; skip silently
+        //   (user can re-share manually; don't auto-prompt mid-interview)
+        // • Mobile / null stream         → getDisplayMedia not supported; skip
+        // NEVER call startRecording(null) here — that triggers requestScreenShare()
+        // which shows the browser picker dialog unexpectedly mid-interview.
+        if (screenShareStream && screenShareStream.active) {
           await screenRecording.startRecording(screenShareStream);
-          console.log("✓ Screen streaming started");
+          console.log("✓ Screen streaming started (reused stream)");
+        } else {
+          console.log("ℹ️ No active screen stream — screen recording skipped");
         }
 
         await startSecondaryCanvasRecording(socket);

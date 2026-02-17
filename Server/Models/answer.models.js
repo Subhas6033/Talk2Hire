@@ -1,6 +1,9 @@
 const { pool } = require("../Config/database.config");
 
 const Evaluation = {
+  /**
+   * Save per-question evaluation scores.
+   */
   async saveQuestionEvaluation({
     interviewId,
     questionId,
@@ -29,11 +32,16 @@ const Evaluation = {
         ],
       );
     } catch (err) {
-      console.log("Error While saving the questions evaluations", err);
-    } finally {
+      console.error("❌ Error saving question evaluation:", err);
+      throw err;
     }
   },
 
+  /**
+   * Save overall interview evaluation.
+   * FIX: was `const db = pool` (missing await) — DB calls silently failed
+   * under connection-pool implementations that return a Promise.
+   */
   async saveInterviewEvaluation({
     interviewId,
     overallScore,
@@ -44,7 +52,7 @@ const Evaluation = {
     summary,
     modelVersion,
   }) {
-    const db = pool;
+    const db = await pool; // FIX: added await
     try {
       await db.execute(
         `INSERT INTO interview_evaluations
@@ -63,13 +71,17 @@ const Evaluation = {
         ],
       );
     } catch (err) {
-      console.log("Error While saving the interview evaluations", err);
-    } finally {
+      console.error("❌ Error saving interview evaluation:", err);
+      throw err;
     }
   },
 
+  /**
+   * Save per-technology skill evaluation.
+   * FIX: was `const db = pool` (missing await) — same issue as above.
+   */
   async saveSkillEvaluation({ interviewId, technology, score, level }) {
-    const db = pool;
+    const db = await pool; // FIX: added await
     try {
       await db.execute(
         `INSERT INTO skill_evaluations
@@ -78,8 +90,8 @@ const Evaluation = {
         [interviewId, technology, score, level],
       );
     } catch (err) {
-      console.log("Error While saving the skill eveluations", err);
-    } finally {
+      console.error("❌ Error saving skill evaluation:", err);
+      throw err;
     }
   },
 };

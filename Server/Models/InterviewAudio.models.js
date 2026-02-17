@@ -101,6 +101,7 @@ class InterviewAudio {
 
   /**
    * Update upload status
+   * FIX: completed_at and error_message columns now exist after migration.
    */
   static async updateUploadStatus(audioId, status) {
     try {
@@ -115,6 +116,29 @@ class InterviewAudio {
       console.log(` Audio ${audioId} status updated to: ${status}`);
     } catch (error) {
       console.error("❌ Error updating audio status:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update after FTP upload completes
+   */
+  static async updateAfterUpload({ audioId, ftpUrl, ftpPath, fileSize }) {
+    try {
+      await pool.execute(
+        `UPDATE interview_audio 
+         SET ftp_url = ?,
+             ftp_path = ?,
+             file_size = ?,
+             upload_status = 'completed',
+             completed_at = NOW()
+         WHERE id = ?`,
+        [ftpUrl, ftpPath, fileSize, audioId],
+      );
+
+      console.log(` Audio ${audioId} updated after upload`);
+    } catch (error) {
+      console.error("❌ Error updating audio after upload:", error);
       throw error;
     }
   }
@@ -151,6 +175,7 @@ class InterviewAudio {
 
   /**
    * Mark as failed
+   * FIX: error_message column now exists after migration.
    */
   static async markAsFailed(audioId, errorMessage) {
     try {
@@ -237,13 +262,11 @@ class InterviewAudio {
    */
   static async delete(audioId) {
     try {
-      // Delete chunks first
       await pool.execute(
         `DELETE FROM interview_audio_chunks WHERE audio_id = ?`,
         [audioId],
       );
 
-      // Delete audio record
       await pool.execute(`DELETE FROM interview_audio WHERE id = ?`, [audioId]);
 
       console.log(` Audio ${audioId} deleted`);

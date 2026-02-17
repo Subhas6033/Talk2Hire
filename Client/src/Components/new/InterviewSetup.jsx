@@ -11,6 +11,14 @@ import { useStreams } from "../../Hooks/streamContext";
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
+// getDisplayMedia is desktop-only — not available on Android/iOS browsers
+const IS_MOBILE =
+  /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+    navigator.userAgent,
+  );
+const SCREEN_SHARE_SUPPORTED =
+  !IS_MOBILE && !!navigator.mediaDevices?.getDisplayMedia;
+
 const InterviewSetup = () => {
   const navigate = useNavigate();
   const dispatch = useDispatch();
@@ -54,6 +62,9 @@ const InterviewSetup = () => {
 
   const [screenShareStream, setScreenShareStream] = useState(null);
   const [screenShareError, setScreenShareError] = useState(null);
+  // Ref keeps the live stream value accessible inside async closures without
+  // needing screenShareStream in the step-7 effect dependency array.
+  const screenShareStreamRef = useRef(null);
 
   const [initProgress, setInitProgress] = useState({
     socket: false,
@@ -153,7 +164,10 @@ const InterviewSetup = () => {
   const handleScreenShareSuccess = () => {
     const isMicActive = micStream?.active;
     const isCameraActive = primaryCameraStream?.active;
-    const isScreenActive = screenShareStream?.active;
+    // On mobile, screen share is not supported — treat it as always active
+    const isScreenActive = SCREEN_SHARE_SUPPORTED
+      ? screenShareStream?.active
+      : true;
 
     if (!isMicActive || !isCameraActive || !isScreenActive) {
       const missing = [];
@@ -319,6 +333,14 @@ const InterviewSetup = () => {
   /* ── SCREEN SHARE ───────────────────────────────────────────────────────── */
 
   const startScreenShareTest = async () => {
+    // Mobile browsers don't support getDisplayMedia — skip silently
+    if (!SCREEN_SHARE_SUPPORTED) {
+      console.log(
+        "📱 Screen share not supported on this device — skipping step",
+      );
+      return;
+    }
+
     try {
       setScreenShareError(null);
 
@@ -326,10 +348,12 @@ const InterviewSetup = () => {
         video: true,
       });
       setScreenShareStream(stream);
+      screenShareStreamRef.current = stream;
 
       const track = stream.getVideoTracks()[0];
       track.addEventListener("ended", () => {
         setScreenShareStream(null);
+        screenShareStreamRef.current = null;
         setScreenShareError(
           "Screen sharing was stopped. Please share your screen again.",
         );
@@ -562,19 +586,24 @@ const InterviewSetup = () => {
           );
         }
 
-        // ── Screen recording — capture videoId for InterviewLive to reuse ─────
-        setInitProgress((prev) => ({ ...prev, screenRecording: "starting" }));
-        const screenResult = await registerVideoSession("screen_recording");
-        if (mounted) {
-          setInitProgress((prev) => ({ ...prev, screenRecording: true }));
-          // KEY FIX: Store pre-warmed session ID
-          streamsRef.current.preWarmSessionIds.screenRecordingId =
-            screenResult.videoId ?? null;
-          streamsRef.current.preWarmComplete.screenRecording = true;
-          console.log(
-            "📦 Stored pre-warm screenRecordingId:",
-            screenResult.videoId,
-          );
+        // ── Screen recording — skip on mobile (getDisplayMedia not supported) ──
+        if (SCREEN_SHARE_SUPPORTED) {
+          setInitProgress((prev) => ({ ...prev, screenRecording: "starting" }));
+          const screenResult = await registerVideoSession("screen_recording");
+          if (mounted) {
+            setInitProgress((prev) => ({ ...prev, screenRecording: true }));
+            streamsRef.current.preWarmSessionIds.screenRecordingId =
+              screenResult.videoId ?? null;
+            streamsRef.current.preWarmComplete.screenRecording = true;
+            console.log(
+              "📦 Stored pre-warm screenRecordingId:",
+              screenResult.videoId,
+            );
+          }
+        } else {
+          // Mobile — no screen recording session needed
+          setInitProgress((prev) => ({ ...prev, screenRecording: "skipped" }));
+          console.log("📱 Screen recording skipped (mobile)");
         }
 
         // ── Mobile (optional) ─────────────────────────────────────────────────
@@ -612,7 +641,7 @@ const InterviewSetup = () => {
         // ── Store everything in context for InterviewLive ─────────────────────
         streamsRef.current.micStream = micStream;
         streamsRef.current.primaryCameraStream = primaryCameraStream;
-        streamsRef.current.screenShareStream = screenShareStream;
+        streamsRef.current.screenShareStream = screenShareStreamRef.current;
         streamsRef.current.sessionData = sessionData;
         streamsRef.current.preInitializedSocket = socket;
 
@@ -646,7 +675,8 @@ const InterviewSetup = () => {
     mobileCameraConnected,
     micStream,
     primaryCameraStream,
-    screenShareStream,
+    // screenShareStream intentionally omitted — we use screenShareStreamRef
+    // to avoid re-running this effect when the stream state changes.
     navigate,
     streamsRef,
   ]);
@@ -1092,7 +1122,23 @@ const InterviewSetup = () => {
             <h2 className="text-xl font-bold text-white mb-6">
               Screen Sharing
             </h2>
-            {screenShareError ? (
+            {/* Mobile browsers don't support getDisplayMedia — show skip UI */}
+            {!SCREEN_SHARE_SUPPORTED ? (
+              <div className="space-y-6 text-center">
+                <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl">
+                  <p className="text-yellow-300 text-sm font-medium mb-1">
+                    📱 Screen sharing is not supported on mobile browsers
+                  </p>
+                  <p className="text-gray-400 text-xs">
+                    Please use a desktop browser (Chrome, Edge, or Firefox) to
+                    enable screen recording. You can continue without it.
+                  </p>
+                </div>
+                <Button onClick={handleScreenShareSuccess} className="px-10">
+                  Continue Without Screen Share
+                </Button>
+              </div>
+            ) : screenShareError ? (
               <div className="space-y-6">
                 <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
                   <p className="text-red-400 text-sm text-center">
