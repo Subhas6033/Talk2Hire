@@ -23,8 +23,6 @@ const InterviewLive = () => {
 
   const stableRef = useRef(null);
   if (!stableRef.current) {
-    // Read from module-level singleton first — immune to React navigation,
-    // unmount/remount cycles and Context re-renders that can reset the ref.
     const src = streamStore.sessionData ? streamStore : streamsRef.current;
     if (src?.sessionData) {
       stableRef.current = {
@@ -99,10 +97,7 @@ const InterviewLive = () => {
   const [mobileCameraConnected, setMobileCameraConnected] = useState(
     () => preWarmComplete?.secondaryCamera ?? false,
   );
-  // FIX C: track screen video state with both a ref and useState.
-  // useState resets to false on StrictMode remount, causing the placeholder
-  // to flash back. The ref persists so we know the stream was already attached
-  // and can reattach immediately on the real mount without retries.
+
   const screenVideoActiveRef = useRef(false);
   const [screenVideoActive, setScreenVideoActive] = useState(false);
   const setScreenActive = useCallback((val) => {
@@ -110,6 +105,9 @@ const InterviewLive = () => {
     setScreenVideoActive(val);
   }, []);
   const [socketReady, setSocketReady] = useState(false);
+
+  // ── FIX: Track whether mobile video has been attached to avoid re-attach flicker ──
+  const mobileVideoAttachedRef = useRef(false);
 
   useHolisticDetection(
     videoRef,
@@ -134,10 +132,6 @@ const InterviewLive = () => {
     }
   }, []); // eslint-disable-line
 
-  // ── FIX 1: null-safe cleanupAllRecordings ─────────────────────────────────
-  // TypeError: Cannot set properties of null (setting 'onstop')
-  // Guard mobileMediaRecorderRef before accessing it — it may be null if
-  // interview_terminated fires before/during mobile recording startup.
   const cleanupAllRecordings = useCallback(async () => {
     const jobs = [];
     if (isVideoRecording) jobs.push(stopVideoRecording().catch(console.error));
@@ -175,22 +169,48 @@ const InterviewLive = () => {
     });
   }, []); // eslint-disable-line
 
-  // ── FIX 4: Screen share video attachment ───────────────────────────────────
-  //
-  // BUG that was self-defeating: when track.readyState was not "live" on first
-  // check, we cleared streamsRef.current.screenShareStream = null, which
-  // destroyed the reference permanently so no retry could ever find it again.
-  //
-  // FIX: NEVER clear streamsRef.current.screenShareStream inside attachScreenVideo.
-  // Only skip and let the next retry try again. The stream stays in streamsRef
-  // until InterviewSetup's cleanup runs on unmount.
-  //
-  // Also: retry for 10 seconds (100 × 100ms) instead of 5 or 0.5 seconds.
+  // ── FIX: Re-attach mobile stream if ref was not ready when ontrack fired ───
+  // This effect watches mobileCameraConnected. When it flips to true it means
+  // mobileStreamRef.current is populated. If the video element already exists
+  // but srcObject was never set (because the DOM ref wasn't ready inside ontrack),
+  // we set it here as a guaranteed fallback.
+  useEffect(() => {
+    if (!mobileCameraConnected) return;
+    const stream = mobileStreamRef.current;
+    if (!stream) return;
+
+    const vid = mobileVideoRef.current;
+    if (!vid) return;
+
+    // Only attach if not already showing the correct stream
+    if (vid.srcObject === stream && mobileVideoAttachedRef.current) return;
+
+    console.log("🔄 Mobile video: attaching stream via fallback effect");
+    vid.srcObject = stream;
+    vid.muted = true;
+    mobileVideoAttachedRef.current = true;
+
+    const tryPlay = () => {
+      vid.play().catch((e) => {
+        if (e.name === "AbortError") setTimeout(tryPlay, 50);
+        else if (e.name !== "NotAllowedError")
+          console.error("Mobile video fallback play error:", e);
+      });
+    };
+
+    if (vid.readyState >= 2) {
+      tryPlay();
+    } else {
+      vid.addEventListener("loadedmetadata", tryPlay, { once: true });
+      vid.addEventListener("canplay", tryPlay, { once: true });
+    }
+  }, [mobileCameraConnected]);
+
+  // ── Screen share video attachment ──────────────────────────────────────────
   const attachScreenVideo = useCallback(() => {
     const vid = screenVideoRef.current;
     if (!vid) return false;
 
-    // Read from singleton first — survives React lifecycle edge cases
     const stream =
       streamStore.screenShareStream ??
       streamsRef.current?.screenShareStream ??
@@ -201,7 +221,6 @@ const InterviewLive = () => {
     if (!track) return false;
 
     if (track.readyState !== "live") {
-      // DON'T clear the ref — just skip this attempt and retry
       console.warn(
         "⚠️ Screen track not live yet:",
         track.readyState,
@@ -237,7 +256,6 @@ const InterviewLive = () => {
       vid.srcObject = null;
       setScreenActive(false);
       screenShareStreamRef.current = null;
-      // Safe to clear here — track has genuinely ended, stream is dead
       if (streamsRef.current) streamsRef.current.screenShareStream = null;
     };
     track.addEventListener("ended", onTrackEnded);
@@ -250,9 +268,6 @@ const InterviewLive = () => {
   }, []); // eslint-disable-line
 
   useEffect(() => {
-    // FIX D: if screenVideoActiveRef is true, mount 1 already attached the stream.
-    // Reattach immediately (synchronously) on mount 2 without waiting for retries.
-    // This eliminates the visible flash of "Screen share not available" between mounts.
     if (screenVideoActiveRef.current) {
       console.log("🔄 Screen video: reattaching after remount");
       const cleanup = attachScreenVideo();
@@ -263,7 +278,7 @@ const InterviewLive = () => {
     if (cleanup) return cleanup;
 
     let retries = 0;
-    const MAX_RETRIES = 100; // 10 seconds
+    const MAX_RETRIES = 100;
     let activeCleanup = null;
 
     const retryTimer = setInterval(() => {
@@ -284,16 +299,7 @@ const InterviewLive = () => {
     };
   }, []); // eslint-disable-line
 
-  // ── FIX 2: WebRTC — deduplicate offers ────────────────────────────────────
-  //
-  // ROOT CAUSE: Mobile page sends offer on connect. If it reconnects (due to
-  // network hiccup or React strict-mode double mount) it sends a second offer.
-  // Both were processed, creating two RTCPeerConnections → two answers →
-  // logs showed "WebRTC answer sent" twice and state cycling connecting→connected→connecting.
-  //
-  // FIX: webrtcNegotiatingRef blocks processing a second offer while the first
-  // negotiation is in-flight. After "connected" or "failed" the ref is cleared
-  // to allow legitimate re-negotiation (e.g. after disconnect).
+  // ── WebRTC answer handler ──────────────────────────────────────────────────
   const startWebRTCAnswer = useCallback(
     async (socket, offerData) => {
       if (webrtcNegotiatingRef.current) {
@@ -317,25 +323,57 @@ const InterviewLive = () => {
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       peerConnectionRef.current = pc;
 
+      // ── FIX: ontrack — attach to video element immediately if ref is ready,
+      // otherwise the fallback useEffect (watching mobileCameraConnected) will
+      // attach it once state updates cause a re-render and the ref is available.
       pc.ontrack = (event) => {
-        console.log("🖥️ Mobile camera track arrived:", event.track.kind);
+        console.log(
+          "📡 ontrack fired — mobile camera track arrived:",
+          event.track.kind,
+        );
         const [remoteStream] = event.streams;
-        mobileStreamRef.current = remoteStream;
 
-        if (mobileVideoRef.current) {
-          mobileVideoRef.current.srcObject = remoteStream;
-          mobileVideoRef.current.muted = true;
-          const tryPlay = () =>
-            mobileVideoRef.current?.play().catch((e) => {
-              if (e.name === "AbortError") setTimeout(tryPlay, 50);
-              else console.error("Mobile video play:", e);
-            });
-          mobileVideoRef.current.addEventListener("loadedmetadata", tryPlay, {
-            once: true,
-          });
-          tryPlay();
+        if (!remoteStream) {
+          console.warn("⚠️ ontrack: no streams in event, skipping");
+          return;
         }
 
+        mobileStreamRef.current = remoteStream;
+        mobileVideoAttachedRef.current = false; // reset so fallback effect re-attaches
+
+        const vid = mobileVideoRef.current;
+        if (vid) {
+          // Video element is mounted — attach directly right now
+          console.log("✅ Attaching mobile stream directly in ontrack");
+          vid.srcObject = remoteStream;
+          vid.muted = true;
+          mobileVideoAttachedRef.current = true;
+
+          const tryPlay = () => {
+            if (!vid) return;
+            vid.play().catch((e) => {
+              if (e.name === "AbortError") setTimeout(tryPlay, 50);
+              else if (e.name !== "NotAllowedError")
+                console.error("Mobile video play (ontrack):", e);
+            });
+          };
+
+          if (vid.readyState >= 2) {
+            tryPlay();
+          } else {
+            vid.addEventListener("loadedmetadata", tryPlay, { once: true });
+            vid.addEventListener("canplay", tryPlay, { once: true });
+            tryPlay(); // also try immediately in case events already fired
+          }
+        } else {
+          // Video ref not ready yet — fallback useEffect will handle this
+          // when mobileCameraConnected state update triggers a re-render
+          console.warn(
+            "⚠️ mobileVideoRef not ready in ontrack — fallback effect will attach",
+          );
+        }
+
+        // Updating state triggers re-render → fallback useEffect runs as safety net
         setMobileCameraConnected(true);
         setWebrtcState("connected");
         socket.emit("webrtc_connected", {
@@ -358,12 +396,12 @@ const InterviewLive = () => {
         if (state === "connected") {
           setWebrtcState("connected");
           setMobileCameraConnected(true);
-          webrtcNegotiatingRef.current = false; // allow re-negotiation after reconnect
+          webrtcNegotiatingRef.current = false;
         } else if (state === "failed") {
           setWebrtcState("failed");
           webrtcNegotiatingRef.current = false;
         } else if (state === "disconnected") {
-          webrtcNegotiatingRef.current = false; // allow mobile to re-offer
+          webrtcNegotiatingRef.current = false;
           setTimeout(() => {
             if (peerConnectionRef.current?.connectionState !== "connected")
               setWebrtcState("failed");
@@ -542,7 +580,6 @@ const InterviewLive = () => {
         });
 
         socket.on("webrtc_ice_candidate", async (data) => {
-          // fromMobile may be undefined on older mobile page versions — process all
           if (data.fromMobile === false) return;
           const pc = peerConnectionRef.current;
           if (!data.candidate) return;
@@ -990,6 +1027,9 @@ const InterviewLive = () => {
                   {mobileStatusLabel}
                 </span>
               </div>
+              {/* ── FIX: video element is ALWAYS rendered so mobileVideoRef.current
+                  is never null when ontrack fires. The overlay sits on top using
+                  absolute positioning and is removed once connected. ── */}
               <div className="relative aspect-video bg-black">
                 <video
                   ref={mobileVideoRef}
@@ -999,6 +1039,8 @@ const InterviewLive = () => {
                   className="w-full h-full object-cover"
                   style={{ transform: "scaleX(-1)" }}
                 />
+                {/* Overlay only shown while not yet connected — video element
+                    stays in DOM the whole time so the ref is always valid */}
                 {!mobileCameraConnected && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10">
                     {webrtcState === "failed" ? (

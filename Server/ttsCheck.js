@@ -64,7 +64,31 @@ const MIGRATIONS = [
   },
 
   // ---------------------------------------------------------------------------
-  // FIX 2: interview_violations — new table for Interview.saveViolation()
+  // FIX 2: interview_audio — upload_status column is too narrow.
+  //         ROOT CAUSE of the "Data truncated for column 'upload_status'"
+  //         console error seen in the browser. The server tries to write a
+  //         value longer than the current column definition allows.
+  //
+  //         Known values written by the server:
+  //           'pending'    →  7 chars
+  //           'uploading'  →  9 chars
+  //           'uploaded'   →  8 chars
+  //           'processing' → 10 chars  ← this is what was being truncated
+  //           'complete'   →  8 chars
+  //           'failed'     →  6 chars
+  //           'deleted'    →  7 chars
+  //
+  //         VARCHAR(50) gives plenty of headroom for any future status values.
+  // ---------------------------------------------------------------------------
+  {
+    name: "interview_audio: widen upload_status to VARCHAR(50)",
+    sql: `ALTER TABLE interview_audio
+            MODIFY COLUMN upload_status VARCHAR(50) NOT NULL DEFAULT 'pending'
+            COMMENT 'pending | uploading | uploaded | processing | complete | failed | deleted'`,
+  },
+
+  // ---------------------------------------------------------------------------
+  // FIX 3: interview_violations — new table for Interview.saveViolation()
   //         Violations were silently dropped because the table didn't exist
   // ---------------------------------------------------------------------------
   {
@@ -82,7 +106,7 @@ const MIGRATIONS = [
   },
 
   // ---------------------------------------------------------------------------
-  // FIX 3: interview_audio_chunks — upload_status column may be too narrow
+  // FIX 4: interview_audio_chunks — upload_status column may be too narrow
   //         to hold the value 'deleted' used by markChunksDeleted()
   // ---------------------------------------------------------------------------
   {
@@ -93,7 +117,7 @@ const MIGRATIONS = [
   },
 
   // ---------------------------------------------------------------------------
-  // FIX 4: interview_questions — add unique constraint on (interview_id,
+  // FIX 5: interview_questions — add unique constraint on (interview_id,
   //         question_order) to prevent duplicate inserts on race conditions
   // ---------------------------------------------------------------------------
   {
@@ -106,7 +130,7 @@ const MIGRATIONS = [
   },
 
   // ---------------------------------------------------------------------------
-  // FIX 5: interview_evaluations — model_version column used by
+  // FIX 6: interview_evaluations — model_version column used by
   //         Evaluation.saveInterviewEvaluation() but may not exist
   // ---------------------------------------------------------------------------
   {
@@ -116,7 +140,7 @@ const MIGRATIONS = [
   },
 
   // ---------------------------------------------------------------------------
-  // FIX 6: skill_evaluations — level column used by
+  // FIX 7: skill_evaluations — level column used by
   //         Evaluation.saveSkillEvaluation() but may not exist
   // ---------------------------------------------------------------------------
   {
@@ -127,7 +151,7 @@ const MIGRATIONS = [
   },
 
   // ---------------------------------------------------------------------------
-  // FIX 7: interview_videos — completed_at used by updateAfterUpload() and
+  // FIX 8: interview_videos — completed_at used by updateAfterUpload() and
   //         updateAfterMerge() but may not exist
   // ---------------------------------------------------------------------------
   {
@@ -246,7 +270,31 @@ async function runMigrations() {
     }
 
     // -------------------------------------------------------------------------
-    // 4. Summary
+    // 4. Verify upload_status column width specifically — confirm the fix landed
+    // -------------------------------------------------------------------------
+    section("Verification — upload_status Column Detail");
+
+    for (const table of ["interview_audio", "interview_audio_chunks"]) {
+      try {
+        const [rows] = await connection.execute(
+          `SHOW COLUMNS FROM \`${table}\` WHERE Field = 'upload_status'`,
+        );
+        if (rows.length === 0) {
+          log("warn", `${table}.upload_status — column not found`);
+        } else {
+          const col = rows[0];
+          log(
+            "ok",
+            `${table}.upload_status — Type: ${col.Type}, Null: ${col.Null}, Default: '${col.Default}'`,
+          );
+        }
+      } catch (err) {
+        log("err", `${table}.upload_status — could not verify: ${err.message}`);
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // 5. Summary
     // -------------------------------------------------------------------------
     section("Migration Summary");
     log("ok", `Passed:  ${results.passed.length}`);
