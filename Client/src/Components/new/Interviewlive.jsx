@@ -12,15 +12,11 @@ import streamStore from "../../Hooks/streamSingleton";
 let _globalSocketInitialized = false;
 let _globalClientReadyEmitted = false;
 
-const ICE_SERVERS = [
-  { urls: "stun:stun.l.google.com:19302" },
-  { urls: "stun:stun1.l.google.com:19302" },
-];
-
 const InterviewLive = () => {
   const navigate = useNavigate();
   const streamsRef = useStreams();
 
+  // ── Pull session data from singleton / context ─────────────────────────────
   const stableRef = useRef(null);
   if (!stableRef.current) {
     const src = streamStore.sessionData ? streamStore : streamsRef.current;
@@ -45,6 +41,7 @@ const InterviewLive = () => {
 
   const screenShareStreamRef = useRef(null);
 
+  // ── Hooks ──────────────────────────────────────────────────────────────────
   const interview = useInterview(
     sessionData?.interviewId,
     sessionData?.userId,
@@ -72,42 +69,37 @@ const InterviewLive = () => {
     preWarmSessionIds.screenRecordingId,
   );
 
-  const videoRef = useRef(null);
-  const mobileVideoRef = useRef(null);
-  const screenVideoRef = useRef(null);
+  // ── Refs ───────────────────────────────────────────────────────────────────
+  const videoRef = useRef(null); // primary camera
+  const mobileCanvasRef = useRef(null); // secondary camera — WebSocket frames drawn here
+  const screenVideoRef = useRef(null); // screen share
 
   const recordingsStartedRef = useRef(false);
   const isLeavingRef = useRef(false);
 
-  // WebRTC
-  const peerConnectionRef = useRef(null);
+  // Mobile secondary camera state (WebSocket frames — no WebRTC)
   const mobileMediaRecorderRef = useRef(null);
   const mobileChunkCountRef = useRef(0);
   const mobileSessionReadyRef = useRef(false);
-  const mobileStreamRef = useRef(null);
-  const webrtcNegotiatingRef = useRef(false);
-  const pendingIceCandidatesRef = useRef([]);
+  // Canvas stream for recording the mobile frames
+  const mobileCanvasStreamRef = useRef(null);
 
+  const screenVideoActiveRef = useRef(false);
+
+  // ── State ──────────────────────────────────────────────────────────────────
   const [isSecondaryRecording, setIsSecondaryRecording] = useState(false);
   const [evaluationStatus, setEvaluationStatus] = useState(null);
   const [evaluationResults, setEvaluationResults] = useState(null);
   const [faceViolationWarning, setFaceViolationWarning] = useState(null);
   const [isInterviewTerminated, setIsInterviewTerminated] = useState(false);
-  const [webrtcState, setWebrtcState] = useState("waiting");
   const [mobileCameraConnected, setMobileCameraConnected] = useState(
     () => preWarmComplete?.secondaryCamera ?? false,
   );
+  const [mobileFrameCount, setMobileFrameCount] = useState(0);
+  const mobileFrameCountRef = useRef(0);
 
-  const screenVideoActiveRef = useRef(false);
   const [screenVideoActive, setScreenVideoActive] = useState(false);
-  const setScreenActive = useCallback((val) => {
-    screenVideoActiveRef.current = val;
-    setScreenVideoActive(val);
-  }, []);
   const [socketReady, setSocketReady] = useState(false);
-
-  // ── FIX: Track whether mobile video has been attached to avoid re-attach flicker ──
-  const mobileVideoAttachedRef = useRef(false);
 
   useHolisticDetection(
     videoRef,
@@ -115,6 +107,7 @@ const InterviewLive = () => {
     interview.status === "live" && !interview.isInitializing,
   );
 
+  // ── Cleanup global flags on unmount ───────────────────────────────────────
   useEffect(() => {
     return () => {
       _globalSocketInitialized = false;
@@ -122,6 +115,7 @@ const InterviewLive = () => {
     };
   }, []);
 
+  // ── Redirect if no session ─────────────────────────────────────────────────
   useEffect(() => {
     if (!sessionData) {
       const t = setTimeout(() => {
@@ -132,6 +126,7 @@ const InterviewLive = () => {
     }
   }, []); // eslint-disable-line
 
+  // ── Stop all recordings ────────────────────────────────────────────────────
   const cleanupAllRecordings = useCallback(async () => {
     const jobs = [];
     if (isVideoRecording) jobs.push(stopVideoRecording().catch(console.error));
@@ -142,7 +137,6 @@ const InterviewLive = () => {
     }
     if (screenRecording.isRecording)
       jobs.push(screenRecording.stopRecording().catch(console.error));
-
     const mobileRec = mobileMediaRecorderRef.current;
     if (mobileRec && mobileRec.state !== "inactive") {
       jobs.push(
@@ -169,378 +163,237 @@ const InterviewLive = () => {
     });
   }, []); // eslint-disable-line
 
-  // ── FIX: Re-attach mobile stream if ref was not ready when ontrack fired ───
-  // This effect watches mobileCameraConnected. When it flips to true it means
-  // mobileStreamRef.current is populated. If the video element already exists
-  // but srcObject was never set (because the DOM ref wasn't ready inside ontrack),
-  // we set it here as a guaranteed fallback.
-  useEffect(() => {
-    if (!mobileCameraConnected) return;
-    const stream = mobileStreamRef.current;
-    if (!stream) return;
+  // ── Draw incoming WebSocket frame onto mobile canvas ───────────────────────
+  // This is the core of the WebSocket streaming approach.
+  // The server relays mobile_camera_frame events from the mobile device.
+  // We draw each JPEG dataURL onto the canvas element for display.
+  const drawMobileFrame = useCallback((frameDataUrl) => {
+    const canvas = mobileCanvasRef.current;
+    if (!canvas) return;
 
-    const vid = mobileVideoRef.current;
-    if (!vid) return;
-
-    // Only attach if not already showing the correct stream
-    if (vid.srcObject === stream && mobileVideoAttachedRef.current) return;
-
-    console.log("🔄 Mobile video: attaching stream via fallback effect");
-    vid.srcObject = stream;
-    vid.muted = true;
-    mobileVideoAttachedRef.current = true;
-
-    const tryPlay = () => {
-      vid.play().catch((e) => {
-        if (e.name === "AbortError") setTimeout(tryPlay, 50);
-        else if (e.name !== "NotAllowedError")
-          console.error("Mobile video fallback play error:", e);
-      });
+    const img = new Image();
+    img.onload = () => {
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        mobileFrameCountRef.current++;
+        if (mobileFrameCountRef.current % 10 === 0) {
+          setMobileFrameCount(mobileFrameCountRef.current);
+        }
+      }
     };
+    img.src = frameDataUrl;
+  }, []);
 
-    if (vid.readyState >= 2) {
-      tryPlay();
-    } else {
-      vid.addEventListener("loadedmetadata", tryPlay, { once: true });
-      vid.addEventListener("canplay", tryPlay, { once: true });
-    }
-  }, [mobileCameraConnected]);
+  // ── Start recording the mobile canvas stream ───────────────────────────────
+  // We capture the canvas as a MediaStream and record it with MediaRecorder.
+  // This gives us a proper video file of the secondary camera for FTP upload.
+  const startMobileCanvasRecording = useCallback(
+    async (socket) => {
+      if (mobileMediaRecorderRef.current) return; // already recording
 
-  // ── Screen share video attachment ──────────────────────────────────────────
+      const canvas = mobileCanvasRef.current;
+      if (!canvas) {
+        console.warn("⚠️ Mobile canvas not ready for recording");
+        return;
+      }
+
+      try {
+        // Capture canvas as a 10fps MediaStream (matches ~frame rate from mobile)
+        const canvasStream = canvas.captureStream(10);
+        mobileCanvasStreamRef.current = canvasStream;
+
+        const mimeTypes = [
+          "video/webm;codecs=vp9",
+          "video/webm;codecs=vp8",
+          "video/webm",
+          "",
+        ];
+        let mediaRecorder;
+        for (const mimeType of mimeTypes) {
+          try {
+            mediaRecorder = new MediaRecorder(
+              canvasStream,
+              mimeType ? { mimeType, videoBitsPerSecond: 1000000 } : {},
+            );
+            break;
+          } catch (_) {
+            continue;
+          }
+        }
+        if (!mediaRecorder) {
+          console.error("❌ No MediaRecorder for canvas stream");
+          return;
+        }
+
+        mobileMediaRecorderRef.current = mediaRecorder;
+        mobileChunkCountRef.current = 0;
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (!e.data || e.data.size === 0) return;
+          mobileChunkCountRef.current++;
+          const chunkNum = mobileChunkCountRef.current;
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            if (socket?.connected && mobileSessionReadyRef.current) {
+              socket.emit("video_chunk", {
+                videoType: "secondary_camera",
+                chunkNumber: chunkNum,
+                chunkData: reader.result.split(",")[1],
+                isLastChunk: false,
+                timestamp: Date.now(),
+              });
+            }
+          };
+          reader.readAsDataURL(e.data);
+        };
+
+        mediaRecorder.onstart = () => {
+          console.log("✅ Mobile canvas recording started");
+          setIsSecondaryRecording(true);
+        };
+
+        mediaRecorder.onstop = () => {
+          console.log(
+            `🛑 Mobile canvas recording stopped. Chunks: ${mobileChunkCountRef.current}`,
+          );
+          setIsSecondaryRecording(false);
+          mobileSessionReadyRef.current = false;
+          mobileMediaRecorderRef.current = null;
+          if (socket?.connected) {
+            socket.emit("video_recording_stop", {
+              videoType: "secondary_camera",
+              totalChunks: mobileChunkCountRef.current,
+            });
+          }
+        };
+
+        // Register session or reuse pre-warmed one
+        if (
+          preWarmComplete.secondaryCamera &&
+          preWarmSessionIds.secondaryCameraId
+        ) {
+          mobileSessionReadyRef.current = true;
+        } else if (socket?.connected) {
+          socket.emit("video_recording_start", {
+            videoType: "secondary_camera",
+            totalChunks: 0,
+            metadata: { mimeType: "video/webm;codecs=vp9" },
+          });
+          await new Promise((resolve) => {
+            const timeout = setTimeout(() => {
+              mobileSessionReadyRef.current = true;
+              resolve();
+            }, 5000);
+            const handler = (data) => {
+              if (data.videoType === "secondary_camera") {
+                clearTimeout(timeout);
+                socket.off("video_recording_ready", handler);
+                mobileSessionReadyRef.current = true;
+                resolve();
+              }
+            };
+            socket.on("video_recording_ready", handler);
+          });
+        } else {
+          mobileSessionReadyRef.current = true;
+        }
+
+        mediaRecorder.start(20000); // 20-second chunks
+        console.log("✅ Secondary camera canvas recording started");
+      } catch (err) {
+        console.error("❌ Failed to start mobile canvas recording:", err);
+      }
+    },
+    [preWarmComplete, preWarmSessionIds],
+  );
+
+  // ── Screen share attachment ────────────────────────────────────────────────
   const attachScreenVideo = useCallback(() => {
     const vid = screenVideoRef.current;
     if (!vid) return false;
-
     const stream =
       streamStore.screenShareStream ??
       streamsRef.current?.screenShareStream ??
       null;
     if (!stream || !stream.active) return false;
-
     const track = stream.getVideoTracks()[0];
-    if (!track) return false;
-
-    if (track.readyState !== "live") {
-      console.warn(
-        "⚠️ Screen track not live yet:",
-        track.readyState,
-        "— will retry",
-      );
-      return false;
-    }
+    if (!track || track.readyState !== "live") return false;
 
     screenShareStreamRef.current = stream;
-
     if (vid.srcObject !== stream) {
       vid.srcObject = stream;
       vid.muted = true;
     }
 
-    setScreenActive(true);
-    console.log("✅ Screen video attached successfully");
+    screenVideoActiveRef.current = true;
+    setScreenVideoActive(true);
 
     const tryPlay = () => {
       if (!vid.isConnected) return;
       vid.play().catch((e) => {
         if (e.name === "AbortError") setTimeout(tryPlay, 50);
-        else if (e.name !== "NotAllowedError")
-          console.error("Screen video play error:", e);
+        else if (e.name !== "NotAllowedError") console.error("Screen play:", e);
       });
     };
     vid.addEventListener("loadedmetadata", tryPlay, { once: true });
     vid.addEventListener("canplay", tryPlay, { once: true });
     if (vid.readyState >= 1) tryPlay();
 
-    const onTrackEnded = () => {
-      console.log("🛑 Screen share track ended");
+    const onEnded = () => {
       vid.srcObject = null;
-      setScreenActive(false);
+      screenVideoActiveRef.current = false;
+      setScreenVideoActive(false);
       screenShareStreamRef.current = null;
-      if (streamsRef.current) streamsRef.current.screenShareStream = null;
     };
-    track.addEventListener("ended", onTrackEnded);
-
+    track.addEventListener("ended", onEnded);
     return () => {
       vid.removeEventListener("loadedmetadata", tryPlay);
       vid.removeEventListener("canplay", tryPlay);
-      track.removeEventListener("ended", onTrackEnded);
+      track.removeEventListener("ended", onEnded);
     };
   }, []); // eslint-disable-line
 
   useEffect(() => {
-    if (screenVideoActiveRef.current) {
-      console.log("🔄 Screen video: reattaching after remount");
-      const cleanup = attachScreenVideo();
-      if (cleanup) return cleanup;
-    }
-
     const cleanup = attachScreenVideo();
     if (cleanup) return cleanup;
 
     let retries = 0;
-    const MAX_RETRIES = 100;
     let activeCleanup = null;
-
-    const retryTimer = setInterval(() => {
+    const timer = setInterval(() => {
       retries++;
       const c = attachScreenVideo();
       if (c) {
         activeCleanup = c;
-        clearInterval(retryTimer);
-      } else if (retries >= MAX_RETRIES) {
-        clearInterval(retryTimer);
-        console.warn("⚠️ Screen share never became available after 10s");
+        clearInterval(timer);
+      } else if (retries >= 100) {
+        clearInterval(timer);
       }
     }, 100);
-
     return () => {
-      clearInterval(retryTimer);
+      clearInterval(timer);
       if (activeCleanup) activeCleanup();
     };
   }, []); // eslint-disable-line
 
-  // ── WebRTC answer handler ──────────────────────────────────────────────────
-  const startWebRTCAnswer = useCallback(
-    async (socket, offerData) => {
-      if (webrtcNegotiatingRef.current) {
-        console.log(
-          "⚠️ WebRTC: skipping duplicate offer — negotiation in progress",
-        );
-        return;
-      }
-      webrtcNegotiatingRef.current = true;
-      console.log("🖥️ Creating WebRTC answer for mobile camera");
-      setWebrtcState("connecting");
-
-      if (peerConnectionRef.current) {
-        try {
-          peerConnectionRef.current.close();
-        } catch (_) {}
-        peerConnectionRef.current = null;
-      }
-      pendingIceCandidatesRef.current = [];
-
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-      peerConnectionRef.current = pc;
-
-      // ── FIX: ontrack — attach to video element immediately if ref is ready,
-      // otherwise the fallback useEffect (watching mobileCameraConnected) will
-      // attach it once state updates cause a re-render and the ref is available.
-      pc.ontrack = (event) => {
-        console.log(
-          "📡 ontrack fired — mobile camera track arrived:",
-          event.track.kind,
-        );
-        const [remoteStream] = event.streams;
-
-        if (!remoteStream) {
-          console.warn("⚠️ ontrack: no streams in event, skipping");
-          return;
-        }
-
-        mobileStreamRef.current = remoteStream;
-        mobileVideoAttachedRef.current = false; // reset so fallback effect re-attaches
-
-        const vid = mobileVideoRef.current;
-        if (vid) {
-          // Video element is mounted — attach directly right now
-          console.log("✅ Attaching mobile stream directly in ontrack");
-          vid.srcObject = remoteStream;
-          vid.muted = true;
-          mobileVideoAttachedRef.current = true;
-
-          const tryPlay = () => {
-            if (!vid) return;
-            vid.play().catch((e) => {
-              if (e.name === "AbortError") setTimeout(tryPlay, 50);
-              else if (e.name !== "NotAllowedError")
-                console.error("Mobile video play (ontrack):", e);
-            });
-          };
-
-          if (vid.readyState >= 2) {
-            tryPlay();
-          } else {
-            vid.addEventListener("loadedmetadata", tryPlay, { once: true });
-            vid.addEventListener("canplay", tryPlay, { once: true });
-            tryPlay(); // also try immediately in case events already fired
-          }
-        } else {
-          // Video ref not ready yet — fallback useEffect will handle this
-          // when mobileCameraConnected state update triggers a re-render
-          console.warn(
-            "⚠️ mobileVideoRef not ready in ontrack — fallback effect will attach",
-          );
-        }
-
-        // Updating state triggers re-render → fallback useEffect runs as safety net
-        setMobileCameraConnected(true);
-        setWebrtcState("connected");
-        socket.emit("webrtc_connected", {
-          interviewId: sessionData?.interviewId,
-        });
-      };
-
-      pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          socket.emit("webrtc_ice_candidate", {
-            candidate: event.candidate,
-            interviewId: sessionData?.interviewId,
-          });
-        }
-      };
-
-      pc.onconnectionstatechange = () => {
-        const state = pc.connectionState;
-        console.log("🖥️ WebRTC connection state:", state);
-        if (state === "connected") {
-          setWebrtcState("connected");
-          setMobileCameraConnected(true);
-          webrtcNegotiatingRef.current = false;
-        } else if (state === "failed") {
-          setWebrtcState("failed");
-          webrtcNegotiatingRef.current = false;
-        } else if (state === "disconnected") {
-          webrtcNegotiatingRef.current = false;
-          setTimeout(() => {
-            if (peerConnectionRef.current?.connectionState !== "connected")
-              setWebrtcState("failed");
-          }, 5000);
-        }
-      };
-
-      try {
-        await pc.setRemoteDescription(
-          new RTCSessionDescription({
-            type: offerData.type,
-            sdp: offerData.sdp,
-          }),
-        );
-
-        for (const candidate of pendingIceCandidatesRef.current) {
-          try {
-            await pc.addIceCandidate(new RTCIceCandidate(candidate));
-          } catch (err) {
-            console.warn("ICE buffered candidate error:", err.message);
-          }
-        }
-        pendingIceCandidatesRef.current = [];
-
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket.emit("webrtc_answer", {
-          sdp: answer.sdp,
-          type: answer.type,
-          interviewId: sessionData?.interviewId,
-        });
-        console.log("🖥️ WebRTC answer sent");
-      } catch (err) {
-        console.error("❌ WebRTC negotiation error:", err);
-        setWebrtcState("failed");
-        webrtcNegotiatingRef.current = false;
-      }
-    },
-    [sessionData],
-  ); // eslint-disable-line
-
-  const startMobileStreamRecording = useCallback(
-    async (socket) => {
-      const stream = mobileStreamRef.current;
-      if (!stream || mobileMediaRecorderRef.current) return;
-
-      mobileChunkCountRef.current = 0;
-      const mimeTypes = [
-        "video/webm;codecs=vp9",
-        "video/webm;codecs=vp8",
-        "video/webm",
-        "",
-      ];
-      let mediaRecorder;
-      for (const mimeType of mimeTypes) {
-        try {
-          mediaRecorder = new MediaRecorder(
-            stream,
-            mimeType ? { mimeType } : {},
-          );
-          break;
-        } catch (_) {
-          continue;
-        }
-      }
-      if (!mediaRecorder) {
-        console.error("❌ No MediaRecorder for mobile stream");
-        return;
-      }
-
-      mobileMediaRecorderRef.current = mediaRecorder;
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (!e.data || e.data.size === 0) return;
-        mobileChunkCountRef.current++;
-        const chunkNum = mobileChunkCountRef.current;
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          if (socket?.connected && mobileSessionReadyRef.current) {
-            socket.emit("video_chunk", {
-              videoType: "secondary_camera",
-              chunkNumber: chunkNum,
-              chunkData: reader.result.split(",")[1],
-              isLastChunk: false,
-              timestamp: Date.now(),
-            });
-          }
-        };
-        reader.readAsDataURL(e.data);
-      };
-
-      mediaRecorder.onstart = () => setIsSecondaryRecording(true);
-      mediaRecorder.onstop = () => {
-        setIsSecondaryRecording(false);
-        mobileSessionReadyRef.current = false;
-        mobileMediaRecorderRef.current = null;
-        if (socket?.connected) {
-          socket.emit("video_recording_stop", {
-            videoType: "secondary_camera",
-            totalChunks: mobileChunkCountRef.current,
-          });
-        }
-      };
-
-      if (
-        preWarmComplete.secondaryCamera &&
-        preWarmSessionIds.secondaryCameraId
-      ) {
-        mobileSessionReadyRef.current = true;
-      } else if (socket?.connected) {
-        socket.emit("video_recording_start", {
-          videoType: "secondary_camera",
-          totalChunks: 0,
-          metadata: { mimeType: "video/webm;codecs=vp9" },
-        });
-        await new Promise((resolve) => {
-          const timeout = setTimeout(() => {
-            mobileSessionReadyRef.current = true;
-            resolve();
-          }, 5000);
-          const handler = (data) => {
-            if (data.videoType === "secondary_camera") {
-              clearTimeout(timeout);
-              socket.off("video_recording_ready", handler);
-              mobileSessionReadyRef.current = true;
-              resolve();
-            }
-          };
-          socket.on("video_recording_ready", handler);
-        });
-      } else {
-        mobileSessionReadyRef.current = true;
-      }
-
-      mediaRecorder.start(20000);
-      console.log("✅ Mobile stream recording started");
-    },
-    [preWarmComplete, preWarmSessionIds],
-  );
+  // ── Start mobile recording when first frame arrives ────────────────────────
+  useEffect(() => {
+    if (
+      mobileCameraConnected &&
+      !mobileMediaRecorderRef.current &&
+      interview.status === "live" &&
+      socketReady
+    ) {
+      startMobileCanvasRecording(interview.socketRef.current).catch(
+        console.error,
+      );
+    }
+  }, [
+    mobileCameraConnected,
+    interview.status,
+    socketReady,
+    startMobileCanvasRecording,
+  ]);
 
   // ── Main socket init ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -567,51 +420,31 @@ const InterviewLive = () => {
         interview.socketRef.current = socket;
         setSocketReady(true);
 
-        // Register WebRTC listeners BEFORE any await — prevents missed offers
-        socket.on("webrtc_offer", async (data) => {
-          console.log("📡 WebRTC offer received");
-          try {
-            await startWebRTCAnswer(socket, data);
-          } catch (err) {
-            console.error("WebRTC answer failed:", err);
-            setWebrtcState("failed");
-            webrtcNegotiatingRef.current = false;
-          }
+        // ── Secondary camera (WebSocket frames) ──────────────────────────────
+        socket.on("secondary_camera_ready", () => {
+          console.log("📱 Secondary camera connected via WebSocket");
+          setMobileCameraConnected(true);
         });
 
-        socket.on("webrtc_ice_candidate", async (data) => {
-          if (data.fromMobile === false) return;
-          const pc = peerConnectionRef.current;
-          if (!data.candidate) return;
-          if (!pc || pc.remoteDescription === null) {
-            pendingIceCandidatesRef.current.push(data.candidate);
-            return;
-          }
-          try {
-            await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-          } catch (err) {
-            console.warn("ICE candidate error:", err.message);
-          }
-        });
-
-        socket.on("webrtc_failed", () => {
-          setWebrtcState("failed");
-          webrtcNegotiatingRef.current = false;
-        });
-        socket.on("secondary_camera_ready", () =>
-          setMobileCameraConnected(true),
-        );
         socket.on("secondary_camera_status", (d) => {
           if (d.connected) setMobileCameraConnected(true);
         });
 
+        // This is the key event — server relays JPEG frames from mobile
+        socket.on("mobile_camera_frame", (data) => {
+          if (!data?.frame) return;
+          // Mark connected on first frame (belt-and-suspenders)
+          setMobileCameraConnected(true);
+          drawMobileFrame(data.frame);
+        });
+
+        // ── Interview events ─────────────────────────────────────────────────
         const silenced = new Set([
           "user_audio_chunk",
           "video_chunk",
           "audio_chunk",
           "holistic_detection_result",
           "interim_transcript",
-          "webrtc_ice_candidate",
         ]);
         socket.onAny((ev) => {
           if (!silenced.has(ev)) console.log(`📡 [socket] "${ev}"`);
@@ -662,9 +495,6 @@ const InterviewLive = () => {
         socket.on("video_recording_error", (d) =>
           console.error("❌ Video error:", d),
         );
-        socket.on("audio_processing_error", (d) =>
-          console.error("❌ Audio processing:", d),
-        );
         socket.on("disconnect", (reason) => {
           if (reason === "io server disconnect" && !isLeavingRef.current) {
             alert("Server disconnected unexpectedly.");
@@ -709,11 +539,6 @@ const InterviewLive = () => {
     return () => {
       if (isLeavingRef.current) {
         cleanupAllRecordings();
-        if (peerConnectionRef.current) {
-          try {
-            peerConnectionRef.current.close();
-          } catch (_) {}
-        }
         socket?.offAny();
         socket?.removeAllListeners();
         socket?.disconnect();
@@ -721,20 +546,7 @@ const InterviewLive = () => {
     };
   }, []); // eslint-disable-line
 
-  useEffect(() => {
-    if (
-      webrtcState !== "connected" ||
-      !mobileStreamRef.current ||
-      mobileMediaRecorderRef.current ||
-      interview.status !== "live" ||
-      !socketReady
-    )
-      return;
-    startMobileStreamRecording(interview.socketRef.current).catch(
-      console.error,
-    );
-  }, [webrtcState, interview.status, socketReady, startMobileStreamRecording]);
-
+  // ── Start primary recordings when interview goes live ─────────────────────
   useEffect(() => {
     if (recordingsStartedRef.current) return;
     if (
@@ -774,6 +586,7 @@ const InterviewLive = () => {
     isVideoRecording,
   ]); // eslint-disable-line
 
+  // ── Navigate to dashboard after evaluation ────────────────────────────────
   useEffect(() => {
     if (evaluationStatus === "complete" && evaluationResults) {
       setTimeout(() => navigate("/dashboard"), 2000);
@@ -784,11 +597,6 @@ const InterviewLive = () => {
     if (!confirm("End the interview?")) return;
     isLeavingRef.current = true;
     await cleanupAllRecordings();
-    if (peerConnectionRef.current) {
-      try {
-        peerConnectionRef.current.close();
-      } catch (_) {}
-    }
     const socket = interview.socketRef.current;
     if (socket) {
       socket.offAny();
@@ -820,25 +628,11 @@ const InterviewLive = () => {
     </div>
   );
 
-  const mobileStatusLabel =
-    webrtcState === "connected"
-      ? "● LIVE · P2P"
-      : webrtcState === "connecting"
-        ? "CONNECTING"
-        : webrtcState === "failed"
-          ? "FAILED"
-          : "WAITING";
-  const mobileStatusClass =
-    webrtcState === "connected"
-      ? "text-orange-300 bg-orange-900/30"
-      : webrtcState === "failed"
-        ? "text-red-300 bg-red-900/30"
-        : "text-gray-500 bg-gray-700";
-
   return (
     <section className="min-h-screen bg-gray-900 p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
+          {/* ── Main interview panel ─────────────────────────────────────── */}
           <div className="lg:col-span-2">
             <Card className="flex flex-col overflow-hidden shadow-xl border border-gray-700 bg-gray-800 min-h-150">
               <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700 flex-wrap gap-3">
@@ -897,11 +691,12 @@ const InterviewLive = () => {
                   <p className="text-sm font-semibold text-red-300">
                     ⚠️{" "}
                     {faceViolationWarning.type === "NO_FACE"
-                      ? "No face detected — please stay in frame"
+                      ? `No face detected — ${faceViolationWarning.max - faceViolationWarning.count} warning(s) remaining`
                       : "Multiple faces detected"}
                   </p>
                 </div>
               )}
+
               {evaluationStatus === "started" && (
                 <div className="px-5 py-3 bg-blue-900/20 border-b border-blue-800 flex items-center gap-3">
                   <div className="animate-spin w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full" />
@@ -992,7 +787,9 @@ const InterviewLive = () => {
             </Card>
           </div>
 
+          {/* ── Right column: cameras ────────────────────────────────────── */}
           <div className="lg:col-span-1 space-y-3">
+            {/* Primary camera */}
             <Card className="overflow-hidden border border-gray-700 bg-gray-800">
               <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
                 <span className="text-xs font-bold text-gray-300">
@@ -1016,55 +813,60 @@ const InterviewLive = () => {
               </div>
             </Card>
 
+            {/* Mobile camera — WebSocket canvas */}
             <Card className="overflow-hidden border border-gray-700 bg-gray-800">
               <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
                 <span className="text-xs font-bold text-gray-300">
                   Mobile Camera
                 </span>
                 <span
-                  className={`text-xs font-semibold px-2 py-0.5 rounded ${mobileStatusClass}`}
+                  className={`text-xs font-semibold px-2 py-0.5 rounded ${
+                    mobileCameraConnected
+                      ? isSecondaryRecording
+                        ? "text-orange-300 bg-orange-900/30"
+                        : "text-green-300 bg-green-900/30"
+                      : "text-gray-500 bg-gray-700"
+                  }`}
                 >
-                  {mobileStatusLabel}
+                  {mobileCameraConnected
+                    ? isSecondaryRecording
+                      ? "● REC"
+                      : "● LIVE"
+                    : "WAITING"}
                 </span>
               </div>
-              {/* ── FIX: video element is ALWAYS rendered so mobileVideoRef.current
-                  is never null when ontrack fires. The overlay sits on top using
-                  absolute positioning and is removed once connected. ── */}
               <div className="relative aspect-video bg-black">
-                <video
-                  ref={mobileVideoRef}
-                  autoPlay
-                  muted
-                  playsInline
+                {/* Canvas always rendered — frames drawn onto it via drawMobileFrame() */}
+                <canvas
+                  ref={mobileCanvasRef}
+                  width={640}
+                  height={480}
                   className="w-full h-full object-cover"
-                  style={{ transform: "scaleX(-1)" }}
                 />
-                {/* Overlay only shown while not yet connected — video element
-                    stays in DOM the whole time so the ref is always valid */}
+
+                {/* Overlay — only shown while waiting for first frame */}
                 {!mobileCameraConnected && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10">
-                    {webrtcState === "failed" ? (
-                      <>
-                        <span className="text-red-400 text-2xl mb-2">✕</span>
-                        <p className="text-white text-xs opacity-60">
-                          P2P connection failed
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        <div className="animate-spin w-8 h-8 border-2 border-orange-500/40 border-t-orange-500 rounded-full mb-2" />
-                        <p className="text-white text-xs opacity-60">
-                          {webrtcState === "connecting"
-                            ? "Establishing P2P…"
-                            : "Waiting for mobile…"}
-                        </p>
-                      </>
-                    )}
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-10">
+                    <div className="animate-spin w-8 h-8 border-2 border-orange-500/40 border-t-orange-500 rounded-full mb-2" />
+                    <p className="text-white text-xs opacity-70">
+                      Waiting for mobile…
+                    </p>
+                    <p className="text-gray-500 text-xs mt-1">
+                      Scan QR code on your phone
+                    </p>
+                  </div>
+                )}
+
+                {/* Frame counter badge */}
+                {mobileCameraConnected && (
+                  <div className="absolute bottom-2 right-2 px-2 py-0.5 bg-black/50 rounded text-xs text-gray-400 font-mono">
+                    {mobileFrameCount} frames
                   </div>
                 )}
               </div>
             </Card>
 
+            {/* Screen share */}
             <Card className="overflow-hidden border border-gray-700 bg-gray-800">
               <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
                 <span className="text-xs font-bold text-gray-300">Screen</span>
@@ -1097,6 +899,7 @@ const InterviewLive = () => {
           </div>
         </div>
 
+        {/* Termination modal */}
         {isInterviewTerminated && (
           <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50">
             <div className="bg-gray-800 rounded-2xl p-8 text-center max-w-sm mx-4 shadow-2xl">
@@ -1107,7 +910,7 @@ const InterviewLive = () => {
                 Interview Terminated
               </h3>
               <p className="text-gray-400 text-sm">
-                Your session has been ended.
+                Your session has been ended due to a violation.
               </p>
             </div>
           </div>
