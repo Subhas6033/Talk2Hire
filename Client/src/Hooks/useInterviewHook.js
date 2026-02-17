@@ -69,11 +69,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   }, [interview]);
 
   // ── Create ONE AudioContext and share it with the recording hook ───────────
-  // ROOT-CAUSE FIX: Previously useInterviewHook and useAudioRecording each
-  // created their own AudioContext. Two independent contexts have independent
-  // clocks — you cannot schedule audio on one and have the other play it in
-  // sync. Now we create the context here and hand it to the recording hook via
-  // setAudioContext(), so both share a single clock.
   useEffect(() => {
     if (audioCtxInitRef.current) return;
     audioCtxInitRef.current = true;
@@ -90,7 +85,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       if (ctx.state === "suspended") await ctx.resume();
       console.log("✅ AudioContext ready:", ctx.state, ctx.sampleRate + "Hz");
 
-      // Share the context with the recording hook immediately
       await audioRecording.setAudioContext(ctx);
       console.log("✅ Shared AudioContext handed to audioRecording");
     };
@@ -154,13 +148,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     activeSourcesRef.current = [];
   }, []);
 
-  /**
-   * Scheduler tick — runs every 25ms.
-   *
-   * ROOT-CAUSE FIX: We now pass the source NODE (not the buffer) to
-   * connectTTSAudio. The recording hook simply taps into the already-started
-   * node — same clock, same start time, zero latency, zero drift.
-   */
   const scheduleTick = useCallback(() => {
     const ctx = audioCtxRef.current;
     if (!ctx || ctx.state === "closed") return;
@@ -175,15 +162,11 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
       const startAt = Math.max(nextChunkAtRef.current, now + 0.001);
 
-      // ── Speaker source ────────────────────────────────────────────────────
       const source = ctx.createBufferSource();
       source.buffer = buf;
       source.connect(ctx.destination);
       source.start(startAt);
 
-      // ── Recording mix — ROOT-CAUSE FIX ────────────────────────────────────
-      // Pass the source NODE. The recording hook connects it to its gain node.
-      // Same object, same clock, same start time. No second source, no drift.
       if (audioRecording.connectTTSAudio) {
         try {
           audioRecording.connectTTSAudio(source);
@@ -227,35 +210,73 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     dispatch(setIsPlaying(false));
   }, [stopScheduler, stopAllSources, dispatch]);
 
-  // Handle incoming TTS audio chunk
+  // ── Handle incoming TTS audio chunk ────────────────────────────────────────
+  // FIX: RangeError: Offset is outside the bounds of the DataView
+  //
+  // ROOT CAUSE: The server occasionally sends a PCM chunk whose byte length is
+  // odd (e.g. 8001 bytes). Dividing by 2 gives a non-integer numSamples (4000.5).
+  // createBuffer() silently floors it to 4000, but the loop runs up to index 4000
+  // and calls dataView.getInt16(8000, true) on an 8001-byte buffer — which is a
+  // valid read — HOWEVER if byteLength is truly odd the last getInt16 at offset
+  // (byteLength - 1) reads 1 byte past the end → RangeError.
+  //
+  // FIX: use Math.floor(byteLength / 2) for numSamples so we only ever read
+  // complete 2-byte samples, and add guard rails for empty / null buffers.
   const handleTtsAudio = useCallback(
     async (data) => {
       try {
+        // ── 1. Extract base64 string ─────────────────────────────────────────
         let base64Audio;
         if (typeof data === "string") {
           base64Audio = data;
         } else if (data?.audio) {
           base64Audio = data.audio;
         } else {
-          console.warn("⚠️ TTS audio chunk has no audio:", data);
+          console.warn("⚠️ TTS audio chunk has no audio field:", typeof data);
           return;
         }
-        if (!base64Audio || base64Audio.length === 0) return;
 
+        if (!base64Audio || base64Audio.length === 0) {
+          console.warn("⚠️ TTS audio chunk is empty, skipping");
+          return;
+        }
+
+        // ── 2. Ensure AudioContext is ready ──────────────────────────────────
         const ctx = audioCtxRef.current;
         if (!ctx) {
           console.error("❌ No AudioContext for TTS chunk");
           return;
         }
         if (ctx.state === "closed") {
-          console.error("❌ AudioContext closed");
+          console.error("❌ AudioContext is closed");
           return;
         }
         if (ctx.state === "suspended") await ctx.resume();
 
-        // Decode: base64 → PCM int16 → float32 AudioBuffer
+        // ── 3. Decode base64 → ArrayBuffer ───────────────────────────────────
         const arrayBuffer = base64ToArrayBuffer(base64Audio);
-        const numSamples = arrayBuffer.byteLength / 2;
+
+        // Guard: need at least 2 bytes for one Int16 sample
+        if (!arrayBuffer || arrayBuffer.byteLength < 2) {
+          console.warn(
+            "⚠️ TTS buffer too small to decode:",
+            arrayBuffer?.byteLength,
+            "bytes — skipping",
+          );
+          return;
+        }
+
+        // FIX: floor() ensures we only read whole 2-byte samples.
+        // Without this, an odd byteLength causes getInt16 to read 1 byte past
+        // the end of the buffer → RangeError: Offset is outside the bounds.
+        const numSamples = Math.floor(arrayBuffer.byteLength / 2);
+
+        if (numSamples === 0) {
+          console.warn("⚠️ TTS buffer has zero decodable samples — skipping");
+          return;
+        }
+
+        // ── 4. PCM Int16 → Float32 AudioBuffer ──────────────────────────────
         const audioBuffer = ctx.createBuffer(
           1,
           numSamples,
@@ -263,11 +284,15 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         );
         const channelData = audioBuffer.getChannelData(0);
         const dataView = new DataView(arrayBuffer);
+
         for (let i = 0; i < numSamples; i++) {
+          // Safe: i * 2 is always within [0, byteLength - 2] because
+          // numSamples = floor(byteLength / 2), so max offset = (numSamples-1)*2
+          // = floor(byteLength/2)*2 - 2 ≤ byteLength - 2. ✓
           channelData[i] = dataView.getInt16(i * 2, true) / 32768;
         }
 
-        // Silence detection
+        // ── 5. Skip pure-silence chunks ──────────────────────────────────────
         let maxAmplitude = 0;
         for (let i = 0; i < channelData.length; i++) {
           const abs = Math.abs(channelData[i]);
@@ -275,6 +300,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         }
         if (maxAmplitude < 0.001) return;
 
+        // ── 6. Queue into scheduler ──────────────────────────────────────────
         if (pendingBuffersRef.current.length === 0 && !isPlayingRef.current) {
           nextChunkAtRef.current = ctx.currentTime + 0.01;
           isPlayingRef.current = true;

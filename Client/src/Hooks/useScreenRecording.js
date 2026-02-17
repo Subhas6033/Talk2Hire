@@ -2,28 +2,37 @@ import { useRef, useState, useCallback, useEffect } from "react";
 
 const CHUNK_DURATION = 20000;
 
-/**
- * Detect mobile browsers — getDisplayMedia is not supported on any mobile
- * browser (Chrome Android, Safari iOS, Firefox Android, Samsung Internet).
- * Calling it throws "navigator.mediaDevices.getDisplayMedia is not a function".
- */
 function isMobileBrowser() {
   return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
     navigator.userAgent,
   );
 }
 
-/**
- * KEY FIX: Hook now accepts an optional `preWarmVideoId` constructor argument.
- * When provided, startRecording() skips emitting video_recording_start and
- * immediately begins chunking to the already-confirmed server session.
- *
- * Additionally, startRecording() now accepts an existing MediaStream as its
- * first argument. When the caller passes the stream that was already acquired
- * during InterviewSetup, we skip requestScreenShare() entirely — no browser
- * dialog, no extra latency, the preview <video> in InterviewLive continues
- * showing without interruption.
- */
+function findSupportedMimeType() {
+  const candidates = [
+    { type: "video/webm;codecs=vp9", bitrate: 2500000 },
+    { type: "video/webm;codecs=vp8", bitrate: 2500000 },
+    { type: "video/webm;codecs=h264", bitrate: 2500000 },
+    { type: "video/webm", bitrate: 2500000 },
+    { type: "video/webm", bitrate: 1500000 },
+    { type: "video/mp4", bitrate: 2500000 },
+    { type: "", bitrate: 1000000 },
+  ];
+
+  for (const { type, bitrate } of candidates) {
+    if (type === "" || MediaRecorder.isTypeSupported(type)) {
+      const options = {};
+      if (type) options.mimeType = type;
+      if (bitrate) options.videoBitsPerSecond = bitrate;
+      console.log(
+        `✅ Screen MIME: ${type || "browser default"} @ ${bitrate}bps`,
+      );
+      return { mimeType: type || "default", bitrate, options };
+    }
+  }
+  return null;
+}
+
 const useScreenRecording = (
   interviewId,
   userId,
@@ -41,61 +50,22 @@ const useScreenRecording = (
   const hasStoppedRef = useRef(false);
   const screenStreamRef = useRef(null);
 
-  // Capture preWarmVideoId in a ref so the callback closure is always fresh
   const preWarmVideoIdRef = useRef(preWarmVideoId);
   useEffect(() => {
     preWarmVideoIdRef.current = preWarmVideoId;
   }, [preWarmVideoId]);
 
-  const findSupportedMimeType = (stream) => {
-    const mimeTypesToTry = [
-      { type: "video/webm;codecs=vp9", bitrate: 2500000 },
-      { type: "video/webm;codecs=vp8", bitrate: 2500000 },
-      { type: "video/webm;codecs=h264", bitrate: 2500000 },
-      { type: "video/webm", bitrate: 2500000 },
-      { type: "video/webm", bitrate: 1500000 },
-      { type: "video/mp4", bitrate: 2500000 },
-      { type: "", bitrate: 1000000 },
-    ];
-
-    for (const config of mimeTypesToTry) {
-      const { type: mimeType, bitrate } = config;
-      if (mimeType && !MediaRecorder.isTypeSupported(mimeType)) continue;
-      try {
-        const options = {};
-        if (mimeType) options.mimeType = mimeType;
-        if (bitrate) options.videoBitsPerSecond = bitrate;
-        const testRecorder = new MediaRecorder(stream, options);
-        if (testRecorder.state !== "inactive") testRecorder.stop();
-        console.log(
-          ` Screen MIME type: ${mimeType || "default"} @ ${bitrate}bps`,
-        );
-        return { mimeType: mimeType || "default", bitrate, options };
-      } catch {
-        continue;
-      }
-    }
-    return null;
-  };
-
+  // ── requestScreenShare ──────────────────────────────────────────────────────
   const requestScreenShare = useCallback(async () => {
-    // getDisplayMedia is a desktop-only API — not available on any mobile browser.
-    // Return null silently so callers can skip screen recording gracefully.
     if (isMobileBrowser()) {
-      console.log(
-        "📱 Mobile browser detected — screen sharing not supported, skipping",
-      );
+      console.log("📱 Mobile — screen sharing not supported");
       return null;
     }
-
-    // Also guard against browsers that don't implement getDisplayMedia at all
     if (!navigator.mediaDevices?.getDisplayMedia) {
-      console.warn("⚠️ getDisplayMedia not available in this browser");
+      console.warn("⚠️ getDisplayMedia not available");
       return null;
     }
-
     try {
-      console.log("🖥️ Requesting screen share...");
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           displaySurface: "monitor",
@@ -104,30 +74,19 @@ const useScreenRecording = (
         },
         audio: false,
       });
-      console.log(" Screen share granted");
       screenStreamRef.current = stream;
       setScreenStream(stream);
       return stream;
     } catch (error) {
       console.error("❌ Screen share denied:", error);
-      if (error.name === "NotAllowedError") {
-        alert(
-          "Screen sharing permission denied. Screen recording will not be available.",
-        );
-      } else {
-        alert("Failed to start screen sharing: " + error.message);
-      }
+      if (error.name === "NotAllowedError")
+        alert("Screen sharing permission denied.");
+      else alert("Failed to start screen sharing: " + error.message);
       return null;
     }
   }, []);
 
-  /**
-   * Start screen recording.
-   *
-   * @param {MediaStream|null} existingStream  Pass the stream already acquired
-   *   during InterviewSetup so we skip the getDisplayMedia() dialog entirely.
-   *   If null/undefined, requestScreenShare() is called as before.
-   */
+  // ── startRecording ──────────────────────────────────────────────────────────
   const startRecording = useCallback(
     async (existingStream = null) => {
       if (isRecording) {
@@ -142,9 +101,8 @@ const useScreenRecording = (
         }, 2000);
         return;
       }
-
       if (isRequestingSessionRef.current) {
-        console.log("⚠️ Already requesting screen recording session");
+        console.log("⚠️ Already requesting session");
         return;
       }
 
@@ -155,15 +113,11 @@ const useScreenRecording = (
         screenSessionReadyRef.current = false;
         chunkCountRef.current = 0;
 
-        // KEY FIX: Use the pre-acquired stream if provided; skip getDisplayMedia
         let stream;
         if (existingStream && existingStream.active) {
-          console.log(
-            "♻️ Reusing pre-acquired screen stream (no browser dialog)",
-          );
           stream = existingStream;
           screenStreamRef.current = stream;
-          setScreenStream(stream);
+          if (screenStream !== stream) setScreenStream(stream);
         } else {
           stream = screenStreamRef.current;
           if (!stream || !stream.active) {
@@ -177,54 +131,44 @@ const useScreenRecording = (
 
         const videoTrack = stream.getVideoTracks()[0];
         if (!videoTrack || videoTrack.readyState !== "live") {
-          console.error("❌ Screen video track is not live");
+          console.error(
+            "❌ Screen video track not live:",
+            videoTrack?.readyState,
+          );
           isRequestingSessionRef.current = false;
           return;
         }
 
-        const mimeConfig = findSupportedMimeType(stream);
+        const mimeConfig = findSupportedMimeType();
         if (!mimeConfig) {
-          throw new Error(
-            "No supported video MIME type found for screen recording.",
-          );
+          throw new Error("No supported video MIME type found.");
         }
 
         let mediaRecorder;
         try {
           mediaRecorder = new MediaRecorder(stream, mimeConfig.options);
-        } catch {
-          try {
-            mediaRecorder = new MediaRecorder(stream);
-          } catch (finalError) {
-            isRequestingSessionRef.current = false;
-            alert(
-              "Failed to initialize screen recorder: " + finalError.message,
-            );
-            return;
-          }
+        } catch (e) {
+          console.warn("⚠️ Preferred MIME failed, falling back:", e.message);
+          mediaRecorder = new MediaRecorder(stream);
         }
-
         mediaRecorderRef.current = mediaRecorder;
 
         videoTrack.onended = () => {
-          console.log("🛑 User stopped screen sharing from browser UI");
-          if (mediaRecorderRef.current?.state !== "inactive") {
-            stopRecording();
-          }
+          console.log("🛑 User stopped screen sharing");
+          if (mediaRecorderRef.current?.state !== "inactive") stopRecording();
         };
 
         mediaRecorder.ondataavailable = (event) => {
           if (!event.data || event.data.size === 0) return;
           chunkCountRef.current++;
-          const currentChunkNumber = chunkCountRef.current;
+          const chunkNum = chunkCountRef.current;
           const reader = new FileReader();
           reader.onloadend = () => {
             if (socketRef.current?.connected && screenSessionReadyRef.current) {
-              const base64Data = reader.result.split(",")[1];
               socketRef.current.emit("video_chunk", {
                 videoType: "screen_recording",
-                chunkNumber: currentChunkNumber,
-                chunkData: base64Data,
+                chunkNumber: chunkNum,
+                chunkData: reader.result.split(",")[1],
                 isLastChunk: false,
                 timestamp: Date.now(),
               });
@@ -235,10 +179,21 @@ const useScreenRecording = (
         };
 
         mediaRecorder.onstart = () => {
-          console.log(" Screen MediaRecorder started");
+          console.log("✅ Screen MediaRecorder started");
           setIsRecording(true);
         };
 
+        // FIX: Do NOT stop stream tracks in onstop.
+        //
+        // Previously this handler called s.getTracks().forEach(t => t.stop()),
+        // which killed the MediaStream that InterviewLive's <video> was still
+        // displaying. The track's readyState became "ended" before
+        // attachScreenVideo() could attach it, causing the "Screen share not
+        // available" placeholder to stay visible forever.
+        //
+        // The stream is OWNED by InterviewSetup via streamsRef. It must remain
+        // live until InterviewSetup unmounts and runs its cleanup effect.
+        // Stopping tracks here was the root cause of the blank screen preview.
         mediaRecorder.onstop = () => {
           if (hasStoppedRef.current) return;
           hasStoppedRef.current = true;
@@ -253,12 +208,11 @@ const useScreenRecording = (
               totalChunks: chunkCountRef.current,
             });
           }
-          const s = screenStreamRef.current;
-          if (s) {
-            s.getTracks().forEach((t) => t.stop());
-            screenStreamRef.current = null;
-            setScreenStream(null);
-          }
+          // ✅ DO NOT stop stream tracks here — stream is owned by streamsRef/
+          // InterviewSetup and must stay alive for the preview <video> element.
+          // InterviewSetup's cleanup effect stops the tracks on page unmount.
+          screenStreamRef.current = null;
+          setScreenStream(null);
         };
 
         mediaRecorder.onerror = (event) => {
@@ -267,17 +221,14 @@ const useScreenRecording = (
           setIsRecording(false);
         };
 
-        // KEY FIX: Pre-warmed path — session already confirmed, skip round-trip
         if (preWarmVideoIdRef.current) {
           console.log(
-            "♻️ Screen recording session pre-warmed, skipping registration. videoId:",
+            "♻️ Screen session pre-warmed:",
             preWarmVideoIdRef.current,
           );
           screenSessionReadyRef.current = true;
           isRequestingSessionRef.current = false;
         } else {
-          // Fallback: request a new server session
-          console.log("📤 Requesting screen recording session from server...");
           socketRef.current.emit("video_recording_start", {
             videoType: "screen_recording",
             totalChunks: 0,
@@ -286,42 +237,27 @@ const useScreenRecording = (
               videoBitsPerSecond: mimeConfig.bitrate,
             },
           });
-
-          const serverResponsePromise = new Promise((resolve, reject) => {
+          await new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
               socketRef.current.off("video_recording_ready", handler);
               socketRef.current.off("video_recording_error", errorHandler);
-              reject(
-                new Error(
-                  "Server timeout waiting for screen recording confirmation",
-                ),
-              );
+              reject(new Error("Server timeout for screen recording"));
             }, 10000);
-
-            const handler = (response) => {
-              if (response.videoType !== "screen_recording") return;
+            const handler = (res) => {
+              if (res.videoType !== "screen_recording") return;
               clearTimeout(timeout);
               socketRef.current.off("video_recording_error", errorHandler);
-              console.log(
-                " Server confirmed screen recording ready:",
-                response,
-              );
-              resolve(response);
+              resolve(res);
             };
-
-            const errorHandler = (error) => {
-              if (error.videoType !== "screen_recording") return;
+            const errorHandler = (err) => {
+              if (err.videoType !== "screen_recording") return;
               clearTimeout(timeout);
               socketRef.current.off("video_recording_ready", handler);
-              reject(new Error(error.error || error.message || "Server error"));
+              reject(new Error(err.error || "Server error"));
             };
-
             socketRef.current.on("video_recording_ready", handler);
             socketRef.current.on("video_recording_error", errorHandler);
           });
-
-          await serverResponsePromise;
-          console.log(" Screen session confirmed, starting MediaRecorder");
           screenSessionReadyRef.current = true;
           isRequestingSessionRef.current = false;
         }
@@ -331,78 +267,59 @@ const useScreenRecording = (
         console.error("❌ Screen recording setup error:", err);
         isRequestingSessionRef.current = false;
         setIsRecording(false);
-        alert("Failed to setup screen recording: " + err.message);
       }
     },
-    [isRecording, socketRef, requestScreenShare],
+    [isRecording, socketRef, requestScreenShare, screenStream],
   );
 
+  // ── stopRecording ───────────────────────────────────────────────────────────
   const stopRecording = useCallback(async () => {
-    console.log("🛑 Attempting to stop screen recording...");
-
     if (!mediaRecorderRef.current) {
-      console.log("⚠️ No media recorder to stop");
-      const s = screenStreamRef.current;
-      if (s && s.active) {
-        s.getTracks().forEach((t) => t.stop());
-        screenStreamRef.current = null;
-        setScreenStream(null);
-      }
+      // Nothing to stop — but do NOT touch the stream tracks here either.
+      // The stream is owned by InterviewSetup.
       return null;
     }
-
-    if (mediaRecorderRef.current.state === "inactive") {
-      console.log("⚠️ Recorder already inactive");
-      return null;
-    }
+    if (mediaRecorderRef.current.state === "inactive") return null;
 
     return new Promise((resolve) => {
       const recorder = mediaRecorderRef.current;
-      const originalStop = recorder.onstop;
+      const orig = recorder.onstop;
       recorder.onstop = (e) => {
-        if (originalStop) originalStop(e);
+        if (orig) orig(e);
         mediaRecorderRef.current = null;
         resolve(chunkCountRef.current);
       };
       try {
         recorder.stop();
-        console.log(" Stop command sent to recorder");
-      } catch (error) {
-        console.error("❌ Error stopping recorder:", error);
+      } catch (err) {
+        console.error("❌ Error stopping recorder:", err);
         mediaRecorderRef.current = null;
         resolve(null);
       }
     });
   }, []);
 
+  // ── cleanup ─────────────────────────────────────────────────────────────────
+  // Called on unmount — here it IS correct to stop tracks because the component
+  // that owns the stream (InterviewSetup) is also unmounting at this point.
   const cleanup = useCallback(() => {
-    console.log("🧹 Cleaning up screen recording");
-
-    if (
-      mediaRecorderRef.current &&
-      mediaRecorderRef.current.state !== "inactive"
-    ) {
+    if (mediaRecorderRef.current?.state !== "inactive") {
       try {
         mediaRecorderRef.current.stop();
-      } catch (error) {
-        console.error("❌ Error during cleanup stop:", error);
-      }
+      } catch (_) {}
     }
     mediaRecorderRef.current = null;
-
+    // Only stop tracks in cleanup (unmount), never in onstop.
     const s = screenStreamRef.current;
-    if (s && s.active) {
+    if (s?.active) {
       s.getTracks().forEach((t) => {
         try {
           t.stop();
-        } catch (error) {
-          console.error("❌ Error stopping track:", error);
-        }
+        } catch (_) {}
       });
       screenStreamRef.current = null;
       setScreenStream(null);
     }
-
     chunkCountRef.current = 0;
     screenSessionReadyRef.current = false;
     isRequestingSessionRef.current = false;
@@ -410,9 +327,7 @@ const useScreenRecording = (
     setIsRecording(false);
   }, []);
 
-  useEffect(() => {
-    return () => cleanup();
-  }, [cleanup]);
+  useEffect(() => () => cleanup(), [cleanup]);
 
   return {
     isRecording,

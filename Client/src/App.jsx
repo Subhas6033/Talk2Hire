@@ -10,7 +10,6 @@ import { ProtectedRoute, PublicRoute } from "./Security/ProtectedRoutes.jsx";
 import {
   Home,
   About,
-  Interview,
   Login,
   NotFound,
   Privacy,

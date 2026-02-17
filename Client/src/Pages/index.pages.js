@@ -1,7 +1,6 @@
 import Home from "./Home";
 import About from "./About";
 import NotFound from "./NotFound";
-import Interview from "./Inteview";
 import RegistrationForm from "./Auth/Register.jsx";
 import Login from "./Auth/Login";
 import Privacy from "./Private/Privacy";
@@ -17,7 +16,6 @@ export {
   Home,
   About,
   NotFound,
-  Interview,
   RegistrationForm,
   Login,
   Privacy,

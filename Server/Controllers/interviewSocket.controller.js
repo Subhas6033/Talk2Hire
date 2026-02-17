@@ -70,6 +70,10 @@ function initInterviewSocket(httpServer) {
         lastMobileFrameTimestamp: null,
         isSetupMode: true,
         interviewStarted: false,
+        // WebRTC: track which socket is the desktop (interview type)
+        // so ICE candidates and answers can be routed correctly
+        desktopSocketId: null,
+        mobileSocketId: null,
       });
     }
     return interviewSessions.get(interviewId);
@@ -86,11 +90,16 @@ function initInterviewSocket(httpServer) {
 
   // ============================================================================
   // SETTINGS SOCKET HANDLER
+  // Handles: mobile camera page (type=settings)
+  // NEW: WebRTC signaling relay — webrtc_offer, webrtc_ice_candidate
   // ============================================================================
   function handleSettingsSocket(socket, interviewId, userId) {
     console.log(`[SETTINGS] Socket connected for interview ${interviewId}`);
     const session = getOrCreateSession(interviewId);
     socket.join(`interview_${interviewId}`);
+
+    // Track mobile socket id so desktop can route answers back correctly
+    session.mobileSocketId = socket.id;
 
     socket.on("secondary_camera_connected", (data) => {
       console.log("[SETTINGS] Mobile camera connected:", data);
@@ -114,6 +123,47 @@ function initInterviewSocket(httpServer) {
       });
     });
 
+    // ── WebRTC signaling: Mobile → Desktop ──────────────────────────────────
+    // Mobile creates an RTCPeerConnection offer and sends it here.
+    // Server simply relays it to the desktop socket in the same room.
+    // The server never inspects or modifies SDP — it's a pure relay.
+    socket.on("webrtc_offer", (data) => {
+      console.log(
+        `[SETTINGS] 📡 WebRTC offer from mobile, relaying to desktop`,
+      );
+      // Relay to the desktop socket specifically (not back to mobile)
+      if (session.desktopSocketId) {
+        io.to(session.desktopSocketId).emit("webrtc_offer", {
+          sdp: data.sdp,
+          type: data.type,
+          fromMobileSocketId: socket.id,
+        });
+      } else {
+        // Desktop not connected yet — relay to whole room, desktop will pick it up
+        socket.to(`interview_${interviewId}`).emit("webrtc_offer", {
+          sdp: data.sdp,
+          type: data.type,
+          fromMobileSocketId: socket.id,
+        });
+      }
+    });
+
+    // ICE candidates from mobile — relay to desktop
+    socket.on("webrtc_ice_candidate", (data) => {
+      if (session.desktopSocketId) {
+        io.to(session.desktopSocketId).emit("webrtc_ice_candidate", {
+          candidate: data.candidate,
+          fromMobile: true,
+        });
+      } else {
+        socket.to(`interview_${interviewId}`).emit("webrtc_ice_candidate", {
+          candidate: data.candidate,
+          fromMobile: true,
+        });
+      }
+    });
+
+    // Legacy frame relay — kept for fallback if WebRTC fails
     socket.on("security_frame_request", (data, ack) => {
       session.lastMobileFrame = data.frame;
       session.lastMobileFrameTimestamp = data.timestamp || Date.now();
@@ -155,17 +205,25 @@ function initInterviewSocket(httpServer) {
 
     socket.on("disconnect", () => {
       console.log(`[SETTINGS] Socket disconnected: ${socket.id}`);
+      if (session.mobileSocketId === socket.id) {
+        session.mobileSocketId = null;
+      }
     });
   }
 
   // ============================================================================
   // INTERVIEW SOCKET HANDLER
+  // Handles: desktop interview page (type=interview or default)
+  // NEW: WebRTC signaling relay — webrtc_answer, webrtc_ice_candidate
   // ============================================================================
   async function handleInterviewSocket(socket, interviewId, userId) {
     console.log(`[INTERVIEW] Socket connected for interview ${interviewId}`);
 
     const session = getOrCreateSession(interviewId);
     const { videoUploads, audioUploads } = session;
+
+    // Track desktop socket id for targeted WebRTC routing
+    session.desktopSocketId = socket.id;
 
     socket.join(`interview_${interviewId}`);
 
@@ -189,6 +247,60 @@ function initInterviewSocket(httpServer) {
         });
       }
     }
+
+    // ── WebRTC signaling: Desktop → Mobile ──────────────────────────────────
+    // Desktop creates an SDP answer in response to mobile's offer.
+    // Relay it back to the mobile socket.
+    socket.on("webrtc_answer", (data) => {
+      console.log(
+        `[INTERVIEW] 📡 WebRTC answer from desktop, relaying to mobile`,
+      );
+      if (session.mobileSocketId) {
+        io.to(session.mobileSocketId).emit("webrtc_answer", {
+          sdp: data.sdp,
+          type: data.type,
+        });
+      } else {
+        socket.to(`interview_${interviewId}`).emit("webrtc_answer", {
+          sdp: data.sdp,
+          type: data.type,
+        });
+      }
+    });
+
+    // ICE candidates from desktop — relay to mobile
+    socket.on("webrtc_ice_candidate", (data) => {
+      if (session.mobileSocketId) {
+        io.to(session.mobileSocketId).emit("webrtc_ice_candidate", {
+          candidate: data.candidate,
+          fromMobile: false,
+        });
+      } else {
+        socket.to(`interview_${interviewId}`).emit("webrtc_ice_candidate", {
+          candidate: data.candidate,
+          fromMobile: false,
+        });
+      }
+    });
+
+    // Notified by desktop that WebRTC connected — update session state
+    socket.on("webrtc_connected", () => {
+      console.log(`[INTERVIEW] ✅ WebRTC P2P connected for ${interviewId}`);
+      session.secondaryCameraConnected = true;
+      io.to(`interview_${interviewId}`).emit("secondary_camera_status", {
+        connected: true,
+        webrtc: true,
+        metadata: session.secondaryCameraMetadata,
+      });
+    });
+
+    // Notified by desktop that WebRTC failed — server logs it
+    socket.on("webrtc_failed", (data) => {
+      console.warn(
+        `[INTERVIEW] ⚠️ WebRTC failed for ${interviewId}:`,
+        data?.reason,
+      );
+    });
 
     let currentOrder = 1;
     let isProcessing = false;
@@ -239,7 +351,6 @@ function initInterviewSocket(httpServer) {
         return socket.disconnect();
       }
 
-      // PATCH 3: Pre-warm TTS instance during init so it's hot before client_ready
       getTTSInstance(interviewId);
       console.log("✅ First question ready");
 
@@ -390,7 +501,7 @@ function initInterviewSocket(httpServer) {
       });
 
       // ================================================================
-      // VIDEO RECORDING EVENTS
+      // VIDEO RECORDING EVENTS (unchanged)
       // ================================================================
       socket.on("video_recording_start", async (data) => {
         const { videoType, totalChunks, metadata, setupMode } = data;
@@ -549,7 +660,7 @@ function initInterviewSocket(httpServer) {
       });
 
       // ================================================================
-      // AUDIO RECORDING EVENTS
+      // AUDIO RECORDING EVENTS (unchanged)
       // ================================================================
       socket.on("audio_recording_start", async (data) => {
         const { audioType, metadata, setupMode } = data;
@@ -687,16 +798,14 @@ function initInterviewSocket(httpServer) {
       });
 
       // ================================================================
-      // INTERVIEW FLOW HELPERS
+      // INTERVIEW FLOW HELPERS (all unchanged)
       // ================================================================
       async function ensureDeepgramReady(deepgramReadyPromise, context = "") {
         await deepgramReadyPromise;
         if (deepgramConnection && deepgramConnection.isConnected()) return true;
-
         const retryConnection = startDeepgramConnection();
         await retryConnection;
         if (deepgramConnection && deepgramConnection.isConnected()) return true;
-
         throw new Error("Deepgram connection failed after retry");
       }
 
@@ -810,8 +919,6 @@ function initInterviewSocket(httpServer) {
 
           if (deepgramConnection) {
             try {
-              // PATCH 2: pause idle detection before finishing so the 10s
-              // ghost timer can't fire on a dead socket
               deepgramConnection.pauseIdleDetection();
               deepgramConnection.finish();
             } catch (e) {}
@@ -880,15 +987,7 @@ function initInterviewSocket(httpServer) {
         }
       }
 
-      // ================================================================
-      // PATCH 1: startDeepgramConnection — reuse live connection between
-      // questions instead of always tearing down and rebuilding the WebSocket.
-      // Each new connection costs ~300–500ms handshake the user hears as
-      // silence. We only create a new one when the existing connection is
-      // dead or missing.
-      // ================================================================
       function startDeepgramConnection() {
-        // Reuse an existing live connection — reset per-question state only
         if (deepgramConnection && deepgramConnection.isConnected()) {
           console.log(`♻️ Reusing live Deepgram connection for ${interviewId}`);
           if (typeof deepgramConnection.resetTranscriptState === "function") {
@@ -897,7 +996,6 @@ function initInterviewSocket(httpServer) {
           return Promise.resolve(deepgramConnection);
         }
 
-        // Tear down any stale/dead connection before creating a new one
         if (deepgramConnection) {
           try {
             deepgramConnection.finish();
@@ -964,7 +1062,6 @@ function initInterviewSocket(httpServer) {
               deepgramConnection = null;
             },
 
-            // PATCH 2: guard against idle firing after disconnect
             onIdle: async () => {
               if (isListeningActive && !isProcessing && deepgramConnection) {
                 await handleIdle();
@@ -972,7 +1069,6 @@ function initInterviewSocket(httpServer) {
             },
           });
 
-          // Expose reset method so reuse path can reset per-question state
           connection.resetTranscriptState = () => {
             hasReceivedTranscript = false;
           };
@@ -1165,7 +1261,7 @@ function initInterviewSocket(httpServer) {
       }
 
       // ================================================================
-      // HOLISTIC DETECTION
+      // HOLISTIC DETECTION (unchanged)
       // ================================================================
       async function safeRecordViolation(violationType, details, timestamp) {
         try {
@@ -1230,13 +1326,11 @@ function initInterviewSocket(httpServer) {
                   "Interview terminated: Your face was not visible in the camera",
                 violationCount: faceViolationCount,
               });
-
               await safeRecordViolation(
                 "NO_FACE",
                 `Face not detected for ${faceViolationCount} consecutive checks`,
                 timestamp,
               );
-
               await endInterview();
               return;
             }
@@ -1246,13 +1340,11 @@ function initInterviewSocket(httpServer) {
               message: `Interview terminated: ${faceCount} people detected.`,
               faceCount,
             });
-
             await safeRecordViolation(
               "MULTIPLE_FACES",
               `${faceCount} faces detected`,
               timestamp,
             );
-
             await endInterview();
             return;
           } else if (faceCount === 1) {
@@ -1276,7 +1368,7 @@ function initInterviewSocket(httpServer) {
       });
 
       // ================================================================
-      // AUDIO STREAMING
+      // AUDIO STREAMING (unchanged)
       // ================================================================
       let lastNoConnectionWarning = 0;
       let lastSendFailureWarning = 0;
@@ -1309,8 +1401,6 @@ function initInterviewSocket(httpServer) {
 
       // ================================================================
       // DISCONNECT
-      // PATCH 2: Call pauseIdleDetection() BEFORE finish() so the 10-second
-      // idle timer cannot fire on a dead socket after the user leaves.
       // ================================================================
       socket.on("disconnect", (reason) => {
         console.log("🔌 Interview socket disconnected:", {
@@ -1318,6 +1408,10 @@ function initInterviewSocket(httpServer) {
           interviewId,
           reason,
         });
+
+        if (session.desktopSocketId === socket.id) {
+          session.desktopSocketId = null;
+        }
 
         if (deepgramConnection) {
           try {
@@ -1376,7 +1470,7 @@ function initInterviewSocket(httpServer) {
       `🔌 Socket connected: ${socket.id} | Type: ${type || "interview"} | Interview: ${interviewId}`,
     );
 
-    if (type === "settings") {
+    if (type === "settings" || (type && type !== "interview")) {
       handleSettingsSocket(socket, interviewId, userId);
     } else {
       await handleInterviewSocket(socket, interviewId, userId);
@@ -1390,7 +1484,7 @@ function initInterviewSocket(httpServer) {
 }
 
 // ============================================================================
-// streamTTSToClient — ZERO-LATENCY STREAMING
+// streamTTSToClient — unchanged
 // ============================================================================
 async function streamTTSToClient(socket, text, interviewId, retryCount = 0) {
   const MAX_RETRIES = 2;

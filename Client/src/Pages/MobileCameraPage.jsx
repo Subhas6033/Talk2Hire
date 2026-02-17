@@ -1,9 +1,18 @@
 import { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { io } from "socket.io-client";
-import useSecondaryCamera from "../Hooks/useSecondaryCameraHook";
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
+
+// Free Google STUN servers — work for ~80% of NAT configurations.
+// If users are on strict corporate/carrier NAT, add a TURN server here.
+const ICE_SERVERS = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+];
+
+// How long to wait for ICE to reach "connected" before declaring failure
+const WEBRTC_CONNECT_TIMEOUT_MS = 15000;
 
 const MobileCameraPage = () => {
   const [searchParams] = useSearchParams();
@@ -13,35 +22,33 @@ const MobileCameraPage = () => {
   const [error, setError] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [cameraGranted, setCameraGranted] = useState(false);
-  const [isStreaming, setIsStreaming] = useState(false);
+  const [connectionState, setConnectionState] = useState("idle");
+  // "idle" | "connecting" | "connected" | "failed" | "streaming"
 
   const socketRef = useRef(null);
   const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const frameIntervalRef = useRef(null);
+  const peerConnectionRef = useRef(null);
+  const cameraStreamRef = useRef(null);
+  const connectTimeoutRef = useRef(null);
 
-  //  1 (CRITICAL): Use a REF to control the rAF loop, NOT state.
-  // React state captured in a requestAnimationFrame closure is stale — it
-  // freezes at the value from when the closure was created (false).
-  // A ref is mutable and always reflects the current value.
-  const isStreamingRef = useRef(false);
-
-  //  2 (CRITICAL): Also guard startFrameStreaming with a ref so the
-  // "already started" check works correctly (state would always read false).
-  const streamingStartedRef = useRef(false);
-
-  const secondaryCamera = useSecondaryCamera(sessionId, userId, socketRef);
-
+  // ── Socket setup ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!sessionId || !userId) {
       setError("Invalid mobile camera link. Please scan the QR code again.");
       return;
     }
 
-    console.log("Mobile secondary camera initializing:", { sessionId, userId });
+    console.log("📱 Mobile WebRTC camera initializing:", { sessionId, userId });
 
     const socket = io(SOCKET_URL, {
-      query: { interviewId: sessionId, userId },
+      query: {
+        interviewId: sessionId,
+        userId,
+        // MUST be "settings" — prevents server from starting Deepgram/TTS/face
+        // detection for this socket (which would terminate the interview because
+        // no face is visible on the mobile device's front camera angle)
+        type: "settings",
+      },
       transports: ["websocket", "polling"],
       path: "/socket.io",
       reconnection: true,
@@ -54,271 +61,224 @@ const MobileCameraPage = () => {
     socketRef.current = socket;
 
     socket.on("connect", () => {
-      console.log("Mobile socket connected:", socket.id);
+      console.log("📱 Mobile socket connected:", socket.id);
       setIsConnected(true);
     });
 
+    // ── WebRTC signaling: receive answer from desktop ─────────────────────
+    socket.on("webrtc_answer", async (data) => {
+      console.log("📱 Received WebRTC answer from desktop");
+      const pc = peerConnectionRef.current;
+      if (!pc) return;
+      try {
+        await pc.setRemoteDescription(
+          new RTCSessionDescription({ type: data.type, sdp: data.sdp }),
+        );
+        console.log("📱 Remote description (answer) set successfully");
+      } catch (err) {
+        console.error("📱 Error setting remote description:", err);
+        handleWebRTCFailure("Failed to set remote description: " + err.message);
+      }
+    });
+
+    // ── WebRTC signaling: receive ICE candidates from desktop ─────────────
+    socket.on("webrtc_ice_candidate", async (data) => {
+      // Only process candidates FROM desktop (fromMobile=false)
+      if (data.fromMobile) return;
+      const pc = peerConnectionRef.current;
+      if (!pc || !data.candidate) return;
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+      } catch (err) {
+        // Non-fatal — ICE trickle can have ordering issues
+        console.warn("📱 Error adding ICE candidate:", err.message);
+      }
+    });
+
     socket.on("connect_error", (err) => {
-      console.error("Mobile socket connection error:", err);
-      setError(
-        "Failed to connect to server. Please check your internet connection.",
-      );
+      console.error("📱 Socket connection error:", err);
+      setError("Failed to connect to server. Check your internet connection.");
     });
 
     socket.on("disconnect", (reason) => {
-      console.log("Mobile socket disconnected:", reason);
+      console.log("📱 Socket disconnected:", reason);
       setIsConnected(false);
-      setIsStreaming(false);
-      // Keep isStreamingRef true on temporary disconnect so loop stays alive
-      // for reconnection. Loop already guards with socketRef.current?.connected.
+      if (connectionState !== "connected") {
+        setConnectionState("failed");
+      }
     });
 
     return () => {
-      if (frameIntervalRef.current) {
-        clearInterval(frameIntervalRef.current);
+      if (connectTimeoutRef.current) clearTimeout(connectTimeoutRef.current);
+      closePeerConnection();
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach((t) => t.stop());
       }
-      isStreamingRef.current = false;
-      streamingStartedRef.current = false;
       socket.disconnect();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, userId]);
 
-  const startFrameStreaming = (stream) => {
-    if (!canvasRef.current || !videoRef.current || !socketRef.current) {
-      console.error("Cannot start streaming - missing required references");
-      return;
-    }
-
-    //  2: Guard with REF not state (state is always stale false here)
-    if (streamingStartedRef.current) {
-      console.log("Streaming already active, skipping");
-      return;
-    }
-
-    const canvas = canvasRef.current;
-    const video = videoRef.current;
-    const ctx = canvas.getContext("2d");
-
-    canvas.width = 640;
-    canvas.height = 480;
-
-    console.log("Starting frame streaming to desktop");
-
-    //  1: Set REF true BEFORE starting the loop so the closure reads true
-    isStreamingRef.current = true;
-    streamingStartedRef.current = true;
-    setIsStreaming(true); // UI display only
-
-    let frameCount = 0;
-    let lastFrameTime = 0;
-    const FRAME_INTERVAL = 100; // 10 FPS
-
-    const captureFrame = () => {
-      //  1: Read from REF — always gets current value, never stale
-      if (!isStreamingRef.current) {
-        console.log("Streaming stopped (ref=false), ending rAF loop");
-        return;
-      }
-
-      // Keep loop alive during temporary disconnects; frames will resume on reconnect
-      if (!socketRef.current?.connected) {
-        requestAnimationFrame(captureFrame);
-        return;
-      }
-
-      const now = Date.now();
-      if (now - lastFrameTime < FRAME_INTERVAL) {
-        requestAnimationFrame(captureFrame);
-        return;
-      }
-
-      lastFrameTime = now;
-
-      if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        try {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-          canvas.toBlob(
-            (blob) => {
-              if (
-                blob &&
-                socketRef.current?.connected &&
-                isStreamingRef.current
-              ) {
-                const reader = new FileReader();
-                reader.onloadend = () => {
-                  if (!isStreamingRef.current) return;
-                  // ED: Changed event name from "mobile_camera_frame" to "security_frame_request"
-                  socketRef.current.emit(
-                    "security_frame_request",
-                    {
-                      frame: reader.result,
-                      interviewId: sessionId,
-                      userId,
-                      timestamp: Date.now(),
-                    },
-                    () => {
-                      // ACK callback - confirms server received the frame
-                      frameCount++;
-                      if (frameCount % 50 === 0) {
-                        console.log(
-                          `Sent ${frameCount} frames to desktop (ACK received)`,
-                        );
-                      }
-                    },
-                  );
-                };
-                reader.readAsDataURL(blob);
-              }
-            },
-            "image/jpeg",
-            0.7,
-          );
-        } catch (err) {
-          console.error("Error capturing frame:", err);
-        }
-      }
-
-      requestAnimationFrame(captureFrame);
-    };
-
-    requestAnimationFrame(captureFrame);
-    console.log("Frame streaming active: 10 FPS at 640x480");
-  };
-
-  const stopFrameStreaming = () => {
-    // Setting ref false stops the rAF loop cleanly on next tick
-    isStreamingRef.current = false;
-    streamingStartedRef.current = false;
-    if (frameIntervalRef.current) {
-      clearInterval(frameIntervalRef.current);
-      frameIntervalRef.current = null;
-    }
-    setIsStreaming(false);
-    console.log("Stopped frame streaming");
-  };
-
+  // ── Camera + WebRTC setup — runs once socket is connected ─────────────────
   useEffect(() => {
     if (!isConnected || cameraGranted) return;
+    requestCameraAndStartWebRTC();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected]);
 
-    const requestCamera = async () => {
+  async function requestCameraAndStartWebRTC() {
+    try {
+      console.log("📱 Step 1: Requesting front camera");
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+
+      cameraStreamRef.current = stream;
+      setCameraGranted(true);
+
+      // Show local preview
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch((e) => {
+          if (e.name !== "AbortError") console.error("Preview play:", e);
+        });
+      }
+
+      console.log("📱 Step 2: Notifying server of mobile connection");
+      socketRef.current.emit("secondary_camera_connected", {
+        interviewId: sessionId,
+        userId,
+        timestamp: Date.now(),
+      });
+
+      console.log("📱 Step 3: Starting WebRTC offer");
+      await startWebRTCOffer(stream);
+    } catch (err) {
+      console.error("📱 Camera/WebRTC setup error:", err);
+      let msg = "Unable to access front camera. ";
+      if (err.name === "NotAllowedError")
+        msg += "Please grant camera permission and refresh.";
+      else if (err.name === "NotFoundError") msg += "No front camera found.";
+      else if (err.name === "NotReadableError")
+        msg += "Camera in use by another app.";
+      else msg += err.message;
+      setError(msg);
+    }
+  }
+
+  // ── WebRTC offer creation ─────────────────────────────────────────────────
+  async function startWebRTCOffer(stream) {
+    // Clean up any existing peer connection
+    closePeerConnection();
+
+    setConnectionState("connecting");
+
+    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    peerConnectionRef.current = pc;
+
+    // Add all camera tracks to the peer connection
+    stream.getTracks().forEach((track) => {
+      pc.addTrack(track, stream);
+      console.log("📱 Added track to peer connection:", track.kind);
+    });
+
+    // ── ICE candidate gathering: send each candidate to desktop via socket ──
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        socketRef.current?.emit("webrtc_ice_candidate", {
+          candidate: event.candidate,
+          interviewId: sessionId,
+        });
+      }
+    };
+
+    // ── Connection state monitoring ───────────────────────────────────────
+    pc.onconnectionstatechange = () => {
+      const state = pc.connectionState;
+      console.log("📱 WebRTC connection state:", state);
+
+      if (state === "connected") {
+        if (connectTimeoutRef.current) {
+          clearTimeout(connectTimeoutRef.current);
+          connectTimeoutRef.current = null;
+        }
+        setConnectionState("connected");
+        console.log(
+          "📱 ✅ WebRTC P2P connected — video streaming directly to desktop",
+        );
+      } else if (state === "failed") {
+        handleWebRTCFailure("ICE connection failed");
+      } else if (state === "disconnected") {
+        console.warn("📱 WebRTC disconnected — attempting restart");
+        // Browser may auto-recover; give it 5s before declaring failure
+        setTimeout(() => {
+          if (peerConnectionRef.current?.connectionState !== "connected") {
+            handleWebRTCFailure("WebRTC disconnected and did not recover");
+          }
+        }, 5000);
+      }
+    };
+
+    pc.onicegatheringstatechange = () => {
+      console.log("📱 ICE gathering state:", pc.iceGatheringState);
+    };
+
+    pc.onsignalingstatechange = () => {
+      console.log("📱 Signaling state:", pc.signalingState);
+    };
+
+    // ── Create and send SDP offer ─────────────────────────────────────────
+    const offer = await pc.createOffer({
+      offerToReceiveAudio: false,
+      offerToReceiveVideo: false, // We are SENDING video only, not receiving
+    });
+    await pc.setLocalDescription(offer);
+
+    console.log("📱 Sending WebRTC offer to desktop via socket");
+    socketRef.current?.emit("webrtc_offer", {
+      sdp: offer.sdp,
+      type: offer.type,
+      interviewId: sessionId,
+    });
+
+    // ── Timeout guard — if ICE never reaches connected, fall back ─────────
+    connectTimeoutRef.current = setTimeout(() => {
+      if (peerConnectionRef.current?.connectionState !== "connected") {
+        handleWebRTCFailure(
+          "WebRTC connection timeout after " + WEBRTC_CONNECT_TIMEOUT_MS + "ms",
+        );
+      }
+    }, WEBRTC_CONNECT_TIMEOUT_MS);
+  }
+
+  function handleWebRTCFailure(reason) {
+    console.error("📱 WebRTC failed:", reason);
+    setConnectionState("failed");
+    setError(
+      "Direct video connection failed. This can happen on some mobile networks. " +
+        "Try switching to WiFi or refreshing the page.",
+    );
+    // Notify desktop so it can show appropriate UI
+    socketRef.current?.emit("webrtc_failed", { reason });
+  }
+
+  function closePeerConnection() {
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.onicecandidate = null;
+      peerConnectionRef.current.onconnectionstatechange = null;
+      peerConnectionRef.current.onicegatheringstatechange = null;
+      peerConnectionRef.current.onsignalingstatechange = null;
       try {
-        console.log("Step 1: Requesting front camera access");
-
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: "user",
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-          audio: false,
-        });
-
-        console.log("Step 1 Complete: Camera access granted");
-        setCameraGranted(true);
-
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-          console.log("Video element is now playing");
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 500));
-
-        console.log("Step 2: Notifying server of mobile camera connection");
-        socketRef.current.emit("secondary_camera_connected", {
-          interviewId: sessionId,
-          userId,
-          timestamp: Date.now(),
-        });
-        console.log("Step 2 Complete: Server notified");
-
-        console.log("Step 3: Starting frame streaming to desktop");
-        startFrameStreaming(stream);
-        console.log("Step 3 Complete: Frame streaming started");
-
-        console.log("Step 4: Requesting video recording session");
-        socketRef.current.emit("video_recording_start", {
-          videoType: "secondary_camera",
-          totalChunks: 0,
-          metadata: {
-            mimeType: "video/webm;codecs=vp9",
-            videoBitsPerSecond: 2500000,
-          },
-          interviewId: sessionId,
-          userId,
-        });
-
-        try {
-          await new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
-              socketRef.current.off("video_recording_ready", handler);
-              socketRef.current.off("video_recording_error", errorHandler);
-              reject(
-                new Error("Server timeout - no video session confirmation"),
-              );
-            }, 10000);
-
-            const handler = (data) => {
-              if (data.videoType === "secondary_camera") {
-                clearTimeout(timeout);
-                socketRef.current.off("video_recording_error", errorHandler);
-                console.log(
-                  "Step 4 Complete: Server confirmed video session:",
-                  data,
-                );
-                resolve(data);
-              }
-            };
-
-            const errorHandler = (error) => {
-              if (error.videoType === "secondary_camera") {
-                clearTimeout(timeout);
-                socketRef.current.off("video_recording_ready", handler);
-                console.error("Server error:", error);
-                reject(new Error(error.error || "Server error"));
-              }
-            };
-
-            socketRef.current.on("video_recording_ready", handler);
-            socketRef.current.on("video_recording_error", errorHandler);
-          });
-
-          console.log("Step 5: Starting video recording");
-          await secondaryCamera.startRecording();
-          console.log("Step 5 Complete: Video recording started");
-        } catch (serverError) {
-          console.error("Server confirmation failed:", serverError);
-          console.log("Continuing frame streaming without recording");
-        }
-      } catch (err) {
-        console.error("Camera error:", err);
-        let errorMessage = "Unable to access front camera. ";
-        if (err.name === "NotAllowedError") {
-          errorMessage += "Please grant camera permission and refresh.";
-        } else if (err.name === "NotFoundError") {
-          errorMessage += "No front camera found.";
-        } else if (err.name === "NotReadableError") {
-          errorMessage += "Camera in use by another app.";
-        } else {
-          errorMessage += err.message;
-        }
-        setError(errorMessage);
-      }
-    };
-
-    requestCamera();
-  }, [isConnected, cameraGranted, sessionId, userId]);
-
-  useEffect(() => {
-    return () => {
-      stopFrameStreaming();
-      if (secondaryCamera.isRecording) {
-        secondaryCamera.stopRecording();
-      }
-      secondaryCamera.cleanup();
-    };
-  }, []);
+        peerConnectionRef.current.close();
+      } catch (_) {}
+      peerConnectionRef.current = null;
+    }
+  }
 
   if (!sessionId || !userId) {
     return (
@@ -350,6 +310,22 @@ const MobileCameraPage = () => {
       </div>
     );
   }
+
+  const statusLabel = {
+    idle: "Initializing...",
+    connecting: "Connecting...",
+    connected: "Streaming Live",
+    failed: "Connection Failed",
+    streaming: "Streaming Live",
+  }[connectionState];
+
+  const statusColor = {
+    idle: "bg-gray-400",
+    connecting: "bg-yellow-300 animate-pulse",
+    connected: "bg-green-300 animate-pulse",
+    failed: "bg-red-400",
+    streaming: "bg-green-300 animate-pulse",
+  }[connectionState];
 
   return (
     <div className="min-h-screen bg-linear-to-br from-gray-900 to-gray-800 flex flex-col items-center justify-center p-4">
@@ -393,43 +369,33 @@ const MobileCameraPage = () => {
                 d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
               />
             </svg>
-            <p className="text-red-300 text-sm font-medium">{error}</p>
+            <p className="text-red-300 text-sm font-medium mb-3">{error}</p>
+            {connectionState === "failed" && (
+              <button
+                onClick={() => {
+                  setError(null);
+                  setConnectionState("connecting");
+                  if (cameraStreamRef.current) {
+                    startWebRTCOffer(cameraStreamRef.current);
+                  }
+                }}
+                className="px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600"
+              >
+                Retry Connection
+              </button>
+            )}
           </div>
         )}
 
         <div className="bg-gray-800 rounded-2xl overflow-hidden shadow-2xl border-2 border-gray-700">
+          {/* Status bar */}
           <div className="bg-linear-to-r from-orange-600 to-red-600 px-6 py-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                {secondaryCamera.isRecording ? (
-                  <>
-                    <div className="w-3 h-3 rounded-full bg-white animate-pulse" />
-                    <span className="text-white font-bold text-sm">
-                      RECORDING
-                    </span>
-                  </>
-                ) : isStreaming ? (
-                  <>
-                    <div className="w-3 h-3 rounded-full bg-green-300 animate-pulse" />
-                    <span className="text-white font-bold text-sm">
-                      STREAMING
-                    </span>
-                  </>
-                ) : isConnected ? (
-                  <>
-                    <div className="w-3 h-3 rounded-full bg-yellow-300 animate-pulse" />
-                    <span className="text-white font-bold text-sm">
-                      CONNECTED
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <div className="w-3 h-3 rounded-full bg-gray-400" />
-                    <span className="text-white font-bold text-sm">
-                      CONNECTING...
-                    </span>
-                  </>
-                )}
+                <div className={`w-3 h-3 rounded-full ${statusColor}`} />
+                <span className="text-white font-bold text-sm">
+                  {statusLabel}
+                </span>
               </div>
               {isConnected && (
                 <svg
@@ -449,6 +415,7 @@ const MobileCameraPage = () => {
             </div>
           </div>
 
+          {/* Camera preview */}
           <div className="relative aspect-9/16 bg-black">
             <video
               ref={videoRef}
@@ -458,36 +425,34 @@ const MobileCameraPage = () => {
               className="w-full h-full object-cover"
               style={{ transform: "scaleX(-1)" }}
             />
-            <canvas ref={canvasRef} className="hidden" />
 
-            {!isStreaming && !error && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70">
-                <div className="animate-spin w-12 h-12 border-4 border-gray-600 border-t-orange-500 rounded-full mb-4" />
+            {connectionState === "connecting" && !error && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40">
+                <div className="animate-spin w-10 h-10 border-4 border-gray-600 border-t-orange-500 rounded-full mb-3" />
                 <p className="text-white text-sm font-medium">
-                  {!isConnected ? "Connecting..." : "Initializing camera..."}
+                  {!isConnected
+                    ? "Connecting to server..."
+                    : "Establishing direct connection..."}
+                </p>
+                <p className="text-gray-400 text-xs mt-1">
+                  This takes a few seconds
                 </p>
               </div>
             )}
 
-            {secondaryCamera.isRecording && (
-              <div className="absolute top-4 left-4">
-                <div className="flex items-center gap-2 px-4 py-2 bg-red-600/90 backdrop-blur-sm rounded-lg shadow-xl">
-                  <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
-                  <span className="text-white text-xs font-bold">REC</span>
-                </div>
-              </div>
-            )}
-
-            {isStreaming && (
+            {connectionState === "connected" && (
               <div className="absolute top-4 right-4">
                 <div className="flex items-center gap-2 px-4 py-2 bg-green-600/90 backdrop-blur-sm rounded-lg shadow-xl">
                   <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
-                  <span className="text-white text-xs font-bold">LIVE</span>
+                  <span className="text-white text-xs font-bold">
+                    LIVE · P2P
+                  </span>
                 </div>
               </div>
             )}
           </div>
 
+          {/* Status details */}
           <div className="bg-gray-750 px-6 py-4 border-t border-gray-700">
             <div className="flex items-start gap-3">
               <svg
@@ -506,25 +471,19 @@ const MobileCameraPage = () => {
               <div className="text-sm text-gray-300">
                 <p className="font-semibold mb-1">Status:</p>
                 <ul className="space-y-1 text-xs text-gray-400">
+                  <li>Server: {isConnected ? "Connected" : "Not connected"}</li>
                   <li>
-                    Connection:{" "}
-                    {isConnected ? "Connected to server" : "Not connected"}
+                    Camera: {cameraGranted ? "Access granted" : "Requesting..."}
                   </li>
                   <li>
-                    Camera:{" "}
-                    {cameraGranted ? "Access granted" : "Requesting access..."}
-                  </li>
-                  <li>
-                    Streaming:{" "}
-                    {isStreaming
-                      ? "Streaming to desktop"
-                      : "Waiting to stream..."}
-                  </li>
-                  <li>
-                    Recording:{" "}
-                    {secondaryCamera.isRecording
-                      ? "Recording active"
-                      : "Waiting to record..."}
+                    Video stream:{" "}
+                    {connectionState === "connected"
+                      ? "🟢 Direct P2P — low latency"
+                      : connectionState === "connecting"
+                        ? "⏳ Negotiating..."
+                        : connectionState === "failed"
+                          ? "🔴 Failed"
+                          : "Waiting..."}
                   </li>
                 </ul>
               </div>
