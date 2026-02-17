@@ -8,6 +8,7 @@ import { startInterview } from "../../API/interviewApi";
 import { QRCodeCanvas } from "qrcode.react";
 import { io } from "socket.io-client";
 import { useStreams } from "../../Hooks/streamContext";
+import { setAllStreams } from "../../Hooks/streamSingleton";
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
@@ -62,8 +63,6 @@ const InterviewSetup = () => {
 
   const [screenShareStream, setScreenShareStream] = useState(null);
   const [screenShareError, setScreenShareError] = useState(null);
-  // Ref keeps the live stream value accessible inside async closures without
-  // needing screenShareStream in the step-7 effect dependency array.
   const screenShareStreamRef = useRef(null);
 
   const [initProgress, setInitProgress] = useState({
@@ -164,7 +163,6 @@ const InterviewSetup = () => {
   const handleScreenShareSuccess = () => {
     const isMicActive = micStream?.active;
     const isCameraActive = primaryCameraStream?.active;
-    // On mobile, screen share is not supported — treat it as always active
     const isScreenActive = SCREEN_SHARE_SUPPORTED
       ? screenShareStream?.active
       : true;
@@ -333,7 +331,6 @@ const InterviewSetup = () => {
   /* ── SCREEN SHARE ───────────────────────────────────────────────────────── */
 
   const startScreenShareTest = async () => {
-    // Mobile browsers don't support getDisplayMedia — skip silently
     if (!SCREEN_SHARE_SUPPORTED) {
       console.log(
         "📱 Screen share not supported on this device — skipping step",
@@ -376,11 +373,6 @@ const InterviewSetup = () => {
   }, [currentStep]);
 
   /* ── PRE-INITIALIZATION (STEP 7) ────────────────────────────────────────── */
-  // KEY FIX: We now capture the videoId/audioId returned from each
-  // registration and store them in streamsRef.current.preWarmSessionIds.
-  // InterviewLive reads these to RESUME the same sessions rather than
-  // creating new ones — eliminating the duplicate-session conflict that
-  // caused screen/secondary recording to fail and TTS to lag on startup.
 
   useEffect(() => {
     if (currentStep !== 7 || !sessionData) return;
@@ -418,7 +410,7 @@ const InterviewSetup = () => {
           clearTimeout(timer);
           cleanup();
           console.log(`✅ ${videoType} REGISTERED: videoId=${data.videoId}`);
-          resolve(data); // data.videoId is the pre-warm session ID we need
+          resolve(data);
         };
 
         const onError = (err) => {
@@ -469,7 +461,7 @@ const InterviewSetup = () => {
           clearTimeout(timer);
           cleanup();
           console.log("✅ Audio REGISTERED: audioId=", data.audioId);
-          resolve(data); // data.audioId is the pre-warm session ID we need
+          resolve(data);
         };
 
         const onError = (err) => {
@@ -559,24 +551,22 @@ const InterviewSetup = () => {
 
         console.log("📝 Registering recording sessions (isolated handlers)");
 
-        // ── Audio — capture audioId for InterviewLive to reuse ────────────────
+        // ── Audio ─────────────────────────────────────────────────────────────
         setInitProgress((prev) => ({ ...prev, audioRecording: "starting" }));
         const audioResult = await registerAudioSession();
         if (mounted) {
           setInitProgress((prev) => ({ ...prev, audioRecording: true }));
-          // KEY FIX: Store pre-warmed session ID
           streamsRef.current.preWarmSessionIds.audioId =
             audioResult.audioId ?? null;
           streamsRef.current.preWarmComplete.audio = true;
           console.log("📦 Stored pre-warm audioId:", audioResult.audioId);
         }
 
-        // ── Primary camera — capture videoId for InterviewLive to reuse ───────
+        // ── Primary camera ────────────────────────────────────────────────────
         setInitProgress((prev) => ({ ...prev, videoRecording: "starting" }));
         const primaryResult = await registerVideoSession("primary_camera");
         if (mounted) {
           setInitProgress((prev) => ({ ...prev, videoRecording: true }));
-          // KEY FIX: Store pre-warmed session ID
           streamsRef.current.preWarmSessionIds.primaryCameraId =
             primaryResult.videoId ?? null;
           streamsRef.current.preWarmComplete.primaryCamera = true;
@@ -586,7 +576,7 @@ const InterviewSetup = () => {
           );
         }
 
-        // ── Screen recording — skip on mobile (getDisplayMedia not supported) ──
+        // ── Screen recording ──────────────────────────────────────────────────
         if (SCREEN_SHARE_SUPPORTED) {
           setInitProgress((prev) => ({ ...prev, screenRecording: "starting" }));
           const screenResult = await registerVideoSession("screen_recording");
@@ -601,7 +591,6 @@ const InterviewSetup = () => {
             );
           }
         } else {
-          // Mobile — no screen recording session needed
           setInitProgress((prev) => ({ ...prev, screenRecording: "skipped" }));
           console.log("📱 Screen recording skipped (mobile)");
         }
@@ -622,7 +611,6 @@ const InterviewSetup = () => {
               mobileRecording: succeeded ? true : "optional",
             }));
             if (succeeded) {
-              // KEY FIX: Store pre-warmed session ID
               streamsRef.current.preWarmSessionIds.secondaryCameraId =
                 secondaryResult.videoId ?? null;
               streamsRef.current.preWarmComplete.secondaryCamera = true;
@@ -638,12 +626,36 @@ const InterviewSetup = () => {
 
         console.log("✅ Pre-initialization complete!");
 
-        // ── Store everything in context for InterviewLive ─────────────────────
-        streamsRef.current.micStream = micStream;
-        streamsRef.current.primaryCameraStream = primaryCameraStream;
-        streamsRef.current.screenShareStream = screenShareStreamRef.current;
-        streamsRef.current.sessionData = sessionData;
-        streamsRef.current.preInitializedSocket = socket;
+        // ── FIX: Write to singleton AND streamsRef before navigate() ──────────
+        //
+        // The singleton (streamSingleton.js) is a plain JS module — it survives
+        // React navigation, StrictMode double-mounts, and Context re-renders.
+        // InterviewLive reads from the singleton first, so it always gets the
+        // correct screenShareStream even if streamsRef.current gets reset.
+        //
+        // We still write to streamsRef for backward compatibility with other
+        // hooks that read from it (useVideoRecording, useAudioRecording, etc).
+        const streamPayload = {
+          micStream,
+          primaryCameraStream,
+          screenShareStream: screenShareStreamRef.current, // use ref, not state
+          sessionData,
+          preInitializedSocket: socket,
+          preWarmSessionIds: { ...streamsRef.current.preWarmSessionIds },
+          preWarmComplete: { ...streamsRef.current.preWarmComplete },
+        };
+
+        // Singleton first — immune to React lifecycle
+        setAllStreams(streamPayload);
+
+        // Also write to context ref for other hooks
+        Object.assign(streamsRef.current, streamPayload);
+
+        console.log("📦 Streams committed to singleton + context. screen:", {
+          active: screenShareStreamRef.current?.active,
+          trackState:
+            screenShareStreamRef.current?.getVideoTracks()[0]?.readyState,
+        });
 
         if (mounted) {
           hasNavigatedRef.current = true;
@@ -675,8 +687,6 @@ const InterviewSetup = () => {
     mobileCameraConnected,
     micStream,
     primaryCameraStream,
-    // screenShareStream intentionally omitted — we use screenShareStreamRef
-    // to avoid re-running this effect when the stream state changes.
     navigate,
     streamsRef,
   ]);
@@ -873,7 +883,6 @@ const InterviewSetup = () => {
                 </div>
               ))}
             </div>
-
             <div className="flex justify-center">
               <Button onClick={handleAcceptGuidelines} className="px-10">
                 Accept and Continue
@@ -1122,7 +1131,6 @@ const InterviewSetup = () => {
             <h2 className="text-xl font-bold text-white mb-6">
               Screen Sharing
             </h2>
-            {/* Mobile browsers don't support getDisplayMedia — show skip UI */}
             {!SCREEN_SHARE_SUPPORTED ? (
               <div className="space-y-6 text-center">
                 <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl">
@@ -1130,8 +1138,7 @@ const InterviewSetup = () => {
                     📱 Screen sharing is not supported on mobile browsers
                   </p>
                   <p className="text-gray-400 text-xs">
-                    Please use a desktop browser (Chrome, Edge, or Firefox) to
-                    enable screen recording. You can continue without it.
+                    Please use a desktop browser to enable screen recording.
                   </p>
                 </div>
                 <Button onClick={handleScreenShareSuccess} className="px-10">
@@ -1208,7 +1215,6 @@ const InterviewSetup = () => {
                   <p className="text-gray-400 text-sm">
                     Click continue to initialize the interview
                   </p>
-
                   <Button
                     onClick={handleScreenShareSuccess}
                     className="px-10"

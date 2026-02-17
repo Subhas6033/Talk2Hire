@@ -7,6 +7,7 @@ import useScreenRecording from "../../Hooks/useScreenRecording";
 import { Button } from "../index";
 import { Card } from "../Common/Card";
 import { useStreams } from "../../Hooks/streamContext";
+import streamStore from "../../Hooks/streamSingleton";
 
 let _globalSocketInitialized = false;
 let _globalClientReadyEmitted = false;
@@ -21,16 +22,20 @@ const InterviewLive = () => {
   const streamsRef = useStreams();
 
   const stableRef = useRef(null);
-  if (!stableRef.current && streamsRef.current?.sessionData) {
-    stableRef.current = {
-      sessionData: streamsRef.current.sessionData,
-      micStream: streamsRef.current.micStream,
-      primaryCameraStream: streamsRef.current.primaryCameraStream,
-      // screenShareStream intentionally omitted — read lazily in useEffect
-      preInitializedSocket: streamsRef.current.preInitializedSocket,
-      preWarmSessionIds: { ...streamsRef.current.preWarmSessionIds },
-      preWarmComplete: { ...streamsRef.current.preWarmComplete },
-    };
+  if (!stableRef.current) {
+    // Read from module-level singleton first — immune to React navigation,
+    // unmount/remount cycles and Context re-renders that can reset the ref.
+    const src = streamStore.sessionData ? streamStore : streamsRef.current;
+    if (src?.sessionData) {
+      stableRef.current = {
+        sessionData: src.sessionData,
+        micStream: src.micStream,
+        primaryCameraStream: src.primaryCameraStream,
+        preInitializedSocket: src.preInitializedSocket,
+        preWarmSessionIds: { ...(src.preWarmSessionIds ?? {}) },
+        preWarmComplete: { ...(src.preWarmComplete ?? {}) },
+      };
+    }
   }
 
   const sessionData = stableRef.current?.sessionData ?? null;
@@ -40,7 +45,6 @@ const InterviewLive = () => {
   const preWarmSessionIds = stableRef.current?.preWarmSessionIds ?? {};
   const preWarmComplete = stableRef.current?.preWarmComplete ?? {};
 
-  // Lazy ref — populated after mount so we always read the final stream value
   const screenShareStreamRef = useRef(null);
 
   const interview = useInterview(
@@ -76,7 +80,6 @@ const InterviewLive = () => {
 
   const recordingsStartedRef = useRef(false);
   const isLeavingRef = useRef(false);
-  const screenAttachAttemptRef = useRef(0); // retry counter
 
   // WebRTC
   const peerConnectionRef = useRef(null);
@@ -84,6 +87,8 @@ const InterviewLive = () => {
   const mobileChunkCountRef = useRef(0);
   const mobileSessionReadyRef = useRef(false);
   const mobileStreamRef = useRef(null);
+  const webrtcNegotiatingRef = useRef(false);
+  const pendingIceCandidatesRef = useRef([]);
 
   const [isSecondaryRecording, setIsSecondaryRecording] = useState(false);
   const [evaluationStatus, setEvaluationStatus] = useState(null);
@@ -91,12 +96,19 @@ const InterviewLive = () => {
   const [faceViolationWarning, setFaceViolationWarning] = useState(null);
   const [isInterviewTerminated, setIsInterviewTerminated] = useState(false);
   const [webrtcState, setWebrtcState] = useState("waiting");
-
   const [mobileCameraConnected, setMobileCameraConnected] = useState(
     () => preWarmComplete?.secondaryCamera ?? false,
   );
-  // Track whether screen video is actually playing so the placeholder hides
+  // FIX C: track screen video state with both a ref and useState.
+  // useState resets to false on StrictMode remount, causing the placeholder
+  // to flash back. The ref persists so we know the stream was already attached
+  // and can reattach immediately on the real mount without retries.
+  const screenVideoActiveRef = useRef(false);
   const [screenVideoActive, setScreenVideoActive] = useState(false);
+  const setScreenActive = useCallback((val) => {
+    screenVideoActiveRef.current = val;
+    setScreenVideoActive(val);
+  }, []);
   const [socketReady, setSocketReady] = useState(false);
 
   useHolisticDetection(
@@ -120,9 +132,12 @@ const InterviewLive = () => {
       }, 3000);
       return () => clearTimeout(t);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, []); // eslint-disable-line
 
+  // ── FIX 1: null-safe cleanupAllRecordings ─────────────────────────────────
+  // TypeError: Cannot set properties of null (setting 'onstop')
+  // Guard mobileMediaRecorderRef before accessing it — it may be null if
+  // interview_terminated fires before/during mobile recording startup.
   const cleanupAllRecordings = useCallback(async () => {
     const jobs = [];
     if (isVideoRecording) jobs.push(stopVideoRecording().catch(console.error));
@@ -133,12 +148,14 @@ const InterviewLive = () => {
     }
     if (screenRecording.isRecording)
       jobs.push(screenRecording.stopRecording().catch(console.error));
-    if (mobileMediaRecorderRef.current?.state !== "inactive") {
+
+    const mobileRec = mobileMediaRecorderRef.current;
+    if (mobileRec && mobileRec.state !== "inactive") {
       jobs.push(
         new Promise((resolve) => {
-          mobileMediaRecorderRef.current.onstop = () => resolve();
+          mobileRec.onstop = () => resolve();
           try {
-            mobileMediaRecorderRef.current.stop();
+            mobileRec.stop();
           } catch (_) {
             resolve();
           }
@@ -146,10 +163,9 @@ const InterviewLive = () => {
       );
     }
     await Promise.allSettled(jobs);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isVideoRecording, audioRecording, screenRecording]);
+  }, [isVideoRecording, audioRecording, screenRecording]); // eslint-disable-line
 
-  // ── Primary camera ─────────────────────────────────────────────────────────
+  // ── Primary camera preview ─────────────────────────────────────────────────
   useEffect(() => {
     if (!videoRef.current || !primaryCameraStream) return;
     videoRef.current.srcObject = primaryCameraStream;
@@ -157,59 +173,40 @@ const InterviewLive = () => {
     videoRef.current.play().catch((e) => {
       if (e.name !== "AbortError") console.error("Primary video play:", e);
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, []); // eslint-disable-line
 
-  // ── Screen share video ─────────────────────────────────────────────────────
+  // ── FIX 4: Screen share video attachment ───────────────────────────────────
   //
-  // WHY SCREEN VIDEO WAS BLANK / LAGGING:
+  // BUG that was self-defeating: when track.readyState was not "live" on first
+  // check, we cleared streamsRef.current.screenShareStream = null, which
+  // destroyed the reference permanently so no retry could ever find it again.
   //
-  // THE MAIN BUG was NOT here — it was in useScreenRecording.findSupportedMimeType().
-  // That function created test `new MediaRecorder(stream, opts)` instances for
-  // every MIME candidate (up to 12). Each constructor takes ~20-50ms on the main
-  // thread because Chrome allocates hardware encoder resources synchronously.
-  // Total: up to 600ms of synchronous blocking right when the user lands on
-  // InterviewLive — causing the preview to appear frozen/black and the whole
-  // UI to jank. Fixed in useScreenRecording.js and useVideoRecording.js by
-  // switching to isTypeSupported()-only detection.
+  // FIX: NEVER clear streamsRef.current.screenShareStream inside attachScreenVideo.
+  // Only skip and let the next retry try again. The stream stays in streamsRef
+  // until InterviewSetup's cleanup runs on unmount.
   //
-  // SECONDARY ISSUE fixed here:
-  // - screenVideoActive overlay waited for async play() resolution before hiding.
-  //   If play() was delayed (AbortError retries, main-thread blocking), the black
-  //   overlay stayed visible — hiding the video element underneath even when the
-  //   stream WAS correctly attached. Fix: mark active as soon as srcObject is set
-  //   on a live track, not when the play() promise resolves.
-  //
-  // - AbortError from play() was retried correctly but screenVideoActive state
-  //   wasn't set until play() succeeded. Now we set it optimistically on srcObject
-  //   assignment and only revert on track.ended.
-  //
-  // ── Screen share video attachment ─────────────────────────────────────────
-
+  // Also: retry for 10 seconds (100 × 100ms) instead of 5 or 0.5 seconds.
   const attachScreenVideo = useCallback(() => {
     const vid = screenVideoRef.current;
     if (!vid) return false;
 
-    // ONLY read from streamsRef — screenShareStream is intentionally NOT in
-    // stableRef (stableRef captures at mount; the screen stream may not be
-    // populated yet at that instant).
-    const stream = streamsRef.current?.screenShareStream ?? null;
-
+    // Read from singleton first — survives React lifecycle edge cases
+    const stream =
+      streamStore.screenShareStream ??
+      streamsRef.current?.screenShareStream ??
+      null;
     if (!stream || !stream.active) return false;
 
     const track = stream.getVideoTracks()[0];
     if (!track) return false;
 
     if (track.readyState !== "live") {
-      // Track already ended (e.g. user stopped sharing, or the old
-      // useScreenRecording bug stopped it in onstop). Clear the dead reference
-      // so future retries don't keep trying the same dead stream.
+      // DON'T clear the ref — just skip this attempt and retry
       console.warn(
-        "⚠️ Screen track readyState:",
+        "⚠️ Screen track not live yet:",
         track.readyState,
-        "— clearing stale stream ref",
+        "— will retry",
       );
-      if (streamsRef.current) streamsRef.current.screenShareStream = null;
       return false;
     }
 
@@ -220,22 +217,17 @@ const InterviewLive = () => {
       vid.muted = true;
     }
 
-    // Mark active immediately when srcObject is set on a live track.
-    // Don't wait for play() resolution — the stream is available the moment
-    // srcObject is assigned. play() failure just means paused, not unavailable.
-    setScreenVideoActive(true);
+    setScreenActive(true);
+    console.log("✅ Screen video attached successfully");
 
     const tryPlay = () => {
       if (!vid.isConnected) return;
       vid.play().catch((e) => {
-        if (e.name === "AbortError") {
-          setTimeout(tryPlay, 50);
-        } else if (e.name !== "NotAllowedError") {
+        if (e.name === "AbortError") setTimeout(tryPlay, 50);
+        else if (e.name !== "NotAllowedError")
           console.error("Screen video play error:", e);
-        }
       });
     };
-
     vid.addEventListener("loadedmetadata", tryPlay, { once: true });
     vid.addEventListener("canplay", tryPlay, { once: true });
     if (vid.readyState >= 1) tryPlay();
@@ -243,8 +235,9 @@ const InterviewLive = () => {
     const onTrackEnded = () => {
       console.log("🛑 Screen share track ended");
       vid.srcObject = null;
-      setScreenVideoActive(false);
+      setScreenActive(false);
       screenShareStreamRef.current = null;
+      // Safe to clear here — track has genuinely ended, stream is dead
       if (streamsRef.current) streamsRef.current.screenShareStream = null;
     };
     track.addEventListener("ended", onTrackEnded);
@@ -257,26 +250,60 @@ const InterviewLive = () => {
   }, []); // eslint-disable-line
 
   useEffect(() => {
+    // FIX D: if screenVideoActiveRef is true, mount 1 already attached the stream.
+    // Reattach immediately (synchronously) on mount 2 without waiting for retries.
+    // This eliminates the visible flash of "Screen share not available" between mounts.
+    if (screenVideoActiveRef.current) {
+      console.log("🔄 Screen video: reattaching after remount");
+      const cleanup = attachScreenVideo();
+      if (cleanup) return cleanup;
+    }
+
     const cleanup = attachScreenVideo();
     if (cleanup) return cleanup;
 
-    // Retry up to 5× at 100ms intervals — handles marginal timing on slow
-    // machines where React schedules the effect before streamsRef propagates.
     let retries = 0;
+    const MAX_RETRIES = 100; // 10 seconds
+    let activeCleanup = null;
+
     const retryTimer = setInterval(() => {
       retries++;
       const c = attachScreenVideo();
-      if (c || retries >= 5) clearInterval(retryTimer);
+      if (c) {
+        activeCleanup = c;
+        clearInterval(retryTimer);
+      } else if (retries >= MAX_RETRIES) {
+        clearInterval(retryTimer);
+        console.warn("⚠️ Screen share never became available after 10s");
+      }
     }, 100);
 
-    return () => clearInterval(retryTimer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    return () => {
+      clearInterval(retryTimer);
+      if (activeCleanup) activeCleanup();
+    };
+  }, []); // eslint-disable-line
 
-  // ── WebRTC: desktop answers mobile's offer ────────────────────────────────
+  // ── FIX 2: WebRTC — deduplicate offers ────────────────────────────────────
+  //
+  // ROOT CAUSE: Mobile page sends offer on connect. If it reconnects (due to
+  // network hiccup or React strict-mode double mount) it sends a second offer.
+  // Both were processed, creating two RTCPeerConnections → two answers →
+  // logs showed "WebRTC answer sent" twice and state cycling connecting→connected→connecting.
+  //
+  // FIX: webrtcNegotiatingRef blocks processing a second offer while the first
+  // negotiation is in-flight. After "connected" or "failed" the ref is cleared
+  // to allow legitimate re-negotiation (e.g. after disconnect).
   const startWebRTCAnswer = useCallback(
     async (socket, offerData) => {
-      console.log("🖥️ Creating WebRTC answer");
+      if (webrtcNegotiatingRef.current) {
+        console.log(
+          "⚠️ WebRTC: skipping duplicate offer — negotiation in progress",
+        );
+        return;
+      }
+      webrtcNegotiatingRef.current = true;
+      console.log("🖥️ Creating WebRTC answer for mobile camera");
       setWebrtcState("connecting");
 
       if (peerConnectionRef.current) {
@@ -285,12 +312,13 @@ const InterviewLive = () => {
         } catch (_) {}
         peerConnectionRef.current = null;
       }
+      pendingIceCandidatesRef.current = [];
 
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       peerConnectionRef.current = pc;
 
       pc.ontrack = (event) => {
-        console.log("🖥️ Remote track arrived:", event.track.kind);
+        console.log("🖥️ Mobile camera track arrived:", event.track.kind);
         const [remoteStream] = event.streams;
         mobileStreamRef.current = remoteStream;
 
@@ -326,13 +354,16 @@ const InterviewLive = () => {
 
       pc.onconnectionstatechange = () => {
         const state = pc.connectionState;
-        console.log("🖥️ WebRTC state:", state);
+        console.log("🖥️ WebRTC connection state:", state);
         if (state === "connected") {
           setWebrtcState("connected");
           setMobileCameraConnected(true);
+          webrtcNegotiatingRef.current = false; // allow re-negotiation after reconnect
         } else if (state === "failed") {
           setWebrtcState("failed");
+          webrtcNegotiatingRef.current = false;
         } else if (state === "disconnected") {
+          webrtcNegotiatingRef.current = false; // allow mobile to re-offer
           setTimeout(() => {
             if (peerConnectionRef.current?.connectionState !== "connected")
               setWebrtcState("failed");
@@ -340,23 +371,40 @@ const InterviewLive = () => {
         }
       };
 
-      await pc.setRemoteDescription(
-        new RTCSessionDescription({ type: offerData.type, sdp: offerData.sdp }),
-      );
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
+      try {
+        await pc.setRemoteDescription(
+          new RTCSessionDescription({
+            type: offerData.type,
+            sdp: offerData.sdp,
+          }),
+        );
 
-      socket.emit("webrtc_answer", {
-        sdp: answer.sdp,
-        type: answer.type,
-        interviewId: sessionData?.interviewId,
-      });
-      console.log("🖥️ WebRTC answer sent");
+        for (const candidate of pendingIceCandidatesRef.current) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(candidate));
+          } catch (err) {
+            console.warn("ICE buffered candidate error:", err.message);
+          }
+        }
+        pendingIceCandidatesRef.current = [];
+
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit("webrtc_answer", {
+          sdp: answer.sdp,
+          type: answer.type,
+          interviewId: sessionData?.interviewId,
+        });
+        console.log("🖥️ WebRTC answer sent");
+      } catch (err) {
+        console.error("❌ WebRTC negotiation error:", err);
+        setWebrtcState("failed");
+        webrtcNegotiatingRef.current = false;
+      }
     },
     [sessionData],
   ); // eslint-disable-line
 
-  // ── Start recording from WebRTC stream ────────────────────────────────────
   const startMobileStreamRecording = useCallback(
     async (socket) => {
       const stream = mobileStreamRef.current;
@@ -406,12 +454,12 @@ const InterviewLive = () => {
         };
         reader.readAsDataURL(e.data);
       };
-      mediaRecorder.onstart = () => {
-        setIsSecondaryRecording(true);
-      };
+
+      mediaRecorder.onstart = () => setIsSecondaryRecording(true);
       mediaRecorder.onstop = () => {
         setIsSecondaryRecording(false);
         mobileSessionReadyRef.current = false;
+        mobileMediaRecorderRef.current = null;
         if (socket?.connected) {
           socket.emit("video_recording_stop", {
             videoType: "secondary_camera",
@@ -478,30 +526,41 @@ const InterviewLive = () => {
           return;
         }
 
-        // Assign socket ref and signal readiness BEFORE any await
         interview.socketRef.current = socket;
         setSocketReady(true);
 
-        // WebRTC signaling — before any await
+        // Register WebRTC listeners BEFORE any await — prevents missed offers
         socket.on("webrtc_offer", async (data) => {
+          console.log("📡 WebRTC offer received");
           try {
             await startWebRTCAnswer(socket, data);
           } catch (err) {
             console.error("WebRTC answer failed:", err);
             setWebrtcState("failed");
+            webrtcNegotiatingRef.current = false;
           }
         });
+
         socket.on("webrtc_ice_candidate", async (data) => {
-          if (!data.fromMobile) return;
+          // fromMobile may be undefined on older mobile page versions — process all
+          if (data.fromMobile === false) return;
           const pc = peerConnectionRef.current;
-          if (!pc || !data.candidate) return;
+          if (!data.candidate) return;
+          if (!pc || pc.remoteDescription === null) {
+            pendingIceCandidatesRef.current.push(data.candidate);
+            return;
+          }
           try {
             await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
           } catch (err) {
             console.warn("ICE candidate error:", err.message);
           }
         });
-        socket.on("webrtc_failed", () => setWebrtcState("failed"));
+
+        socket.on("webrtc_failed", () => {
+          setWebrtcState("failed");
+          webrtcNegotiatingRef.current = false;
+        });
         socket.on("secondary_camera_ready", () =>
           setMobileCameraConnected(true),
         );
@@ -509,7 +568,6 @@ const InterviewLive = () => {
           if (d.connected) setMobileCameraConnected(true);
         });
 
-        // All other listeners
         const silenced = new Set([
           "user_audio_chunk",
           "video_chunk",
@@ -533,9 +591,7 @@ const InterviewLive = () => {
         socket.on("transcript_received", (d) =>
           interview.handleTranscriptReceived(d),
         );
-        socket.on("listening_enabled", () => {
-          interview.enableListening();
-        });
+        socket.on("listening_enabled", () => interview.enableListening());
         socket.on("listening_disabled", () => interview.disableListening());
         socket.on("interview_complete", async (d) => {
           interview.handleInterviewComplete(d);
@@ -568,6 +624,9 @@ const InterviewLive = () => {
         );
         socket.on("video_recording_error", (d) =>
           console.error("❌ Video error:", d),
+        );
+        socket.on("audio_processing_error", (d) =>
+          console.error("❌ Audio processing:", d),
         );
         socket.on("disconnect", (reason) => {
           if (reason === "io server disconnect" && !isLeavingRef.current) {
@@ -623,10 +682,8 @@ const InterviewLive = () => {
         socket?.disconnect();
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, []); // eslint-disable-line
 
-  // ── Start secondary recording when WebRTC connects ────────────────────────
   useEffect(() => {
     if (
       webrtcState !== "connected" ||
@@ -641,7 +698,6 @@ const InterviewLive = () => {
     );
   }, [webrtcState, interview.status, socketReady, startMobileStreamRecording]);
 
-  // ── Start primary recordings ───────────────────────────────────────────────
   useEffect(() => {
     if (recordingsStartedRef.current) return;
     if (
@@ -656,13 +712,13 @@ const InterviewLive = () => {
       return;
 
     recordingsStartedRef.current = true;
-
     (async () => {
       try {
         await audioRecording.startRecording(preWarmSessionIds.audioId);
         await startVideoRecording();
-
-        const activeScreenStream = screenShareStreamRef.current;
+        const activeScreenStream =
+          streamStore.screenShareStream ??
+          streamsRef.current?.screenShareStream;
         if (activeScreenStream && activeScreenStream.active) {
           await screenRecording.startRecording(activeScreenStream);
           console.log("✓ Screen recording started");
@@ -679,7 +735,7 @@ const InterviewLive = () => {
     interview.serverReady,
     interview.hasStarted,
     isVideoRecording,
-  ]);
+  ]); // eslint-disable-line
 
   useEffect(() => {
     if (evaluationStatus === "complete" && evaluationResults) {
@@ -746,7 +802,6 @@ const InterviewLive = () => {
     <section className="min-h-screen bg-gray-900 p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
-          {/* ── Main interview panel ── */}
           <div className="lg:col-span-2">
             <Card className="flex flex-col overflow-hidden shadow-xl border border-gray-700 bg-gray-800 min-h-150">
               <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700 flex-wrap gap-3">
@@ -900,9 +955,7 @@ const InterviewLive = () => {
             </Card>
           </div>
 
-          {/* ── Camera sidebar ── */}
           <div className="lg:col-span-1 space-y-3">
-            {/* Primary camera */}
             <Card className="overflow-hidden border border-gray-700 bg-gray-800">
               <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
                 <span className="text-xs font-bold text-gray-300">
@@ -926,7 +979,6 @@ const InterviewLive = () => {
               </div>
             </Card>
 
-            {/* Mobile camera — WebRTC direct stream */}
             <Card className="overflow-hidden border border-gray-700 bg-gray-800">
               <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
                 <span className="text-xs font-bold text-gray-300">
@@ -971,7 +1023,6 @@ const InterviewLive = () => {
               </div>
             </Card>
 
-            {/* Screen share */}
             <Card className="overflow-hidden border border-gray-700 bg-gray-800">
               <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
                 <span className="text-xs font-bold text-gray-300">Screen</span>
@@ -982,13 +1033,6 @@ const InterviewLive = () => {
                 </span>
               </div>
               <div className="relative aspect-video bg-black">
-                {/*
-                  Video element is always rendered so the ref is always attached.
-                  srcObject is set by attachScreenVideo() with retry + AbortError
-                  handling. screenVideoActive flips true the moment srcObject is
-                  assigned to a live track — no waiting for async play() so the
-                  placeholder never flickers back in after the stream attaches.
-                */}
                 <video
                   ref={screenVideoRef}
                   autoPlay

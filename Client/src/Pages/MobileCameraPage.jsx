@@ -4,14 +4,11 @@ import { io } from "socket.io-client";
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
-// Free Google STUN servers — work for ~80% of NAT configurations.
-// If users are on strict corporate/carrier NAT, add a TURN server here.
 const ICE_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
 ];
 
-// How long to wait for ICE to reach "connected" before declaring failure
 const WEBRTC_CONNECT_TIMEOUT_MS = 15000;
 
 const MobileCameraPage = () => {
@@ -23,30 +20,28 @@ const MobileCameraPage = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [cameraGranted, setCameraGranted] = useState(false);
   const [connectionState, setConnectionState] = useState("idle");
-  // "idle" | "connecting" | "connected" | "failed" | "streaming"
 
   const socketRef = useRef(null);
   const videoRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const cameraStreamRef = useRef(null);
   const connectTimeoutRef = useRef(null);
+  const offerSentRef = useRef(false); // prevent duplicate offers on reconnect
 
-  // ── Socket setup ──────────────────────────────────────────────────────────
+  // ── Socket setup ───────────────────────────────────────────────────────────
   useEffect(() => {
     if (!sessionId || !userId) {
       setError("Invalid mobile camera link. Please scan the QR code again.");
       return;
     }
 
-    console.log("📱 Mobile WebRTC camera initializing:", { sessionId, userId });
-
     const socket = io(SOCKET_URL, {
       query: {
         interviewId: sessionId,
         userId,
-        // MUST be "settings" — prevents server from starting Deepgram/TTS/face
-        // detection for this socket (which would terminate the interview because
-        // no face is visible on the mobile device's front camera angle)
+        // Keep type="settings" — server uses this to prevent Deepgram/TTS/face
+        // detection from running on the mobile socket. The server relays WebRTC
+        // signaling from the settings room to the interview room.
         type: "settings",
       },
       transports: ["websocket", "polling"],
@@ -55,7 +50,6 @@ const MobileCameraPage = () => {
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
       timeout: 20000,
-      autoConnect: true,
     });
 
     socketRef.current = socket;
@@ -65,7 +59,7 @@ const MobileCameraPage = () => {
       setIsConnected(true);
     });
 
-    // ── WebRTC signaling: receive answer from desktop ─────────────────────
+    // Receive answer from desktop
     socket.on("webrtc_answer", async (data) => {
       console.log("📱 Received WebRTC answer from desktop");
       const pc = peerConnectionRef.current;
@@ -74,61 +68,53 @@ const MobileCameraPage = () => {
         await pc.setRemoteDescription(
           new RTCSessionDescription({ type: data.type, sdp: data.sdp }),
         );
-        console.log("📱 Remote description (answer) set successfully");
+        console.log("📱 Remote description set successfully");
       } catch (err) {
         console.error("📱 Error setting remote description:", err);
         handleWebRTCFailure("Failed to set remote description: " + err.message);
       }
     });
 
-    // ── WebRTC signaling: receive ICE candidates from desktop ─────────────
+    // Receive ICE candidates from desktop
     socket.on("webrtc_ice_candidate", async (data) => {
-      // Only process candidates FROM desktop (fromMobile=false)
-      if (data.fromMobile) return;
+      // fromMobile=true means it's our own candidate echoed back — skip it
+      if (data.fromMobile === true) return;
       const pc = peerConnectionRef.current;
       if (!pc || !data.candidate) return;
       try {
         await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
       } catch (err) {
-        // Non-fatal — ICE trickle can have ordering issues
-        console.warn("📱 Error adding ICE candidate:", err.message);
+        console.warn("📱 ICE candidate error:", err.message);
       }
     });
 
     socket.on("connect_error", (err) => {
-      console.error("📱 Socket connection error:", err);
+      console.error("📱 Socket error:", err.message);
       setError("Failed to connect to server. Check your internet connection.");
     });
 
     socket.on("disconnect", (reason) => {
       console.log("📱 Socket disconnected:", reason);
       setIsConnected(false);
-      if (connectionState !== "connected") {
-        setConnectionState("failed");
-      }
     });
 
     return () => {
       if (connectTimeoutRef.current) clearTimeout(connectTimeoutRef.current);
       closePeerConnection();
-      if (cameraStreamRef.current) {
+      if (cameraStreamRef.current)
         cameraStreamRef.current.getTracks().forEach((t) => t.stop());
-      }
       socket.disconnect();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, userId]);
+  }, [sessionId, userId]); // eslint-disable-line
 
-  // ── Camera + WebRTC setup — runs once socket is connected ─────────────────
+  // ── Start camera + WebRTC once socket connects ────────────────────────────
   useEffect(() => {
     if (!isConnected || cameraGranted) return;
     requestCameraAndStartWebRTC();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected]);
+  }, [isConnected]); // eslint-disable-line
 
   async function requestCameraAndStartWebRTC() {
     try {
-      console.log("📱 Step 1: Requesting front camera");
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: "user",
@@ -141,25 +127,23 @@ const MobileCameraPage = () => {
       cameraStreamRef.current = stream;
       setCameraGranted(true);
 
-      // Show local preview
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play().catch((e) => {
-          if (e.name !== "AbortError") console.error("Preview play:", e);
+        videoRef.current.play().catch((e) => {
+          if (e.name !== "AbortError") console.error(e);
         });
       }
 
-      console.log("📱 Step 2: Notifying server of mobile connection");
-      socketRef.current.emit("secondary_camera_connected", {
+      // Notify server that mobile camera is connected (for secondary_camera_ready event)
+      socketRef.current?.emit("secondary_camera_connected", {
         interviewId: sessionId,
         userId,
         timestamp: Date.now(),
       });
 
-      console.log("📱 Step 3: Starting WebRTC offer");
       await startWebRTCOffer(stream);
     } catch (err) {
-      console.error("📱 Camera/WebRTC setup error:", err);
+      console.error("📱 Camera setup error:", err);
       let msg = "Unable to access front camera. ";
       if (err.name === "NotAllowedError")
         msg += "Please grant camera permission and refresh.";
@@ -171,51 +155,50 @@ const MobileCameraPage = () => {
     }
   }
 
-  // ── WebRTC offer creation ─────────────────────────────────────────────────
   async function startWebRTCOffer(stream) {
-    // Clean up any existing peer connection
-    closePeerConnection();
+    // Prevent sending duplicate offers if this runs twice (React strict mode / reconnect)
+    if (offerSentRef.current) {
+      console.log("📱 Offer already sent — skipping duplicate");
+      return;
+    }
 
+    closePeerConnection();
     setConnectionState("connecting");
 
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     peerConnectionRef.current = pc;
 
-    // Add all camera tracks to the peer connection
     stream.getTracks().forEach((track) => {
       pc.addTrack(track, stream);
-      console.log("📱 Added track to peer connection:", track.kind);
+      console.log("📱 Added track:", track.kind);
     });
 
-    // ── ICE candidate gathering: send each candidate to desktop via socket ──
+    // FIX: tag ICE candidates with fromMobile=true so desktop can distinguish
+    // them from its own candidates (desktop checks data.fromMobile === false to skip)
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         socketRef.current?.emit("webrtc_ice_candidate", {
           candidate: event.candidate,
           interviewId: sessionId,
+          fromMobile: true, // ← critical: tells desktop this came from mobile
         });
       }
     };
 
-    // ── Connection state monitoring ───────────────────────────────────────
     pc.onconnectionstatechange = () => {
       const state = pc.connectionState;
-      console.log("📱 WebRTC connection state:", state);
-
+      console.log("📱 WebRTC state:", state);
       if (state === "connected") {
         if (connectTimeoutRef.current) {
           clearTimeout(connectTimeoutRef.current);
           connectTimeoutRef.current = null;
         }
         setConnectionState("connected");
-        console.log(
-          "📱 ✅ WebRTC P2P connected — video streaming directly to desktop",
-        );
+        offerSentRef.current = false; // allow re-offer if disconnected
       } else if (state === "failed") {
         handleWebRTCFailure("ICE connection failed");
       } else if (state === "disconnected") {
-        console.warn("📱 WebRTC disconnected — attempting restart");
-        // Browser may auto-recover; give it 5s before declaring failure
+        offerSentRef.current = false; // allow re-offer after disconnect
         setTimeout(() => {
           if (peerConnectionRef.current?.connectionState !== "connected") {
             handleWebRTCFailure("WebRTC disconnected and did not recover");
@@ -224,33 +207,25 @@ const MobileCameraPage = () => {
       }
     };
 
-    pc.onicegatheringstatechange = () => {
-      console.log("📱 ICE gathering state:", pc.iceGatheringState);
-    };
-
-    pc.onsignalingstatechange = () => {
-      console.log("📱 Signaling state:", pc.signalingState);
-    };
-
-    // ── Create and send SDP offer ─────────────────────────────────────────
     const offer = await pc.createOffer({
       offerToReceiveAudio: false,
-      offerToReceiveVideo: false, // We are SENDING video only, not receiving
+      offerToReceiveVideo: false,
     });
     await pc.setLocalDescription(offer);
 
-    console.log("📱 Sending WebRTC offer to desktop via socket");
+    offerSentRef.current = true;
+    console.log("📱 Sending WebRTC offer to desktop");
     socketRef.current?.emit("webrtc_offer", {
       sdp: offer.sdp,
       type: offer.type,
       interviewId: sessionId,
+      fromMobile: true,
     });
 
-    // ── Timeout guard — if ICE never reaches connected, fall back ─────────
     connectTimeoutRef.current = setTimeout(() => {
       if (peerConnectionRef.current?.connectionState !== "connected") {
         handleWebRTCFailure(
-          "WebRTC connection timeout after " + WEBRTC_CONNECT_TIMEOUT_MS + "ms",
+          "Connection timeout after " + WEBRTC_CONNECT_TIMEOUT_MS + "ms",
         );
       }
     }, WEBRTC_CONNECT_TIMEOUT_MS);
@@ -259,20 +234,20 @@ const MobileCameraPage = () => {
   function handleWebRTCFailure(reason) {
     console.error("📱 WebRTC failed:", reason);
     setConnectionState("failed");
+    offerSentRef.current = false;
     setError(
-      "Direct video connection failed. This can happen on some mobile networks. " +
-        "Try switching to WiFi or refreshing the page.",
+      "Direct video connection failed. Try switching to WiFi or refreshing.",
     );
-    // Notify desktop so it can show appropriate UI
-    socketRef.current?.emit("webrtc_failed", { reason });
+    socketRef.current?.emit("webrtc_failed", {
+      reason,
+      interviewId: sessionId,
+    });
   }
 
   function closePeerConnection() {
     if (peerConnectionRef.current) {
       peerConnectionRef.current.onicecandidate = null;
       peerConnectionRef.current.onconnectionstatechange = null;
-      peerConnectionRef.current.onicegatheringstatechange = null;
-      peerConnectionRef.current.onsignalingstatechange = null;
       try {
         peerConnectionRef.current.close();
       } catch (_) {}
@@ -282,8 +257,8 @@ const MobileCameraPage = () => {
 
   if (!sessionId || !userId) {
     return (
-      <div className="min-h-screen bg-linear-to-br from-gray-900 to-gray-800 flex items-center justify-center p-4">
-        <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 max-w-md text-center shadow-2xl">
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
+        <div className="bg-gray-800 rounded-2xl p-8 max-w-md text-center">
           <div className="w-20 h-20 rounded-full bg-red-500 flex items-center justify-center mx-auto mb-6">
             <svg
               className="w-10 h-10 text-white"
@@ -299,12 +274,9 @@ const MobileCameraPage = () => {
               />
             </svg>
           </div>
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">
-            Invalid Link
-          </h2>
-          <p className="text-gray-600 dark:text-gray-400 mb-6">
-            This page must be accessed by scanning the QR code from your desktop
-            interview session.
+          <h2 className="text-2xl font-bold text-white mb-4">Invalid Link</h2>
+          <p className="text-gray-400">
+            Scan the QR code from your desktop interview session.
           </p>
         </div>
       </div>
@@ -316,19 +288,16 @@ const MobileCameraPage = () => {
     connecting: "Connecting...",
     connected: "Streaming Live",
     failed: "Connection Failed",
-    streaming: "Streaming Live",
   }[connectionState];
-
   const statusColor = {
     idle: "bg-gray-400",
     connecting: "bg-yellow-300 animate-pulse",
     connected: "bg-green-300 animate-pulse",
     failed: "bg-red-400",
-    streaming: "bg-green-300 animate-pulse",
   }[connectionState];
 
   return (
-    <div className="min-h-screen bg-linear-to-br from-gray-900 to-gray-800 flex flex-col items-center justify-center p-4">
+    <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-lg">
         <div className="text-center mb-6">
           <div className="w-16 h-16 rounded-full bg-linear-to-br from-orange-500 to-red-600 flex items-center justify-center mx-auto mb-4 shadow-xl">
@@ -349,35 +318,21 @@ const MobileCameraPage = () => {
           <h1 className="text-2xl font-bold text-white mb-2">
             Secondary Camera
           </h1>
-          <p className="text-gray-300 text-sm">
+          <p className="text-gray-400 text-sm">
             Keep this page open during your interview
           </p>
         </div>
 
         {error && (
           <div className="mb-6 bg-red-500/10 border-2 border-red-500 rounded-xl p-6 text-center">
-            <svg
-              className="w-12 h-12 text-red-500 mx-auto mb-3"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-              />
-            </svg>
             <p className="text-red-300 text-sm font-medium mb-3">{error}</p>
             {connectionState === "failed" && (
               <button
                 onClick={() => {
                   setError(null);
                   setConnectionState("connecting");
-                  if (cameraStreamRef.current) {
+                  if (cameraStreamRef.current)
                     startWebRTCOffer(cameraStreamRef.current);
-                  }
                 }}
                 className="px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600"
               >
@@ -388,34 +343,15 @@ const MobileCameraPage = () => {
         )}
 
         <div className="bg-gray-800 rounded-2xl overflow-hidden shadow-2xl border-2 border-gray-700">
-          {/* Status bar */}
           <div className="bg-linear-to-r from-orange-600 to-red-600 px-6 py-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className={`w-3 h-3 rounded-full ${statusColor}`} />
-                <span className="text-white font-bold text-sm">
-                  {statusLabel}
-                </span>
-              </div>
-              {isConnected && (
-                <svg
-                  className="w-5 h-5 text-white"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"
-                  />
-                </svg>
-              )}
+            <div className="flex items-center gap-3">
+              <div className={`w-3 h-3 rounded-full ${statusColor}`} />
+              <span className="text-white font-bold text-sm">
+                {statusLabel}
+              </span>
             </div>
           </div>
 
-          {/* Camera preview */}
           <div className="relative aspect-9/16 bg-black">
             <video
               ref={videoRef}
@@ -432,7 +368,7 @@ const MobileCameraPage = () => {
                 <p className="text-white text-sm font-medium">
                   {!isConnected
                     ? "Connecting to server..."
-                    : "Establishing direct connection..."}
+                    : "Establishing P2P link..."}
                 </p>
                 <p className="text-gray-400 text-xs mt-1">
                   This takes a few seconds
@@ -452,44 +388,39 @@ const MobileCameraPage = () => {
             )}
           </div>
 
-          {/* Status details */}
-          <div className="bg-gray-750 px-6 py-4 border-t border-gray-700">
-            <div className="flex items-start gap-3">
-              <svg
-                className="w-5 h-5 text-blue-400 shrink-0 mt-0.5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-              <div className="text-sm text-gray-300">
-                <p className="font-semibold mb-1">Status:</p>
-                <ul className="space-y-1 text-xs text-gray-400">
-                  <li>Server: {isConnected ? "Connected" : "Not connected"}</li>
-                  <li>
-                    Camera: {cameraGranted ? "Access granted" : "Requesting..."}
-                  </li>
-                  <li>
-                    Video stream:{" "}
-                    {connectionState === "connected"
-                      ? "🟢 Direct P2P — low latency"
-                      : connectionState === "connecting"
-                        ? "⏳ Negotiating..."
-                        : connectionState === "failed"
-                          ? "🔴 Failed"
-                          : "Waiting..."}
-                  </li>
-                </ul>
-              </div>
+          <div className="px-6 py-4 border-t border-gray-700">
+            <div className="text-xs text-gray-400 space-y-1">
+              <p>
+                Server:{" "}
+                <span className="text-white">
+                  {isConnected ? "Connected" : "Connecting..."}
+                </span>
+              </p>
+              <p>
+                Camera:{" "}
+                <span className="text-white">
+                  {cameraGranted ? "Active" : "Requesting..."}
+                </span>
+              </p>
+              <p>
+                Stream:{" "}
+                <span className="text-white">
+                  {connectionState === "connected"
+                    ? "🟢 P2P Direct"
+                    : connectionState === "connecting"
+                      ? "⏳ Negotiating..."
+                      : connectionState === "failed"
+                        ? "🔴 Failed"
+                        : "Waiting..."}
+                </span>
+              </p>
             </div>
           </div>
         </div>
+
+        <p className="text-center text-gray-600 text-xs mt-4">
+          Keep your screen on and this page open
+        </p>
       </div>
     </div>
   );
