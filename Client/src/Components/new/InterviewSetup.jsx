@@ -12,13 +12,118 @@ import { setAllStreams } from "../../Hooks/streamSingleton";
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
-// getDisplayMedia is desktop-only — not available on Android/iOS browsers
 const IS_MOBILE =
   /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
     navigator.userAgent,
   );
 const SCREEN_SHARE_SUPPORTED =
   !IS_MOBILE && !!navigator.mediaDevices?.getDisplayMedia;
+
+/* ── tiny helpers ─────────────────────────────────────────────────────────── */
+
+const StatusIcon = ({ status }) => {
+  if (status === true)
+    return (
+      <div className="w-7 h-7 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">
+        <svg
+          className="w-4 h-4 text-emerald-400"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2.5}
+            d="M5 13l4 4L19 7"
+          />
+        </svg>
+      </div>
+    );
+  if (["connecting", "waiting", "starting"].includes(status))
+    return (
+      <div className="w-7 h-7 rounded-full bg-violet-500/20 border border-violet-500/40 flex items-center justify-center shrink-0">
+        <div className="animate-spin w-3.5 h-3.5 border-2 border-violet-400/30 border-t-violet-400 rounded-full" />
+      </div>
+    );
+  if (["skipped", "optional"].includes(status))
+    return (
+      <div className="w-7 h-7 rounded-full bg-slate-700/60 border border-slate-600/40 flex items-center justify-center shrink-0">
+        <svg
+          className="w-3.5 h-3.5 text-slate-500"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M6 18L18 6M6 6l12 12"
+          />
+        </svg>
+      </div>
+    );
+  return (
+    <div className="w-7 h-7 rounded-full bg-slate-800 border border-slate-700/60 flex items-center justify-center shrink-0" />
+  );
+};
+
+const LiveBadge = ({ color = "green", label }) => {
+  const colorMap = {
+    green: "bg-emerald-500/90",
+    orange: "bg-orange-500/90",
+    violet: "bg-violet-500/90",
+  };
+  return (
+    <div
+      className={`flex items-center gap-1.5 px-2.5 py-1 ${colorMap[color]} backdrop-blur-sm rounded-md`}
+    >
+      <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+      <span className="text-white text-[10px] font-bold tracking-widest">
+        {label}
+      </span>
+    </div>
+  );
+};
+
+const InfoBadge = ({ children, variant = "green" }) => {
+  const variantMap = {
+    green: "bg-emerald-500/10 border-emerald-500/25 text-emerald-400",
+    blue: "bg-blue-500/10 border-blue-500/25 text-blue-300",
+    yellow: "bg-amber-500/10 border-amber-500/25 text-amber-300",
+    red: "bg-red-500/10 border-red-500/25 text-red-400",
+  };
+  return (
+    <div
+      className={`inline-flex items-center gap-2 px-4 py-2.5 border rounded-xl text-sm font-medium ${variantMap[variant]}`}
+    >
+      {children}
+    </div>
+  );
+};
+
+const Spinner = ({ size = "md", color = "violet" }) => {
+  const sizeMap = {
+    sm: "w-4 h-4 border-2",
+    md: "w-5 h-5 border-2",
+    lg: "w-10 h-10 border-3",
+  };
+  const colorMap = {
+    violet: "border-violet-400/30 border-t-violet-400",
+    blue: "border-blue-400/30 border-t-blue-400",
+    orange: "border-orange-500/30 border-t-orange-500",
+  };
+  return (
+    <div
+      className={`animate-spin rounded-full shrink-0 ${sizeMap[size]} ${colorMap[color]}`}
+    />
+  );
+};
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   MAIN COMPONENT
+══════════════════════════════════════════════════════════════════════════════ */
 
 const InterviewSetup = () => {
   const navigate = useNavigate();
@@ -30,17 +135,16 @@ const InterviewSetup = () => {
     mode: "onChange",
     defaultValues: { skills: [] },
   });
-
   const skills = watch("skills");
 
   const steps = [
     { num: 1, label: "Skills" },
     { num: 2, label: "Guidelines" },
     { num: 3, label: "Microphone" },
-    { num: 4, label: "Primary Camera" },
-    { num: 5, label: "Mobile Camera" },
-    { num: 6, label: "Screen Share" },
-    { num: 7, label: "Initializing" },
+    { num: 4, label: "Camera" },
+    { num: 5, label: "Mobile" },
+    { num: 6, label: "Screen" },
+    { num: 7, label: "Launch" },
   ];
 
   const [currentStep, setCurrentStep] = useState(1);
@@ -66,6 +170,7 @@ const InterviewSetup = () => {
   const screenShareStreamRef = useRef(null);
 
   const [initProgress, setInitProgress] = useState({
+    questions: false,
     socket: false,
     serverReady: false,
     audioRecording: false,
@@ -75,6 +180,7 @@ const InterviewSetup = () => {
   });
   const [initError, setInitError] = useState(null);
 
+  /* ── refs ───────────────────────────────────────────────────────────────── */
   const primaryVideoRef = useRef(null);
   const mobileCanvasRef = useRef(null);
   const micTestCleanupRef = useRef(false);
@@ -87,41 +193,47 @@ const InterviewSetup = () => {
   const questionStartedRef = useRef(false);
   const hasNavigatedRef = useRef(false);
 
+  // ✅ Ref mirrors so Step 7 closures always read live values
+  const sessionDataRef = useRef(null);
+  const questionsReadyRef = useRef(false);
+  useEffect(() => {
+    sessionDataRef.current = sessionData;
+  }, [sessionData]);
+  useEffect(() => {
+    questionsReadyRef.current = questionsReady;
+  }, [questionsReady]);
+
   const hasExistingSkills = user?.skill?.trim();
 
-  /* ── STEP HANDLERS ─────────────────────────────────────────────────────── */
+  /* ── STEP 1: Start setup & kick off question generation ────────────────── */
 
   const handleStartSetup = () => {
     if (!hasExistingSkills && (!skills || skills.length === 0)) {
       setError("Please select at least one skill.");
       return;
     }
-
     setError(null);
+
+    // ✅ Advance immediately — don't block on question generation
+    setCurrentStep(2);
 
     if (!questionStartedRef.current) {
       questionStartedRef.current = true;
       setIsGeneratingQuestions(true);
 
       dispatch(
-        startInterview({
-          skills: !hasExistingSkills ? skills : undefined,
-        }),
+        startInterview({ skills: !hasExistingSkills ? skills : undefined }),
       )
         .unwrap()
         .then((res) => {
           if (!res?.sessionId) throw new Error("No session id");
-
-          setSessionData({
-            interviewId: res.sessionId,
-            userId: user.id,
-          });
-
+          setSessionData({ interviewId: res.sessionId, userId: user.id });
           setQuestionsReady(true);
-          setCurrentStep(2);
         })
         .catch(() => {
-          setError("Failed to generate questions.");
+          setError(
+            "Failed to generate questions. Please go back and try again.",
+          );
           questionStartedRef.current = false;
         })
         .finally(() => {
@@ -130,14 +242,14 @@ const InterviewSetup = () => {
     }
   };
 
+  /* ── STEP 2 ─────────────────────────────────────────────────────────────── */
+
   const handleAcceptGuidelines = () => {
-    if (!sessionData) {
-      setError("Session not ready yet. Please wait a moment.");
-      return;
-    }
     setError(null);
     setCurrentStep(3);
   };
+
+  /* ── STEP 3 ─────────────────────────────────────────────────────────────── */
 
   const handleMicSuccess = () => {
     if (animationFrameRef.current) {
@@ -150,15 +262,21 @@ const InterviewSetup = () => {
     setCurrentStep(4);
   };
 
+  /* ── STEP 4 ─────────────────────────────────────────────────────────────── */
+
   const handlePrimaryCameraSuccess = () => {
     setError(null);
     setCurrentStep(5);
   };
 
+  /* ── STEP 5 ─────────────────────────────────────────────────────────────── */
+
   const handleMobileCameraSuccess = () => {
     setError(null);
     setCurrentStep(6);
   };
+
+  /* ── STEP 6 — no longer blocks on questions ─────────────────────────────── */
 
   const handleScreenShareSuccess = () => {
     const isMicActive = micStream?.active;
@@ -178,20 +296,8 @@ const InterviewSetup = () => {
       return;
     }
 
-    if (isGeneratingQuestions) {
-      setError(
-        "Questions are still generating. Please wait a moment and try again.",
-      );
-      return;
-    }
-
-    if (!questionsReady) {
-      setError("Questions are not ready yet. Please wait.");
-      return;
-    }
-
     setError(null);
-    setCurrentStep(7);
+    setCurrentStep(7); // ✅ always proceed — Step 7 will await questions
   };
 
   /* ── MIC TEST ────────────────────────────────────────────────────────────── */
@@ -209,14 +315,12 @@ const InterviewSetup = () => {
           autoGainControl: true,
         },
       });
-
       setMicStream(stream);
 
-      if (!audioContextRef.current) {
+      if (!audioContextRef.current)
         audioContextRef.current = new (
           window.AudioContext || window.webkitAudioContext
         )();
-      }
 
       const audioContext = audioContextRef.current;
       if (audioContext.state === "suspended") await audioContext.resume();
@@ -229,19 +333,15 @@ const InterviewSetup = () => {
       source.connect(analyser);
 
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
-
       const updateLevel = () => {
         if (!analyserRef.current || micTestCleanupRef.current) return;
         analyser.getByteFrequencyData(dataArray);
         const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-        const level = Math.min(100, (avg / 128) * 100);
-        setMicLevel(level);
+        setMicLevel(Math.min(100, (avg / 128) * 100));
         animationFrameRef.current = requestAnimationFrame(updateLevel);
       };
-
       updateLevel();
     } catch (err) {
-      console.error("❌ Microphone error:", err);
       setError(`Microphone error: ${err.message}`);
       setIsMicTesting(false);
       micTestCleanupRef.current = true;
@@ -256,7 +356,6 @@ const InterviewSetup = () => {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       setPrimaryCameraStream(stream);
     } catch (err) {
-      console.error("Camera error:", err);
       setPrimaryCameraError("Camera permission denied.");
     }
   };
@@ -277,78 +376,79 @@ const InterviewSetup = () => {
   /* ── MOBILE CAMERA SOCKET ───────────────────────────────────────────────── */
 
   useEffect(() => {
-    if (currentStep !== 5 || !sessionData) return;
+    if (currentStep !== 5) return;
 
-    const socket = io(SOCKET_URL, {
-      query: {
-        interviewId: sessionData.interviewId,
-        userId: sessionData.userId,
-        type: "settings",
-      },
-    });
+    // sessionData may still be null if API is slow — poll via ref
+    let socket = null;
+    let cancelled = false;
 
-    settingsSocketRef.current = socket;
+    const connect = (session) => {
+      if (cancelled) return;
+      socket = io(SOCKET_URL, {
+        query: {
+          interviewId: session.interviewId,
+          userId: session.userId,
+          type: "settings",
+        },
+      });
+      settingsSocketRef.current = socket;
+      socket.on("connect", () =>
+        console.log("✅ Settings socket connected:", socket.id),
+      );
+      socket.on("secondary_camera_ready", () => setMobileCameraConnected(true));
+      socket.on("mobile_camera_frame", (data) => {
+        if (!data?.frame || !mobileCanvasRef.current) return;
+        const img = new Image();
+        img.onload = () => {
+          const ctx = mobileCanvasRef.current.getContext("2d");
+          if (ctx) {
+            ctx.drawImage(
+              img,
+              0,
+              0,
+              mobileCanvasRef.current.width,
+              mobileCanvasRef.current.height,
+            );
+            setMobileFramesReceived((prev) => prev + 1);
+          }
+        };
+        img.src = data.frame;
+      });
+      socket.on("connect_error", () =>
+        setError("Failed to connect to server for mobile camera."),
+      );
+    };
 
-    socket.on("connect", () => {
-      console.log("✅ Settings socket connected:", socket.id);
-    });
-
-    socket.on("secondary_camera_ready", () => {
-      console.log("✅ Mobile camera connected");
-      setMobileCameraConnected(true);
-    });
-
-    socket.on("mobile_camera_frame", (data) => {
-      if (!data?.frame || !mobileCanvasRef.current) return;
-      const img = new Image();
-      img.onload = () => {
-        const ctx = mobileCanvasRef.current.getContext("2d");
-        if (ctx) {
-          ctx.drawImage(
-            img,
-            0,
-            0,
-            mobileCanvasRef.current.width,
-            mobileCanvasRef.current.height,
-          );
-          setMobileFramesReceived((prev) => prev + 1);
+    if (sessionDataRef.current) {
+      connect(sessionDataRef.current);
+    } else {
+      const interval = setInterval(() => {
+        if (sessionDataRef.current) {
+          clearInterval(interval);
+          connect(sessionDataRef.current);
         }
-      };
-      img.src = data.frame;
-    });
-
-    socket.on("connect_error", (err) => {
-      console.error("Settings socket error:", err);
-      setError("Failed to connect to server for mobile camera.");
-    });
+      }, 300);
+    }
 
     return () => {
-      console.log("🧹 Disconnecting settings socket");
-      socket.disconnect();
+      cancelled = true;
+      socket?.disconnect();
     };
-  }, [currentStep, sessionData]);
+  }, [currentStep]);
 
   /* ── SCREEN SHARE ───────────────────────────────────────────────────────── */
 
   const startScreenShareTest = async () => {
-    if (!SCREEN_SHARE_SUPPORTED) {
-      console.log(
-        "📱 Screen share not supported on this device — skipping step",
-      );
-      return;
-    }
-
+    if (!SCREEN_SHARE_SUPPORTED) return;
     try {
       setScreenShareError(null);
-
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
       });
       setScreenShareStream(stream);
       screenShareStreamRef.current = stream;
 
-      const track = stream.getVideoTracks()[0];
-      track.addEventListener("ended", () => {
+      stream.getVideoTracks()[0].addEventListener("ended", () => {
         setScreenShareStream(null);
         screenShareStreamRef.current = null;
         setScreenShareError(
@@ -363,7 +463,6 @@ const InterviewSetup = () => {
         });
       }
     } catch (err) {
-      console.error("Screen share error:", err);
       setScreenShareError("Screen share denied or cancelled.");
     }
   };
@@ -372,10 +471,10 @@ const InterviewSetup = () => {
     if (currentStep === 6) startScreenShareTest();
   }, [currentStep]);
 
-  /* ── PRE-INITIALIZATION (STEP 7) ────────────────────────────────────────── */
+  /* ── STEP 7: PRE-INITIALIZATION ─────────────────────────────────────────── */
 
   useEffect(() => {
-    if (currentStep !== 7 || !sessionData) return;
+    if (currentStep !== 7) return;
 
     let mounted = true;
     let socket = null;
@@ -387,53 +486,43 @@ const InterviewSetup = () => {
     ) =>
       new Promise((resolve, reject) => {
         let settled = false;
-
         const cleanup = () => {
           socket.off("video_recording_ready", onReady);
           socket.off("video_recording_error", onError);
         };
-
         const timer = setTimeout(() => {
           if (settled) return;
           settled = true;
           cleanup();
           const msg = `${videoType} registration timeout`;
-          console.warn("⚠️", msg);
           if (optional) resolve({ timedOut: true });
           else reject(new Error(msg));
         }, timeoutMs);
-
         const onReady = (data) => {
-          if (data.videoType !== videoType) return;
-          if (settled) return;
+          if (data.videoType !== videoType || settled) return;
           settled = true;
           clearTimeout(timer);
           cleanup();
-          console.log(`✅ ${videoType} REGISTERED: videoId=${data.videoId}`);
           resolve(data);
         };
-
         const onError = (err) => {
-          if (err?.videoType && err.videoType !== videoType) return;
-          if (settled) return;
+          if ((err?.videoType && err.videoType !== videoType) || settled)
+            return;
           settled = true;
           clearTimeout(timer);
           cleanup();
           const msg = err?.error || `${videoType} registration failed`;
-          console.error(`❌ ${videoType} error:`, msg);
           if (optional) resolve({ error: msg });
           else reject(new Error(msg));
         };
-
         socket.on("video_recording_ready", onReady);
         socket.on("video_recording_error", onError);
-
         socket.emit("video_recording_start", {
           videoType,
           totalChunks: 0,
           metadata: { mimeType: "video/webm;codecs=vp9" },
-          interviewId: sessionData.interviewId,
-          userId: sessionData.userId,
+          interviewId: sessionDataRef.current?.interviewId,
+          userId: sessionDataRef.current?.userId,
           setupMode: true,
         });
       });
@@ -441,29 +530,23 @@ const InterviewSetup = () => {
     const registerAudioSession = () =>
       new Promise((resolve, reject) => {
         let settled = false;
-
         const cleanup = () => {
           socket.off("audio_recording_ready", onReady);
           socket.off("audio_recording_error", onError);
         };
-
         const timer = setTimeout(() => {
           if (settled) return;
           settled = true;
           cleanup();
           reject(new Error("Audio recording registration timeout"));
         }, 15000);
-
         const onReady = (data) => {
-          if (data.audioType !== "mixed_audio") return;
-          if (settled) return;
+          if (data.audioType !== "mixed_audio" || settled) return;
           settled = true;
           clearTimeout(timer);
           cleanup();
-          console.log("✅ Audio REGISTERED: audioId=", data.audioId);
           resolve(data);
         };
-
         const onError = (err) => {
           if (settled) return;
           settled = true;
@@ -471,15 +554,13 @@ const InterviewSetup = () => {
           cleanup();
           reject(new Error(err?.error || "Audio registration failed"));
         };
-
         socket.on("audio_recording_ready", onReady);
         socket.on("audio_recording_error", onError);
-
         socket.emit("audio_recording_start", {
           audioType: "mixed_audio",
           metadata: { sampleRate: 48000 },
-          interviewId: sessionData.interviewId,
-          userId: sessionData.userId,
+          interviewId: sessionDataRef.current?.interviewId,
+          userId: sessionDataRef.current?.userId,
           setupMode: true,
         });
       });
@@ -488,19 +569,43 @@ const InterviewSetup = () => {
       try {
         console.log("🔄 Starting pre-initialization...");
 
+        // ── Wait for sessionData if API hasn't returned yet ───────────────────
+        if (!sessionDataRef.current) {
+          console.log("⏳ Waiting for session data...");
+          await new Promise((resolve, reject) => {
+            if (sessionDataRef.current) return resolve();
+            const timeout = setTimeout(
+              () =>
+                reject(
+                  new Error("Session creation timed out. Please try again."),
+                ),
+              60000,
+            );
+            const interval = setInterval(() => {
+              if (sessionDataRef.current) {
+                clearTimeout(timeout);
+                clearInterval(interval);
+                resolve();
+              }
+            }, 300);
+          });
+        }
+
+        // ✅ Now safe to use — guaranteed non-null
+        const session = sessionDataRef.current;
+
         if (settingsSocketRef.current?.connected) {
-          console.log("🧹 Disconnecting settings socket");
           settingsSocketRef.current.disconnect();
           settingsSocketRef.current = null;
           await new Promise((r) => setTimeout(r, 300));
         }
 
+        // ── Socket connection ─────────────────────────────────────────────────
         setInitProgress((prev) => ({ ...prev, socket: "connecting" }));
-
         socket = io(SOCKET_URL, {
           query: {
-            interviewId: sessionData.interviewId,
-            userId: sessionData.userId,
+            interviewId: session.interviewId,
+            userId: session.userId,
             type: "interview",
           },
           transports: ["websocket", "polling"],
@@ -509,7 +614,6 @@ const InterviewSetup = () => {
           reconnectionDelay: 1000,
           timeout: 20000,
         });
-
         interviewSocketRef.current = socket;
 
         await new Promise((resolve, reject) => {
@@ -519,11 +623,10 @@ const InterviewSetup = () => {
           );
           socket.once("connect", () => {
             clearTimeout(timer);
-            console.log("✅ Socket connected:", socket.id);
             socket.emit("setup_mode", {
               setupInProgress: true,
-              interviewId: sessionData.interviewId,
-              userId: sessionData.userId,
+              interviewId: session.interviewId,
+              userId: session.userId,
             });
             if (mounted) setInitProgress((prev) => ({ ...prev, socket: true }));
             resolve();
@@ -534,6 +637,7 @@ const InterviewSetup = () => {
           });
         });
 
+        // ── Server ready ──────────────────────────────────────────────────────
         setInitProgress((prev) => ({ ...prev, serverReady: "waiting" }));
         await new Promise((resolve, reject) => {
           const timer = setTimeout(
@@ -542,14 +646,37 @@ const InterviewSetup = () => {
           );
           socket.once("server_ready", () => {
             clearTimeout(timer);
-            console.log("✅ Server ready");
             if (mounted)
               setInitProgress((prev) => ({ ...prev, serverReady: true }));
             resolve();
           });
         });
 
-        console.log("📝 Registering recording sessions (isolated handlers)");
+        // ── ✅ Wait for question generation (non-blocking during prior steps) ─
+        if (!questionsReadyRef.current) {
+          console.log("⏳ Questions still generating — waiting...");
+          if (mounted)
+            setInitProgress((prev) => ({ ...prev, questions: "waiting" }));
+
+          await new Promise((resolve, reject) => {
+            if (questionsReadyRef.current) return resolve();
+            const timeout = setTimeout(
+              () =>
+                reject(
+                  new Error("Question generation timed out. Please try again."),
+                ),
+              60000,
+            );
+            const interval = setInterval(() => {
+              if (questionsReadyRef.current) {
+                clearTimeout(timeout);
+                clearInterval(interval);
+                resolve();
+              }
+            }, 300);
+          });
+        }
+        if (mounted) setInitProgress((prev) => ({ ...prev, questions: true }));
 
         // ── Audio ─────────────────────────────────────────────────────────────
         setInitProgress((prev) => ({ ...prev, audioRecording: "starting" }));
@@ -559,7 +686,6 @@ const InterviewSetup = () => {
           streamsRef.current.preWarmSessionIds.audioId =
             audioResult.audioId ?? null;
           streamsRef.current.preWarmComplete.audio = true;
-          console.log("📦 Stored pre-warm audioId:", audioResult.audioId);
         }
 
         // ── Primary camera ────────────────────────────────────────────────────
@@ -570,10 +696,6 @@ const InterviewSetup = () => {
           streamsRef.current.preWarmSessionIds.primaryCameraId =
             primaryResult.videoId ?? null;
           streamsRef.current.preWarmComplete.primaryCamera = true;
-          console.log(
-            "📦 Stored pre-warm primaryCameraId:",
-            primaryResult.videoId,
-          );
         }
 
         // ── Screen recording ──────────────────────────────────────────────────
@@ -585,14 +707,9 @@ const InterviewSetup = () => {
             streamsRef.current.preWarmSessionIds.screenRecordingId =
               screenResult.videoId ?? null;
             streamsRef.current.preWarmComplete.screenRecording = true;
-            console.log(
-              "📦 Stored pre-warm screenRecordingId:",
-              screenResult.videoId,
-            );
           }
         } else {
           setInitProgress((prev) => ({ ...prev, screenRecording: "skipped" }));
-          console.log("📱 Screen recording skipped (mobile)");
         }
 
         // ── Mobile (optional) ─────────────────────────────────────────────────
@@ -614,10 +731,6 @@ const InterviewSetup = () => {
               streamsRef.current.preWarmSessionIds.secondaryCameraId =
                 secondaryResult.videoId ?? null;
               streamsRef.current.preWarmComplete.secondaryCamera = true;
-              console.log(
-                "📦 Stored pre-warm secondaryCameraId:",
-                secondaryResult.videoId,
-              );
             }
           }
         } else {
@@ -626,40 +739,21 @@ const InterviewSetup = () => {
 
         console.log("✅ Pre-initialization complete!");
 
-        // ── FIX: Write to singleton AND streamsRef before navigate() ──────────
-        //
-        // The singleton (streamSingleton.js) is a plain JS module — it survives
-        // React navigation, StrictMode double-mounts, and Context re-renders.
-        // InterviewLive reads from the singleton first, so it always gets the
-        // correct screenShareStream even if streamsRef.current gets reset.
-        //
-        // We still write to streamsRef for backward compatibility with other
-        // hooks that read from it (useVideoRecording, useAudioRecording, etc).
         const streamPayload = {
           micStream,
           primaryCameraStream,
-          screenShareStream: screenShareStreamRef.current, // use ref, not state
-          sessionData,
+          screenShareStream: screenShareStreamRef.current,
+          sessionData: session,
           preInitializedSocket: socket,
           preWarmSessionIds: { ...streamsRef.current.preWarmSessionIds },
           preWarmComplete: { ...streamsRef.current.preWarmComplete },
         };
 
-        // Singleton first — immune to React lifecycle
         setAllStreams(streamPayload);
-
-        // Also write to context ref for other hooks
         Object.assign(streamsRef.current, streamPayload);
-
-        console.log("📦 Streams committed to singleton + context. screen:", {
-          active: screenShareStreamRef.current?.active,
-          trackState:
-            screenShareStreamRef.current?.getVideoTracks()[0]?.readyState,
-        });
 
         if (mounted) {
           hasNavigatedRef.current = true;
-          console.log("🚀 Navigating to /interview/live");
           navigate("/interview/live", { replace: true });
         }
       } catch (error) {
@@ -677,13 +771,11 @@ const InterviewSetup = () => {
     };
 
     initializeInterview();
-
     return () => {
       mounted = false;
     };
   }, [
     currentStep,
-    sessionData,
     mobileCameraConnected,
     micStream,
     primaryCameraStream,
@@ -696,15 +788,9 @@ const InterviewSetup = () => {
   useEffect(() => {
     return () => {
       if (hasNavigatedRef.current) {
-        console.log("✅ Navigation successful, streams preserved in context");
-        if (settingsSocketRef.current?.connected) {
-          settingsSocketRef.current.disconnect();
-        }
+        settingsSocketRef.current?.disconnect();
         return;
       }
-
-      console.log("🧹 Cleaning up streams (setup cancelled)");
-
       if (animationFrameRef.current)
         cancelAnimationFrame(animationFrameRef.current);
       if (micStream) micStream.getTracks().forEach((t) => t.stop());
@@ -712,81 +798,171 @@ const InterviewSetup = () => {
         primaryCameraStream.getTracks().forEach((t) => t.stop());
       if (screenShareStream)
         screenShareStream.getTracks().forEach((t) => t.stop());
-
       settingsSocketRef.current?.disconnect();
       interviewSocketRef.current?.disconnect();
     };
   }, []);
 
-  /* ── RENDER ────────────────────────────────────────────────────────────── */
+  /* ══════════════════════════════════════════════════════════════════════════
+     RENDER
+  ══════════════════════════════════════════════════════════════════════════ */
 
   const renderStepIndicator = () => (
-    <div className="flex items-center justify-center gap-2 mb-8 overflow-x-auto pb-4">
-      {steps.map((step, idx) => (
-        <div key={step.num} className="flex items-center">
-          <div
-            className={`flex flex-col items-center ${currentStep >= step.num ? "opacity-100" : "opacity-40"}`}
-          >
+    <div className="flex items-center justify-center gap-1 mb-10 overflow-x-auto pb-2">
+      {steps.map((step, idx) => {
+        const done = currentStep > step.num;
+        const active = currentStep === step.num;
+        return (
+          <div key={step.num} className="flex items-center">
             <div
-              className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${
-                currentStep > step.num
-                  ? "bg-green-500 text-white"
-                  : currentStep === step.num
-                    ? "bg-purple-600 text-white"
-                    : "bg-gray-700 text-gray-400"
-              }`}
+              className={`flex flex-col items-center transition-all duration-300 ${active || done ? "opacity-100" : "opacity-35"}`}
             >
-              {currentStep > step.num ? "✓" : step.num}
+              <div
+                className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-300 ${
+                  done
+                    ? "bg-emerald-500 text-white shadow-lg shadow-emerald-500/30"
+                    : active
+                      ? "bg-violet-600 text-white shadow-lg shadow-violet-500/40 ring-2 ring-violet-400/30 ring-offset-2 ring-offset-slate-900"
+                      : "bg-slate-800 text-slate-500 border border-slate-700/60"
+                }`}
+              >
+                {done ? (
+                  <svg
+                    className="w-4 h-4"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2.5}
+                      d="M5 13l4 4L19 7"
+                    />
+                  </svg>
+                ) : (
+                  step.num
+                )}
+              </div>
+              <span
+                className={`text-[10px] mt-1.5 font-medium tracking-wide ${active ? "text-violet-400" : done ? "text-emerald-500" : "text-slate-600"}`}
+              >
+                {step.label}
+              </span>
             </div>
-            <span className="text-xs mt-1 text-gray-400">{step.label}</span>
+            {idx < steps.length - 1 && (
+              <div
+                className={`w-6 h-px mx-1 mb-5 transition-all duration-500 ${done ? "bg-emerald-500/60" : "bg-slate-700/60"}`}
+              />
+            )}
           </div>
-          {idx < steps.length - 1 && (
-            <div className="w-8 h-0.5 mx-2 mb-4 bg-gray-700" />
-          )}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 
+  const renderBackgroundProgress = () => {
+    if (currentStep === 1 || currentStep === 7) return null;
+    if (!isGeneratingQuestions && questionsReady) return null;
+
+    return (
+      <div
+        className={`mb-5 px-4 py-3 rounded-xl border flex items-center gap-3 transition-all duration-300 ${
+          isGeneratingQuestions
+            ? "bg-blue-500/8 border-blue-500/20"
+            : "bg-emerald-500/8 border-emerald-500/20"
+        }`}
+      >
+        {isGeneratingQuestions ? (
+          <>
+            <Spinner size="sm" color="blue" />
+            <p className="text-blue-300 text-xs font-medium">
+              Generating interview questions in background — you can continue
+              setup freely
+            </p>
+          </>
+        ) : (
+          <>
+            <svg
+              className="w-4 h-4 text-emerald-400 shrink-0"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M5 13l4 4L19 7"
+              />
+            </svg>
+            <p className="text-emerald-400 text-xs font-medium">
+              Questions ready
+            </p>
+          </>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <section className="min-h-screen bg-gray-900 p-6">
-      <div className="max-w-4xl mx-auto">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2">
+    <section
+      className="min-h-screen bg-slate-950 p-4 sm:p-6"
+      style={{
+        background:
+          "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(124,58,237,0.12) 0%, transparent 70%), #020617",
+      }}
+    >
+      <div className="max-w-2xl mx-auto">
+        {/* Header */}
+        <div className="text-center mb-10">
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-violet-500/10 border border-violet-500/20 rounded-full mb-4">
+            <div className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
+            <span className="text-violet-400 text-xs font-semibold tracking-widest uppercase">
+              Setup
+            </span>
+          </div>
+          <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">
             Interview Setup
           </h1>
-          <p className="text-gray-400">
-            Complete all steps to start your interview
+          <p className="text-slate-500 text-sm">
+            Complete each step to begin your session
           </p>
         </div>
 
         {renderStepIndicator()}
+        {renderBackgroundProgress()}
 
         {error && (
-          <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
-            <p className="text-red-400 text-sm text-center">{error}</p>
+          <div className="mb-5 px-4 py-3 bg-red-500/8 border border-red-500/20 rounded-xl flex items-start gap-3">
+            <svg
+              className="w-4 h-4 text-red-400 mt-0.5 shrink-0"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+            <p className="text-red-400 text-sm">{error}</p>
           </div>
         )}
 
-        {isGeneratingQuestions && currentStep > 1 && currentStep < 7 && (
-          <div className="mb-4 p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl">
-            <div className="flex items-center gap-3">
-              <div className="animate-spin w-4 h-4 border-2 border-blue-400/30 border-t-blue-400 rounded-full" />
-              <p className="text-blue-300 text-sm">
-                Generating interview questions in the background…
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* STEP 1: Skills */}
+        {/* ── STEP 1: Skills ──────────────────────────────────────────────────── */}
         {currentStep === 1 && (
-          <Card className="p-8">
+          <Card className="p-7 bg-slate-900/60 border-slate-800/60 backdrop-blur-sm">
             {!hasExistingSkills ? (
               <>
-                <h2 className="text-xl font-bold text-white mb-6">
+                <h2 className="text-lg font-semibold text-white mb-1">
                   Select Your Skills
                 </h2>
+                <p className="text-slate-500 text-sm mb-6">
+                  Choose the areas you'd like to be interviewed on
+                </p>
                 <SkillsSelector
                   selectedSkills={skills || []}
                   onSkillsChange={(newSkills) =>
@@ -796,9 +972,9 @@ const InterviewSetup = () => {
               </>
             ) : (
               <div className="text-center space-y-4">
-                <div className="flex items-center justify-center gap-2 text-green-500 mb-4">
+                <div className="inline-flex items-center gap-2 text-emerald-400 mb-2">
                   <svg
-                    className="w-6 h-6"
+                    className="w-5 h-5"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
@@ -810,64 +986,106 @@ const InterviewSetup = () => {
                       d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
                     />
                   </svg>
-                  <span className="font-semibold">Skills Configured</span>
+                  <span className="font-semibold text-sm">
+                    Skills Configured
+                  </span>
                 </div>
-                <div className="flex flex-wrap gap-2 justify-center p-4 bg-white/5 rounded-lg border border-white/10">
+                <div className="flex flex-wrap gap-2 justify-center p-4 bg-slate-800/40 rounded-xl border border-slate-700/40">
                   {user.skill.split(",").map((skill, idx) => (
-                    <div
+                    <span
                       key={idx}
-                      className="px-3 py-1.5 bg-purple-500/20 border border-purple-500 rounded-lg text-purple-300 text-sm font-medium"
+                      className="px-3 py-1.5 bg-violet-500/15 border border-violet-500/30 rounded-lg text-violet-300 text-sm font-medium"
                     >
                       {skill.trim()}
-                    </div>
+                    </span>
                   ))}
                 </div>
               </div>
             )}
 
             {isGeneratingQuestions && (
-              <div className="mt-6 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
-                <div className="flex items-center gap-3">
-                  <div className="animate-spin w-5 h-5 border-2 border-blue-400/30 border-t-blue-400 rounded-full" />
-                  <p className="text-blue-300 text-sm">
-                    Generating questions...
-                  </p>
-                </div>
+              <div className="mt-6 px-4 py-3 bg-blue-500/8 border border-blue-500/20 rounded-xl flex items-center gap-3">
+                <Spinner size="sm" color="blue" />
+                <p className="text-blue-300 text-sm">Generating questions…</p>
               </div>
             )}
 
-            <div className="flex justify-center mt-8">
+            <div className="flex justify-center mt-7">
               <Button
                 onClick={handleStartSetup}
                 disabled={
                   (!hasExistingSkills && (!skills || skills.length === 0)) ||
                   isGeneratingQuestions
                 }
-                className="px-10"
+                className="px-10 h-11"
               >
-                {isGeneratingQuestions ? "Generating..." : "Continue"}
+                {isGeneratingQuestions ? "Generating…" : "Continue"}
               </Button>
             </div>
           </Card>
         )}
 
-        {/* STEP 2: Guidelines */}
+        {/* ── STEP 2: Guidelines ──────────────────────────────────────────────── */}
         {currentStep === 2 && (
-          <Card className="p-8">
-            <h2 className="text-xl font-bold text-white mb-6">
+          <Card className="p-7 bg-slate-900/60 border-slate-800/60 backdrop-blur-sm">
+            <h2 className="text-lg font-semibold text-white mb-1">
               Interview Guidelines
             </h2>
-            <div className="space-y-4 text-gray-300 text-sm mb-8">
+            <p className="text-slate-500 text-sm mb-6">
+              Please review before continuing
+            </p>
+            <div className="space-y-3 mb-8">
               {[
-                "Ensure you're in a quiet, well-lit environment",
-                "Keep your face visible in the camera at all times",
-                "Speak clearly and avoid background noise",
-                "Do not switch tabs or minimize the browser",
-                "Answer questions naturally and honestly",
-              ].map((guideline, idx) => (
-                <div key={idx} className="flex items-start gap-3">
+                {
+                  icon: "🔇",
+                  text: "Ensure you're in a quiet, well-lit environment",
+                },
+                {
+                  icon: "👁️",
+                  text: "Keep your face fully visible in the camera at all times",
+                },
+                {
+                  icon: "🎙️",
+                  text: "Speak clearly and minimise background noise",
+                },
+                {
+                  icon: "🖥️",
+                  text: "Do not switch tabs or minimise the browser window",
+                },
+                { icon: "💬", text: "Answer questions naturally and honestly" },
+              ].map((g, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-start gap-3 px-4 py-3 bg-slate-800/40 rounded-xl border border-slate-700/30"
+                >
+                  <span className="text-base shrink-0 mt-0.5">{g.icon}</span>
+                  <p className="text-slate-300 text-sm">{g.text}</p>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-center">
+              <Button onClick={handleAcceptGuidelines} className="px-10 h-11">
+                Accept & Continue
+              </Button>
+            </div>
+          </Card>
+        )}
+
+        {/* ── STEP 3: Microphone ──────────────────────────────────────────────── */}
+        {currentStep === 3 && (
+          <Card className="p-7 bg-slate-900/60 border-slate-800/60 backdrop-blur-sm">
+            <h2 className="text-lg font-semibold text-white mb-1">
+              Microphone Check
+            </h2>
+            <p className="text-slate-500 text-sm mb-6">
+              Confirm your mic is picking up audio clearly
+            </p>
+
+            {!isMicTesting ? (
+              <div className="text-center space-y-6 py-6">
+                <div className="w-16 h-16 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center mx-auto">
                   <svg
-                    className="w-5 h-5 text-purple-500 shrink-0 mt-0.5"
+                    className="w-8 h-8 text-violet-400"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
@@ -875,58 +1093,52 @@ const InterviewSetup = () => {
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                      strokeWidth={1.5}
+                      d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
                     />
                   </svg>
-                  <p>{guideline}</p>
                 </div>
-              ))}
-            </div>
-            <div className="flex justify-center">
-              <Button onClick={handleAcceptGuidelines} className="px-10">
-                Accept and Continue
-              </Button>
-            </div>
-          </Card>
-        )}
-
-        {/* STEP 3: Microphone */}
-        {currentStep === 3 && (
-          <Card className="p-8">
-            <h2 className="text-xl font-bold text-white mb-6">
-              Microphone Check
-            </h2>
-            {!isMicTesting ? (
-              <div className="text-center space-y-6">
-                <p className="text-gray-400">
-                  Test your microphone for clear audio
+                <p className="text-slate-400 text-sm">
+                  Speak after clicking test — the bar will show your audio level
                 </p>
-                <Button onClick={startMicTest} className="px-10">
+                <Button onClick={startMicTest} className="px-10 h-11">
                   Test Microphone
                 </Button>
               </div>
             ) : (
               <div className="space-y-6">
-                <div className="text-center">
-                  <p className="text-gray-400 mb-4">
-                    Speak to see the level bar move
+                <div className="px-4 py-5 bg-slate-800/40 rounded-xl border border-slate-700/30">
+                  <p className="text-slate-400 text-xs mb-3 text-center">
+                    Speak now — watch the level rise
                   </p>
-                  <div className="w-full h-8 bg-gray-700 rounded-full overflow-hidden">
+                  <div className="w-full h-5 bg-slate-800 rounded-full overflow-hidden border border-slate-700/40">
                     <div
-                      className="h-full bg-linear-to-r from-green-500 to-emerald-500 transition-all duration-100"
-                      style={{ width: `${micLevel}%` }}
+                      className="h-full rounded-full transition-all duration-75"
+                      style={{
+                        width: `${micLevel}%`,
+                        background:
+                          micLevel > 60
+                            ? "linear-gradient(90deg,#10b981,#34d399)"
+                            : micLevel > 25
+                              ? "linear-gradient(90deg,#6366f1,#8b5cf6)"
+                              : "linear-gradient(90deg,#475569,#64748b)",
+                      }}
                     />
                   </div>
-                  <p className="text-sm text-gray-500 mt-2">
-                    Level: {Math.round(micLevel)}%
-                  </p>
+                  <div className="flex justify-between items-center mt-2">
+                    <span className="text-xs text-slate-600">0%</span>
+                    <span className="text-xs text-slate-400 font-mono">
+                      {Math.round(micLevel)}%
+                    </span>
+                    <span className="text-xs text-slate-600">100%</span>
+                  </div>
                 </div>
+
                 {micLevel > 10 && (
-                  <div className="text-center">
-                    <div className="inline-flex items-center gap-2 px-4 py-2 bg-green-500/20 border border-green-500/30 rounded-lg mb-4">
+                  <div className="flex justify-center">
+                    <InfoBadge variant="green">
                       <svg
-                        className="w-5 h-5 text-green-500"
+                        className="w-4 h-4"
                         fill="none"
                         viewBox="0 0 24 24"
                         stroke="currentColor"
@@ -935,20 +1147,19 @@ const InterviewSetup = () => {
                           strokeLinecap="round"
                           strokeLinejoin="round"
                           strokeWidth={2}
-                          d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                          d="M5 13l4 4L19 7"
                         />
                       </svg>
-                      <span className="text-green-400 text-sm font-medium">
-                        Microphone working!
-                      </span>
-                    </div>
+                      Microphone is working
+                    </InfoBadge>
                   </div>
                 )}
+
                 <div className="flex justify-center">
                   <Button
                     onClick={handleMicSuccess}
                     disabled={micLevel < 10}
-                    className="px-10"
+                    className="px-10 h-11"
                   >
                     Continue
                   </Button>
@@ -958,33 +1169,53 @@ const InterviewSetup = () => {
           </Card>
         )}
 
-        {/* STEP 4: Primary Camera */}
+        {/* ── STEP 4: Primary Camera ──────────────────────────────────────────── */}
         {currentStep === 4 && (
-          <Card className="p-8">
-            <h2 className="text-xl font-bold text-white mb-6">
+          <Card className="p-7 bg-slate-900/60 border-slate-800/60 backdrop-blur-sm">
+            <h2 className="text-lg font-semibold text-white mb-1">
               Primary Camera
             </h2>
+            <p className="text-slate-500 text-sm mb-6">
+              Make sure your face is centred and well-lit
+            </p>
+
             {primaryCameraError ? (
-              <div className="space-y-6">
-                <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
-                  <p className="text-red-400 text-sm text-center">
-                    {primaryCameraError}
-                  </p>
-                </div>
+              <div className="space-y-5">
+                <InfoBadge variant="red">
+                  <svg
+                    className="w-4 h-4"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  {primaryCameraError}
+                </InfoBadge>
                 <div className="flex justify-center">
-                  <Button onClick={startPrimaryCameraTest} className="px-10">
+                  <Button
+                    onClick={startPrimaryCameraTest}
+                    className="px-10 h-11"
+                  >
                     Try Again
                   </Button>
                 </div>
               </div>
             ) : !primaryCameraStream ? (
-              <div className="text-center space-y-6">
-                <div className="animate-spin w-12 h-12 border-4 border-purple-500/30 border-t-purple-500 rounded-full mx-auto" />
-                <p className="text-gray-400">Accessing camera...</p>
+              <div className="text-center py-12 space-y-4">
+                <Spinner size="lg" color="violet" />
+                <p className="text-slate-400 text-sm">
+                  Requesting camera access…
+                </p>
               </div>
             ) : (
-              <div className="space-y-6">
-                <div className="relative w-full aspect-video bg-black rounded-xl overflow-hidden">
+              <div className="space-y-5">
+                <div className="relative w-full aspect-video bg-black rounded-xl overflow-hidden ring-1 ring-slate-700/50">
                   <video
                     ref={primaryVideoRef}
                     autoPlay
@@ -993,20 +1224,17 @@ const InterviewSetup = () => {
                     className="w-full h-full object-cover"
                     style={{ transform: "scaleX(-1)" }}
                   />
-                  <div className="absolute top-4 left-4">
-                    <div className="flex items-center gap-2 px-3 py-1.5 bg-green-500/90 backdrop-blur-sm rounded-lg">
-                      <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
-                      <span className="text-white text-xs font-bold">LIVE</span>
-                    </div>
+                  <div className="absolute top-3 left-3">
+                    <LiveBadge color="green" label="LIVE" />
                   </div>
                 </div>
-                <div className="text-center">
-                  <p className="text-gray-400 mb-4">
-                    Make sure your face is visible
+                <div className="text-center space-y-4">
+                  <p className="text-slate-400 text-sm">
+                    Ensure your face is clearly visible and centred
                   </p>
                   <Button
                     onClick={handlePrimaryCameraSuccess}
-                    className="px-10"
+                    className="px-10 h-11"
                   >
                     Looks Good
                   </Button>
@@ -1016,44 +1244,48 @@ const InterviewSetup = () => {
           </Card>
         )}
 
-        {/* STEP 5: Mobile Camera */}
+        {/* ── STEP 5: Mobile Camera ───────────────────────────────────────────── */}
         {currentStep === 5 && (
-          <Card className="p-8">
-            <h2 className="text-xl font-bold text-white mb-6 text-center">
-              Connect Mobile Camera
+          <Card className="p-7 bg-slate-900/60 border-slate-800/60 backdrop-blur-sm">
+            <h2 className="text-lg font-semibold text-white mb-1 text-center">
+              Mobile Camera
             </h2>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <div className="space-y-6">
-                <div className="text-center">
-                  <h3 className="text-lg font-semibold text-white mb-4">
-                    Scan with Phone
-                  </h3>
-                  <div className="inline-block p-4 bg-white rounded-2xl mx-auto">
-                    {sessionData ? (
-                      <QRCodeCanvas
-                        value={`${window.location.origin}/mobile-camera?interviewId=${sessionData.interviewId}&userId=${user?.id}`}
-                        size={256}
-                      />
-                    ) : (
-                      <div className="w-64 h-64 flex items-center justify-center bg-gray-700 rounded-2xl">
-                        <div className="animate-spin w-12 h-12 border-4 border-purple-500/30 border-t-purple-500 rounded-full" />
-                      </div>
-                    )}
-                  </div>
+            <p className="text-slate-500 text-sm mb-6 text-center">
+              Connect a secondary angle from your phone (optional)
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* QR side */}
+              <div className="flex flex-col items-center gap-5">
+                <div className="inline-block p-3 bg-white rounded-2xl shadow-xl shadow-black/40">
+                  {sessionData ? (
+                    <QRCodeCanvas
+                      value={`${window.location.origin}/mobile-camera?interviewId=${sessionData.interviewId}&userId=${user?.id}`}
+                      size={200}
+                    />
+                  ) : (
+                    <div className="w-[200px] h-[200px] flex items-center justify-center bg-slate-100 rounded-xl">
+                      <Spinner size="lg" color="violet" />
+                    </div>
+                  )}
                 </div>
-                <div className="text-sm text-gray-400 space-y-2">
-                  <p className="font-semibold text-white">Instructions:</p>
-                  <ol className="list-decimal list-inside space-y-1">
-                    <li>Open phone camera</li>
-                    <li>Point at QR code</li>
-                    <li>Tap notification</li>
+                <div className="w-full px-4 py-3 bg-slate-800/40 rounded-xl border border-slate-700/30 space-y-2">
+                  <p className="text-slate-300 text-xs font-semibold uppercase tracking-wider">
+                    Instructions
+                  </p>
+                  <ol className="text-slate-400 text-xs space-y-1 list-decimal list-inside">
+                    <li>Open your phone camera app</li>
+                    <li>Point at the QR code above</li>
+                    <li>Tap the notification banner</li>
                     <li>Grant camera permission</li>
-                    <li>Position front camera</li>
+                    <li>Position facing you from the side</li>
                   </ol>
                 </div>
               </div>
-              <div className="space-y-4">
-                <div className="relative w-full aspect-video bg-black rounded-xl overflow-hidden">
+
+              {/* Preview side */}
+              <div className="flex flex-col gap-4">
+                <div className="relative w-full aspect-video bg-black rounded-xl overflow-hidden ring-1 ring-slate-700/50">
                   <canvas
                     ref={mobileCanvasRef}
                     width="640"
@@ -1062,113 +1294,127 @@ const InterviewSetup = () => {
                     style={{ transform: "scaleX(-1)" }}
                   />
                   {!mobileCameraConnected && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70">
-                      <div className="animate-spin w-10 h-10 border-4 border-orange-500/30 border-t-orange-500 rounded-full mb-4" />
-                      <p className="text-white text-sm">Waiting...</p>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/75 gap-3">
+                      <Spinner size="lg" color="orange" />
+                      <p className="text-slate-400 text-xs">
+                        Waiting for connection…
+                      </p>
                     </div>
                   )}
                   {mobileCameraConnected && (
-                    <div className="absolute top-4 left-4">
-                      <div className="flex items-center gap-2 px-3 py-1.5 bg-orange-500/90 backdrop-blur-sm rounded-lg">
-                        <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
-                        <span className="text-white text-xs font-bold">
-                          CONNECTED
-                        </span>
-                      </div>
+                    <div className="absolute top-3 left-3">
+                      <LiveBadge color="orange" label="CONNECTED" />
                     </div>
                   )}
                 </div>
-                <div className="text-center">
-                  {mobileCameraConnected ? (
-                    <div className="space-y-4">
-                      <div className="inline-flex items-center gap-2 px-4 py-2 bg-green-500/20 border border-green-500/30 rounded-lg">
-                        <svg
-                          className="w-5 h-5 text-green-500"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                          />
-                        </svg>
-                        <span className="text-green-400 text-sm font-medium">
-                          Connected! ({mobileFramesReceived} frames)
-                        </span>
-                      </div>
-                      <Button
-                        onClick={handleMobileCameraSuccess}
-                        className="px-10"
+
+                {mobileCameraConnected ? (
+                  <div className="flex flex-col items-center gap-3">
+                    <InfoBadge variant="green">
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
                       >
-                        Continue
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      <p className="text-gray-400 text-sm">
-                        Waiting for connection...
-                      </p>
-                      <button
-                        onClick={handleMobileCameraSuccess}
-                        className="text-xs text-gray-500 underline hover:text-gray-300"
-                      >
-                        Skip mobile camera
-                      </button>
-                    </div>
-                  )}
-                </div>
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M5 13l4 4L19 7"
+                        />
+                      </svg>
+                      Connected · {mobileFramesReceived} frames
+                    </InfoBadge>
+                    <Button
+                      onClick={handleMobileCameraSuccess}
+                      className="px-10 h-11 w-full"
+                    >
+                      Continue
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-2">
+                    <p className="text-slate-500 text-xs">
+                      Waiting for your phone to connect…
+                    </p>
+                    {/* <button
+                      onClick={handleMobileCameraSuccess}
+                      className="text-xs text-slate-600 underline underline-offset-2 hover:text-slate-400 transition-colors"
+                    >
+                      Skip mobile camera
+                    </button> */}
+                  </div>
+                )}
               </div>
             </div>
           </Card>
         )}
 
-        {/* STEP 6: Screen Share */}
+        {/* ── STEP 6: Screen Share ─────────────────────────────────────────────── */}
         {currentStep === 6 && (
-          <Card className="p-8">
-            <h2 className="text-xl font-bold text-white mb-6">
+          <Card className="p-7 bg-slate-900/60 border-slate-800/60 backdrop-blur-sm">
+            <h2 className="text-lg font-semibold text-white mb-1">
               Screen Sharing
             </h2>
+            <p className="text-slate-500 text-sm mb-6">
+              Share your entire screen for the interview session
+            </p>
+
             {!SCREEN_SHARE_SUPPORTED ? (
-              <div className="space-y-6 text-center">
-                <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl">
-                  <p className="text-yellow-300 text-sm font-medium mb-1">
-                    📱 Screen sharing is not supported on mobile browsers
+              <div className="space-y-5 text-center">
+                <div className="px-4 py-4 bg-amber-500/8 border border-amber-500/20 rounded-xl">
+                  <p className="text-amber-300 text-sm font-medium mb-1">
+                    📱 Screen sharing unavailable on mobile
                   </p>
-                  <p className="text-gray-400 text-xs">
-                    Please use a desktop browser to enable screen recording.
+                  <p className="text-slate-500 text-xs">
+                    Use a desktop browser to enable screen recording.
                   </p>
                 </div>
-                <Button onClick={handleScreenShareSuccess} className="px-10">
+                <Button
+                  onClick={handleScreenShareSuccess}
+                  className="px-10 h-11"
+                >
                   Continue Without Screen Share
                 </Button>
               </div>
             ) : screenShareError ? (
-              <div className="space-y-6">
-                <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
-                  <p className="text-red-400 text-sm text-center">
-                    {screenShareError}
-                  </p>
-                </div>
+              <div className="space-y-5">
+                <InfoBadge variant="red">
+                  <svg
+                    className="w-4 h-4"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  {screenShareError}
+                </InfoBadge>
                 <div className="flex justify-center">
-                  <Button onClick={startScreenShareTest} className="px-10">
+                  <Button onClick={startScreenShareTest} className="px-10 h-11">
                     Try Again
                   </Button>
                 </div>
               </div>
             ) : !screenShareStream ? (
-              <div className="text-center space-y-6">
-                <div className="animate-spin w-12 h-12 border-4 border-purple-500/30 border-t-purple-500 rounded-full mx-auto" />
-                <p className="text-gray-400">Starting screen share...</p>
-                <p className="text-sm text-gray-500">
-                  Select your entire screen
+              <div className="text-center py-12 space-y-4">
+                <Spinner size="lg" color="violet" />
+                <p className="text-slate-400 text-sm">
+                  Opening screen share picker…
+                </p>
+                <p className="text-slate-600 text-xs">
+                  Select your entire screen when prompted
                 </p>
               </div>
             ) : (
-              <div className="space-y-6">
-                <div className="relative w-full aspect-video bg-black rounded-xl overflow-hidden">
+              <div className="space-y-5">
+                <div className="relative w-full aspect-video bg-black rounded-xl overflow-hidden ring-1 ring-slate-700/50">
                   <video
                     ref={screenVideoRef}
                     autoPlay
@@ -1176,19 +1422,14 @@ const InterviewSetup = () => {
                     playsInline
                     className="w-full h-full object-contain"
                   />
-                  <div className="absolute top-4 left-4">
-                    <div className="flex items-center gap-2 px-3 py-1.5 bg-purple-500/90 backdrop-blur-sm rounded-lg">
-                      <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
-                      <span className="text-white text-xs font-bold">
-                        SHARING
-                      </span>
-                    </div>
+                  <div className="absolute top-3 left-3">
+                    <LiveBadge color="violet" label="SHARING" />
                   </div>
                 </div>
                 <div className="text-center space-y-4">
-                  <div className="inline-flex items-center gap-2 px-4 py-2 bg-green-500/20 border border-green-500/30 rounded-lg">
+                  <InfoBadge variant="green">
                     <svg
-                      className="w-5 h-5 text-green-500"
+                      className="w-4 h-4"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -1197,32 +1438,17 @@ const InterviewSetup = () => {
                         strokeLinecap="round"
                         strokeLinejoin="round"
                         strokeWidth={2}
-                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                        d="M5 13l4 4L19 7"
                       />
                     </svg>
-                    <span className="text-green-400 text-sm font-medium">
-                      Screen share ready!
-                    </span>
-                  </div>
-
-                  {isGeneratingQuestions && (
-                    <div className="flex items-center justify-center gap-2 text-blue-300 text-sm">
-                      <div className="animate-spin w-4 h-4 border-2 border-blue-400/30 border-t-blue-400 rounded-full" />
-                      <span>Questions still generating, please wait…</span>
-                    </div>
-                  )}
-
-                  <p className="text-gray-400 text-sm">
-                    Click continue to initialize the interview
-                  </p>
+                    Screen share active
+                  </InfoBadge>
+                  {/* ✅ No longer blocked by question generation */}
                   <Button
                     onClick={handleScreenShareSuccess}
-                    className="px-10"
-                    disabled={isGeneratingQuestions}
+                    className="px-10 h-11"
                   >
-                    {isGeneratingQuestions
-                      ? "Waiting for questions…"
-                      : "Continue"}
+                    Continue
                   </Button>
                 </div>
               </div>
@@ -1230,94 +1456,122 @@ const InterviewSetup = () => {
           </Card>
         )}
 
-        {/* STEP 7: Initialization */}
+        {/* ── STEP 7: Initialization ───────────────────────────────────────────── */}
         {currentStep === 7 && (
-          <Card className="p-8">
-            <h2 className="text-xl font-bold text-white mb-6 text-center">
-              Initializing Interview
+          <Card className="p-7 bg-slate-900/60 border-slate-800/60 backdrop-blur-sm">
+            <h2 className="text-lg font-semibold text-white mb-1 text-center">
+              Launching Interview
             </h2>
+            <p className="text-slate-500 text-sm mb-7 text-center">
+              Finalising connections and preparing your session…
+            </p>
+
             {initError ? (
-              <div className="space-y-6">
-                <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
-                  <p className="text-red-400 text-sm text-center">
-                    {initError}
-                  </p>
+              <div className="space-y-5">
+                <div className="px-4 py-3 bg-red-500/8 border border-red-500/20 rounded-xl flex items-start gap-3">
+                  <svg
+                    className="w-4 h-4 text-red-400 mt-0.5 shrink-0"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  <p className="text-red-400 text-sm">{initError}</p>
                 </div>
                 <div className="flex justify-center">
-                  <Button onClick={() => setCurrentStep(6)} className="px-10">
+                  <Button
+                    onClick={() => {
+                      setInitError(null);
+                      setCurrentStep(6);
+                    }}
+                    className="px-10 h-11"
+                  >
                     Go Back
                   </Button>
                 </div>
               </div>
             ) : (
-              <div className="space-y-6">
-                <p className="text-center text-gray-400 mb-8">
-                  Setting up audio, video, and connections...
-                </p>
-                <div className="space-y-4">
-                  {[
-                    { key: "socket", label: "Connecting to server" },
-                    { key: "serverReady", label: "Server ready" },
-                    { key: "audioRecording", label: "Audio recording" },
-                    { key: "videoRecording", label: "Video recording" },
-                    { key: "screenRecording", label: "Screen recording" },
-                    {
-                      key: "mobileRecording",
-                      label: `Mobile recording ${!mobileCameraConnected ? "(optional)" : ""}`,
-                    },
-                  ].map(({ key, label }) => (
+              <div className="space-y-3">
+                {[
+                  { key: "socket", label: "Connecting to server" },
+                  { key: "serverReady", label: "Server ready" },
+                  { key: "questions", label: "Interview questions" },
+                  { key: "audioRecording", label: "Audio recording" },
+                  { key: "videoRecording", label: "Video recording" },
+                  {
+                    key: "screenRecording",
+                    label: SCREEN_SHARE_SUPPORTED
+                      ? "Screen recording"
+                      : "Screen recording (desktop only)",
+                  },
+                  {
+                    key: "mobileRecording",
+                    label: `Mobile recording${!mobileCameraConnected ? " (optional)" : ""}`,
+                  },
+                ].map(({ key, label }) => {
+                  const status = initProgress[key];
+                  return (
                     <div
                       key={key}
-                      className="flex items-center gap-4 p-4 bg-white/5 rounded-lg"
+                      className={`flex items-center gap-3.5 px-4 py-3.5 rounded-xl border transition-all duration-300 ${
+                        status === true
+                          ? "bg-emerald-500/5 border-emerald-500/20"
+                          : ["connecting", "waiting", "starting"].includes(
+                                status,
+                              )
+                            ? "bg-violet-500/8 border-violet-500/20"
+                            : ["skipped", "optional"].includes(status)
+                              ? "bg-slate-800/30 border-slate-700/30"
+                              : "bg-slate-800/20 border-slate-700/20"
+                      }`}
                     >
-                      {initProgress[key] === true ? (
-                        <svg
-                          className="w-6 h-6 text-green-500 shrink-0"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M5 13l4 4L19 7"
-                          />
-                        </svg>
-                      ) : ["connecting", "waiting", "starting"].includes(
-                          initProgress[key],
-                        ) ? (
-                        <div className="animate-spin w-6 h-6 border-2 border-purple-500/30 border-t-purple-500 rounded-full shrink-0" />
-                      ) : ["skipped", "optional"].includes(
-                          initProgress[key],
-                        ) ? (
-                        <svg
-                          className="w-6 h-6 text-gray-500 shrink-0"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M6 18L18 6M6 6l12 12"
-                          />
-                        </svg>
-                      ) : (
-                        <div className="w-6 h-6 border-2 border-gray-600 rounded-full shrink-0" />
+                      <StatusIcon status={status} />
+                      <span
+                        className={`text-sm font-medium ${
+                          status === true
+                            ? "text-emerald-300"
+                            : ["connecting", "waiting", "starting"].includes(
+                                  status,
+                                )
+                              ? "text-violet-300"
+                              : ["skipped", "optional"].includes(status)
+                                ? "text-slate-600"
+                                : "text-slate-500"
+                        }`}
+                      >
+                        {label}
+                      </span>
+                      {["connecting", "waiting", "starting"].includes(
+                        status,
+                      ) && (
+                        <span className="ml-auto text-[10px] text-violet-500 font-medium animate-pulse">
+                          {status === "connecting"
+                            ? "connecting…"
+                            : status === "waiting"
+                              ? "waiting…"
+                              : "starting…"}
+                        </span>
                       )}
-                      <span className="text-white font-medium">{label}</span>
+                      {status === true && (
+                        <span className="ml-auto text-[10px] text-emerald-600 font-medium">
+                          done
+                        </span>
+                      )}
                     </div>
-                  ))}
-                </div>
-                <div className="text-center pt-6">
-                  <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500/20 border border-blue-500/30 rounded-lg">
-                    <div className="animate-spin w-4 h-4 border-2 border-blue-400/30 border-t-blue-400 rounded-full" />
-                    <span className="text-blue-300 text-sm font-medium">
-                      Please wait while we prepare everything...
-                    </span>
-                  </div>
+                  );
+                })}
+
+                <div className="flex justify-center pt-4">
+                  <InfoBadge variant="blue">
+                    <Spinner size="sm" color="blue" />
+                    Almost ready — please wait…
+                  </InfoBadge>
                 </div>
               </div>
             )}
