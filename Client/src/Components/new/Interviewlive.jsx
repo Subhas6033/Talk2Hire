@@ -8,7 +8,9 @@ import { Button } from "../index";
 import { Card } from "../Common/Card";
 import { useStreams } from "../../Hooks/streamContext";
 import streamStore from "../../Hooks/streamSingleton";
+import { RoomEvent, Track } from "livekit-client";
 
+// Module-level flags prevent double-init across React StrictMode mounts
 let _globalSocketInitialized = false;
 let _globalClientReadyEmitted = false;
 
@@ -16,7 +18,7 @@ const InterviewLive = () => {
   const navigate = useNavigate();
   const streamsRef = useStreams();
 
-  // ── Pull session data from singleton / context ─────────────────────────────
+  // ── Snapshot session data once on first render ─────────────────────────────
   const stableRef = useRef(null);
   if (!stableRef.current) {
     const src = streamStore.sessionData ? streamStore : streamsRef.current;
@@ -41,7 +43,7 @@ const InterviewLive = () => {
 
   const screenShareStreamRef = useRef(null);
 
-  // ── Hooks ──────────────────────────────────────────────────────────────────
+  // ── Core hooks ─────────────────────────────────────────────────────────────
   const interview = useInterview(
     sessionData?.interviewId,
     sessionData?.userId,
@@ -69,25 +71,17 @@ const InterviewLive = () => {
     preWarmSessionIds.screenRecordingId,
   );
 
-  // ── Refs ───────────────────────────────────────────────────────────────────
-  const videoRef = useRef(null); // primary camera
-  const mobileCanvasRef = useRef(null); // secondary camera — WebSocket frames drawn here
-  const screenVideoRef = useRef(null); // screen share
+  // ── DOM refs ───────────────────────────────────────────────────────────────
+  const videoRef = useRef(null); // primary camera preview
+  const mobileVideoRef = useRef(null); // mobile camera — LiveKit remote track
+  const screenVideoRef = useRef(null); // screen share preview
 
+  // ── Recording / flow control refs ─────────────────────────────────────────
   const recordingsStartedRef = useRef(false);
   const isLeavingRef = useRef(false);
-
-  // Mobile secondary camera state (WebSocket frames — no WebRTC)
-  const mobileMediaRecorderRef = useRef(null);
-  const mobileChunkCountRef = useRef(0);
-  const mobileSessionReadyRef = useRef(false);
-  // Canvas stream for recording the mobile frames
-  const mobileCanvasStreamRef = useRef(null);
-
   const screenVideoActiveRef = useRef(false);
 
-  // ── State ──────────────────────────────────────────────────────────────────
-  const [isSecondaryRecording, setIsSecondaryRecording] = useState(false);
+  // ── UI state ───────────────────────────────────────────────────────────────
   const [evaluationStatus, setEvaluationStatus] = useState(null);
   const [evaluationResults, setEvaluationResults] = useState(null);
   const [faceViolationWarning, setFaceViolationWarning] = useState(null);
@@ -95,12 +89,11 @@ const InterviewLive = () => {
   const [mobileCameraConnected, setMobileCameraConnected] = useState(
     () => preWarmComplete?.secondaryCamera ?? false,
   );
-  const [mobileFrameCount, setMobileFrameCount] = useState(0);
-  const mobileFrameCountRef = useRef(0);
-
+  const [mobileTrackAttached, setMobileTrackAttached] = useState(false);
   const [screenVideoActive, setScreenVideoActive] = useState(false);
   const [socketReady, setSocketReady] = useState(false);
 
+  // ── Face detection (holistic) ──────────────────────────────────────────────
   useHolisticDetection(
     videoRef,
     interview.socketRef,
@@ -126,7 +119,7 @@ const InterviewLive = () => {
     }
   }, []); // eslint-disable-line
 
-  // ── Stop all recordings ────────────────────────────────────────────────────
+  // ── Stop all active recordings ─────────────────────────────────────────────
   const cleanupAllRecordings = useCallback(async () => {
     const jobs = [];
     if (isVideoRecording) jobs.push(stopVideoRecording().catch(console.error));
@@ -137,19 +130,6 @@ const InterviewLive = () => {
     }
     if (screenRecording.isRecording)
       jobs.push(screenRecording.stopRecording().catch(console.error));
-    const mobileRec = mobileMediaRecorderRef.current;
-    if (mobileRec && mobileRec.state !== "inactive") {
-      jobs.push(
-        new Promise((resolve) => {
-          mobileRec.onstop = () => resolve();
-          try {
-            mobileRec.stop();
-          } catch (_) {
-            resolve();
-          }
-        }).catch(console.error),
-      );
-    }
     await Promise.allSettled(jobs);
   }, [isVideoRecording, audioRecording, screenRecording]); // eslint-disable-line
 
@@ -163,152 +143,74 @@ const InterviewLive = () => {
     });
   }, []); // eslint-disable-line
 
-  // ── Draw incoming WebSocket frame onto mobile canvas ───────────────────────
-  // This is the core of the WebSocket streaming approach.
-  // The server relays mobile_camera_frame events from the mobile device.
-  // We draw each JPEG dataURL onto the canvas element for display.
-  const drawMobileFrame = useCallback((frameDataUrl) => {
-    const canvas = mobileCanvasRef.current;
-    if (!canvas) return;
+  // ── Attach mobile LiveKit remote track to preview <video> ─────────────────
+  // Runs whenever the LiveKit room becomes available.
+  // The hook already subscribes to remote tracks — we hook into RoomEvent here
+  // to catch the mobile participant's video track and attach it to mobileVideoRef.
+  useEffect(() => {
+    const room = interview.livekitRoomRef?.current;
+    if (!room) return;
 
-    const img = new Image();
-    img.onload = () => {
-      const ctx = canvas.getContext("2d");
-      if (ctx) {
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        mobileFrameCountRef.current++;
-        if (mobileFrameCountRef.current % 10 === 0) {
-          setMobileFrameCount(mobileFrameCountRef.current);
-        }
-      }
-    };
-    img.src = frameDataUrl;
-  }, []);
-
-  // ── Start recording the mobile canvas stream ───────────────────────────────
-  // We capture the canvas as a MediaStream and record it with MediaRecorder.
-  // This gives us a proper video file of the secondary camera for FTP upload.
-  const startMobileCanvasRecording = useCallback(
-    async (socket) => {
-      if (mobileMediaRecorderRef.current) return; // already recording
-
-      const canvas = mobileCanvasRef.current;
-      if (!canvas) {
-        console.warn("⚠️ Mobile canvas not ready for recording");
+    const handleTrackSubscribed = (track, _pub, participant) => {
+      // Only handle the mobile participant's video
+      if (
+        track.kind !== Track.Kind.Video ||
+        !participant.identity?.startsWith("mobile_")
+      )
         return;
-      }
 
-      try {
-        // Capture canvas as a 10fps MediaStream (matches ~frame rate from mobile)
-        const canvasStream = canvas.captureStream(10);
-        mobileCanvasStreamRef.current = canvasStream;
+      const videoEl = mobileVideoRef.current;
+      if (!videoEl) return;
 
-        const mimeTypes = [
-          "video/webm;codecs=vp9",
-          "video/webm;codecs=vp8",
-          "video/webm",
-          "",
-        ];
-        let mediaRecorder;
-        for (const mimeType of mimeTypes) {
-          try {
-            mediaRecorder = new MediaRecorder(
-              canvasStream,
-              mimeType ? { mimeType, videoBitsPerSecond: 1000000 } : {},
-            );
-            break;
-          } catch (_) {
-            continue;
-          }
+      track.attach(videoEl);
+      setMobileTrackAttached(true);
+      setMobileCameraConnected(true);
+      console.log("📱 Mobile camera LiveKit track attached");
+    };
+
+    const handleTrackUnsubscribed = (track, _pub, participant) => {
+      if (
+        track.kind !== Track.Kind.Video ||
+        !participant.identity?.startsWith("mobile_")
+      )
+        return;
+
+      track.detach();
+      setMobileTrackAttached(false);
+      console.log("📱 Mobile camera track detached");
+    };
+
+    const handleParticipantDisconnected = (participant) => {
+      if (!participant.identity?.startsWith("mobile_")) return;
+      setMobileCameraConnected(false);
+      setMobileTrackAttached(false);
+    };
+
+    room.on(RoomEvent.TrackSubscribed, handleTrackSubscribed);
+    room.on(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
+    room.on(RoomEvent.ParticipantDisconnected, handleParticipantDisconnected);
+
+    // Handle case where mobile participant already joined before this effect ran
+    room.remoteParticipants.forEach((participant) => {
+      if (!participant.identity?.startsWith("mobile_")) return;
+      participant.trackPublications.forEach((pub) => {
+        if (pub.track?.kind === Track.Kind.Video && pub.isSubscribed) {
+          handleTrackSubscribed(pub.track, pub, participant);
         }
-        if (!mediaRecorder) {
-          console.error("❌ No MediaRecorder for canvas stream");
-          return;
-        }
+      });
+    });
 
-        mobileMediaRecorderRef.current = mediaRecorder;
-        mobileChunkCountRef.current = 0;
+    return () => {
+      room.off(RoomEvent.TrackSubscribed, handleTrackSubscribed);
+      room.off(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
+      room.off(
+        RoomEvent.ParticipantDisconnected,
+        handleParticipantDisconnected,
+      );
+    };
+  }, [interview.livekitRoomRef?.current]); // re-run when room connects
 
-        mediaRecorder.ondataavailable = (e) => {
-          if (!e.data || e.data.size === 0) return;
-          mobileChunkCountRef.current++;
-          const chunkNum = mobileChunkCountRef.current;
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            if (socket?.connected && mobileSessionReadyRef.current) {
-              socket.emit("video_chunk", {
-                videoType: "secondary_camera",
-                chunkNumber: chunkNum,
-                chunkData: reader.result.split(",")[1],
-                isLastChunk: false,
-                timestamp: Date.now(),
-              });
-            }
-          };
-          reader.readAsDataURL(e.data);
-        };
-
-        mediaRecorder.onstart = () => {
-          console.log("✅ Mobile canvas recording started");
-          setIsSecondaryRecording(true);
-        };
-
-        mediaRecorder.onstop = () => {
-          console.log(
-            `🛑 Mobile canvas recording stopped. Chunks: ${mobileChunkCountRef.current}`,
-          );
-          setIsSecondaryRecording(false);
-          mobileSessionReadyRef.current = false;
-          mobileMediaRecorderRef.current = null;
-          if (socket?.connected) {
-            socket.emit("video_recording_stop", {
-              videoType: "secondary_camera",
-              totalChunks: mobileChunkCountRef.current,
-            });
-          }
-        };
-
-        // Register session or reuse pre-warmed one
-        if (
-          preWarmComplete.secondaryCamera &&
-          preWarmSessionIds.secondaryCameraId
-        ) {
-          mobileSessionReadyRef.current = true;
-        } else if (socket?.connected) {
-          socket.emit("video_recording_start", {
-            videoType: "secondary_camera",
-            totalChunks: 0,
-            metadata: { mimeType: "video/webm;codecs=vp9" },
-          });
-          await new Promise((resolve) => {
-            const timeout = setTimeout(() => {
-              mobileSessionReadyRef.current = true;
-              resolve();
-            }, 5000);
-            const handler = (data) => {
-              if (data.videoType === "secondary_camera") {
-                clearTimeout(timeout);
-                socket.off("video_recording_ready", handler);
-                mobileSessionReadyRef.current = true;
-                resolve();
-              }
-            };
-            socket.on("video_recording_ready", handler);
-          });
-        } else {
-          mobileSessionReadyRef.current = true;
-        }
-
-        mediaRecorder.start(20000); // 20-second chunks
-        console.log("✅ Secondary camera canvas recording started");
-      } catch (err) {
-        console.error("❌ Failed to start mobile canvas recording:", err);
-      }
-    },
-    [preWarmComplete, preWarmSessionIds],
-  );
-
-  // ── Screen share attachment ────────────────────────────────────────────────
+  // ── Attach screen share to preview <video> ─────────────────────────────────
   const attachScreenVideo = useCallback(() => {
     const vid = screenVideoRef.current;
     if (!vid) return false;
@@ -316,7 +218,7 @@ const InterviewLive = () => {
       streamStore.screenShareStream ??
       streamsRef.current?.screenShareStream ??
       null;
-    if (!stream || !stream.active) return false;
+    if (!stream?.active) return false;
     const track = stream.getVideoTracks()[0];
     if (!track || track.readyState !== "live") return false;
 
@@ -325,7 +227,6 @@ const InterviewLive = () => {
       vid.srcObject = stream;
       vid.muted = true;
     }
-
     screenVideoActiveRef.current = true;
     setScreenVideoActive(true);
 
@@ -357,7 +258,6 @@ const InterviewLive = () => {
   useEffect(() => {
     const cleanup = attachScreenVideo();
     if (cleanup) return cleanup;
-
     let retries = 0;
     let activeCleanup = null;
     const timer = setInterval(() => {
@@ -366,9 +266,7 @@ const InterviewLive = () => {
       if (c) {
         activeCleanup = c;
         clearInterval(timer);
-      } else if (retries >= 100) {
-        clearInterval(timer);
-      }
+      } else if (retries >= 100) clearInterval(timer);
     }, 100);
     return () => {
       clearInterval(timer);
@@ -376,26 +274,9 @@ const InterviewLive = () => {
     };
   }, []); // eslint-disable-line
 
-  // ── Start mobile recording when first frame arrives ────────────────────────
-  useEffect(() => {
-    if (
-      mobileCameraConnected &&
-      !mobileMediaRecorderRef.current &&
-      interview.status === "live" &&
-      socketReady
-    ) {
-      startMobileCanvasRecording(interview.socketRef.current).catch(
-        console.error,
-      );
-    }
-  }, [
-    mobileCameraConnected,
-    interview.status,
-    socketReady,
-    startMobileCanvasRecording,
-  ]);
-
-  // ── Main socket init ───────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MAIN SOCKET INIT
+  // ═══════════════════════════════════════════════════════════════════════════
   useEffect(() => {
     if (_globalSocketInitialized || !sessionData || !preInitializedSocket)
       return;
@@ -420,25 +301,18 @@ const InterviewLive = () => {
         interview.socketRef.current = socket;
         setSocketReady(true);
 
-        // ── Secondary camera (WebSocket frames) ──────────────────────────────
+        // ── Secondary camera — now only used for connected status ──────────
+        // Frame relay events are no longer needed since mobile streams via LiveKit.
+        // We keep secondary_camera_ready / status for the connection indicator.
         socket.on("secondary_camera_ready", () => {
-          console.log("📱 Secondary camera connected via WebSocket");
+          console.log("📱 Secondary camera connected via LiveKit");
           setMobileCameraConnected(true);
         });
-
         socket.on("secondary_camera_status", (d) => {
           if (d.connected) setMobileCameraConnected(true);
         });
 
-        // This is the key event — server relays JPEG frames from mobile
-        socket.on("mobile_camera_frame", (data) => {
-          if (!data?.frame) return;
-          // Mark connected on first frame (belt-and-suspenders)
-          setMobileCameraConnected(true);
-          drawMobileFrame(data.frame);
-        });
-
-        // ── Interview events ─────────────────────────────────────────────────
+        // ── Debug logging ──────────────────────────────────────────────────
         const silenced = new Set([
           "user_audio_chunk",
           "video_chunk",
@@ -450,6 +324,7 @@ const InterviewLive = () => {
           if (!silenced.has(ev)) console.log(`📡 [socket] "${ev}"`);
         });
 
+        // ── Core interview events ──────────────────────────────────────────
         socket.on("question", (d) => interview.handleQuestion(d));
         socket.on("next_question", (d) => interview.handleNextQuestion(d));
         socket.on("tts_audio", (d) => {
@@ -463,14 +338,20 @@ const InterviewLive = () => {
         );
         socket.on("listening_enabled", () => interview.enableListening());
         socket.on("listening_disabled", () => interview.disableListening());
+        socket.on("livekit_token", (data) =>
+          interview.handleLiveKitToken(data),
+        );
+
         socket.on("interview_complete", async (d) => {
           interview.handleInterviewComplete(d);
           await cleanupAllRecordings();
         });
+
         socket.on("face_violation", (d) => setFaceViolationWarning(d));
         socket.on("face_violation_cleared", () =>
           setFaceViolationWarning(null),
         );
+
         socket.on("interview_terminated", async () => {
           setIsInterviewTerminated(true);
           interview.setMicStreamingActive(false);
@@ -479,6 +360,7 @@ const InterviewLive = () => {
           socket.disconnect();
           navigate("/dashboard");
         });
+
         socket.on("evaluation_started", () => setEvaluationStatus("started"));
         socket.on("evaluation_complete", (d) => {
           setEvaluationStatus("complete");
@@ -487,7 +369,7 @@ const InterviewLive = () => {
         });
         socket.on("evaluation_error", () => setEvaluationStatus("error"));
         socket.on("media_merge_complete", (d) =>
-          console.log("✅ Media merge:", d.finalVideoUrl),
+          console.log(" Media merge:", d.finalVideoUrl),
         );
         socket.on("audio_recording_error", (d) =>
           console.error("❌ Audio error:", d),
@@ -495,6 +377,7 @@ const InterviewLive = () => {
         socket.on("video_recording_error", (d) =>
           console.error("❌ Video error:", d),
         );
+
         socket.on("disconnect", (reason) => {
           if (reason === "io server disconnect" && !isLeavingRef.current) {
             alert("Server disconnected unexpectedly.");
@@ -506,6 +389,7 @@ const InterviewLive = () => {
         );
         socket.on("error", () => interview.setStatus("error"));
 
+        // ── Mark interview live ────────────────────────────────────────────
         interview.setStatus("live");
         interview.setServerReady(true);
         interview.setIsInitializing(false);
@@ -513,6 +397,7 @@ const InterviewLive = () => {
           interviewId: sessionData.interviewId,
           userId: sessionData.userId,
         });
+
         socket.emit("request_secondary_camera_status", {
           interviewId: sessionData.interviewId,
         });
@@ -546,7 +431,7 @@ const InterviewLive = () => {
     };
   }, []); // eslint-disable-line
 
-  // ── Start primary recordings when interview goes live ─────────────────────
+  // ── Start primary recordings once interview is live ────────────────────────
   useEffect(() => {
     if (recordingsStartedRef.current) return;
     if (
@@ -568,7 +453,7 @@ const InterviewLive = () => {
         const activeScreenStream =
           streamStore.screenShareStream ??
           streamsRef.current?.screenShareStream;
-        if (activeScreenStream && activeScreenStream.active) {
+        if (activeScreenStream?.active) {
           await screenRecording.startRecording(activeScreenStream);
           console.log("✓ Screen recording started");
         }
@@ -586,7 +471,7 @@ const InterviewLive = () => {
     isVideoRecording,
   ]); // eslint-disable-line
 
-  // ── Navigate to dashboard after evaluation ────────────────────────────────
+  // ── Navigate to dashboard after evaluation ─────────────────────────────────
   useEffect(() => {
     if (evaluationStatus === "complete" && evaluationResults) {
       setTimeout(() => navigate("/dashboard"), 2000);
@@ -606,6 +491,7 @@ const InterviewLive = () => {
     navigate("/dashboard");
   };
 
+  // ── Loading guard ──────────────────────────────────────────────────────────
   if (!sessionData) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
@@ -619,7 +505,11 @@ const InterviewLive = () => {
 
   const StatusBadge = ({ label, active, color = "gray" }) => (
     <div
-      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold ${active ? `bg-${color}-900/30 text-${color}-300` : "bg-gray-800 text-gray-500"}`}
+      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold ${
+        active
+          ? `bg-${color}-900/30 text-${color}-300`
+          : "bg-gray-800 text-gray-500"
+      }`}
     >
       <span
         className={`w-1.5 h-1.5 rounded-full ${active ? `bg-${color}-400 animate-pulse` : "bg-gray-600"}`}
@@ -638,7 +528,13 @@ const InterviewLive = () => {
               <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700 flex-wrap gap-3">
                 <div className="flex items-center gap-3">
                   <div
-                    className={`w-10 h-10 rounded-xl flex items-center justify-center ${interview.isPlaying ? "bg-blue-600" : interview.isListening ? "bg-emerald-600" : "bg-gray-700"}`}
+                    className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                      interview.isPlaying
+                        ? "bg-blue-600"
+                        : interview.isListening
+                          ? "bg-emerald-600"
+                          : "bg-gray-700"
+                    }`}
                   >
                     <span className="text-white text-sm font-bold">
                       {interview.isPlaying ? "AI" : "🎤"}
@@ -675,7 +571,7 @@ const InterviewLive = () => {
                   />
                   <StatusBadge
                     label="Mobile"
-                    active={isSecondaryRecording}
+                    active={mobileTrackAttached}
                     color="orange"
                   />
                   <StatusBadge
@@ -796,7 +692,11 @@ const InterviewLive = () => {
                   Primary Camera
                 </span>
                 <span
-                  className={`text-xs font-semibold px-2 py-0.5 rounded ${isVideoRecording ? "text-red-300 bg-red-900/30" : "text-gray-500 bg-gray-700"}`}
+                  className={`text-xs font-semibold px-2 py-0.5 rounded ${
+                    isVideoRecording
+                      ? "text-red-300 bg-red-900/30"
+                      : "text-gray-500 bg-gray-700"
+                  }`}
                 >
                   {isVideoRecording ? "● REC" : "STANDBY"}
                 </span>
@@ -813,7 +713,7 @@ const InterviewLive = () => {
               </div>
             </Card>
 
-            {/* Mobile camera — WebSocket canvas */}
+            {/* Mobile camera — LiveKit remote track */}
             <Card className="overflow-hidden border border-gray-700 bg-gray-800">
               <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
                 <span className="text-xs font-bold text-gray-300">
@@ -821,30 +721,30 @@ const InterviewLive = () => {
                 </span>
                 <span
                   className={`text-xs font-semibold px-2 py-0.5 rounded ${
-                    mobileCameraConnected
-                      ? isSecondaryRecording
-                        ? "text-orange-300 bg-orange-900/30"
-                        : "text-green-300 bg-green-900/30"
-                      : "text-gray-500 bg-gray-700"
+                    mobileTrackAttached
+                      ? "text-orange-300 bg-orange-900/30"
+                      : mobileCameraConnected
+                        ? "text-green-300 bg-green-900/30"
+                        : "text-gray-500 bg-gray-700"
                   }`}
                 >
-                  {mobileCameraConnected
-                    ? isSecondaryRecording
-                      ? "● REC"
-                      : "● LIVE"
-                    : "WAITING"}
+                  {mobileTrackAttached
+                    ? "● LIVE"
+                    : mobileCameraConnected
+                      ? "● JOINING"
+                      : "WAITING"}
                 </span>
               </div>
               <div className="relative aspect-video bg-black">
-                {/* Canvas always rendered — frames drawn onto it via drawMobileFrame() */}
-                <canvas
-                  ref={mobileCanvasRef}
-                  width={640}
-                  height={480}
+                {/* LiveKit attaches the remote video track directly to this element */}
+                <video
+                  ref={mobileVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
                   className="w-full h-full object-cover"
+                  style={{ transform: "scaleX(-1)" }}
                 />
-
-                {/* Overlay — only shown while waiting for first frame */}
                 {!mobileCameraConnected && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-10">
                     <div className="animate-spin w-8 h-8 border-2 border-orange-500/40 border-t-orange-500 rounded-full mb-2" />
@@ -856,11 +756,12 @@ const InterviewLive = () => {
                     </p>
                   </div>
                 )}
-
-                {/* Frame counter badge */}
-                {mobileCameraConnected && (
-                  <div className="absolute bottom-2 right-2 px-2 py-0.5 bg-black/50 rounded text-xs text-gray-400 font-mono">
-                    {mobileFrameCount} frames
+                {mobileCameraConnected && !mobileTrackAttached && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 z-10">
+                    <div className="animate-spin w-8 h-8 border-2 border-green-500/40 border-t-green-500 rounded-full mb-2" />
+                    <p className="text-white text-xs opacity-70">
+                      Joining LiveKit room…
+                    </p>
                   </div>
                 )}
               </div>
@@ -871,7 +772,11 @@ const InterviewLive = () => {
               <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
                 <span className="text-xs font-bold text-gray-300">Screen</span>
                 <span
-                  className={`text-xs font-semibold px-2 py-0.5 rounded ${screenRecording.isRecording ? "text-purple-300 bg-purple-900/30" : "text-gray-500 bg-gray-700"}`}
+                  className={`text-xs font-semibold px-2 py-0.5 rounded ${
+                    screenRecording.isRecording
+                      ? "text-purple-300 bg-purple-900/30"
+                      : "text-gray-500 bg-gray-700"
+                  }`}
                 >
                   {screenRecording.isRecording ? "● REC" : "STANDBY"}
                 </span>

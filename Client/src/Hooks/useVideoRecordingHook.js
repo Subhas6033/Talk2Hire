@@ -1,37 +1,39 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 
-const CHUNK_DURATION = 20000;
+// ─── Config ──────────────────────────────────────────────────────────────────
+const CHUNK_DURATION = 20000; // 20-s chunks
 
+// In LiveKit mode the primary camera is recorded by the composite egress.
+// The local MediaRecorder still runs so chunks can be uploaded to FTP,
+// but only when a cameraStream is provided.
+const LIVEKIT_MODE = true;
+
+// ─── MIME type detection ──────────────────────────────────────────────────────
 function findSupportedMimeType() {
   const candidates = [
-    { type: "video/webm;codecs=vp9", bitrate: 2500000 },
-    { type: "video/webm;codecs=vp9", bitrate: 1500000 },
-    { type: "video/webm;codecs=vp8", bitrate: 2500000 },
-    { type: "video/webm;codecs=vp8", bitrate: 1500000 },
-    { type: "video/webm;codecs=h264", bitrate: 2500000 },
-    { type: "video/webm;codecs=h264", bitrate: 1500000 },
-    { type: "video/webm", bitrate: 2500000 },
-    { type: "video/webm", bitrate: 1500000 },
-    { type: "video/webm", bitrate: 1000000 },
-    { type: "video/mp4", bitrate: 2500000 },
-    { type: "video/mp4", bitrate: 1500000 },
-    { type: "", bitrate: 1000000 },
+    { type: "video/webm;codecs=vp9", bitrate: 2_500_000 },
+    { type: "video/webm;codecs=vp9", bitrate: 1_500_000 },
+    { type: "video/webm;codecs=vp8", bitrate: 2_500_000 },
+    { type: "video/webm;codecs=vp8", bitrate: 1_500_000 },
+    { type: "video/webm;codecs=h264", bitrate: 2_500_000 },
+    { type: "video/webm", bitrate: 2_500_000 },
+    { type: "video/webm", bitrate: 1_500_000 },
+    { type: "video/mp4", bitrate: 2_500_000 },
+    { type: "", bitrate: 1_000_000 },
   ];
-
   for (const { type, bitrate } of candidates) {
     if (type === "" || MediaRecorder.isTypeSupported(type)) {
       const options = {};
       if (type) options.mimeType = type;
       if (bitrate) options.videoBitsPerSecond = bitrate;
-      console.log(
-        `✅ Video MIME: ${type || "browser default"} @ ${bitrate}bps`,
-      );
+      console.log(` Video MIME: ${type || "browser default"} @ ${bitrate}bps`);
       return { mimeType: type || "default", bitrate, options };
     }
   }
   return null;
 }
 
+// ─── Hook ─────────────────────────────────────────────────────────────────────
 const useVideoRecording = (
   interviewId,
   userId,
@@ -48,29 +50,41 @@ const useVideoRecording = (
   const isRequestingSessionRef = useRef(false);
   const hasStoppedRef = useRef(false);
 
+  // FIX: ref guard prevents stale-closure double-start in React StrictMode
+  const isRecordingRef = useRef(false);
+
   const preWarmVideoIdRef = useRef(preWarmVideoId);
   useEffect(() => {
     preWarmVideoIdRef.current = preWarmVideoId;
   }, [preWarmVideoId]);
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // startRecording
+  // ─────────────────────────────────────────────────────────────────────────
   const startRecording = useCallback(async () => {
-    if (!cameraStream || isRecording) return;
+    // LiveKit egress records primary camera; skip local recorder if no stream
+    if (LIVEKIT_MODE && !cameraStream) {
+      isRecordingRef.current = true;
+      setIsRecording(true);
+      console.log("📹 Video: LiveKit egress active (no local stream)");
+      return;
+    }
+
+    if (!cameraStream) return;
+    if (isRecordingRef.current) return; // ref guard (not stale state)
     if (!cameraStream.active) {
-      alert("Camera stream is not active. Please refresh.");
+      console.warn("⚠️ Camera stream not active");
       return;
     }
 
     const videoTrack = cameraStream.getVideoTracks()[0];
-    if (!videoTrack) {
-      alert("No video track found.");
-      return;
-    }
-    if (videoTrack.readyState !== "live") {
-      alert(`Video track is ${videoTrack.readyState}.`);
+    if (!videoTrack || videoTrack.readyState !== "live") {
+      console.warn("⚠️ Video track not live:", videoTrack?.readyState);
       return;
     }
 
     if (!socketRef?.current?.connected) {
+      // Retry once socket reconnects
       setTimeout(() => {
         if (socketRef?.current?.connected) startRecording();
       }, 2000);
@@ -84,7 +98,6 @@ const useVideoRecording = (
       videoSessionReadyRef.current = false;
       chunkCountRef.current = 0;
 
-      // FIX: isTypeSupported() only — no test instances
       const mimeConfig = findSupportedMimeType();
       if (!mimeConfig) throw new Error("No supported video MIME type found.");
 
@@ -92,14 +105,8 @@ const useVideoRecording = (
       try {
         mediaRecorder = new MediaRecorder(cameraStream, mimeConfig.options);
       } catch (e) {
-        console.warn("⚠️ Preferred MIME failed, fallback:", e.message);
-        try {
-          mediaRecorder = new MediaRecorder(cameraStream);
-        } catch (finalErr) {
-          isRequestingSessionRef.current = false;
-          alert("Failed to initialize video recorder: " + finalErr.message);
-          return;
-        }
+        console.warn("⚠️ Preferred MIME failed, falling back:", e.message);
+        mediaRecorder = new MediaRecorder(cameraStream);
       }
       mediaRecorderRef.current = mediaRecorder;
 
@@ -124,13 +131,15 @@ const useVideoRecording = (
       };
 
       mediaRecorder.onstart = () => {
-        console.log("✅ Video MediaRecorder started");
+        isRecordingRef.current = true;
         setIsRecording(true);
+        console.log(" Video MediaRecorder started");
       };
 
       mediaRecorder.onstop = () => {
         if (hasStoppedRef.current) return;
         hasStoppedRef.current = true;
+        isRecordingRef.current = false;
         setIsRecording(false);
         videoSessionReadyRef.current = false;
         if (socketRef.current?.connected) {
@@ -142,12 +151,13 @@ const useVideoRecording = (
       };
 
       mediaRecorder.onerror = (event) => {
-        console.error("❌ MediaRecorder error:", event.error);
+        console.error("❌ Video MediaRecorder error:", event.error);
         isRequestingSessionRef.current = false;
+        isRecordingRef.current = false;
         setIsRecording(false);
       };
 
-      // Session management
+      // ── Session init ──────────────────────────────────────────────────────
       if (preWarmVideoIdRef.current) {
         console.log("♻️ Primary camera pre-warmed:", preWarmVideoIdRef.current);
         videoSessionReadyRef.current = true;
@@ -168,45 +178,59 @@ const useVideoRecording = (
       await new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
           socketRef.current.off("video_recording_ready", handler);
-          socketRef.current.off("video_recording_error", errorHandler);
-          // Proceed anyway — don't block recording on server timeout
-          console.warn("⚠️ Server confirmation timeout, proceeding anyway");
+          socketRef.current.off("video_recording_error", errHandler);
+          // Don't block recording on server timeout
+          console.warn("⚠️ Server confirmation timeout — proceeding");
           videoSessionReadyRef.current = true;
           isRequestingSessionRef.current = false;
           resolve();
-        }, 10000);
+        }, 10_000);
+
         const handler = (res) => {
           if (res?.videoType && res.videoType !== "primary_camera") return;
           clearTimeout(timeout);
-          socketRef.current.off("video_recording_error", errorHandler);
+          socketRef.current.off("video_recording_error", errHandler);
           videoSessionReadyRef.current = true;
           isRequestingSessionRef.current = false;
           resolve(res);
         };
-        const errorHandler = (err) => {
+        const errHandler = (err) => {
           if (err?.videoType && err.videoType !== "primary_camera") return;
           clearTimeout(timeout);
           socketRef.current.off("video_recording_ready", handler);
-          reject(new Error(err.error || "Server error"));
+          reject(new Error(err.error ?? "Server error"));
         };
+
         socketRef.current.on("video_recording_ready", handler);
-        socketRef.current.on("video_recording_error", errorHandler);
+        socketRef.current.on("video_recording_error", errHandler);
       });
 
       mediaRecorder.start(CHUNK_DURATION);
-      console.log("✅ Primary camera recording started");
+      console.log(" Primary camera recording started");
     } catch (err) {
       console.error("❌ Video recording setup error:", err);
       isRequestingSessionRef.current = false;
+      isRecordingRef.current = false;
       setIsRecording(false);
     }
-  }, [cameraStream, isRecording, socketRef]);
+  }, [cameraStream, socketRef]); // ref guard replaces isRecording dep
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // stopRecording
+  // ─────────────────────────────────────────────────────────────────────────
   const stopRecording = useCallback(async () => {
-    if (!isRecording || !mediaRecorderRef.current) return null;
+    // LiveKit egress mode — server stops egress; flip flag locally
+    if (LIVEKIT_MODE && !mediaRecorderRef.current) {
+      isRecordingRef.current = false;
+      setIsRecording(false);
+      console.log("🛑 Video: LiveKit egress will be stopped by server");
+      return null;
+    }
+    if (!isRecordingRef.current || !mediaRecorderRef.current) return null;
     return new Promise((resolve) => {
       const recorder = mediaRecorderRef.current;
       recorder.onstop = () => {
+        isRecordingRef.current = false;
         setIsRecording(false);
         videoSessionReadyRef.current = false;
         resolve(chunkCountRef.current);
@@ -214,8 +238,11 @@ const useVideoRecording = (
       if (recorder.state !== "inactive") recorder.stop();
       else recorder.onstop();
     });
-  }, [isRecording]);
+  }, []);
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // cleanup
+  // ─────────────────────────────────────────────────────────────────────────
   const cleanup = useCallback(() => {
     if (mediaRecorderRef.current?.state !== "inactive") {
       try {
@@ -227,6 +254,8 @@ const useVideoRecording = (
     videoSessionReadyRef.current = false;
     isRequestingSessionRef.current = false;
     hasStoppedRef.current = false;
+    isRecordingRef.current = false;
+    setIsRecording(false);
   }, [socketRef]);
 
   useEffect(() => () => cleanup(), [cleanup]);

@@ -1,207 +1,308 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { io } from "socket.io-client";
+import {
+  Room,
+  RoomEvent,
+  Track,
+  createLocalVideoTrack,
+  VideoPresets,
+} from "livekit-client";
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
-// ~7fps — smooth enough for a secondary monitoring angle.
-// Raise to 100ms for ~10fps, lower to 200ms for ~5fps to save bandwidth.
-const FRAME_INTERVAL_MS = 150;
-const JPEG_QUALITY = 0.6;
-const CAPTURE_WIDTH = 640;
-const CAPTURE_HEIGHT = 480;
+// ─── Status Dot ──────────────────────────────────────────────────────────────
+const Dot = ({ active, color = "green" }) => {
+  const colors = {
+    green: active ? "bg-emerald-400" : "bg-slate-600",
+    orange: active ? "bg-orange-400" : "bg-slate-600",
+    yellow: active ? "bg-amber-400" : "bg-slate-600",
+    red: active ? "bg-red-400" : "bg-slate-600",
+  };
+  return (
+    <span
+      className={`inline-block w-2 h-2 rounded-full shrink-0 ${colors[color]} ${active ? "animate-pulse" : ""}`}
+    />
+  );
+};
 
+// ─── Status Row ───────────────────────────────────────────────────────────────
+const StatusRow = ({ label, value, active, color }) => (
+  <div className="flex items-center justify-between py-2 border-b border-slate-800/60 last:border-0">
+    <span className="text-slate-500 text-xs">{label}</span>
+    <span className="flex items-center gap-2 text-xs font-medium text-slate-300">
+      <Dot active={active} color={color} />
+      {value}
+    </span>
+  </div>
+);
+
+// ─── Spinner ──────────────────────────────────────────────────────────────────
+const Spinner = ({ className = "" }) => (
+  <svg
+    className={`animate-spin ${className}`}
+    xmlns="http://www.w3.org/2000/svg"
+    fill="none"
+    viewBox="0 0 24 24"
+  >
+    <circle
+      className="opacity-25"
+      cx="12"
+      cy="12"
+      r="10"
+      stroke="currentColor"
+      strokeWidth="4"
+    />
+    <path
+      className="opacity-75"
+      fill="currentColor"
+      d="M4 12a8 8 0 018-8v8H4z"
+    />
+  </svg>
+);
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MobileCameraPage — LiveKit-based secondary camera
+// ══════════════════════════════════════════════════════════════════════════════
 const MobileCameraPage = () => {
   const [searchParams] = useSearchParams();
   const sessionId = searchParams.get("interviewId");
   const userId = searchParams.get("userId");
 
-  const [isConnected, setIsConnected] = useState(false);
-  const [cameraGranted, setCameraGranted] = useState(false);
-  const [isStreaming, setIsStreaming] = useState(false);
+  // ── State ─────────────────────────────────────────────────────────────────
+  const [phase, setPhase] = useState("connecting"); // connecting | camera | publishing | live | error
   const [error, setError] = useState(null);
-  const [frameCount, setFrameCount] = useState(0);
+  const [socketConnected, setSocketConnected] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [roomConnected, setRoomConnected] = useState(false);
+  const [trackPublished, setTrackPublished] = useState(false);
+  const [retrying, setRetrying] = useState(false);
 
+  // ── Refs ──────────────────────────────────────────────────────────────────
   const socketRef = useRef(null);
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const cameraStreamRef = useRef(null);
-  const frameTimerRef = useRef(null);
-  const frameCountRef = useRef(0);
-  const isCameraStartingRef = useRef(false);
+  const roomRef = useRef(null);
+  const localVideoTrackRef = useRef(null);
+  const videoElRef = useRef(null); // preview <video>
+  const mountedRef = useRef(true);
 
-  // ── Socket ─────────────────────────────────────────────────────────────────
+  // ── Cleanup ───────────────────────────────────────────────────────────────
+  const teardown = useCallback(async () => {
+    if (localVideoTrackRef.current) {
+      try {
+        localVideoTrackRef.current.stop();
+      } catch (_) {}
+      localVideoTrackRef.current = null;
+    }
+    if (roomRef.current) {
+      try {
+        await roomRef.current.disconnect();
+      } catch (_) {}
+      roomRef.current = null;
+    }
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+      socketRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      teardown();
+    };
+  }, [teardown]);
+
+  // ── Guard: invalid URL params ─────────────────────────────────────────────
   useEffect(() => {
     if (!sessionId || !userId) {
-      setError("Invalid link. Please scan the QR code again.");
-      return;
+      setPhase("error");
+      setError("Invalid link — please scan the QR code again.");
     }
+  }, [sessionId, userId]);
+
+  // ── Step 1: Connect Socket ────────────────────────────────────────────────
+  const connectSocket = useCallback(() => {
+    if (!sessionId || !userId) return;
+
+    setPhase("connecting");
+    setError(null);
 
     const socket = io(SOCKET_URL, {
       query: { interviewId: sessionId, userId, type: "settings" },
       transports: ["websocket", "polling"],
-      path: "/socket.io",
       reconnection: true,
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
-      timeout: 20000,
+      timeout: 20_000,
     });
 
     socketRef.current = socket;
 
     socket.on("connect", () => {
-      console.log("📱 Socket connected:", socket.id);
-      setIsConnected(true);
-    });
+      if (!mountedRef.current) return;
+      setSocketConnected(true);
 
-    socket.on("reconnect", () => {
-      console.log("📱 Socket reconnected");
-      // Re-announce camera if it was already running
-      if (cameraStreamRef.current?.active) {
-        socket.emit("secondary_camera_connected", {
-          interviewId: sessionId,
-          userId,
-          timestamp: Date.now(),
-          streamType: "websocket_frames",
-        });
-      }
-    });
-
-    socket.on("disconnect", (reason) => {
-      console.log("📱 Socket disconnected:", reason);
-      setIsConnected(false);
-      // Don't stop streaming — frames will just be dropped until reconnect
-    });
-
-    socket.on("connect_error", (err) => {
-      console.error("📱 Socket error:", err.message);
-      setError("Server connection failed. Check your internet and refresh.");
-    });
-
-    return () => {
-      stopStreaming();
-      if (cameraStreamRef.current) {
-        cameraStreamRef.current.getTracks().forEach((t) => t.stop());
-      }
-      socket.disconnect();
-    };
-  }, [sessionId, userId]); // eslint-disable-line
-
-  // ── Start camera once socket connects ─────────────────────────────────────
-  useEffect(() => {
-    if (isConnected && !cameraGranted && !isCameraStartingRef.current) {
-      startCamera();
-    }
-  }, [isConnected]); // eslint-disable-line
-
-  async function startCamera() {
-    if (isCameraStartingRef.current) return;
-    isCameraStartingRef.current = true;
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-        audio: false,
-      });
-
-      cameraStreamRef.current = stream;
-      setCameraGranted(true);
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play().catch((e) => {
-          if (e.name !== "AbortError") console.error("Video play:", e);
-        });
-      }
-
-      // Tell server secondary camera is ready
-      socketRef.current?.emit("secondary_camera_connected", {
+      // Announce our presence; server will emit livekit_token in response
+      socket.emit("secondary_camera_connected", {
         interviewId: sessionId,
         userId,
         timestamp: Date.now(),
-        streamType: "websocket_frames",
+        streamType: "livekit",
       });
 
-      startStreaming();
+      setPhase("camera");
+    });
+
+    socket.on("disconnect", (reason) => {
+      if (!mountedRef.current) return;
+      setSocketConnected(false);
+      if (reason !== "io client disconnect") {
+        setPhase("error");
+        setError("Server disconnected unexpectedly. Trying to reconnect…");
+      }
+    });
+
+    socket.on("connect_error", () => {
+      if (!mountedRef.current) return;
+      setPhase("error");
+      setError("Could not reach the server. Check your connection and retry.");
+    });
+
+    // ── Step 2: LiveKit token received → join room ─────────────────────────
+    socket.on("livekit_token", async ({ token, url }) => {
+      if (!mountedRef.current) return;
+      await joinLiveKitRoom(url, token);
+    });
+  }, [sessionId, userId]); // eslint-disable-line
+
+  // ── Step 2: Join LiveKit room ─────────────────────────────────────────────
+  const joinLiveKitRoom = useCallback(async (url, token) => {
+    if (!mountedRef.current) return;
+
+    try {
+      setPhase("publishing");
+
+      const room = new Room({
+        adaptiveStream: true,
+        dynacast: true,
+        reconnectPolicy: {
+          nextRetryDelayInMs: (ctx) => {
+            if (ctx.retryCount < 3) return 300;
+            if (ctx.retryCount < 8) return 1000;
+            return null;
+          },
+        },
+      });
+
+      roomRef.current = room;
+
+      room.on(RoomEvent.Connected, () => {
+        if (mountedRef.current) setRoomConnected(true);
+      });
+
+      room.on(RoomEvent.Disconnected, () => {
+        if (mountedRef.current) {
+          setRoomConnected(false);
+          setTrackPublished(false);
+        }
+      });
+
+      room.on(RoomEvent.Reconnecting, () => {
+        if (mountedRef.current) setPhase("publishing");
+      });
+
+      room.on(RoomEvent.Reconnected, () => {
+        if (mountedRef.current) setPhase("live");
+      });
+
+      room.on(RoomEvent.LocalTrackPublished, (pub) => {
+        if (pub.kind === Track.Kind.Video && mountedRef.current) {
+          setTrackPublished(true);
+          setPhase("live");
+        }
+      });
+
+      await room.connect(url, token);
+
+      // ── Step 3: Publish front camera ────────────────────────────────────
+      await publishCamera(room);
     } catch (err) {
-      console.error("📱 Camera error:", err);
-      isCameraStartingRef.current = false;
+      if (!mountedRef.current) return;
+      console.error("❌ LiveKit room join failed:", err);
+      setPhase("error");
+      setError("Failed to join the video room: " + err.message);
+    }
+  }, []);
+
+  // ── Step 3: Create & publish local video track ────────────────────────────
+  const publishCamera = useCallback(async (room) => {
+    if (!mountedRef.current) return;
+
+    try {
+      const track = await createLocalVideoTrack({
+        resolution: VideoPresets.h720.resolution,
+        facingMode: "user",
+      });
+
+      localVideoTrackRef.current = track;
+      setCameraReady(true);
+
+      // Mirror preview into the <video> element
+      if (videoElRef.current) {
+        track.attach(videoElRef.current);
+      }
+
+      await room.localParticipant.publishTrack(track);
+      console.log("📷 Mobile camera published to LiveKit");
+    } catch (err) {
+      if (!mountedRef.current) return;
+      console.error("❌ Camera publish failed:", err);
+
       let msg = "Unable to access front camera. ";
       if (err.name === "NotAllowedError")
         msg += "Please grant camera permission and refresh.";
-      else if (err.name === "NotFoundError") msg += "No front camera found.";
+      else if (err.name === "NotFoundError")
+        msg += "No front camera found on this device.";
       else if (err.name === "NotReadableError")
-        msg += "Camera in use by another app.";
+        msg += "Camera is in use by another app.";
       else msg += err.message;
+
+      setPhase("error");
       setError(msg);
     }
-  }
+  }, []);
 
-  function startStreaming() {
-    if (frameTimerRef.current) return;
-    setIsStreaming(true);
-    frameTimerRef.current = setInterval(captureAndSendFrame, FRAME_INTERVAL_MS);
-    console.log(
-      "📱 Frame streaming started at",
-      Math.round(1000 / FRAME_INTERVAL_MS),
-      "fps",
-    );
-  }
+  // ── Kick off on mount ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (sessionId && userId) connectSocket();
+  }, []); // eslint-disable-line
 
-  function stopStreaming() {
-    if (frameTimerRef.current) {
-      clearInterval(frameTimerRef.current);
-      frameTimerRef.current = null;
-    }
-    setIsStreaming(false);
-  }
-
-  function captureAndSendFrame() {
-    const socket = socketRef.current;
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-
-    if (!socket?.connected || !video || !canvas) return;
-    if (video.readyState < 2 || video.paused || video.ended) return;
-
-    try {
-      const ctx = canvas.getContext("2d");
-      // Mirror horizontally so desktop sees natural orientation
-      ctx.save();
-      ctx.translate(CAPTURE_WIDTH, 0);
-      ctx.scale(-1, 1);
-      ctx.drawImage(video, 0, 0, CAPTURE_WIDTH, CAPTURE_HEIGHT);
-      ctx.restore();
-
-      const frameDataUrl = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
-
-      socket.emit("mobile_camera_frame", {
-        frame: frameDataUrl,
-        timestamp: Date.now(),
-        interviewId: sessionId,
-      });
-
-      frameCountRef.current++;
-      if (frameCountRef.current % 10 === 0) {
-        setFrameCount(frameCountRef.current);
+  // ── Retry handler ─────────────────────────────────────────────────────────
+  const handleRetry = useCallback(async () => {
+    setRetrying(true);
+    await teardown();
+    setSocketConnected(false);
+    setCameraReady(false);
+    setRoomConnected(false);
+    setTrackPublished(false);
+    setError(null);
+    setTimeout(() => {
+      if (mountedRef.current) {
+        setRetrying(false);
+        connectSocket();
       }
-    } catch (err) {
-      console.error("📱 Frame capture error:", err);
-    }
-  }
+    }, 600);
+  }, [teardown, connectSocket]);
 
-  // ── Invalid link ───────────────────────────────────────────────────────────
+  // ── Invalid link screen ───────────────────────────────────────────────────
   if (!sessionId || !userId) {
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
-        <div className="bg-gray-800 rounded-2xl p-8 max-w-md text-center">
-          <div className="w-16 h-16 rounded-full bg-red-500 flex items-center justify-center mx-auto mb-4">
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 max-w-sm w-full text-center shadow-2xl">
+          <div className="w-14 h-14 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto mb-5">
             <svg
-              className="w-8 h-8 text-white"
+              className="w-7 h-7 text-red-400"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -214,103 +315,126 @@ const MobileCameraPage = () => {
               />
             </svg>
           </div>
-          <h2 className="text-2xl font-bold text-white mb-3">Invalid Link</h2>
-          <p className="text-gray-400 text-sm">
-            Scan the QR code from your desktop interview page.
+          <h2 className="text-lg font-semibold text-white mb-2">
+            Invalid Link
+          </h2>
+          <p className="text-slate-500 text-sm">
+            Scan the QR code from your desktop interview page to get a valid
+            link.
           </p>
         </div>
       </div>
     );
   }
 
-  const statusLabel = !isConnected
-    ? "Connecting to server..."
-    : !cameraGranted
-      ? "Starting camera..."
-      : isStreaming
-        ? "Streaming Live"
-        : "Initializing...";
+  // ── Derive header label + accent ──────────────────────────────────────────
+  const phaseConfig = {
+    connecting: {
+      label: "Connecting…",
+      accent: "text-amber-400",
+      bar: "bg-amber-400",
+    },
+    camera: {
+      label: "Starting camera…",
+      accent: "text-violet-400",
+      bar: "bg-violet-500",
+    },
+    publishing: {
+      label: "Joining session…",
+      accent: "text-violet-400",
+      bar: "bg-violet-500",
+    },
+    live: {
+      label: "Streaming Live",
+      accent: "text-emerald-400",
+      bar: "bg-emerald-500",
+    },
+    error: {
+      label: "Connection Error",
+      accent: "text-red-400",
+      bar: "bg-red-500",
+    },
+  };
 
-  const dotClass = isStreaming
-    ? "bg-green-400 animate-pulse"
-    : isConnected
-      ? "bg-yellow-400 animate-pulse"
-      : "bg-gray-500";
+  const cfg = phaseConfig[phase] ?? phaseConfig.connecting;
+  const isLive = phase === "live";
+  const isError = phase === "error";
+  const isLoading = !isLive && !isError;
 
   return (
-    <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center p-4">
-      {/* Hidden capture canvas */}
-      <canvas
-        ref={canvasRef}
-        width={CAPTURE_WIDTH}
-        height={CAPTURE_HEIGHT}
-        className="hidden"
-      />
-
-      <div className="w-full max-w-lg">
-        {/* Header */}
-        <div className="text-center mb-6">
-          <div className="w-16 h-16 rounded-full bg-linear-to-br from-orange-500 to-red-600 flex items-center justify-center mx-auto mb-4 shadow-xl">
-            <svg
-              className="w-8 h-8 text-white"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15 10l4.553-2.069A1 1 0 0121 8.867v6.266a1 1 0 01-1.447.902L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
-              />
-            </svg>
+    <div
+      className="min-h-screen flex flex-col items-center justify-center p-4"
+      style={{
+        background:
+          "radial-gradient(ellipse 80% 60% at 50% 0%, rgba(124,58,237,0.10) 0%, transparent 65%), #020617",
+      }}
+    >
+      <div className="w-full max-w-sm flex flex-col gap-4">
+        {/* ── Header ───────────────────────────────────────────────────────── */}
+        <div className="text-center mb-2">
+          {/* Camera icon */}
+          <div
+            className={`w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4 transition-all duration-500 ${
+              isLive
+                ? "bg-emerald-500/15 border border-emerald-500/30"
+                : isError
+                  ? "bg-red-500/15 border border-red-500/30"
+                  : "bg-violet-500/15 border border-violet-500/30"
+            }`}
+          >
+            {isError ? (
+              <svg
+                className="w-7 h-7 text-red-400"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+            ) : (
+              <svg
+                className={`w-7 h-7 ${isLive ? "text-emerald-400" : "text-violet-400"}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M15 10l4.553-2.069A1 1 0 0121 8.867v6.266a1 1 0 01-1.447.902L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+                />
+              </svg>
+            )}
           </div>
-          <h1 className="text-2xl font-bold text-white mb-1">
+          <h1 className="text-xl font-bold text-white tracking-tight mb-1">
             Secondary Camera
           </h1>
-          <p className="text-gray-400 text-sm">
-            Keep this page open during your interview
+          <p className={`text-sm font-medium ${cfg.accent} transition-colors`}>
+            {cfg.label}
           </p>
         </div>
 
-        {/* Error */}
-        {error && (
-          <div className="mb-4 bg-red-500/10 border-2 border-red-500 rounded-xl p-4 text-center">
-            <p className="text-red-300 text-sm font-medium mb-3">{error}</p>
-            <button
-              onClick={() => {
-                setError(null);
-                isCameraStartingRef.current = false;
-                startCamera();
-              }}
-              className="px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 transition-colors"
-            >
-              Try Again
-            </button>
-          </div>
-        )}
-
-        {/* Card */}
-        <div className="bg-gray-800 rounded-2xl overflow-hidden shadow-2xl border-2 border-gray-700">
-          {/* Status bar */}
-          <div className="bg-linear-to-r from-orange-600 to-red-600 px-5 py-3 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className={`w-2.5 h-2.5 rounded-full ${dotClass}`} />
-              <span className="text-white font-semibold text-sm">
-                {statusLabel}
-              </span>
-            </div>
-            {isStreaming && (
-              <span className="text-orange-200 text-xs font-mono">
-                {frameCount} frames
-              </span>
-            )}
+        {/* ── Video preview card ────────────────────────────────────────────── */}
+        <div className="relative bg-slate-900 rounded-2xl overflow-hidden border border-slate-800/80 shadow-2xl">
+          {/* Progress bar (top) */}
+          <div className="h-0.5 w-full bg-slate-800">
+            <div
+              className={`h-full ${cfg.bar} transition-all duration-700 ${
+                isLive ? "w-full" : isError ? "w-1/4" : "w-2/3 animate-pulse"
+              }`}
+            />
           </div>
 
-          {/* Video */}
-          <div className="relative bg-black" style={{ aspectRatio: "9/16" }}>
+          {/* Camera preview — portrait 9:16 */}
+          <div className="relative" style={{ aspectRatio: "9/16" }}>
             <video
-              ref={videoRef}
+              ref={videoElRef}
               autoPlay
               muted
               playsInline
@@ -318,60 +442,110 @@ const MobileCameraPage = () => {
               style={{ transform: "scaleX(-1)" }}
             />
 
-            {!isStreaming && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60">
-                <div className="animate-spin w-10 h-10 border-4 border-gray-600 border-t-orange-500 rounded-full mb-3" />
-                <p className="text-white text-sm">{statusLabel}</p>
+            {/* Overlay when not yet live */}
+            {!cameraReady && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/90 gap-3">
+                {isError ? (
+                  <svg
+                    className="w-10 h-10 text-red-500/60"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.5}
+                      d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
+                    />
+                  </svg>
+                ) : (
+                  <Spinner className="w-10 h-10 text-violet-500/60" />
+                )}
+                <p className="text-slate-500 text-xs">
+                  {isError ? "Camera unavailable" : "Starting camera…"}
+                </p>
               </div>
             )}
 
-            {isStreaming && (
-              <div className="absolute top-3 right-3">
-                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600/90 backdrop-blur-sm rounded-lg">
-                  <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
-                  <span className="text-white text-xs font-bold">LIVE</span>
+            {/* LIVE badge */}
+            {isLive && (
+              <div className="absolute top-3 left-3">
+                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/90 backdrop-blur-sm rounded-md">
+                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                  <span className="text-white text-[10px] font-bold tracking-widest">
+                    LIVE
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Loading state badge */}
+            {isLoading && cameraReady && (
+              <div className="absolute top-3 left-3">
+                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-violet-600/90 backdrop-blur-sm rounded-md">
+                  <Spinner className="w-2.5 h-2.5 text-white" />
+                  <span className="text-white text-[10px] font-bold tracking-widest">
+                    JOINING
+                  </span>
                 </div>
               </div>
             )}
           </div>
-
-          {/* Info */}
-          <div className="px-5 py-4 border-t border-gray-700 space-y-1.5">
-            <div className="flex justify-between text-xs">
-              <span className="text-gray-500">Server</span>
-              <span
-                className={isConnected ? "text-green-400" : "text-yellow-400"}
-              >
-                {isConnected ? "✅ Connected" : "⏳ Connecting..."}
-              </span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-gray-500">Camera</span>
-              <span
-                className={cameraGranted ? "text-green-400" : "text-gray-400"}
-              >
-                {cameraGranted ? "✅ Active" : "⏳ Requesting..."}
-              </span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-gray-500">Stream</span>
-              <span
-                className={isStreaming ? "text-green-400" : "text-gray-400"}
-              >
-                {isStreaming
-                  ? `🟢 WebSocket · ~${Math.round(1000 / FRAME_INTERVAL_MS)}fps`
-                  : "Waiting..."}
-              </span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-gray-500">Network</span>
-              <span className="text-blue-400">✅ Works on any network</span>
-            </div>
-          </div>
         </div>
 
-        <p className="text-center text-gray-600 text-xs mt-4">
-          Keep your screen on and this page open throughout the interview
+        {/* ── Error panel ───────────────────────────────────────────────────── */}
+        {isError && error && (
+          <div className="px-4 py-3 bg-red-500/8 border border-red-500/20 rounded-xl">
+            <p className="text-red-300 text-sm mb-3">{error}</p>
+            <button
+              onClick={handleRetry}
+              disabled={retrying}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/25 text-red-300 text-sm font-semibold rounded-xl transition-all duration-200 disabled:opacity-50"
+            >
+              {retrying ? (
+                <>
+                  <Spinner className="w-4 h-4 text-red-400" />
+                  Retrying…
+                </>
+              ) : (
+                "Try Again"
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* ── Status panel ──────────────────────────────────────────────────── */}
+        <div className="bg-slate-900/60 border border-slate-800/60 rounded-2xl px-4 py-1 backdrop-blur-sm">
+          <StatusRow
+            label="Server"
+            value={socketConnected ? "Connected" : "Connecting…"}
+            active={socketConnected}
+            color="green"
+          />
+          <StatusRow
+            label="Camera"
+            value={cameraReady ? "Active" : "Waiting…"}
+            active={cameraReady}
+            color="orange"
+          />
+          <StatusRow
+            label="Session"
+            value={roomConnected ? "Joined" : "Pending…"}
+            active={roomConnected}
+            color="yellow"
+          />
+          <StatusRow
+            label="Stream"
+            value={trackPublished ? "Publishing via LiveKit" : "Not publishing"}
+            active={trackPublished}
+            color="green"
+          />
+        </div>
+
+        {/* ── Footer hint ───────────────────────────────────────────────────── */}
+        <p className="text-center text-slate-700 text-xs pb-2">
+          Keep this page open throughout the interview
         </p>
       </div>
     </div>

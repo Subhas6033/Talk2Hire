@@ -180,7 +180,7 @@ const VERIFY_TABLES = [
 function log(level, msg) {
   const icons = {
     info: "ℹ️ ",
-    ok: "✅",
+    ok: "",
     warn: "⚠️ ",
     err: "❌",
     section: "━━",

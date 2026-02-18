@@ -12,6 +12,14 @@ const createDefaultStreams = () => ({
   sessionData: null,
   preInitializedSocket: null,
 
+  // ── LiveKit ─────────────────────────────────────────────────────────────────
+  // Stashing the Room object here lets InterviewLive grab it immediately
+  // instead of waiting for re-auth. The room is already connected when
+  // InterviewSetup navigates away.
+  livekitRoom: null,
+  livekitToken: null,
+  livekitUrl: null,
+
   preWarmSessionIds: {
     audioId: null, // from audio_recording_ready
     primaryCameraId: null, // from video_recording_ready (primary_camera)

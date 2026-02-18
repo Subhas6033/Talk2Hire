@@ -24,9 +24,7 @@ function findSupportedMimeType() {
       const options = {};
       if (type) options.mimeType = type;
       if (bitrate) options.videoBitsPerSecond = bitrate;
-      console.log(
-        `✅ Screen MIME: ${type || "browser default"} @ ${bitrate}bps`,
-      );
+      console.log(` Screen MIME: ${type || "browser default"} @ ${bitrate}bps`);
       return { mimeType: type || "default", bitrate, options };
     }
   }
@@ -194,7 +192,7 @@ const useScreenRecording = (
         mediaRecorder.onstart = () => {
           // FIX B: bail if this recorder belongs to a superseded mount
           if (mountIdRef.current !== myMountId) return;
-          console.log("✅ Screen MediaRecorder started");
+          console.log(" Screen MediaRecorder started");
           isRecordingRef.current = true;
           setIsRecording(true);
         };
@@ -217,7 +215,7 @@ const useScreenRecording = (
               totalChunks: chunkCountRef.current,
             });
           }
-          // ✅ Do NOT stop stream tracks — owned by InterviewSetup/streamStore.
+          //  Do NOT stop stream tracks — owned by InterviewSetup/streamStore.
           // Just clear the local ref.
           screenStreamRef.current = null;
           setScreenStream(null);
@@ -332,7 +330,7 @@ const useScreenRecording = (
     }
     mediaRecorderRef.current = null;
 
-    // ✅ Do NOT stop stream tracks — owned by InterviewSetup/streamStore.
+    //  Do NOT stop stream tracks — owned by InterviewSetup/streamStore.
     screenStreamRef.current = null;
 
     // Reset all flags so mount 2 starts clean

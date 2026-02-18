@@ -1,49 +1,37 @@
 import { useRef, useCallback, useEffect } from "react";
 
+// ─── Config ──────────────────────────────────────────────────────────────────
 const SAMPLE_RATE = 48000;
-const CHUNK_DURATION_MS = 20000;
+const CHUNK_DURATION_MS = 20000; // 20-s chunks for FTP upload
 
-/**
- * Audio recording hook — captures TTS + mic into a single mixed stream.
- *
- * ROOT-CAUSE FIX (TTS lag / recording desync):
- *
- * Previously this hook created its OWN AudioContext internally. The scheduler
- * in useInterviewHook created a SECOND AudioContext. Two AudioContext instances
- * have independent clocks — passing `startAt` from one clock to the other is
- * meaningless and causes drift/silence in the recording mix.
- *
- * Fix: the hook no longer owns an AudioContext. useInterviewHook creates ONE
- * context and immediately calls audioRecording.setAudioContext(ctx). Both
- * hooks now share a single clock.
- *
- * connectTTSAudio — new signature:
- *   Receives the ALREADY-STARTED BufferSourceNode from the scheduler (not an
- *   AudioBuffer). We simply connect that same node to the ttsGainNode so the
- *   recording mix gets the audio at exactly the right time. Zero extra sources,
- *   zero drift, zero duplicate playback.
- */
+// When true, the primary recording is handled by LiveKit composite egress.
+// A local MediaRecorder only runs when preWarmAudioId is provided —
+// that records the TTS+mic blend as the "mixed_audio" FTP track.
+const LIVEKIT_MODE = true;
+
+// ─── Hook ─────────────────────────────────────────────────────────────────────
 const useAudioRecording = (socketRef, interviewId, userId) => {
-  const audioContextRef = useRef(null); // shared — injected via setAudioContext
+  // WebAudio graph nodes
+  const audioContextRef = useRef(null);
   const destinationRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
-
-  const ttsGainNodeRef = useRef(null);
-  const micGainNodeRef = useRef(null);
+  const ttsGainRef = useRef(null);
+  const micGainRef = useRef(null);
   const micSourceRef = useRef(null);
 
+  // Local MediaRecorder (mixed_audio – optional in LiveKit mode)
+  const mediaRecorderRef = useRef(null);
   const chunkNumberRef = useRef(0);
-  const isRecordingRef = useRef(false);
   const audioSessionIdRef = useRef(null);
+  const isRecordingRef = useRef(false); // use ref to avoid stale closure
 
-  /**
-   * Wire up the recording graph into the caller's shared AudioContext.
-   * Called once by useInterviewHook immediately after it creates its ctx.
-   */
+  // ─────────────────────────────────────────────────────────────────────────
+  // setAudioContext
+  // Wire the entire recording graph into the SHARED AudioContext that is
+  // also used for TTS playback. This must be called before startRecording.
+  // ─────────────────────────────────────────────────────────────────────────
   const setAudioContext = useCallback(async (sharedCtx) => {
     if (audioContextRef.current === sharedCtx) return;
     audioContextRef.current = sharedCtx;
-
     if (sharedCtx.state === "suspended") await sharedCtx.resume();
 
     const destination = sharedCtx.createMediaStreamDestination();
@@ -53,21 +41,20 @@ const useAudioRecording = (socketRef, interviewId, userId) => {
     const micGain = sharedCtx.createGain();
     ttsGain.gain.value = 1.0;
     micGain.gain.value = 1.0;
-    ttsGainNodeRef.current = ttsGain;
-    micGainNodeRef.current = micGain;
+    ttsGainRef.current = ttsGain;
+    micGainRef.current = micGain;
 
     ttsGain.connect(destination);
     micGain.connect(destination);
 
-    console.log("✅ Audio recording graph wired into shared AudioContext", {
+    console.log(" Audio recording graph wired", {
       sampleRate: sharedCtx.sampleRate,
       state: sharedCtx.state,
+      livekitMode: LIVEKIT_MODE,
     });
   }, []);
 
-  /**
-   * Legacy init — no-op if setAudioContext() already ran, fallback otherwise.
-   */
+  // Standalone init (fallback — useInterview normally calls setAudioContext)
   const initializeAudioRecording = useCallback(async () => {
     if (audioContextRef.current) return;
     const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -75,93 +62,100 @@ const useAudioRecording = (socketRef, interviewId, userId) => {
     await setAudioContext(ctx);
   }, [setAudioContext]);
 
-  /**
-   * connectTTSAudio — ROOT-CAUSE FIX
-   *
-   * @param {AudioBufferSourceNode} sourceNode
-   *   The node the scheduler already created and started. We just tap into it.
-   *
-   * Do NOT call source.start() here — the scheduler already did that.
-   * Connecting an already-started node to a new destination is valid and
-   * causes no audible change; the destination simply starts receiving the
-   * in-progress audio from that point forward, which is exactly what we want
-   * for the recording mix.
-   */
+  // ─────────────────────────────────────────────────────────────────────────
+  // connectTTSAudio
+  // Called by the TTS scheduler just BEFORE source.start() so each TTS
+  // buffer is also captured in the mixed_audio FTP track.
+  // ─────────────────────────────────────────────────────────────────────────
   const connectTTSAudio = useCallback((sourceNode) => {
-    if (!ttsGainNodeRef.current) {
-      console.warn(
-        "⚠️ ttsGainNode not ready — TTS chunk not routed to recording",
-      );
-      return;
-    }
+    if (!ttsGainRef.current) return; // graph not ready – skip silently
     try {
-      sourceNode.connect(ttsGainNodeRef.current);
+      sourceNode.connect(ttsGainRef.current);
     } catch (err) {
+      // InvalidStateError = node already disconnected — safe to ignore
       if (
         err.name !== "InvalidStateError" &&
         err.name !== "NotSupportedError"
       ) {
-        console.error("❌ connectTTSAudio error:", err);
+        console.error("❌ connectTTSAudio:", err);
       }
     }
   }, []);
 
-  /**
-   * Connect microphone stream to the recording mix.
-   */
-  const connectMicrophoneAudio = useCallback(async (micStream) => {
-    if (!audioContextRef.current || !micGainNodeRef.current) {
-      console.warn("⚠️ Audio context not ready for mic connection");
+  // ─────────────────────────────────────────────────────────────────────────
+  // connectMicrophoneAudio
+  // Accepts either a MediaStreamTrack (LiveKit LocalAudioTrack.mediaStreamTrack)
+  // or a plain MediaStream (getUserMedia fallback).
+  // ─────────────────────────────────────────────────────────────────────────
+  const connectMicrophoneAudio = useCallback(async (micStreamOrTrack) => {
+    if (!audioContextRef.current || !micGainRef.current) {
+      console.warn("⚠️ Audio graph not ready for mic connection");
       return;
     }
     try {
-      if (micSourceRef.current) micSourceRef.current.disconnect();
-      const micSource =
-        audioContextRef.current.createMediaStreamSource(micStream);
-      micSource.connect(micGainNodeRef.current);
-      micSourceRef.current = micSource;
-      console.log("🎤 Microphone audio connected to recording mix");
-    } catch (error) {
-      console.error("❌ Failed to connect microphone audio:", error);
+      if (micSourceRef.current) {
+        try {
+          micSourceRef.current.disconnect();
+        } catch (_) {}
+        micSourceRef.current = null;
+      }
+
+      const stream =
+        micStreamOrTrack instanceof MediaStreamTrack
+          ? new MediaStream([micStreamOrTrack])
+          : micStreamOrTrack;
+
+      const source = audioContextRef.current.createMediaStreamSource(stream);
+      source.connect(micGainRef.current);
+      micSourceRef.current = source;
+      console.log("🎤 Mic connected to recording mix");
+    } catch (err) {
+      console.error("❌ connectMicrophoneAudio:", err);
     }
   }, []);
 
-  /**
-   * Start recording the mixed audio stream.
-   *
-   * @param {string|null} preWarmAudioId
-   *   Session ID pre-registered during InterviewSetup step 7.
-   *   When provided, skips the audio_recording_start round-trip entirely.
-   */
+  // ─────────────────────────────────────────────────────────────────────────
+  // startRecording
+  //
+  // LiveKit mode without preWarmAudioId:
+  //   Egress handles everything → just flip the flag.
+  //
+  // LiveKit mode WITH preWarmAudioId (or legacy mode):
+  //   Run a local MediaRecorder on the TTS+mic mix and upload chunks via
+  //   socket as "mixed_audio" (the FTP blended track).
+  // ─────────────────────────────────────────────────────────────────────────
   const startRecording = useCallback(
     async (preWarmAudioId = null) => {
+      if (LIVEKIT_MODE && !preWarmAudioId) {
+        isRecordingRef.current = true;
+        console.log("🎙️ Audio: LiveKit egress active — local recorder skipped");
+        return;
+      }
+
       if (!destinationRef.current) {
-        console.error(
-          "❌ Cannot start recording — destination not initialized",
-        );
+        console.error("❌ Cannot start recorder — audio graph not wired");
         return;
       }
       if (isRecordingRef.current) {
-        console.warn("⚠️ Already recording");
+        console.warn("⚠️ Already recording audio");
         return;
       }
 
       try {
-        console.log("🎙️ Starting audio recording...");
-
+        console.log("🎙️ Starting local mixed_audio MediaRecorder…");
         const stream = destinationRef.current.stream;
         const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
           ? "audio/webm;codecs=opus"
           : "audio/webm";
 
-        const mediaRecorder = new MediaRecorder(stream, {
+        const recorder = new MediaRecorder(stream, {
           mimeType,
-          audioBitsPerSecond: 128000,
+          audioBitsPerSecond: 128_000,
         });
-
-        mediaRecorderRef.current = mediaRecorder;
+        mediaRecorderRef.current = recorder;
         chunkNumberRef.current = 0;
 
+        // Session ID — prefer pre-warmed, then request from server
         if (preWarmAudioId) {
           audioSessionIdRef.current = preWarmAudioId;
           console.log("♻️ Reusing pre-warmed audio session:", preWarmAudioId);
@@ -172,32 +166,32 @@ const useAudioRecording = (socketRef, interviewId, userId) => {
             userId,
             metadata: {
               mimeType,
-              audioBitsPerSecond: 128000,
+              audioBitsPerSecond: 128_000,
               sampleRate: SAMPLE_RATE,
             },
           });
           await new Promise((resolve) => {
-            const timeout = setTimeout(resolve, 5000);
-            socketRef.current.once("audio_recording_ready", (response) => {
-              clearTimeout(timeout);
-              audioSessionIdRef.current = response.audioId;
-              console.log("✅ Audio session confirmed:", response.audioId);
+            const t = setTimeout(resolve, 5000);
+            socketRef.current.once("audio_recording_ready", (res) => {
+              clearTimeout(t);
+              audioSessionIdRef.current = res.audioId;
+              console.log(" Audio session confirmed:", res.audioId);
               resolve();
             });
           });
         }
 
-        mediaRecorder.ondataavailable = (event) => {
+        recorder.ondataavailable = (event) => {
           if (!event.data || event.data.size === 0) return;
           chunkNumberRef.current++;
-          const currentChunk = chunkNumberRef.current;
+          const chunkNum = chunkNumberRef.current;
           const reader = new FileReader();
           reader.onloadend = () => {
             if (socketRef?.current?.connected) {
               socketRef.current.emit("audio_chunk", {
                 audioType: "mixed_audio",
                 audioId: audioSessionIdRef.current,
-                chunkNumber: currentChunk,
+                chunkNumber: chunkNum,
                 chunkData: reader.result.split(",")[1],
                 timestamp: Date.now(),
                 interviewId,
@@ -208,14 +202,16 @@ const useAudioRecording = (socketRef, interviewId, userId) => {
           reader.readAsDataURL(event.data);
         };
 
-        mediaRecorder.onstart = () => {
-          console.log("✅ Audio recording started");
+        recorder.onstart = () => {
           isRecordingRef.current = true;
+          console.log(" Audio MediaRecorder started");
         };
 
-        mediaRecorder.onstop = () => {
-          console.log("🛑 Audio recording stopped");
+        recorder.onstop = () => {
           isRecordingRef.current = false;
+          console.log(
+            `🛑 Audio MediaRecorder stopped (${chunkNumberRef.current} chunks)`,
+          );
           if (socketRef?.current?.connected) {
             socketRef.current.emit("audio_recording_stop", {
               audioType: "mixed_audio",
@@ -227,52 +223,63 @@ const useAudioRecording = (socketRef, interviewId, userId) => {
           }
         };
 
-        mediaRecorder.onerror = (e) =>
+        recorder.onerror = (e) =>
           console.error("❌ Audio recorder error:", e.error);
-
-        mediaRecorder.start(CHUNK_DURATION_MS);
-        console.log(
-          `✅ Audio MediaRecorder started (${CHUNK_DURATION_MS}ms chunks)`,
-        );
-      } catch (error) {
-        console.error("❌ Failed to start audio recording:", error);
-        throw error;
+        recorder.start(CHUNK_DURATION_MS);
+      } catch (err) {
+        console.error("❌ Failed to start audio recording:", err);
+        throw err;
       }
     },
     [socketRef, interviewId, userId],
   );
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // stopRecording
+  // ─────────────────────────────────────────────────────────────────────────
   const stopRecording = useCallback(() => {
+    if (LIVEKIT_MODE && !mediaRecorderRef.current) {
+      isRecordingRef.current = false;
+      console.log("🛑 Audio: LiveKit egress will be stopped by server");
+      return;
+    }
     if (!isRecordingRef.current || !mediaRecorderRef.current) return;
-    console.log("🛑 Stopping audio recording...");
+    console.log("🛑 Stopping audio MediaRecorder…");
     try {
       if (mediaRecorderRef.current.state !== "inactive")
         mediaRecorderRef.current.stop();
-      if (micSourceRef.current) {
+    } catch (err) {
+      console.error("❌ Error stopping audio recorder:", err);
+    }
+    if (micSourceRef.current) {
+      try {
         micSourceRef.current.disconnect();
-        micSourceRef.current = null;
-      }
-    } catch (error) {
-      console.error("❌ Error stopping audio recording:", error);
+      } catch (_) {}
+      micSourceRef.current = null;
     }
   }, []);
 
   useEffect(() => {
     return () => {
       if (isRecordingRef.current) stopRecording();
-      if (micSourceRef.current) micSourceRef.current.disconnect();
-      // Do NOT close the AudioContext — it is owned by useInterviewHook
+      if (micSourceRef.current) {
+        try {
+          micSourceRef.current.disconnect();
+        } catch (_) {}
+      }
     };
   }, [stopRecording]);
 
   return {
-    setAudioContext, // ← new: call this first with the shared ctx
-    initializeAudioRecording, // ← kept for compatibility / standalone use
-    connectTTSAudio, // ← now takes a BufferSourceNode, not a buffer
+    setAudioContext,
+    initializeAudioRecording,
+    connectTTSAudio,
     connectMicrophoneAudio,
     startRecording,
     stopRecording,
-    isRecording: isRecordingRef.current,
+    get isRecording() {
+      return isRecordingRef.current;
+    },
   };
 };
 
