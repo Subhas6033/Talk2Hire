@@ -57,7 +57,6 @@ const App = () => {
     if (shouldShowOnboarding === "true" && location.pathname === "/") {
       setShowOnboarding(true);
     } else {
-      console.log("⏸️ Not showing onboarding");
       setShowOnboarding(false);
     }
   }, [location.pathname]);

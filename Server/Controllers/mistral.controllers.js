@@ -3,26 +3,23 @@ const mammoth = require("mammoth");
 const xlsx = require("xlsx");
 const JSZip = require("jszip");
 
-const mistral = new Mistral({
-  apiKey: process.env.MISTRAL_API_KEY,
-});
+const mistral = new Mistral({ apiKey: process.env.MISTRAL_API_KEY });
 
-async function mistralResponse({ ftpUrl, mimeType, originalFileName }) {
-  if (!ftpUrl || !mimeType || !originalFileName) {
-    throw new Error("ftpUrl, mimeType and originalFileName are required");
-  }
+// ─── Minimum viable text length ───────────────────────────────────────────────
+// 50 chars is too aggressive — a one-page resume with short bullet points can
+// easily collapse below this after whitespace normalization. Use 30 instead,
+// and treat "too short" as a soft warning rather than a hard throw in most paths.
+const MIN_TEXT_LENGTH = 30;
 
-  console.log("📝 Starting Mistral processing...");
-  console.log("📄 File:", originalFileName);
-  console.log("📦 Mime:", mimeType);
-  console.log("🌐 FTP URL:", ftpUrl);
+// ─── PDF text extraction ──────────────────────────────────────────────────────
+// Tries Mistral OCR first. If the OCR returns empty/whitespace pages (common
+// with image-only or poorly-encoded PDFs), falls back to fetching the raw PDF
+// and sending it as a base64 document to the Mistral chat API for extraction.
+async function extractPdfText(ftpUrl) {
+  console.log("🔎 PDF detected → Trying Mistral OCR...");
 
-  let extractedText = "";
-
-  // --- PDF → OCR ---
-  if (mimeType === "application/pdf") {
-    console.log("🔎 PDF detected → Using Mistral OCR");
-
+  // ── Attempt 1: OCR endpoint ─────────────────────────────────────────────────
+  try {
     const ocrResponse = await fetch("https://api.mistral.ai/v1/ocr", {
       method: "POST",
       headers: {
@@ -36,12 +33,100 @@ async function mistralResponse({ ftpUrl, mimeType, originalFileName }) {
       }),
     });
 
-    const ocrData = await ocrResponse.json();
-    extractedText =
-      ocrData.pages?.map((p) => p.markdown || "").join("\n\n") || "";
+    if (ocrResponse.ok) {
+      const ocrData = await ocrResponse.json();
+      const ocrText =
+        ocrData.pages?.map((p) => p.markdown || "").join("\n\n") || "";
+      const cleaned = ocrText.replace(/\s+/g, " ").trim();
+
+      if (cleaned.length >= MIN_TEXT_LENGTH) {
+        console.log(`✅ OCR succeeded: ${cleaned.length} chars`);
+        return cleaned;
+      }
+      console.warn(
+        `⚠️ OCR returned too little text (${cleaned.length} chars) — trying base64 fallback`,
+      );
+    } else {
+      console.warn(
+        `⚠️ OCR endpoint returned ${ocrResponse.status} — trying base64 fallback`,
+      );
+    }
+  } catch (ocrErr) {
+    console.warn(
+      "⚠️ OCR request failed:",
+      ocrErr.message,
+      "— trying base64 fallback",
+    );
   }
-  // --- Other file types ---
-  else {
+
+  // ── Attempt 2: Download PDF → base64 → Mistral chat ───────────────────────
+  // Works for image-based / scanned PDFs where OCR via URL fails.
+  console.log("📥 Fetching PDF for base64 extraction fallback...");
+  const pdfRes = await fetch(ftpUrl);
+  if (!pdfRes.ok) throw new Error(`Failed to fetch PDF: ${pdfRes.status}`);
+  const pdfBuffer = Buffer.from(await pdfRes.arrayBuffer());
+  const base64Pdf = pdfBuffer.toString("base64");
+
+  console.log(
+    `📦 PDF size: ${Math.round(pdfBuffer.length / 1024)}KB — sending to Mistral chat`,
+  );
+
+  const chatRes = await mistral.chat.complete({
+    model: "mistral-small-latest",
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "document",
+            source: {
+              type: "base64",
+              media_type: "application/pdf",
+              data: base64Pdf,
+            },
+          },
+          {
+            type: "text",
+            text: "Extract all text from this document. Return only the extracted text, no commentary.",
+          },
+        ],
+      },
+    ],
+  });
+
+  const fallbackText = (chatRes.choices[0]?.message?.content || "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (fallbackText.length < MIN_TEXT_LENGTH) {
+    // Last resort: return whatever we got rather than throwing — the caller
+    // will decide if it's good enough to generate a question from.
+    console.warn(
+      `⚠️ Base64 fallback also returned short text (${fallbackText.length} chars)`,
+    );
+  } else {
+    console.log(`✅ Base64 fallback succeeded: ${fallbackText.length} chars`);
+  }
+
+  return fallbackText;
+}
+
+// ─── mistralResponse ──────────────────────────────────────────────────────────
+async function mistralResponse({ ftpUrl, mimeType, originalFileName }) {
+  if (!ftpUrl || !mimeType || !originalFileName) {
+    throw new Error("ftpUrl, mimeType and originalFileName are required");
+  }
+
+  console.log("📝 Starting Mistral processing...");
+  console.log("📄 File:", originalFileName);
+  console.log("📦 Mime:", mimeType);
+  console.log("🌐 FTP URL:", ftpUrl);
+
+  let extractedText = "";
+
+  if (mimeType === "application/pdf") {
+    extractedText = await extractPdfText(ftpUrl);
+  } else {
     const response = await fetch(ftpUrl);
     if (!response.ok)
       throw new Error(`Failed to fetch file: ${response.status}`);
@@ -65,17 +150,30 @@ async function mistralResponse({ ftpUrl, mimeType, originalFileName }) {
         }
       }
     }
+
+    extractedText = extractedText.replace(/\s+/g, " ").trim();
   }
 
-  // --- Clean text ---
-  extractedText = extractedText.replace(/\s+/g, " ").trim();
-  if (!extractedText || extractedText.length < 50) {
-    throw new Error("Extracted text is too short");
+  // FIX: Don't throw here — return a best-effort result so the caller can
+  // decide whether to proceed with a generic question or surface an error.
+  // The old hard throw of "Extracted text is too short" was crashing the
+  // entire interview start flow for image-based PDFs.
+  if (!extractedText || extractedText.length < MIN_TEXT_LENGTH) {
+    console.warn(
+      `⚠️ Text extraction yielded very little content (${extractedText?.length ?? 0} chars)`,
+    );
+    // Return a minimal valid object so callers don't crash on undefined
+    return {
+      summary: "",
+      key_points: [],
+      raw_text: "",
+      extractionFailed: true,
+    };
   }
 
-  console.log(" Text extracted. Length:", extractedText.length);
+  console.log("✅ Text extracted. Length:", extractedText.length);
 
-  // --- Chunking for Mistral summarization ---
+  // ── Chunk + summarize ───────────────────────────────────────────────────────
   const maxChars = 12000;
   const chunks = [];
   for (let i = 0; i < extractedText.length; i += maxChars) {
@@ -83,7 +181,6 @@ async function mistralResponse({ ftpUrl, mimeType, originalFileName }) {
   }
   console.log("🧩 Total chunks:", chunks.length);
 
-  // --- Summarize each chunk using Mistral ---
   const summaries = [];
   for (let i = 0; i < chunks.length; i++) {
     console.log(`🧠 Summarizing chunk ${i + 1}/${chunks.length}`);
@@ -100,30 +197,19 @@ async function mistralResponse({ ftpUrl, mimeType, originalFileName }) {
     summaries.push(summaryResponse.choices[0].message.content);
   }
 
-  // --- Final summary JSON ---
+  // ── Final structured JSON ───────────────────────────────────────────────────
   const finalResponse = await mistral.chat.complete({
     model: "mistral-small-latest",
     messages: [
       {
         role: "system",
-        content: `
-Return STRICTLY valid JSON only.
-Do NOT use markdown.
-Do NOT use backticks.
-
+        content: `Return STRICTLY valid JSON only. Do NOT use markdown. Do NOT use backticks.
 Rules:
-- key_points must include:
-  - technologies
-  - tools
-  - frameworks
-  - projects
-  - measurable outcomes (numbers, %)
-        `,
+- key_points must include: technologies, tools, frameworks, projects, measurable outcomes (numbers, %)`,
       },
       {
         role: "user",
-        content: `
-Return ONLY valid JSON:
+        content: `Return ONLY valid JSON:
 {
   "summary": "",
   "key_points": [],
@@ -131,8 +217,7 @@ Return ONLY valid JSON:
 }
 
 Content:
-${summaries.join("\n\n")}
-        `,
+${summaries.join("\n\n")}`,
       },
     ],
   });
@@ -143,25 +228,20 @@ ${summaries.join("\n\n")}
 
   const parsed = JSON.parse(cleanJson);
 
-  // --- Enrich raw_text with key_points (NO OTHER CHANGES) ---
-  const enrichedRawText = `
+  // Enrich raw_text with key_points
+  parsed.raw_text = `
 === KEY POINTS (IMPORTANT FOR INTERVIEW QUESTIONS) ===
-${
-  Array.isArray(parsed.key_points)
-    ? parsed.key_points.map((p) => `- ${p}`).join("\n")
-    : ""
-}
+${Array.isArray(parsed.key_points) ? parsed.key_points.map((p) => `- ${p}`).join("\n") : ""}
 
 === FULL RESUME TEXT ===
 ${extractedText}
-  `.trim();
+`.trim();
 
-  parsed.raw_text = enrichedRawText;
-
-  console.log(parsed);
+  console.log("✅ mistralResponse complete");
   return parsed;
 }
 
+// ─── extractSkills (unchanged logic, same PDF fix applied) ───────────────────
 async function extractSkills({
   ftpUrl,
   mimeType,
@@ -174,39 +254,20 @@ async function extractSkills({
   }
 
   console.log("🎯 Starting Skills Extraction...");
-  console.log("📄 File:", originalFileName);
-  console.log("📦 Mime:", mimeType);
-  console.log("🌐 FTP URL:", ftpUrl);
-  if (targetDomain) {
-    console.log("🎯 Target Domain:", targetDomain);
-    console.log("📊 Match Threshold:", matchThreshold);
-  }
+  console.log("📄 File:", originalFileName, "| 📦 Mime:", mimeType);
+  if (targetDomain)
+    console.log(
+      "🎯 Target Domain:",
+      targetDomain,
+      "| 📊 Threshold:",
+      matchThreshold,
+    );
 
   let extractedText = "";
 
-  // --- PDF → OCR ---
   if (mimeType === "application/pdf") {
-    console.log("🔎 PDF detected → Using Mistral OCR");
-
-    const ocrResponse = await fetch("https://api.mistral.ai/v1/ocr", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "mistral-ocr-latest",
-        document: { type: "document_url", document_url: ftpUrl },
-        include_image_base64: false,
-      }),
-    });
-
-    const ocrData = await ocrResponse.json();
-    extractedText =
-      ocrData.pages?.map((p) => p.markdown || "").join("\n\n") || "";
-  }
-  // --- Other file types ---
-  else {
+    extractedText = await extractPdfText(ftpUrl);
+  } else {
     const response = await fetch(ftpUrl);
     if (!response.ok)
       throw new Error(`Failed to fetch file: ${response.status}`);
@@ -230,172 +291,88 @@ async function extractSkills({
         }
       }
     }
+    extractedText = extractedText.replace(/\s+/g, " ").trim();
   }
 
-  // --- Clean text ---
-  extractedText = extractedText.replace(/\s+/g, " ").trim();
-  if (!extractedText || extractedText.length < 50) {
-    throw new Error("Extracted text is too short");
+  if (!extractedText || extractedText.length < MIN_TEXT_LENGTH) {
+    throw new Error("Extracted text is too short for skill extraction");
   }
 
-  console.log(" Text extracted. Length:", extractedText.length);
+  console.log("✅ Text extracted. Length:", extractedText.length);
 
-  // --- Extract and filter skills using Mistral ---
   const systemPrompt = targetDomain
     ? `Extract all skills from the resume/document and score their relevance to the role: "${targetDomain}".
-
-For each skill, assign a relevance score from 1-10:
-- 10 = Absolutely critical for this role
-- 7-9 = Highly relevant
-- 4-6 = Somewhat relevant
-- 1-3 = Minimally relevant
-
+For each skill, assign a relevance score from 1-10.
 Return STRICTLY valid JSON only. Do NOT use markdown. Do NOT use backticks.
-
-Categorize skills into:
-- technical_skills (programming languages, frameworks, tools, technologies)
-- soft_skills (communication, leadership, teamwork, etc.)
-- certifications (any certifications mentioned)
-- languages (spoken/written languages)
-
-Each skill should include: skill name and relevance_score (1-10).`
+Categorize into: technical_skills, soft_skills, certifications, languages.
+Each skill: { skill, relevance_score }.`
     : `Extract all skills from the resume/document.
-Return STRICTLY valid JSON only.
-Do NOT use markdown.
-Do NOT use backticks.
-
-Categorize skills into:
-- technical_skills (programming languages, frameworks, tools, technologies)
-- soft_skills (communication, leadership, teamwork, etc.)
-- certifications (any certifications mentioned)
-- languages (spoken/written languages)`;
+Return STRICTLY valid JSON only. Do NOT use markdown. Do NOT use backticks.
+Categorize into: technical_skills, soft_skills, certifications, languages.`;
 
   const userPrompt = targetDomain
-    ? `Extract skills from this document, score each skill's relevance to the "${targetDomain}" role (1-10), and return ONLY valid JSON:
-
+    ? `Extract skills, score relevance to "${targetDomain}" (1-10), return ONLY valid JSON:
 {
-  "technical_skills": [
-    { "skill": "skill name", "relevance_score": 8 }
-  ],
-  "soft_skills": [
-    { "skill": "skill name", "relevance_score": 7 }
-  ],
-  "certifications": [
-    { "skill": "certification name", "relevance_score": 9 }
-  ],
-  "languages": [
-    { "skill": "language name", "relevance_score": 5 }
-  ]
+  "technical_skills": [{ "skill": "name", "relevance_score": 8 }],
+  "soft_skills": [{ "skill": "name", "relevance_score": 7 }],
+  "certifications": [{ "skill": "name", "relevance_score": 9 }],
+  "languages": [{ "skill": "name", "relevance_score": 5 }]
 }
-
-Document text:
-${extractedText}`
-    : `Extract skills from this document and return ONLY valid JSON:
+Document: ${extractedText}`
+    : `Extract skills, return ONLY valid JSON:
 {
-  "technical_skills": [],
-  "soft_skills": [],
-  "certifications": [],
-  "languages": [],
-  "all_skills": []
+  "technical_skills": [], "soft_skills": [], "certifications": [], "languages": [], "all_skills": []
 }
-
-Document text:
-${extractedText}`;
+Document: ${extractedText}`;
 
   const skillsResponse = await mistral.chat.complete({
     model: "mistral-small-latest",
     messages: [
-      {
-        role: "system",
-        content: systemPrompt,
-      },
-      {
-        role: "user",
-        content: userPrompt,
-      },
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
     ],
   });
 
   const cleanJson = skillsResponse.choices[0].message.content
     .replace(/```json|```/gi, "")
     .trim();
-
   let parsed = JSON.parse(cleanJson);
 
-  // --- Filter by domain if specified ---
   if (targetDomain) {
-    console.log(`🔍 Filtering skills for domain: ${targetDomain}`);
-    console.log(`📊 Using threshold: ${matchThreshold}/10`);
-
-    const filterSkills = (skillsArray) => {
-      if (!Array.isArray(skillsArray)) return [];
-
-      return skillsArray
-        .filter((item) => {
-          const score = typeof item === "object" ? item.relevance_score : null;
-          return score !== null && score >= matchThreshold;
-        })
+    const filterSkills = (arr) =>
+      (arr || [])
+        .filter(
+          (item) =>
+            typeof item === "object" && item.relevance_score >= matchThreshold,
+        )
         .sort((a, b) => b.relevance_score - a.relevance_score);
-    };
 
     const filtered = {
-      technical_skills: filterSkills(parsed.technical_skills || []),
-      soft_skills: filterSkills(parsed.soft_skills || []),
-      certifications: filterSkills(parsed.certifications || []),
-      languages: filterSkills(parsed.languages || []),
+      technical_skills: filterSkills(parsed.technical_skills),
+      soft_skills: filterSkills(parsed.soft_skills),
+      certifications: filterSkills(parsed.certifications),
+      languages: filterSkills(parsed.languages),
     };
 
-    // Create summary
-    const totalExtracted =
-      (parsed.technical_skills?.length || 0) +
-      (parsed.soft_skills?.length || 0) +
-      (parsed.certifications?.length || 0) +
-      (parsed.languages?.length || 0);
+    const totalExtracted = Object.values(parsed).flat().length;
+    const all_relevant_skills = Object.values(filtered).flat();
 
-    const totalRelevant =
-      filtered.technical_skills.length +
-      filtered.soft_skills.length +
-      filtered.certifications.length +
-      filtered.languages.length;
-
-    // Flatten all relevant skills
-    const all_relevant_skills = [
-      ...filtered.technical_skills,
-      ...filtered.soft_skills,
-      ...filtered.certifications,
-      ...filtered.languages,
-    ];
-
-    const result = {
+    return {
       ...filtered,
       all_relevant_skills,
       metadata: {
         target_domain: targetDomain,
         match_threshold: matchThreshold,
         total_skills_extracted: totalExtracted,
-        total_relevant_skills: totalRelevant,
+        total_relevant_skills: all_relevant_skills.length,
         match_percentage:
-          ((totalRelevant / totalExtracted) * 100).toFixed(1) + "%",
+          ((all_relevant_skills.length / totalExtracted) * 100).toFixed(1) +
+          "%",
       },
     };
-
-    console.log(" Skills filtered successfully");
-    console.log(`📊 Extracted: ${totalExtracted} skills`);
-    console.log(
-      ` Relevant: ${totalRelevant} skills (${result.metadata.match_percentage} match)`,
-    );
-    console.log("🏆 Top Skills:");
-    all_relevant_skills.slice(0, 5).forEach((s, i) => {
-      console.log(`   ${i + 1}. ${s.skill} (${s.relevance_score}/10)`);
-    });
-
-    return result;
-  } else {
-    // No domain filtering - return all skills
-    console.log(" Skills extracted successfully (no filtering)");
-    console.log(parsed);
-    return parsed;
   }
+
+  return parsed;
 }
 
 module.exports = { mistralResponse, extractSkills, mistral };

@@ -31,14 +31,13 @@ import {
 import useAudioRecording from "./useAudioRecording";
 import { useTTS } from "./useSpeechHook";
 
-const AUDIO_CONFIG = { SAMPLE_RATE: 48000 };
+// 48kHz — matches Deepgram STT sample_rate and TTS output rate
+const MIC_SAMPLE_RATE = 48000;
 
-// ─── useInterview ─────────────────────────────────────────────────────────────
 export const useInterview = (interviewId, userId, cameraStream) => {
   const dispatch = useDispatch();
   const interview = useSelector((s) => s.interview);
 
-  // ── Core refs ──────────────────────────────────────────────────────────────
   const socketRef = useRef(null);
   const audioCtxRef = useRef(null);
   const audioCtxInitRef = useRef(false);
@@ -46,14 +45,12 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const audioRecording = useAudioRecording(socketRef, interviewId, userId);
 
-  // ── LiveKit refs ───────────────────────────────────────────────────────────
   const livekitRoomRef = useRef(null);
   const livekitTokenRef = useRef(null);
   const livekitUrlRef = useRef(null);
   const localAudioTrackRef = useRef(null);
   const lkJoinPromiseRef = useRef(null);
 
-  // ── State mirror refs (avoid stale closures) ──────────────────────────────
   const isPlayingRef = useRef(false);
   const isListeningRef = useRef(false);
   const canListenRef = useRef(false);
@@ -71,12 +68,11 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     micStreamingActiveRef.current = interview.micStreamingActive;
   }, [interview]);
 
-  // ── Mic fallback ref ───────────────────────────────────────────────────────
   const micStreamRef = useRef(null);
   const micProcessorRef = useRef(null);
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // AUDIO CONTEXT
+  // AUDIO CONTEXT — mic capture only, 48kHz to match Deepgram STT
   // ═══════════════════════════════════════════════════════════════════════════
   const ensureAudioContext = useCallback(async () => {
     if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
@@ -85,13 +81,13 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       return audioCtxRef.current;
     }
     const ctx = new (window.AudioContext || window.webkitAudioContext)({
-      sampleRate: AUDIO_CONFIG.SAMPLE_RATE,
+      sampleRate: MIC_SAMPLE_RATE,
       latencyHint: "interactive",
     });
     audioCtxRef.current = ctx;
     if (ctx.state === "suspended") await ctx.resume();
     await audioRecording.setAudioContext(ctx);
-    console.log("✅ AudioContext ready:", ctx.state, ctx.sampleRate + "Hz");
+    console.log("✅ Mic AudioContext ready:", ctx.state, ctx.sampleRate + "Hz");
     return ctx;
   }, [audioRecording]);
 
@@ -99,13 +95,11 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     if (audioCtxInitRef.current) return;
     audioCtxInitRef.current = true;
     ensureAudioContext();
-
     const resumeOnGesture = () => ensureAudioContext();
     document.addEventListener("click", resumeOnGesture, { once: true });
     return () => document.removeEventListener("click", resumeOnGesture);
   }, []); // eslint-disable-line
 
-  // ── Recording timer ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!interview.isInitializing && interview.status === "live") {
       dispatch(startRecording());
@@ -121,9 +115,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   }, [interview.isInitializing, interview.status, dispatch]);
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // TTS
-  // useTTS manages its own isolated AudioContext for output — it is NOT
-  // connected to audioCtxRef or the recording graph, which eliminates echo.
+  // TTS — isolated AudioContext at 48kHz, WAV-wrapped linear16 chunks
   // ═══════════════════════════════════════════════════════════════════════════
   const { enqueueTTSChunk, flushTTS, resetTTS } = useTTS({
     onPlayStart: () => {
@@ -139,8 +131,12 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const handleTtsAudio = useCallback(
     (data) => {
-      // No need to ensureAudioContext here — useTTS manages its own context
-      const base64 = typeof data === "string" ? data : (data?.audio ?? null);
+      const base64 =
+        typeof data === "string"
+          ? data
+          : typeof data?.audio === "string"
+            ? data.audio
+            : null;
       if (base64?.length) enqueueTTSChunk(base64);
     },
     [enqueueTTSChunk],
@@ -151,7 +147,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     flushTTS();
   }, [dispatch, flushTTS]);
 
-  // ── Question handlers ──────────────────────────────────────────────────────
   const handleQuestion = useCallback(
     (payload) => {
       const text =
@@ -206,17 +201,11 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   );
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // LIVEKIT ROOM
+  // LIVEKIT
   // ═══════════════════════════════════════════════════════════════════════════
-
   const joinLiveKitRoom = useCallback(async (url, token) => {
-    if (livekitRoomRef.current) {
-      console.log("♻️ Already in LiveKit room — skipping rejoin");
-      return livekitRoomRef.current;
-    }
-    if (lkJoinPromiseRef.current) {
-      return lkJoinPromiseRef.current;
-    }
+    if (livekitRoomRef.current) return livekitRoomRef.current;
+    if (lkJoinPromiseRef.current) return lkJoinPromiseRef.current;
 
     livekitUrlRef.current = url;
     livekitTokenRef.current = token;
@@ -273,10 +262,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         });
       });
 
-      // ── Remote track subscription ──────────────────────────────────────
-      // Audio: attach to hidden <audio> so the browser plays it.
-      // Video from mobile_*: forwarded via livekitRoomRef in InterviewLive
-      // (InterviewLive reads room.remoteParticipants directly via RoomEvent).
       room.on(RoomEvent.TrackSubscribed, (track, _pub, participant) => {
         if (track.kind === Track.Kind.Audio) {
           console.log(`🔊 Remote audio from: ${participant.identity}`);
@@ -284,9 +269,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
           el.style.display = "none";
           document.body.appendChild(el);
         }
-        // NOTE: Mobile video tracks are handled in InterviewLive.jsx by
-        // listening to RoomEvent.TrackSubscribed on livekitRoomRef.current.
-        // We intentionally do NOT attach them here to avoid double-attach.
       });
 
       await room.connect(url, token);
@@ -317,25 +299,21 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         autoGainControl: true,
         echoCancellation: true,
         noiseSuppression: true,
-        sampleRate: AUDIO_CONFIG.SAMPLE_RATE,
       });
       localAudioTrackRef.current = track;
       await room.localParticipant.publishTrack(track);
       console.log("🎤 LiveKit mic published");
 
-      // ── Tap mic for Deepgram via socket ────────────────────────────────────
-      // LiveKit sends audio over WebRTC internally — it never reaches the
-      // server's socket.on("user_audio_chunk") handler that feeds Deepgram.
-      // We must create a WebAudio ScriptProcessor tap on the same
-      // MediaStreamTrack and emit PCM16 chunks over the socket ourselves.
       const micTrack = track.mediaStreamTrack;
       const micStream = new MediaStream([micTrack]);
-      const ctx = await ensureAudioContext();
+      const ctx = await ensureAudioContext(); // 48kHz
       const source = ctx.createMediaStreamSource(micStream);
-      const processor = ctx.createScriptProcessor(4096, 1, 1);
+
+      // Buffer size 2048 = ~43ms at 48kHz — lower than 4096 for less latency
+      const processor = ctx.createScriptProcessor(2048, 1, 1);
       micProcessorRef.current = processor;
       source.connect(processor);
-      processor.connect(ctx.destination); // must connect to keep graph active
+      processor.connect(ctx.destination);
 
       processor.onaudioprocess = (e) => {
         if (!micStreamingActiveRef.current) return;
@@ -351,7 +329,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         socketRef.current.emit("user_audio_chunk", pcm16.buffer);
       };
 
-      console.log("🎤 PCM tap active — mic audio → Deepgram via socket");
+      console.log("🎤 PCM tap active at", ctx.sampleRate + "Hz → Deepgram");
 
       if (audioRecording.connectMicrophoneAudio) {
         await audioRecording.connectMicrophoneAudio(micTrack);
@@ -365,7 +343,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }
   }, [audioRecording, dispatch, ensureAudioContext]);
 
-  // ── Socket PCM fallback ────────────────────────────────────────────────────
   const startSocketMicFallback = useCallback(
     async (existingStream = null) => {
       if (micStreamRef.current) return;
@@ -380,7 +357,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
             audio: {
               echoCancellation: true,
               noiseSuppression: true,
-              sampleRate: AUDIO_CONFIG.SAMPLE_RATE,
               channelCount: 1,
             },
           }));
@@ -388,9 +364,9 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         micStreamRef.current = stream;
         dispatch(setMicPermissionGranted(true));
 
-        const ctx = await ensureAudioContext();
+        const ctx = await ensureAudioContext(); // 48kHz
         const source = ctx.createMediaStreamSource(stream);
-        const processor = ctx.createScriptProcessor(4096, 1, 1);
+        const processor = ctx.createScriptProcessor(2048, 1, 1);
         micProcessorRef.current = processor;
         source.connect(processor);
         processor.connect(ctx.destination);
@@ -416,7 +392,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
             socketRef.current.emit("user_audio_chunk", pcm16.buffer);
         };
 
-        console.log("✅ Socket mic PCM fallback active");
+        console.log("✅ Socket mic PCM fallback at", ctx.sampleRate + "Hz");
       } catch (err) {
         console.error("❌ Socket mic fallback error:", err);
       }
@@ -448,10 +424,8 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     async (existingMicStream = null) => {
       if (hasStartedRef.current) return;
       hasStartedRef.current = true;
-
       try {
         await ensureAudioContext();
-
         if (
           livekitTokenRef.current &&
           livekitUrlRef.current &&
@@ -459,9 +433,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         ) {
           await joinLiveKitRoom(livekitUrlRef.current, livekitTokenRef.current);
         }
-
         await startMicStreaming(existingMicStream);
-
         if (!serverReadyRef.current) {
           console.error("❌ Server not ready");
           hasStartedRef.current = false;
@@ -472,7 +444,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
           hasStartedRef.current = false;
           return;
         }
-
         dispatch(setHasStarted(true));
         console.log("✅ Interview started");
       } catch (err) {
@@ -487,11 +458,20 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const handleLiveKitToken = useCallback(
     async ({ token, url }) => {
-      // Resolve token in case livekit-server-sdk returns a Promise<string>
       const resolvedToken = await Promise.resolve(token);
+      if (
+        typeof resolvedToken !== "string" ||
+        !resolvedToken.startsWith("ey")
+      ) {
+        console.error(
+          "❌ Invalid LiveKit token:",
+          typeof resolvedToken,
+          String(resolvedToken).slice(0, 40),
+        );
+        return;
+      }
       livekitTokenRef.current = resolvedToken;
       livekitUrlRef.current = url;
-      // Guard against duplicate joins — autoStartInterview may also call joinLiveKitRoom
       if (!livekitRoomRef.current && !lkJoinPromiseRef.current) {
         joinLiveKitRoom(url, resolvedToken).catch(console.error);
       }
@@ -499,7 +479,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [joinLiveKitRoom],
   );
 
-  // ── Cleanup on unmount ─────────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       resetTTS();
@@ -515,7 +494,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     socketRef,
     audioCtxRef,
     micStreamRef,
-    // ── Expose livekitRoomRef so InterviewLive can bind RoomEvent listeners ──
     livekitRoomRef,
     handleLiveKitToken,
     handleQuestion,
