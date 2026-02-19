@@ -11,7 +11,7 @@ import {
 } from "livekit-client";
 
 // ─── Configuration ─────────────────────────────────────────────────────────
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL;
+const SOCKET_URL = import.meta.env.VITE_WS_URL;
 const HOLISTIC_FPS = 2; // How often to run face detection (frames / second)
 
 // ══════════════════════════════════════════════════════════════════════════════
