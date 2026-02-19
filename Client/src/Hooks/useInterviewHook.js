@@ -162,10 +162,13 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [enqueueTTSChunk],
   );
 
-  const handleTtsEnd = useCallback(() => {
-    dispatch(setTtsStreamActive(false));
-    flushTTS();
-  }, [dispatch, flushTTS]);
+  const handleTtsEnd = useCallback(
+    (onDone) => {
+      dispatch(setTtsStreamActive(false));
+      flushTTS(onDone);
+    },
+    [dispatch, flushTTS],
+  );
 
   const handleQuestion = useCallback(
     (payload) => {

@@ -81,15 +81,10 @@ function cleanupSession(id) {
 // ════════════════════════════════════════════════════════════════════════════
 // streamTTSToClient
 //
-// FIX 1 (full question not streaming):
-//   tts_end was only emitted if socket.connected was true at the exact moment
-//   the null-sentinel fired.  If the socket was briefly in a reconnecting state
-//   the event was dropped silently — audio playback stopped mid-sentence and
-//   the interview froze.
-//
-// Fix: emit tts_end UNCONDITIONALLY in the null-sentinel branch.
-//   Audio chunks are still gated on socket.connected (no point sending audio
-//   data to a disconnected socket), but the done signal ALWAYS fires.
+// Resolves as soon as tts_end is emitted to the client (all audio chunks
+// sent). Listening is NOT enabled here — the server waits for "playback_done"
+// from the client, which fires only when the Web Audio queue is fully drained.
+// This prevents STT opening while TTS audio is still playing in the browser.
 // ════════════════════════════════════════════════════════════════════════════
 async function streamTTSToClient(socket, text, interviewId) {
   return new Promise((resolve, reject) => {
@@ -115,9 +110,7 @@ async function streamTTSToClient(socket, text, interviewId) {
     tts
       .speakStream(text, (chunk) => {
         if (chunk === null) {
-          // ── Done sentinel ────────────────────────────────────────────────
           clearTimeout(hardTimeout);
-          // FIX: NO socket.connected check here — always emit tts_end
           try {
             socket.emit("tts_end");
           } catch (e) {
@@ -128,7 +121,6 @@ async function streamTTSToClient(socket, text, interviewId) {
           return;
         }
 
-        // ── Audio chunk — only send if socket is connected ────────────────
         if (!socket.connected) return;
         try {
           const buf = Buffer.isBuffer(chunk)
@@ -204,12 +196,10 @@ async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
   const relay = (data, ack) => {
     session.lastMobileFrame = data.frame;
     if (session.desktopSocketId)
-      socket
-        .to(`interview_${interviewId}`)
-        .emit("mobile_camera_frame", {
-          frame: data.frame,
-          timestamp: data.timestamp ?? Date.now(),
-        });
+      socket.to(`interview_${interviewId}`).emit("mobile_camera_frame", {
+        frame: data.frame,
+        timestamp: data.timestamp ?? Date.now(),
+      });
     if (typeof ack === "function") ack();
   };
   socket.on("mobile_camera_frame", relay);
@@ -263,15 +253,17 @@ async function handleInterviewSocket(
     });
   }
 
-  let currentOrder = 1;
+  // Restore state from session if this is a socket reconnect
+  // (session object persists; local scope vars reset on each new socket)
+  let currentOrder = session.currentOrder ?? 1;
   let isProcessing = false;
   let isInterviewEnded = false;
-  let firstQuestionSent = false;
+  let firstQuestionSent = session.interviewStarted ?? false;
   let firstQuestion = null;
   let deepgramConn = null;
-  let isListeningActive = false; // TRUE only while user should be speaking
+  let isListeningActive = false;
   let awaitingRepeat = false;
-  let currentQText = "";
+  let currentQText = session.currentQText ?? "";
   const MAX_Q = 10;
 
   const MAX_FACE_VIOL = 5;
@@ -281,6 +273,11 @@ async function handleInterviewSocket(
   let faceViolCount = 0;
   let faceFirstMissing = null;
   let faceViolTimeout = null;
+
+  // Tracks whether we are waiting for the client's "playback_done" signal.
+  // While true, STT is intentionally closed — we must not open it until the
+  // browser has finished playing the TTS audio.
+  let awaitingPlaybackDone = false;
 
   try {
     await Interview.getSessionById(interviewId);
@@ -327,34 +324,54 @@ async function handleInterviewSocket(
 
     // ══════════════════════════════════════════════════════════════════════
     // client_ready — start interview
-    //
-    // FIX 2 (idle fires during TTS):
-    //   The old code called ensureDeepgramConnection() which creates the STT
-    //   session, then immediately called streamTTSToClient(). But Deepgram was
-    //   already running (waiting for audio) and the idle timer started ticking.
-    //   After 15 s of silence (while TTS was playing) it fired "repeat?".
-    //
-    // Fix: stt.service.js now starts with idlePaused=true on every new
-    //   connection. resumeIdleDetection() is ONLY called AFTER streamTTSToClient
-    //   completes and listening_enabled is emitted. This means idle detection
-    //   only runs when the user is genuinely expected to be speaking.
     // ══════════════════════════════════════════════════════════════════════
     socket.on("client_ready", async () => {
+      // ── Reconnect resume ───────────────────────────────────────────────
+      // If the desktop socket reconnected mid-interview (e.g. transport glitch),
+      // session.interviewStarted is already true. Resume by replaying the
+      // current question's TTS and re-enabling STT.
+      if (firstQuestionSent && session.interviewStarted) {
+        console.log(`🔄 Reconnect detected — resuming Q${currentOrder}`);
+        isProcessing = true;
+        isListeningActive = false;
+        awaitingPlaybackDone = false;
+        try {
+          socket.emit("question", { question: currentQText });
+          // FIX 2: set awaitingPlaybackDone BEFORE awaiting TTS
+          awaitingPlaybackDone = true;
+          await streamTTSToClient(socket, currentQText, interviewId);
+          if (playbackDoneTimer) clearTimeout(playbackDoneTimer);
+          playbackDoneTimer = setTimeout(() => {
+            console.warn(
+              "⚠️ playback_done timeout (35s) — enabling STT anyway",
+            );
+            enableListeningAfterPlayback();
+          }, 35_000);
+          console.log(
+            `⏳ Waiting for playback_done (reconnect Q${currentOrder})`,
+          );
+        } catch (err) {
+          console.error("❌ reconnect resume:", err);
+          isProcessing = false;
+          awaitingPlaybackDone = false;
+        }
+        return;
+      }
+
       if (firstQuestionSent) return;
       session.isSetupMode = false;
       session.interviewStarted = true;
       isProcessing = true;
       firstQuestionSent = true;
       currentQText = firstQuestion.question;
+      session.currentQText = currentQText;
+      session.currentOrder = currentOrder;
 
       try {
-        // Emit question text to UI immediately (shows while TTS loads)
         socket.emit("question", { question: firstQuestion.question });
 
-        // Open Deepgram — starts PAUSED (idle timer off)
         await ensureDeepgramConn();
 
-        // Start egress in parallel — don't block
         startCompositeEgress(
           interviewId,
           `/recordings/${interviewId}/composite.mp4`,
@@ -364,23 +381,129 @@ async function handleInterviewSocket(
           })
           .catch(console.error);
 
-        // Stream TTS — Deepgram is paused so idle won't fire
+        // FIX 2: set awaitingPlaybackDone BEFORE awaiting TTS so a fast
+        // playback_done from the client is never missed
+        awaitingPlaybackDone = true;
         await streamTTSToClient(socket, firstQuestion.question, interviewId);
-        // ↑ tts_end has been emitted to client here
-
-        // NOW open mic and start idle countdown
-        isListeningActive = true;
-        isProcessing = false;
-        socket.emit("listening_enabled");
-        deepgramConn?.resumeIdleDetection?.(); // ← idle timer starts HERE
-        console.log(`✅ Listening for Q${currentOrder} answer`);
+        // Fallback: if client never sends playback_done, enable STT after 35s
+        if (playbackDoneTimer) clearTimeout(playbackDoneTimer);
+        playbackDoneTimer = setTimeout(() => {
+          console.warn("⚠️ playback_done timeout (35s) — enabling STT anyway");
+          enableListeningAfterPlayback();
+        }, 35_000);
+        console.log(`⏳ Waiting for playback_done (Q${currentOrder})`);
       } catch (err) {
         console.error("❌ client_ready:", err);
         socket.emit("error", { message: "Failed to start" });
         isProcessing = false;
         firstQuestionSent = false;
         session.interviewStarted = false;
+        awaitingPlaybackDone = false;
       }
+    });
+
+    // ══════════════════════════════════════════════════════════════════════
+    // playback_done — client's Web Audio queue is fully drained.
+    //
+    // THIS is the correct moment to open STT. The browser has finished
+    // playing every TTS audio chunk, so Deepgram will hear the user's
+    // voice and not the TTS voice bleeding through the microphone.
+    //
+    // IMPORTANT: Deepgram closes idle WebSocket connections after ~10s with
+    // no audio. TTS fetch (1.5s) + playback (~8-10s) easily exceeds this,
+    // so the STT connection is often dead by the time playback_done fires.
+    // We call ensureDeepgramConn() here to reconnect if needed before
+    // enabling listening — otherwise resumeIdleDetection() is a no-op on null.
+    // ══════════════════════════════════════════════════════════════════════
+    // ── playback_done fallback ────────────────────────────────────────────
+    // If the client never sends playback_done (AudioContext suspended,
+    // tab backgrounded, browser autoplay block) this timer fires after
+    // 35s and enables STT anyway so the interview is never stuck.
+    let playbackDoneTimer = null;
+
+    // FIX 1: enableListeningAfterPlayback — capture connSnapshot before the
+    // settle wait so onClose cannot null deepgramConn under our feet.
+    // Also bumped retries 3→4 and settle wait 300ms→500ms.
+    const enableListeningAfterPlayback = async () => {
+      if (playbackDoneTimer) {
+        clearTimeout(playbackDoneTimer);
+        playbackDoneTimer = null;
+      }
+      if (isInterviewEnded || !session.interviewStarted) return;
+      if (!awaitingPlaybackDone) return;
+      if (isListeningActive) return;
+
+      awaitingPlaybackDone = false;
+
+      // Retry loop: Deepgram sometimes closes immediately after connect because
+      // the previous connection's TCP teardown races with the new handshake.
+      // Wait 500ms after connect and verify isConnected() before proceeding.
+      let attempts = 0;
+      while (attempts < 4) {
+        // FIX 1a: 3 → 4
+        attempts++;
+        try {
+          await ensureDeepgramConn();
+        } catch (err) {
+          console.error(
+            `❌ STT connect attempt ${attempts} failed:`,
+            err.message,
+          );
+          if (attempts >= 4) {
+            socket.emit("error", {
+              message: "STT connection failed, please refresh.",
+            });
+            return;
+          }
+          await new Promise((r) => setTimeout(r, 600 * attempts));
+          continue;
+        }
+
+        // FIX 1b: capture the conn BEFORE the settle wait so onClose can null
+        // the outer deepgramConn ref without affecting our local snapshot.
+        const connSnapshot = deepgramConn;
+
+        // Brief settle — Deepgram can fire onClose right after onOpen if the
+        // previous WS is still tearing down on their side
+        await new Promise((r) => setTimeout(r, 500)); // FIX 1c: 300 → 500ms
+
+        // FIX 1d: check the snapshot, NOT the outer ref which may be null now
+        if (connSnapshot?.isConnected?.()) {
+          deepgramConn = connSnapshot; // re-assign if onClose nulled it
+          break;
+        }
+
+        console.warn(
+          `⚠️ Deepgram closed immediately after connect (attempt ${attempts}) — retrying`,
+        );
+        deepgramConn = null;
+        if (attempts >= 4) {
+          socket.emit("error", {
+            message: "STT connection failed, please refresh.",
+          });
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 600 * attempts));
+      }
+
+      if (!deepgramConn?.isConnected?.()) {
+        console.error("❌ Deepgram not connected after 4 attempts");
+        socket.emit("error", {
+          message: "STT connection failed, please refresh.",
+        });
+        return;
+      }
+
+      isListeningActive = true;
+      isProcessing = false;
+      socket.emit("listening_enabled");
+      deepgramConn.resumeIdleDetection();
+      console.log(`✅ Listening for Q${currentOrder}`);
+    };
+
+    socket.on("playback_done", () => {
+      console.log("🔊 playback_done received from client");
+      enableListeningAfterPlayback();
     });
 
     // ── LiveKit track events ───────────────────────────────────────────────
@@ -475,12 +598,10 @@ async function handleInterviewSocket(
     const relayMobile = (data, ack) => {
       session.lastMobileFrame = data.frame;
       if (session.desktopSocketId)
-        socket
-          .to(`interview_${interviewId}`)
-          .emit("mobile_camera_frame", {
-            frame: data.frame,
-            timestamp: data.timestamp ?? Date.now(),
-          });
+        socket.to(`interview_${interviewId}`).emit("mobile_camera_frame", {
+          frame: data.frame,
+          timestamp: data.timestamp ?? Date.now(),
+        });
       if (typeof ack === "function") ack();
     };
     socket.on("mobile_camera_frame", relayMobile);
@@ -586,17 +707,17 @@ async function handleInterviewSocket(
         clearTimeout(faceViolTimeout);
         faceViolTimeout = null;
       }
-      isProcessing = isListeningActive = false;
+      if (playbackDoneTimer) {
+        clearTimeout(playbackDoneTimer);
+        playbackDoneTimer = null;
+      }
+      isProcessing = isListeningActive = awaitingPlaybackDone = false;
     });
 
     socket.on("error", (e) => console.error("❌ socket error:", e));
 
     // ════════════════════════════════════════════════════════════════════════
-    // ensureDeepgramConn — creates or reuses the STT connection.
-    //
-    // The new connection from stt.service.js starts with idlePaused=true.
-    // We NEVER call resumeIdleDetection() here — only transitionToNextQuestion
-    // (and client_ready) call it, AFTER TTS finishes.
+    // ensureDeepgramConn
     // ════════════════════════════════════════════════════════════════════════
     function ensureDeepgramConn() {
       if (deepgramConn?.isConnected?.()) {
@@ -640,13 +761,13 @@ async function handleInterviewSocket(
               reject(e);
             }
           },
+          // FIX 3: only null the outer ref if it still points to THIS connection,
+          // preventing a race where onClose fires after a new conn is already assigned.
           onClose: () => {
-            console.warn("⚠️ Deepgram closed");
-            deepgramConn = null;
+            console.warn("⚠️ Deepgram connection closed");
+            if (deepgramConn === conn) deepgramConn = null;
           },
           onIdle: async () => {
-            // Only fires when isListeningActive AND IDLE_TIMEOUT_MS silence
-            // NEVER fires during TTS because idlePaused=true during playback
             if (isListeningActive && !isProcessing) await handleIdle();
           },
         });
@@ -685,31 +806,36 @@ async function handleInterviewSocket(
     // ════════════════════════════════════════════════════════════════════════
     // transitionToNextQuestion
     //
-    // Pattern for EVERY question transition:
-    //   1. pauseIdleDetection()   ← must be BEFORE TTS
-    //   2. streamTTSToClient()    ← tts_end fired when complete
-    //   3. resumeIdleDetection()  ← idle timer starts AFTER TTS done
+    // Sends TTS audio and sets awaitingPlaybackDone = true.
+    // STT is NOT re-enabled here — it is enabled in the playback_done handler
+    // once the client confirms the audio has finished playing.
     // ════════════════════════════════════════════════════════════════════════
     async function transitionToNextQuestion(text) {
       try {
         await ensureDeepgramConn();
 
-        // PAUSE before TTS — prevents idle firing during playback
         deepgramConn?.pauseIdleDetection?.();
         isListeningActive = false;
 
-        await streamTTSToClient(socket, text, interviewId);
-        // ↑ tts_end emitted here
+        // FIX 2: set flag BEFORE awaiting TTS so a fast playback_done from
+        // the client is never missed due to the await not having returned yet.
+        awaitingPlaybackDone = true;
 
-        // RESUME after TTS — idle countdown starts now
-        isListeningActive = true;
-        isProcessing = false;
-        socket.emit("listening_enabled");
-        deepgramConn?.resumeIdleDetection?.();
+        await streamTTSToClient(socket, text, interviewId);
+        // ↑ tts_end sent — client will emit playback_done when audio drains
+
+        // Fallback: if client never sends playback_done, enable STT after 35s
+        if (playbackDoneTimer) clearTimeout(playbackDoneTimer);
+        playbackDoneTimer = setTimeout(() => {
+          console.warn("⚠️ playback_done timeout (35s) — enabling STT anyway");
+          enableListeningAfterPlayback();
+        }, 35_000);
+        console.log(`⏳ Waiting for playback_done (Q${currentOrder})`);
       } catch (err) {
         console.error("❌ transition:", err);
         socket.emit("error", { message: "Speech error" });
         isProcessing = false;
+        awaitingPlaybackDone = false;
       }
     }
 
@@ -753,6 +879,8 @@ async function handleInterviewSocket(
         });
         currentOrder = nextOrder;
         currentQText = text;
+        session.currentOrder = currentOrder;
+        session.currentQText = currentQText;
         awaitingRepeat = false;
         socket.emit("next_question", { question: text });
         await transitionToNextQuestion(text);
@@ -810,6 +938,8 @@ async function handleInterviewSocket(
         ]);
         currentOrder = nextOrder;
         currentQText = nextQ.question;
+        session.currentOrder = currentOrder;
+        session.currentQText = currentQText;
         awaitingRepeat = false;
         socket.emit("next_question", { question: nextQ.question });
         await transitionToNextQuestion(nextQ.question);
@@ -844,6 +974,11 @@ async function handleInterviewSocket(
       if (isInterviewEnded) return;
       isInterviewEnded = true;
       isListeningActive = false;
+      awaitingPlaybackDone = false;
+      if (playbackDoneTimer) {
+        clearTimeout(playbackDoneTimer);
+        playbackDoneTimer = null;
+      }
       socket.emit("listening_disabled");
       socket.emit("interview_complete", {
         message: "Interview complete!",

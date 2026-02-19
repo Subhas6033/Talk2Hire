@@ -19,7 +19,6 @@ const TTS_CONTAINER = "none";
 const TTS_API_URL = "https://api.deepgram.com/v1/speak";
 
 function createTTSStream() {
-  // Tracks when the currently-playing speak call has finished
   let currentDone = Promise.resolve();
 
   async function speakStream(text, onChunk) {
@@ -28,12 +27,8 @@ function createTTSStream() {
       return;
     }
 
-    // Start fetching audio immediately — no waiting
     const fetchPromise = _fetchAudio(text);
 
-    // Wait for the previous call to fully finish (emit its null) before
-    // we start handing chunks to onChunk. The fetch itself is already
-    // running in parallel so there is zero extra network delay.
     const previousDone = currentDone;
     let resolveDone;
     currentDone = new Promise((res) => {
@@ -41,8 +36,8 @@ function createTTSStream() {
     });
 
     try {
-      await previousDone; // wait for Q1 to finish playing, not fetching
-      const chunks = await fetchPromise; // already done or nearly done by now
+      await previousDone;
+      const chunks = await fetchPromise;
       for (const chunk of chunks) {
         onChunk?.(chunk);
       }

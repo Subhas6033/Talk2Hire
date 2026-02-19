@@ -3,13 +3,8 @@ import { useRef, useCallback, useEffect } from "react";
 const TTS_SAMPLE_RATE = 48000;
 const NUM_CHANNELS = 1;
 const BITS_PER_SAMPLE = 16;
-const INITIAL_BUFFER_S = 0.05; // 50ms head-start — reduced from 80ms for lower latency
+const INITIAL_BUFFER_S = 0.05;
 
-/**
- * Wrap raw PCM16-LE bytes in a WAV header so decodeAudioData() can parse them.
- * Without this header the browser throws "Unable to decode audio data" because
- * it doesn't know sample rate, channel count, or encoding.
- */
 function pcm16ToWav(
   pcmBuffer,
   sampleRate = TTS_SAMPLE_RATE,
@@ -32,8 +27,8 @@ function pcm16ToWav(
   view.setUint32(4, wavLen - 8, true);
   writeStr(8, "WAVE");
   writeStr(12, "fmt ");
-  view.setUint32(16, 16, true); // PCM fmt chunk size
-  view.setUint16(20, 1, true); // AudioFormat = PCM
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
   view.setUint16(22, numChannels, true);
   view.setUint32(24, sampleRate, true);
   view.setUint32(28, byteRate, true);
@@ -42,10 +37,21 @@ function pcm16ToWav(
   writeStr(36, "data");
   view.setUint32(40, dataLen, true);
   new Uint8Array(wav, 44).set(new Uint8Array(pcmBuffer));
-
   return wav;
 }
 
+/**
+ * useTTS — PCM16 audio playback hook
+ *
+ * Usage (wire these up in your component):
+ *   const { enqueueTTSChunk, flushTTS, resetTTS } = useTTS({ onPlayStart, onPlayEnd });
+ *   socket.on("tts_audio", ({ audio }) => enqueueTTSChunk(audio));
+ *   socket.on("tts_end",   ()          => flushTTS(() => socket.emit("playback_done")));
+ *
+ * flushTTS(onDone) — fires onDone() when Web Audio queue fully drains,
+ * OR after a 30s safety timeout if Web Audio never fires onended
+ * (e.g. AudioContext suspended by browser autoplay policy).
+ */
 export function useTTS({ onPlayStart, onPlayEnd }) {
   const ttsCtxRef = useRef(null);
   const decodedQueueRef = useRef([]);
@@ -53,16 +59,19 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
   const isDecodingRef = useRef(false);
   const nextStartTimeRef = useRef(0);
   const isPlayingRef = useRef(false);
-  const flushRequestedRef = useRef(false);
   const activeSourcesRef = useRef(new Set());
+  const onDoneRef = useRef(null);
+  const flushRequestedRef = useRef(false);
+  const doneCalledRef = useRef(false); // guards against double-fire
+  const fallbackTimerRef = useRef(null);
 
+  // ── AudioContext ────────────────────────────────────────────────────────
   const getTTSCtx = useCallback(() => {
     if (ttsCtxRef.current && ttsCtxRef.current.state !== "closed")
       return ttsCtxRef.current;
-
     const ctx = new (window.AudioContext || window.webkitAudioContext)({
       latencyHint: "interactive",
-      sampleRate: TTS_SAMPLE_RATE, // 48kHz — must match tts.service.js
+      sampleRate: TTS_SAMPLE_RATE,
     });
     ttsCtxRef.current = ctx;
     return ctx;
@@ -70,14 +79,56 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
 
   const ensureTTSCtxRunning = useCallback(async () => {
     const ctx = getTTSCtx();
-    if (ctx.state === "suspended") await ctx.resume();
+    // Must resume BEFORE scheduling audio — suspended context won't fire onended
+    if (ctx.state === "suspended") {
+      try {
+        await ctx.resume();
+      } catch (_) {}
+    }
     return ctx;
   }, [getTTSCtx]);
 
+  // ── fireDone — called exactly once when playback is complete ───────────
+  const fireDone = useCallback(() => {
+    if (doneCalledRef.current) return; // prevent double-fire
+    doneCalledRef.current = true;
+
+    // Cancel fallback timer since we fired naturally
+    if (fallbackTimerRef.current) {
+      clearTimeout(fallbackTimerRef.current);
+      fallbackTimerRef.current = null;
+    }
+
+    isPlayingRef.current = false;
+    nextStartTimeRef.current = 0;
+    flushRequestedRef.current = false;
+
+    const cb = onDoneRef.current;
+    onDoneRef.current = null;
+
+    console.log("🔊 Playback fully done → firing playback_done");
+    try {
+      cb?.();
+    } catch (e) {
+      console.error("onDone error:", e);
+    }
+    onPlayEnd?.();
+  }, [onPlayEnd]);
+
+  // ── scheduleNext ────────────────────────────────────────────────────────
   const scheduleNext = useCallback(() => {
     if (decodedQueueRef.current.length === 0) return;
     const ctx = ttsCtxRef.current;
     if (!ctx || ctx.state === "closed") return;
+
+    // If context is still suspended here, audio won't play — resume it
+    if (ctx.state === "suspended") {
+      ctx
+        .resume()
+        .then(() => scheduleNext())
+        .catch(() => {});
+      return;
+    }
 
     const buffer = decodedQueueRef.current.shift();
 
@@ -100,26 +151,19 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
         return;
       }
       if (pendingDecodeRef.current.length > 0 || isDecodingRef.current) return;
-
-      if (flushRequestedRef.current) {
-        isPlayingRef.current = false;
-        nextStartTimeRef.current = 0;
-        flushRequestedRef.current = false;
-        onPlayEnd?.();
-      }
+      if (flushRequestedRef.current) fireDone();
     };
 
     source.start(nextStartTimeRef.current);
     nextStartTimeRef.current += buffer.duration;
-  }, [onPlayStart, onPlayEnd]);
+  }, [onPlayStart, fireDone]);
 
-  // Batch-decode all pending chunks in parallel — key fix for linear16 lag
+  // ── drainDecodeQueue ────────────────────────────────────────────────────
   const drainDecodeQueue = useCallback(async () => {
     if (isDecodingRef.current || pendingDecodeRef.current.length === 0) return;
     isDecodingRef.current = true;
 
     while (pendingDecodeRef.current.length > 0) {
-      // Grab all currently pending chunks and decode them simultaneously
       const batch = pendingDecodeRef.current.splice(0);
       const ctx = await ensureTTSCtxRunning();
 
@@ -130,7 +174,6 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
             const bytes = new Uint8Array(binary.length);
             for (let i = 0; i < binary.length; i++)
               bytes[i] = binary.charCodeAt(i);
-
             const wavBuffer = pcm16ToWav(bytes.buffer);
             return await ctx.decodeAudioData(wavBuffer);
           } catch (err) {
@@ -140,7 +183,6 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
         }),
       );
 
-      // Push decoded buffers in order, schedule each one
       results.forEach((buf) => {
         if (buf) {
           decodedQueueRef.current.push(buf);
@@ -151,19 +193,17 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
 
     isDecodingRef.current = false;
 
-    // Edge case: flush requested but all chunks failed decode
+    // Edge case: flush requested, all decoded/failed, nothing playing
     if (
       flushRequestedRef.current &&
       decodedQueueRef.current.length === 0 &&
       activeSourcesRef.current.size === 0
     ) {
-      isPlayingRef.current = false;
-      nextStartTimeRef.current = 0;
-      flushRequestedRef.current = false;
-      onPlayEnd?.();
+      fireDone();
     }
-  }, [ensureTTSCtxRunning, scheduleNext, onPlayEnd]);
+  }, [ensureTTSCtxRunning, scheduleNext, fireDone]);
 
+  // ── enqueueTTSChunk ─────────────────────────────────────────────────────
   const enqueueTTSChunk = useCallback(
     (base64) => {
       if (!base64) return;
@@ -173,19 +213,57 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
     [drainDecodeQueue],
   );
 
-  const flushTTS = useCallback(() => {
-    flushRequestedRef.current = true;
-    if (
-      !isPlayingRef.current &&
-      !isDecodingRef.current &&
-      pendingDecodeRef.current.length === 0 &&
-      decodedQueueRef.current.length === 0
-    ) {
-      onPlayEnd?.();
-    }
-  }, [onPlayEnd]);
+  // ── flushTTS ────────────────────────────────────────────────────────────
+  /**
+   * Call on tts_end. onDone fires when audio fully plays.
+   * 30s fallback fires onDone if Web Audio never calls onended
+   * (AudioContext blocked by browser autoplay, tab hidden, etc.)
+   *
+   * socket.on("tts_end", () => flushTTS(() => socket.emit("playback_done")));
+   */
+  const flushTTS = useCallback(
+    (onDone) => {
+      // Cancel previous fallback timer FIRST, then reset the double-fire guard.
+      // If we reset doneCalledRef before clearing the old timer, the old timer
+      // fires into the new cycle and emits a stale playback_done — causing the
+      // next question's TTS to never play because awaitingPlaybackDone is false.
+      if (fallbackTimerRef.current) {
+        clearTimeout(fallbackTimerRef.current);
+        fallbackTimerRef.current = null;
+      }
+      doneCalledRef.current = false;
+      onDoneRef.current = onDone ?? null;
+      flushRequestedRef.current = true;
 
+      // Safety fallback: fires if Web Audio onended never triggers
+      fallbackTimerRef.current = setTimeout(() => {
+        if (!doneCalledRef.current) {
+          console.warn(
+            "⚠️ TTS playback fallback timer fired (30s) — forcing done",
+          );
+          fireDone();
+        }
+      }, 30_000);
+
+      const nothingPending =
+        pendingDecodeRef.current.length === 0 && !isDecodingRef.current;
+      const nothingQueued = decodedQueueRef.current.length === 0;
+      const nothingPlaying = activeSourcesRef.current.size === 0;
+
+      if (nothingPending && nothingQueued && nothingPlaying) {
+        // No audio received at all — fire immediately
+        fireDone();
+      }
+    },
+    [fireDone],
+  );
+
+  // ── resetTTS ────────────────────────────────────────────────────────────
   const resetTTS = useCallback(() => {
+    if (fallbackTimerRef.current) {
+      clearTimeout(fallbackTimerRef.current);
+      fallbackTimerRef.current = null;
+    }
     activeSourcesRef.current.forEach((src) => {
       try {
         src.stop();
@@ -198,21 +276,27 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
     isPlayingRef.current = false;
     nextStartTimeRef.current = 0;
     flushRequestedRef.current = false;
+    onDoneRef.current = null;
+    doneCalledRef.current = false;
   }, []);
 
+  // ── Resume AudioContext on user interaction ─────────────────────────────
   useEffect(() => {
     const resume = () => {
       const ctx = ttsCtxRef.current;
-      if (ctx?.state === "suspended") ctx.resume();
+      if (ctx?.state === "suspended") ctx.resume().catch(() => {});
     };
     document.addEventListener("click", resume);
     document.addEventListener("keydown", resume);
+    document.addEventListener("touchstart", resume);
     return () => {
       document.removeEventListener("click", resume);
       document.removeEventListener("keydown", resume);
+      document.removeEventListener("touchstart", resume);
     };
   }, []);
 
+  // ── Cleanup on unmount ──────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       resetTTS();

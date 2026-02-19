@@ -216,10 +216,15 @@ const InterviewLive = () => {
     }
   }, []);
 
+  // FIX 4: Reset mobileTrackScanDoneRef if no track was actually attached so
+  // the next poll attempt can re-scan (handles the case where the participant
+  // was found but their track wasn't subscribed yet at scan time).
   const scanForExistingMobileTracks = useCallback(
     (room) => {
       if (mobileTrackScanDoneRef.current) return;
       mobileTrackScanDoneRef.current = true;
+
+      let attached = false;
       room.remoteParticipants.forEach((p) => {
         if (!p.identity?.startsWith("mobile_")) return;
         console.log("📱 Retroactive scan — found:", p.identity);
@@ -228,13 +233,29 @@ const InterviewLive = () => {
           if (pub.kind === Track.Kind.Video && pub.isSubscribed && pub.track) {
             console.log("📱 Attaching existing track:", pub.trackSid);
             attachMobileTrack(pub.track);
+            attached = true;
+          } else if (pub.kind === Track.Kind.Video) {
+            console.log(
+              "📱 Track found but not yet subscribed — waiting for TrackSubscribed:",
+              pub.trackSid,
+            );
           }
         });
       });
+
+      // FIX 4: if we found participants but couldn't attach (not subscribed
+      // yet), reset the flag so TrackSubscribed or a future scan can retry.
+      if (!attached) {
+        mobileTrackScanDoneRef.current = false;
+      }
     },
     [attachMobileTrack],
   );
 
+  // FIX 5: Extended poll timeout 60s → 90s, added RoomEvent.Reconnected
+  // handler to re-scan after LiveKit reconnects, and reset + re-scan
+  // immediately on ParticipantConnected since the participant may have
+  // already published their track by the time that event fires.
   useEffect(() => {
     let stopped = false;
     let pollTimer = null;
@@ -275,6 +296,9 @@ const InterviewLive = () => {
         if (!p.identity?.startsWith("mobile_")) return;
         console.log(`📱 Mobile participant joined: ${p.identity}`);
         setMobileCameraConnected(true);
+        // FIX 5a: scan immediately — participant may have already published
+        mobileTrackScanDoneRef.current = false;
+        scanForExistingMobileTracks(room);
       };
       const onParticipantDisconnected = (p) => {
         if (!p.identity?.startsWith("mobile_")) return;
@@ -283,12 +307,20 @@ const InterviewLive = () => {
         mobileTrackScanDoneRef.current = false;
         console.log("📱 Mobile participant left");
       };
+      // FIX 5b: re-scan after LiveKit reconnect in case mobile rejoined
+      // during the disconnect window.
+      const onReconnected = () => {
+        console.log("🔄 LiveKit reconnected — re-scanning for mobile tracks");
+        mobileTrackScanDoneRef.current = false;
+        scanForExistingMobileTracks(room);
+      };
 
       room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
       room.on(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
       room.on(RoomEvent.TrackPublished, onTrackPublished);
       room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
       room.on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
+      room.on(RoomEvent.Reconnected, onReconnected); // FIX 5b
 
       return () => {
         room.off(RoomEvent.TrackSubscribed, onTrackSubscribed);
@@ -296,6 +328,7 @@ const InterviewLive = () => {
         room.off(RoomEvent.TrackPublished, onTrackPublished);
         room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
         room.off(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
+        room.off(RoomEvent.Reconnected, onReconnected); // FIX 5b
       };
     };
 
@@ -317,7 +350,7 @@ const InterviewLive = () => {
           return;
         }
         elapsed += 300;
-        if (tryBind() || elapsed >= 60_000) clearInterval(pollTimer);
+        if (tryBind() || elapsed >= 90_000) clearInterval(pollTimer); // FIX 5c: 60s → 90s
       }, 300);
     }
 
@@ -475,7 +508,9 @@ const InterviewLive = () => {
         socket.on("tts_audio", (d) => {
           if (d) interview.handleTtsAudio(d);
         });
-        socket.on("tts_end", () => interview.handleTtsEnd());
+        socket.on("tts_end", () =>
+          interview.handleTtsEnd(() => socket.emit("playback_done")),
+        );
         socket.on("idle_prompt", (d) => interview.handleIdlePrompt(d));
         socket.on("interim_transcript", (d) => interview.setLiveTranscript(d));
         socket.on("transcript_received", (d) =>
@@ -526,6 +561,7 @@ const InterviewLive = () => {
             navigate("/interview");
           }
         });
+
         socket.on("connect_error", (e) =>
           console.error("❌ connect_error:", e.message),
         );
