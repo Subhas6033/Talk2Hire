@@ -10,7 +10,7 @@ import { useStreams } from "../../Hooks/streamContext";
 import streamStore from "../../Hooks/streamSingleton";
 import { RoomEvent, Track } from "livekit-client";
 
-// Module-level flags prevent double-init across React StrictMode mounts
+// Module-level flags prevent double-init across React StrictMode double-mounts
 let _globalSocketInitialized = false;
 let _globalClientReadyEmitted = false;
 
@@ -18,7 +18,7 @@ const InterviewLive = () => {
   const navigate = useNavigate();
   const streamsRef = useStreams();
 
-  // ── Snapshot session data once on first render ─────────────────────────────
+  // ── Snapshot stable session data once on very first render ────────────────
   const stableRef = useRef(null);
   if (!stableRef.current) {
     const src = streamStore.sessionData ? streamStore : streamsRef.current;
@@ -42,6 +42,26 @@ const InterviewLive = () => {
   const preWarmComplete = stableRef.current?.preWarmComplete ?? {};
 
   const screenShareStreamRef = useRef(null);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // TOKEN BUFFER
+  // The server emits livekit_token immediately after the socket connects.
+  // Because our main init effect runs asynchronously, the token event can
+  // arrive before socket.on("livekit_token", …) is registered.
+  // We pre-attach a one-shot listener on the raw socket that buffers the
+  // payload; the init effect drains it as soon as it is ready.
+  // ─────────────────────────────────────────────────────────────────────────
+  const pendingLkTokenRef = useRef(null);
+  useEffect(() => {
+    const socket = preInitializedSocket;
+    if (!socket) return;
+    const earlyHandler = (data) => {
+      console.log("📦 livekit_token buffered (arrived before init)");
+      pendingLkTokenRef.current = data;
+    };
+    socket.once("livekit_token", earlyHandler);
+    return () => socket.off("livekit_token", earlyHandler);
+  }, []); // eslint-disable-line
 
   // ── Core hooks ─────────────────────────────────────────────────────────────
   const interview = useInterview(
@@ -72,14 +92,15 @@ const InterviewLive = () => {
   );
 
   // ── DOM refs ───────────────────────────────────────────────────────────────
-  const videoRef = useRef(null); // primary camera preview
-  const mobileVideoRef = useRef(null); // mobile camera — LiveKit remote track
+  const videoRef = useRef(null); // primary camera
+  const mobileVideoRef = useRef(null); // mobile LiveKit remote track
   const screenVideoRef = useRef(null); // screen share preview
 
-  // ── Recording / flow control refs ─────────────────────────────────────────
+  // ── Control refs ───────────────────────────────────────────────────────────
   const recordingsStartedRef = useRef(false);
   const isLeavingRef = useRef(false);
   const screenVideoActiveRef = useRef(false);
+  const mobileTrackScanDoneRef = useRef(false); // prevent duplicate retroactive scan
 
   // ── UI state ───────────────────────────────────────────────────────────────
   const [evaluationStatus, setEvaluationStatus] = useState(null);
@@ -93,14 +114,14 @@ const InterviewLive = () => {
   const [screenVideoActive, setScreenVideoActive] = useState(false);
   const [socketReady, setSocketReady] = useState(false);
 
-  // ── Face detection (holistic) ──────────────────────────────────────────────
+  // ── Face detection ─────────────────────────────────────────────────────────
   useHolisticDetection(
     videoRef,
     interview.socketRef,
     interview.status === "live" && !interview.isInitializing,
   );
 
-  // ── Cleanup global flags on unmount ───────────────────────────────────────
+  // ── Reset module flags on unmount ─────────────────────────────────────────
   useEffect(() => {
     return () => {
       _globalSocketInitialized = false;
@@ -108,7 +129,7 @@ const InterviewLive = () => {
     };
   }, []);
 
-  // ── Redirect if no session ─────────────────────────────────────────────────
+  // ── Redirect if session missing ────────────────────────────────────────────
   useEffect(() => {
     if (!sessionData) {
       const t = setTimeout(() => {
@@ -119,7 +140,6 @@ const InterviewLive = () => {
     }
   }, []); // eslint-disable-line
 
-  // ── Stop all active recordings ─────────────────────────────────────────────
   const cleanupAllRecordings = useCallback(async () => {
     const jobs = [];
     if (isVideoRecording) jobs.push(stopVideoRecording().catch(console.error));
@@ -139,78 +159,176 @@ const InterviewLive = () => {
     videoRef.current.srcObject = primaryCameraStream;
     videoRef.current.muted = true;
     videoRef.current.play().catch((e) => {
-      if (e.name !== "AbortError") console.error("Primary video play:", e);
+      if (e.name !== "AbortError") console.error("Primary cam:", e);
     });
   }, []); // eslint-disable-line
 
-  // ── Attach mobile LiveKit remote track to preview <video> ─────────────────
-  // Runs whenever the LiveKit room becomes available.
-  // The hook already subscribes to remote tracks — we hook into RoomEvent here
-  // to catch the mobile participant's video track and attach it to mobileVideoRef.
-  useEffect(() => {
-    const room = interview.livekitRoomRef?.current;
-    if (!room) return;
-
-    const handleTrackSubscribed = (track, _pub, participant) => {
-      // Only handle the mobile participant's video
-      if (
-        track.kind !== Track.Kind.Video ||
-        !participant.identity?.startsWith("mobile_")
-      )
-        return;
-
-      const videoEl = mobileVideoRef.current;
-      if (!videoEl) return;
-
-      track.attach(videoEl);
-      setMobileTrackAttached(true);
-      setMobileCameraConnected(true);
-      console.log("📱 Mobile camera LiveKit track attached");
-    };
-
-    const handleTrackUnsubscribed = (track, _pub, participant) => {
-      if (
-        track.kind !== Track.Kind.Video ||
-        !participant.identity?.startsWith("mobile_")
-      )
-        return;
-
-      track.detach();
-      setMobileTrackAttached(false);
-      console.log("📱 Mobile camera track detached");
-    };
-
-    const handleParticipantDisconnected = (participant) => {
-      if (!participant.identity?.startsWith("mobile_")) return;
-      setMobileCameraConnected(false);
-      setMobileTrackAttached(false);
-    };
-
-    room.on(RoomEvent.TrackSubscribed, handleTrackSubscribed);
-    room.on(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
-    room.on(RoomEvent.ParticipantDisconnected, handleParticipantDisconnected);
-
-    // Handle case where mobile participant already joined before this effect ran
-    room.remoteParticipants.forEach((participant) => {
-      if (!participant.identity?.startsWith("mobile_")) return;
-      participant.trackPublications.forEach((pub) => {
-        if (pub.track?.kind === Track.Kind.Video && pub.isSubscribed) {
-          handleTrackSubscribed(pub.track, pub, participant);
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MOBILE CAMERA — LiveKit remote track
+  //
+  // WHY IT SHOWED "JOINING" FOREVER:
+  //
+  // 1. `interview.livekitRoomRef.current` is null when the component mounts.
+  //    The room only connects after handleLiveKitToken() is called, which is
+  //    called from the socket listener registered in the main init effect.
+  //
+  // 2. The token event arrives quickly — sometimes BEFORE the socket listener
+  //    is registered (hence the buffer above).  Even with the buffer, the room
+  //    connect is async and happens ~50-200 ms later.
+  //
+  // 3. A useEffect([]) dependency on a ref VALUE does not re-run.  So the
+  //    old code ran once at mount, found room=null, registered no listeners,
+  //    and never tried again.
+  //
+  // FIX: Poll for the room every 300 ms.  The moment it appears, bind all
+  // LiveKit room events AND do a retroactive scan for participants/tracks that
+  // already exist (mobile may have joined before we were listening).
+  // ═══════════════════════════════════════════════════════════════════════════
+  const attachMobileTrack = useCallback((track) => {
+    const el = mobileVideoRef.current;
+    if (!el) {
+      // Element may not be in DOM yet (e.g. React hasn't committed yet).
+      // Retry on next animation frame.
+      requestAnimationFrame(() => {
+        const el2 = mobileVideoRef.current;
+        if (!el2) {
+          console.error("❌ mobileVideoRef still null");
+          return;
+        }
+        try {
+          track.attach(el2);
+          setMobileTrackAttached(true);
+          setMobileCameraConnected(true);
+          console.log("📱 Mobile track attached (rAF retry) ✅");
+        } catch (e) {
+          console.error("❌ attach (retry):", e);
         }
       });
-    });
+      return;
+    }
+    try {
+      track.attach(el);
+      setMobileTrackAttached(true);
+      setMobileCameraConnected(true);
+      console.log("📱 Mobile LiveKit track attached ✅");
+    } catch (e) {
+      console.error("❌ attach:", e);
+    }
+  }, []);
+
+  const scanForExistingMobileTracks = useCallback(
+    (room) => {
+      if (mobileTrackScanDoneRef.current) return;
+      mobileTrackScanDoneRef.current = true;
+      room.remoteParticipants.forEach((p) => {
+        if (!p.identity?.startsWith("mobile_")) return;
+        console.log("📱 Retroactive scan — found:", p.identity);
+        setMobileCameraConnected(true);
+        p.trackPublications.forEach((pub) => {
+          if (pub.kind === Track.Kind.Video && pub.isSubscribed && pub.track) {
+            console.log("📱 Attaching existing track:", pub.trackSid);
+            attachMobileTrack(pub.track);
+          }
+        });
+      });
+    },
+    [attachMobileTrack],
+  );
+
+  useEffect(() => {
+    let stopped = false;
+    let pollTimer = null;
+    let roomCleanup = null;
+
+    const bindRoom = (room) => {
+      // Retroactive scan first — mobile may have already published
+      scanForExistingMobileTracks(room);
+
+      const onTrackSubscribed = (track, _pub, p) => {
+        if (
+          track.kind !== Track.Kind.Video ||
+          !p.identity?.startsWith("mobile_")
+        )
+          return;
+        console.log(`📱 TrackSubscribed from ${p.identity}`);
+        attachMobileTrack(track);
+      };
+      const onTrackUnsubscribed = (track, _pub, p) => {
+        if (
+          track.kind !== Track.Kind.Video ||
+          !p.identity?.startsWith("mobile_")
+        )
+          return;
+        try {
+          track.detach();
+        } catch (_) {}
+        setMobileTrackAttached(false);
+        console.log("📱 Mobile track detached");
+      };
+      const onTrackPublished = (pub, p) => {
+        if (pub.kind !== Track.Kind.Video || !p.identity?.startsWith("mobile_"))
+          return;
+        console.log(`📱 TrackPublished — subscribed=${pub.isSubscribed}`);
+        if (pub.isSubscribed && pub.track) attachMobileTrack(pub.track);
+      };
+      const onParticipantConnected = (p) => {
+        if (!p.identity?.startsWith("mobile_")) return;
+        console.log(`📱 Mobile participant joined: ${p.identity}`);
+        setMobileCameraConnected(true);
+      };
+      const onParticipantDisconnected = (p) => {
+        if (!p.identity?.startsWith("mobile_")) return;
+        setMobileCameraConnected(false);
+        setMobileTrackAttached(false);
+        mobileTrackScanDoneRef.current = false;
+        console.log("📱 Mobile participant left");
+      };
+
+      room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
+      room.on(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
+      room.on(RoomEvent.TrackPublished, onTrackPublished);
+      room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
+      room.on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
+
+      return () => {
+        room.off(RoomEvent.TrackSubscribed, onTrackSubscribed);
+        room.off(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
+        room.off(RoomEvent.TrackPublished, onTrackPublished);
+        room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
+        room.off(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
+      };
+    };
+
+    const tryBind = () => {
+      const room = interview.livekitRoomRef?.current;
+      if (!room) return false;
+      clearInterval(pollTimer);
+      pollTimer = null;
+      roomCleanup = bindRoom(room);
+      return true;
+    };
+
+    // Immediate attempt
+    if (!tryBind()) {
+      let elapsed = 0;
+      pollTimer = setInterval(() => {
+        if (stopped) {
+          clearInterval(pollTimer);
+          return;
+        }
+        elapsed += 300;
+        if (tryBind() || elapsed >= 60_000) clearInterval(pollTimer);
+      }, 300);
+    }
 
     return () => {
-      room.off(RoomEvent.TrackSubscribed, handleTrackSubscribed);
-      room.off(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
-      room.off(
-        RoomEvent.ParticipantDisconnected,
-        handleParticipantDisconnected,
-      );
+      stopped = true;
+      if (pollTimer) clearInterval(pollTimer);
+      if (roomCleanup) roomCleanup();
     };
-  }, [interview.livekitRoomRef?.current]); // re-run when room connects
+  }, []); // eslint-disable-line — intentional; polls internally
 
-  // ── Attach screen share to preview <video> ─────────────────────────────────
+  // ── Screen share preview ───────────────────────────────────────────────────
   const attachScreenVideo = useCallback(() => {
     const vid = screenVideoRef.current;
     if (!vid) return false;
@@ -259,23 +377,33 @@ const InterviewLive = () => {
     const cleanup = attachScreenVideo();
     if (cleanup) return cleanup;
     let retries = 0;
-    let activeCleanup = null;
-    const timer = setInterval(() => {
+    let active = null;
+    const t = setInterval(() => {
       retries++;
-      const c = attachScreenVideo();
-      if (c) {
-        activeCleanup = c;
-        clearInterval(timer);
-      } else if (retries >= 100) clearInterval(timer);
+      active = attachScreenVideo();
+      if (active || retries >= 100) clearInterval(t);
     }, 100);
     return () => {
-      clearInterval(timer);
-      if (activeCleanup) activeCleanup();
+      clearInterval(t);
+      if (active) active();
     };
   }, []); // eslint-disable-line
 
   // ═══════════════════════════════════════════════════════════════════════════
   // MAIN SOCKET INIT
+  //
+  // KEY ORDER (each step is sequential / explained):
+  //
+  //   1. Register livekit_token listener FIRST (drain buffer if it already
+  //      arrived early) so room.connect() starts ASAP.
+  //   2. Register all other socket listeners.
+  //   3. Mark Redux state as "live".
+  //   4. Poll secondary camera status.
+  //   5. Call autoStartInterview — this waits internally for the room before
+  //      publishing the mic, so Deepgram gets LiveKit audio not socket PCM.
+  //   6. Emit client_ready — this triggers the server to start TTS/Deepgram.
+  //      By now the room is connecting in the background, so it's likely ready
+  //      before the first question finishes playing.
   // ═══════════════════════════════════════════════════════════════════════════
   useEffect(() => {
     if (_globalSocketInitialized || !sessionData || !preInitializedSocket)
@@ -286,33 +414,44 @@ const InterviewLive = () => {
 
     const init = async () => {
       try {
+        // Wait for socket connection (pre-initialised by InterviewSetup)
         let retries = 0;
-        while (!socket.connected && retries < 30) {
+        while (!socket.connected && retries < 50) {
           await new Promise((r) => setTimeout(r, 200));
           retries++;
         }
         if (!socket.connected) {
-          console.error("❌ Socket never connected");
+          console.error("❌ Pre-init socket never connected");
           _globalSocketInitialized = false;
           navigate("/interview");
           return;
         }
 
         interview.socketRef.current = socket;
-        setSocketReady(true);
 
-        // ── Secondary camera — now only used for connected status ──────────
-        // Frame relay events are no longer needed since mobile streams via LiveKit.
-        // We keep secondary_camera_ready / status for the connection indicator.
-        socket.on("secondary_camera_ready", () => {
-          console.log("📱 Secondary camera connected via LiveKit");
-          setMobileCameraConnected(true);
-        });
-        socket.on("secondary_camera_status", (d) => {
-          if (d.connected) setMobileCameraConnected(true);
-        });
+        // ── 1. livekit_token — MUST come first ────────────────────────────
+        const handleToken = (data) => {
+          console.log("🔑 livekit_token → joining room");
+          // Remove the early-buffer handler if it hasn't fired yet
+          socket.off("livekit_token", earlyBufferHandler);
+          interview.handleLiveKitToken(data).catch(console.error);
+        };
 
-        // ── Debug logging ──────────────────────────────────────────────────
+        // eslint-disable-next-line no-use-before-define
+        const earlyBufferHandler = () => {}; // placeholder; defined below
+        socket.off("livekit_token"); // remove early-buffer handler registered at mount
+
+        // Drain the buffer
+        if (pendingLkTokenRef.current) {
+          console.log("🔑 Draining buffered livekit_token");
+          interview
+            .handleLiveKitToken(pendingLkTokenRef.current)
+            .catch(console.error);
+          pendingLkTokenRef.current = null;
+        }
+        socket.on("livekit_token", handleToken);
+
+        // ── 2. All other listeners ─────────────────────────────────────────
         const silenced = new Set([
           "user_audio_chunk",
           "video_chunk",
@@ -321,10 +460,16 @@ const InterviewLive = () => {
           "interim_transcript",
         ]);
         socket.onAny((ev) => {
-          if (!silenced.has(ev)) console.log(`📡 [socket] "${ev}"`);
+          if (!silenced.has(ev)) console.log(`📡 "${ev}"`);
         });
 
-        // ── Core interview events ──────────────────────────────────────────
+        socket.on("secondary_camera_ready", () =>
+          setMobileCameraConnected(true),
+        );
+        socket.on("secondary_camera_status", (d) => {
+          if (d?.connected) setMobileCameraConnected(true);
+        });
+
         socket.on("question", (d) => interview.handleQuestion(d));
         socket.on("next_question", (d) => interview.handleNextQuestion(d));
         socket.on("tts_audio", (d) => {
@@ -338,9 +483,6 @@ const InterviewLive = () => {
         );
         socket.on("listening_enabled", () => interview.enableListening());
         socket.on("listening_disabled", () => interview.disableListening());
-        socket.on("livekit_token", (data) =>
-          interview.handleLiveKitToken(data),
-        );
 
         socket.on("interview_complete", async (d) => {
           interview.handleInterviewComplete(d);
@@ -369,13 +511,13 @@ const InterviewLive = () => {
         });
         socket.on("evaluation_error", () => setEvaluationStatus("error"));
         socket.on("media_merge_complete", (d) =>
-          console.log(" Media merge:", d.finalVideoUrl),
+          console.log("✅ Merge:", d.finalVideoUrl),
         );
         socket.on("audio_recording_error", (d) =>
-          console.error("❌ Audio error:", d),
+          console.error("❌ Audio recording:", d),
         );
         socket.on("video_recording_error", (d) =>
-          console.error("❌ Video error:", d),
+          console.error("❌ Video recording:", d),
         );
 
         socket.on("disconnect", (reason) => {
@@ -385,11 +527,11 @@ const InterviewLive = () => {
           }
         });
         socket.on("connect_error", (e) =>
-          console.error("❌ Connect error:", e.message),
+          console.error("❌ connect_error:", e.message),
         );
         socket.on("error", () => interview.setStatus("error"));
 
-        // ── Mark interview live ────────────────────────────────────────────
+        // ── 3. Mark interview live ─────────────────────────────────────────
         interview.setStatus("live");
         interview.setServerReady(true);
         interview.setIsInitializing(false);
@@ -397,11 +539,17 @@ const InterviewLive = () => {
           interviewId: sessionData.interviewId,
           userId: sessionData.userId,
         });
+        setSocketReady(true);
 
+        // ── 4. Poll secondary camera status ───────────────────────────────
         socket.emit("request_secondary_camera_status", {
           interviewId: sessionData.interviewId,
         });
 
+        // ── 5. Start mic (waits for LiveKit room internally, up to 5s) ────
+        interview.autoStartInterview(micStream).catch(console.error);
+
+        // ── 6. Tell server we're ready — triggers first question + TTS ────
         if (!_globalClientReadyEmitted) {
           _globalClientReadyEmitted = true;
           socket.emit("client_ready", {
@@ -410,10 +558,8 @@ const InterviewLive = () => {
             timestamp: Date.now(),
           });
         }
-
-        await interview.autoStartInterview(micStream);
       } catch (err) {
-        console.error("❌ Socket init failed:", err);
+        console.error("❌ Socket init error:", err);
         _globalSocketInitialized = false;
         navigate("/interview");
       }
@@ -431,7 +577,7 @@ const InterviewLive = () => {
     };
   }, []); // eslint-disable-line
 
-  // ── Start primary recordings once interview is live ────────────────────────
+  // ── Start recordings once interview is live ────────────────────────────────
   useEffect(() => {
     if (recordingsStartedRef.current) return;
     if (
@@ -450,15 +596,15 @@ const InterviewLive = () => {
       try {
         await audioRecording.startRecording(preWarmSessionIds.audioId);
         await startVideoRecording();
-        const activeScreenStream =
+        const activeScreen =
           streamStore.screenShareStream ??
           streamsRef.current?.screenShareStream;
-        if (activeScreenStream?.active) {
-          await screenRecording.startRecording(activeScreenStream);
+        if (activeScreen?.active) {
+          await screenRecording.startRecording(activeScreen);
           console.log("✓ Screen recording started");
         }
       } catch (err) {
-        console.error("❌ Recording startup failed:", err);
+        console.error("❌ Recording startup:", err);
         recordingsStartedRef.current = false;
       }
     })();
@@ -471,15 +617,14 @@ const InterviewLive = () => {
     isVideoRecording,
   ]); // eslint-disable-line
 
-  // ── Navigate to dashboard after evaluation ─────────────────────────────────
+  // ── Navigate to dashboard after evaluation ────────────────────────────────
   useEffect(() => {
-    if (evaluationStatus === "complete" && evaluationResults) {
+    if (evaluationStatus === "complete" && evaluationResults)
       setTimeout(() => navigate("/dashboard"), 2000);
-    }
   }, [evaluationStatus, evaluationResults, navigate]);
 
   const handleEndInterview = async () => {
-    if (!confirm("End the interview?")) return;
+    if (!confirm("Are you sure you want to end the interview?")) return;
     isLeavingRef.current = true;
     await cleanupAllRecordings();
     const socket = interview.socketRef.current;
@@ -494,96 +639,115 @@ const InterviewLive = () => {
   // ── Loading guard ──────────────────────────────────────────────────────────
   if (!sessionData) {
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin w-12 h-12 border-4 border-purple-500/30 border-t-purple-500 rounded-full mx-auto mb-4" />
-          <p className="text-white text-sm">Loading interview session…</p>
+      <div className="min-h-screen bg-[#0d1117] flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <div className="animate-spin w-12 h-12 border-4 border-purple-500/30 border-t-purple-500 rounded-full mx-auto" />
+          <p className="text-white/50 text-sm">Loading interview session…</p>
         </div>
       </div>
     );
   }
 
-  const StatusBadge = ({ label, active, color = "gray" }) => (
-    <div
-      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold ${
-        active
-          ? `bg-${color}-900/30 text-${color}-300`
-          : "bg-gray-800 text-gray-500"
-      }`}
-    >
+  // ── Tiny UI helpers ────────────────────────────────────────────────────────
+  const Dot = ({ on, color = "gray" }) => {
+    const c = {
+      gray: "bg-gray-600",
+      blue: "bg-blue-400",
+      green: "bg-green-400",
+      red: "bg-red-400",
+      orange: "bg-orange-400",
+      purple: "bg-purple-400",
+      emerald: "bg-emerald-400",
+    };
+    return (
       <span
-        className={`w-1.5 h-1.5 rounded-full ${active ? `bg-${color}-400 animate-pulse` : "bg-gray-600"}`}
+        className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${on ? c[color] + " animate-pulse" : "bg-gray-700"}`}
       />
-      {label}
-    </div>
-  );
+    );
+  };
 
+  const StatusBadge = ({ label, on, color = "gray" }) => {
+    const bg = {
+      gray: "bg-gray-800 text-gray-500",
+      blue: "bg-blue-900/40 text-blue-300",
+      green: "bg-green-900/40 text-green-300",
+      red: "bg-red-900/40 text-red-300",
+      orange: "bg-orange-900/40 text-orange-300",
+      purple: "bg-purple-900/40 text-purple-300",
+      emerald: "bg-emerald-900/40 text-emerald-300",
+    };
+    return (
+      <div
+        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold ${on ? bg[color] : bg.gray}`}
+      >
+        <Dot on={on} color={color} /> {label}
+      </div>
+    );
+  };
+
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <section className="min-h-screen bg-gray-900 p-4 md:p-6">
+    <section className="min-h-screen bg-[#0d1117] p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
-          {/* ── Main interview panel ─────────────────────────────────────── */}
+          {/* ── Main interview panel ───────────────────────────────────── */}
           <div className="lg:col-span-2">
-            <Card className="flex flex-col overflow-hidden shadow-xl border border-gray-700 bg-gray-800 min-h-150">
-              <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700 flex-wrap gap-3">
+            <Card className="flex flex-col border border-gray-700/60 bg-gray-800/80 shadow-2xl min-h-150">
+              {/* Topbar */}
+              <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700/60 flex-wrap gap-3">
                 <div className="flex items-center gap-3">
                   <div
-                    className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                      interview.isPlaying
-                        ? "bg-blue-600"
-                        : interview.isListening
-                          ? "bg-emerald-600"
-                          : "bg-gray-700"
-                    }`}
+                    className={`w-10 h-10 rounded-xl flex items-center justify-center ${interview.isPlaying ? "bg-blue-600" : interview.isListening ? "bg-emerald-600" : "bg-gray-700"}`}
                   >
                     <span className="text-white text-sm font-bold">
                       {interview.isPlaying ? "AI" : "🎤"}
                     </span>
                   </div>
                   <div>
-                    <h2 className="text-sm font-bold text-white">
-                      AI Interview
-                    </h2>
+                    <p className="text-sm font-bold text-white">AI Interview</p>
                     <p className="text-xs text-gray-400">
                       {interview.isPlaying
                         ? "Speaking…"
                         : interview.isListening
                           ? "Listening…"
-                          : "Ready"}
+                          : interview.currentQuestion
+                            ? "Ready"
+                            : "Initialising…"}
                     </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <StatusBadge
                     label="Audio"
-                    active={audioRecording?.isRecording}
+                    on={audioRecording?.isRecording}
                     color="blue"
                   />
                   <StatusBadge
                     label="Mic"
-                    active={interview.isListening}
+                    on={interview.isListening}
                     color="emerald"
                   />
                   <StatusBadge
                     label="Camera"
-                    active={isVideoRecording}
+                    on={isVideoRecording}
                     color="red"
                   />
                   <StatusBadge
                     label="Mobile"
-                    active={mobileTrackAttached}
+                    on={mobileTrackAttached}
                     color="orange"
                   />
                   <StatusBadge
                     label="Screen"
-                    active={screenRecording.isRecording}
+                    on={screenRecording.isRecording}
                     color="purple"
                   />
                 </div>
               </div>
 
+              {/* Violation banner */}
               {faceViolationWarning && (
-                <div className="px-5 py-3 bg-red-900/20 border-b border-red-800">
+                <div className="px-5 py-3 bg-red-900/20 border-b border-red-800/60">
                   <p className="text-sm font-semibold text-red-300">
                     ⚠️{" "}
                     {faceViolationWarning.type === "NO_FACE"
@@ -593,20 +757,22 @@ const InterviewLive = () => {
                 </div>
               )}
 
+              {/* Evaluation banner */}
               {evaluationStatus === "started" && (
-                <div className="px-5 py-3 bg-blue-900/20 border-b border-blue-800 flex items-center gap-3">
-                  <div className="animate-spin w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full" />
+                <div className="px-5 py-3 bg-blue-900/20 border-b border-blue-800/60 flex items-center gap-3">
+                  <div className="animate-spin w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full shrink-0" />
                   <p className="text-sm font-semibold text-blue-300">
                     Evaluating your responses…
                   </p>
                 </div>
               )}
 
-              <div className="flex-1 p-6 flex flex-col justify-center space-y-6">
+              {/* Question area */}
+              <div className="flex-1 p-6 flex flex-col justify-center space-y-5">
                 {interview.currentQuestion ? (
                   <>
                     {interview.idlePrompt && (
-                      <div className="p-3 bg-amber-900/20 border border-amber-800 rounded-xl">
+                      <div className="p-3 bg-amber-900/20 border border-amber-800/60 rounded-xl">
                         <p className="text-sm text-amber-200">
                           {interview.idlePrompt}
                         </p>
@@ -618,7 +784,7 @@ const InterviewLive = () => {
                           Q
                         </span>
                         <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-                          Question {interview.questionOrder}
+                          Question {interview.questionOrder ?? ""}
                         </span>
                       </div>
                       <p className="text-xl md:text-2xl text-white leading-relaxed font-medium">
@@ -630,8 +796,8 @@ const InterviewLive = () => {
                         {[0, 1, 2].map((i) => (
                           <span
                             key={i}
-                            className="w-2 h-2 rounded-full bg-emerald-500 animate-bounce"
-                            style={{ animationDelay: `${i * 0.1}s` }}
+                            className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce"
+                            style={{ animationDelay: `${i * 0.12}s` }}
                           />
                         ))}
                         <span className="text-sm text-emerald-400 font-semibold">
@@ -640,7 +806,7 @@ const InterviewLive = () => {
                       </div>
                     )}
                     {interview.liveTranscript && (
-                      <div className="p-3 bg-gray-700/60 rounded-xl border border-gray-600">
+                      <div className="p-3 bg-gray-700/40 rounded-xl border border-gray-600/40">
                         <p className="text-sm text-gray-300 italic">
                           {interview.liveTranscript}
                         </p>
@@ -648,29 +814,32 @@ const InterviewLive = () => {
                     )}
                   </>
                 ) : (
-                  <div className="text-center text-gray-500 text-sm">
+                  <div className="flex items-center justify-center gap-3 text-gray-500 text-sm">
+                    <div className="animate-spin w-5 h-5 border-2 border-purple-600/40 border-t-purple-500 rounded-full" />
                     Waiting for first question…
                   </div>
                 )}
               </div>
 
+              {/* Answer */}
               {interview.userText && (
-                <div className="border-t border-gray-700 p-5 bg-gray-800/80">
+                <div className="border-t border-gray-700/60 p-5 bg-gray-800/60">
                   <div className="flex items-start gap-3">
-                    <span className="w-7 h-7 rounded-lg bg-emerald-600 flex items-center justify-center text-xs font-bold text-white mt-0.5">
+                    <span className="w-7 h-7 rounded-lg bg-emerald-600 flex items-center justify-center text-xs font-bold text-white shrink-0 mt-0.5">
                       A
                     </span>
-                    <p className="text-sm text-gray-300 flex-1">
+                    <p className="text-sm text-gray-300 leading-relaxed">
                       {interview.userText}
                     </p>
                   </div>
                 </div>
               )}
 
-              <div className="border-t border-gray-700 px-5 py-3 flex items-center justify-between">
+              {/* Footer */}
+              <div className="border-t border-gray-700/60 px-5 py-3 flex items-center justify-between">
                 <div className="flex items-center gap-2 text-xs text-gray-400 font-medium">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  Live • {interview.recordingDuration}
+                  Live • {interview.recordingDuration ?? "00:00"}
                 </div>
                 <Button
                   variant="secondary"
@@ -683,25 +852,21 @@ const InterviewLive = () => {
             </Card>
           </div>
 
-          {/* ── Right column: cameras ────────────────────────────────────── */}
+          {/* ── Right column ───────────────────────────────────────────── */}
           <div className="lg:col-span-1 space-y-3">
             {/* Primary camera */}
-            <Card className="overflow-hidden border border-gray-700 bg-gray-800">
-              <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
+            <Card className="overflow-hidden border border-gray-700/60 bg-gray-800/80">
+              <div className="px-3 py-2 border-b border-gray-700/60 flex items-center justify-between">
                 <span className="text-xs font-bold text-gray-300">
                   Primary Camera
                 </span>
                 <span
-                  className={`text-xs font-semibold px-2 py-0.5 rounded ${
-                    isVideoRecording
-                      ? "text-red-300 bg-red-900/30"
-                      : "text-gray-500 bg-gray-700"
-                  }`}
+                  className={`text-[11px] font-bold px-2 py-0.5 rounded ${isVideoRecording ? "bg-red-900/40 text-red-300" : "bg-gray-700 text-gray-500"}`}
                 >
                   {isVideoRecording ? "● REC" : "STANDBY"}
                 </span>
               </div>
-              <div className="relative aspect-video bg-black">
+              <div className="aspect-video bg-black">
                 <video
                   ref={videoRef}
                   autoPlay
@@ -713,19 +878,19 @@ const InterviewLive = () => {
               </div>
             </Card>
 
-            {/* Mobile camera — LiveKit remote track */}
-            <Card className="overflow-hidden border border-gray-700 bg-gray-800">
-              <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
+            {/* Mobile camera */}
+            <Card className="overflow-hidden border border-gray-700/60 bg-gray-800/80">
+              <div className="px-3 py-2 border-b border-gray-700/60 flex items-center justify-between">
                 <span className="text-xs font-bold text-gray-300">
                   Mobile Camera
                 </span>
                 <span
-                  className={`text-xs font-semibold px-2 py-0.5 rounded ${
+                  className={`text-[11px] font-bold px-2 py-0.5 rounded ${
                     mobileTrackAttached
-                      ? "text-orange-300 bg-orange-900/30"
+                      ? "bg-orange-900/40 text-orange-300"
                       : mobileCameraConnected
-                        ? "text-green-300 bg-green-900/30"
-                        : "text-gray-500 bg-gray-700"
+                        ? "bg-green-900/40 text-green-300"
+                        : "bg-gray-700 text-gray-500"
                   }`}
                 >
                   {mobileTrackAttached
@@ -736,31 +901,39 @@ const InterviewLive = () => {
                 </span>
               </div>
               <div className="relative aspect-video bg-black">
-                {/* LiveKit attaches the remote video track directly to this element */}
+                {/*
+                  IMPORTANT: <video> is ALWAYS in the DOM so mobileVideoRef
+                  is never null when track.attach() calls it.
+                  visibility:hidden avoids the black rectangle before attach.
+                */}
                 <video
                   ref={mobileVideoRef}
                   autoPlay
                   playsInline
                   muted
                   className="w-full h-full object-cover"
-                  style={{ transform: "scaleX(-1)" }}
+                  style={{
+                    transform: "scaleX(-1)",
+                    visibility: mobileTrackAttached ? "visible" : "hidden",
+                  }}
                 />
                 {!mobileCameraConnected && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-10">
-                    <div className="animate-spin w-8 h-8 border-2 border-orange-500/40 border-t-orange-500 rounded-full mb-2" />
-                    <p className="text-white text-xs opacity-70">
-                      Waiting for mobile…
-                    </p>
-                    <p className="text-gray-500 text-xs mt-1">
-                      Scan QR code on your phone
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-950/90 gap-2">
+                    <div className="animate-spin w-8 h-8 border-2 border-orange-500/30 border-t-orange-500 rounded-full" />
+                    <p className="text-white/60 text-xs">Waiting for mobile…</p>
+                    <p className="text-gray-600 text-xs">
+                      Scan the QR code on your phone
                     </p>
                   </div>
                 )}
                 {mobileCameraConnected && !mobileTrackAttached && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 z-10">
-                    <div className="animate-spin w-8 h-8 border-2 border-green-500/40 border-t-green-500 rounded-full mb-2" />
-                    <p className="text-white text-xs opacity-70">
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-950/80 gap-2">
+                    <div className="animate-spin w-8 h-8 border-2 border-green-500/30 border-t-green-400 rounded-full" />
+                    <p className="text-white/70 text-xs">
                       Joining LiveKit room…
+                    </p>
+                    <p className="text-gray-500 text-xs">
+                      Subscribing to video track
                     </p>
                   </div>
                 )}
@@ -768,15 +941,11 @@ const InterviewLive = () => {
             </Card>
 
             {/* Screen share */}
-            <Card className="overflow-hidden border border-gray-700 bg-gray-800">
-              <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
+            <Card className="overflow-hidden border border-gray-700/60 bg-gray-800/80">
+              <div className="px-3 py-2 border-b border-gray-700/60 flex items-center justify-between">
                 <span className="text-xs font-bold text-gray-300">Screen</span>
                 <span
-                  className={`text-xs font-semibold px-2 py-0.5 rounded ${
-                    screenRecording.isRecording
-                      ? "text-purple-300 bg-purple-900/30"
-                      : "text-gray-500 bg-gray-700"
-                  }`}
+                  className={`text-[11px] font-bold px-2 py-0.5 rounded ${screenRecording.isRecording ? "bg-purple-900/40 text-purple-300" : "bg-gray-700 text-gray-500"}`}
                 >
                   {screenRecording.isRecording ? "● REC" : "STANDBY"}
                 </span>
@@ -790,12 +959,12 @@ const InterviewLive = () => {
                   className="w-full h-full object-contain"
                 />
                 {!screenVideoActive && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center z-10">
-                    <span className="text-gray-600 text-2xl mb-2">🖥️</span>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                    <span className="text-3xl opacity-20">🖥️</span>
                     <p className="text-gray-600 text-xs">
                       {screenShareStreamRef.current
-                        ? "Connecting screen…"
-                        : "Screen share not available"}
+                        ? "Connecting…"
+                        : "No screen share"}
                     </p>
                   </div>
                 )}
@@ -803,24 +972,24 @@ const InterviewLive = () => {
             </Card>
           </div>
         </div>
-
-        {/* Termination modal */}
-        {isInterviewTerminated && (
-          <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50">
-            <div className="bg-gray-800 rounded-2xl p-8 text-center max-w-sm mx-4 shadow-2xl">
-              <div className="w-16 h-16 rounded-full bg-red-500 flex items-center justify-center mx-auto mb-4">
-                <span className="text-white text-2xl">✕</span>
-              </div>
-              <h3 className="text-xl font-bold text-white mb-2">
-                Interview Terminated
-              </h3>
-              <p className="text-gray-400 text-sm">
-                Your session has been ended due to a violation.
-              </p>
-            </div>
-          </div>
-        )}
       </div>
+
+      {/* Termination modal */}
+      {isInterviewTerminated && (
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-6">
+          <div className="bg-gray-800 border border-gray-700 rounded-2xl p-8 text-center max-w-sm w-full shadow-2xl">
+            <div className="w-16 h-16 rounded-full bg-red-600/20 border border-red-600/30 flex items-center justify-center mx-auto mb-4">
+              <span className="text-red-400 text-2xl">✕</span>
+            </div>
+            <h3 className="text-xl font-bold text-white mb-2">
+              Interview Terminated
+            </h3>
+            <p className="text-gray-400 text-sm">
+              Your session was ended due to a proctoring violation.
+            </p>
+          </div>
+        </div>
+      )}
     </section>
   );
 };

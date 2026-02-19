@@ -1,345 +1,170 @@
+/**
+ * stt.service.js — Deepgram live STT with controllable idle detection
+ *
+ * KEY FIX: idleDetection starts PAUSED on every new connection.
+ * The server must call resumeIdleDetection() ONLY after TTS finishes
+ * and the mic is genuinely open for the user. This prevents the
+ * "Can I repeat the question?" firing while TTS is still playing.
+ */
+
 const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
 
+const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY;
+const STT_SAMPLE_RATE = 48000;
+const IDLE_TIMEOUT_MS = 15000; // 15 s of real silence → idle
+const UTTERANCE_END_MS = 1500;
+
 function createSTTSession() {
-  if (!process.env.DEEPGRAM_API_KEY) {
-    throw new Error("DEEPGRAM_API_KEY is not set in environment variables");
-  }
+  const deepgram = createClient(DEEPGRAM_API_KEY);
 
-  const apiKey = process.env.DEEPGRAM_API_KEY.trim();
-  console.log(
-    "🔑 Using Deepgram API Key:",
-    apiKey.substring(0, 15) + "..." + apiKey.slice(-4),
-  );
+  function startLiveTranscription({
+    onTranscript,
+    onInterim,
+    onError,
+    onClose,
+    onIdle,
+  }) {
+    let wsReady = false;
+    let wsReadyResolve = null;
+    const wsReadyPromise = new Promise((res) => {
+      wsReadyResolve = res;
+    });
 
-  const deepgram = createClient(apiKey);
+    // ── Idle state — STARTS PAUSED ────────────────────────────────────────
+    let idlePaused = true; // <<< paused until resumeIdleDetection() called
+    let idleTimer = null;
+    let hasTranscript = false;
 
-  return {
-    startLiveTranscription({
-      onTranscript,
-      onInterim,
-      onError,
-      onClose,
-      onIdle,
-    }) {
-      let connection = null;
-      let isOpen = false;
-      let isConnecting = false;
-      let hasBeenOpened = false;
-      let connectionError = null;
-      let openTimeout = null;
-      let keepAliveInterval = null;
+    const clearIdleTimer = () => {
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
+    };
 
-      let lastSpeechTime = Date.now();
-      let idleCheckInterval = null;
-      let idleAlreadyTriggered = false;
-      const IDLE_TIMEOUT = 10000;
-
-      let openResolve = null;
-      let openReject = null;
-      const openPromise = new Promise((resolve, reject) => {
-        openResolve = resolve;
-        openReject = reject;
-      });
-
-      try {
-        isConnecting = true;
-        console.log("🎤 Initiating Deepgram WebSocket connection");
-
-        const options = {
-          model: "nova-2",
-          language: "en",
-          smart_format: true,
-          encoding: "linear16",
-          sample_rate: 48000, // matches mic AudioContext at 48kHz
-          channels: 1,
-          interim_results: true,
-          endpointing: 300,
-          utterance_end_ms: 1000,
-          vad_events: true,
-        };
-
-        console.log("⚙️ STT options:", JSON.stringify(options));
-        connection = deepgram.listen.live(options);
-
-        openTimeout = setTimeout(() => {
-          if (!isOpen && isConnecting) {
-            console.error("❌ Deepgram connection timeout after 8s");
-            isConnecting = false;
-            const timeoutError = new Error("WebSocket connection timeout");
-            connectionError = timeoutError;
-            try {
-              connection?.finish();
-            } catch (_) {}
-            connection = null;
-            openReject?.(timeoutError);
-            onError?.(timeoutError);
-          }
-        }, 8000);
-
-        const startKeepAlive = () => {
-          if (keepAliveInterval) clearInterval(keepAliveInterval);
-          let failureCount = 0;
-          try {
-            connection?.keepAlive();
-          } catch (_) {}
-
-          keepAliveInterval = setInterval(() => {
-            if (isOpen && connection) {
-              try {
-                connection.keepAlive();
-                failureCount = 0;
-              } catch (e) {
-                failureCount++;
-                if (failureCount >= 3) {
-                  clearInterval(keepAliveInterval);
-                  keepAliveInterval = null;
-                }
-              }
-            } else {
-              clearInterval(keepAliveInterval);
-              keepAliveInterval = null;
-            }
-          }, 2000);
-        };
-
-        const startIdleDetection = () => {
-          if (idleCheckInterval) clearInterval(idleCheckInterval);
-          lastSpeechTime = Date.now();
-          idleAlreadyTriggered = false;
-
-          idleCheckInterval = setInterval(() => {
-            if (isOpen && !idleAlreadyTriggered) {
-              if (Date.now() - lastSpeechTime >= IDLE_TIMEOUT) {
-                console.log("⏰ User idle detected (10s silence)");
-                idleAlreadyTriggered = true;
-                clearInterval(idleCheckInterval);
-                idleCheckInterval = null;
-                onIdle?.();
-              }
-            }
-          }, 2000);
-        };
-
-        connection.on(LiveTranscriptionEvents.Open, () => {
-          console.log("✅ Deepgram WebSocket OPEN");
-          clearTimeout(openTimeout);
-          isOpen = true;
-          isConnecting = false;
-          hasBeenOpened = true;
-          openResolve?.(true);
-          startKeepAlive();
-          startIdleDetection();
-        });
-
-        connection.on(LiveTranscriptionEvents.Transcript, (data) => {
-          const transcript = data.channel?.alternatives?.[0]?.transcript;
-          if (!transcript?.trim()) return;
-
-          lastSpeechTime = Date.now();
-          idleAlreadyTriggered = false;
-
-          const isFinal = data.is_final;
-          const speechFinal = data.speech_final;
-          const preview =
-            transcript.length > 50
-              ? transcript.slice(0, 50) + "..."
-              : transcript;
-
-          console.log(
-            `📝 [${isFinal ? "Final" : "Interim"}${speechFinal ? " - SpeechFinal" : ""}]: ${preview}`,
-          );
-
-          if (!isFinal) onInterim?.(transcript, data);
-          if (isFinal && speechFinal) {
-            console.log("✅ Complete utterance:", transcript);
-            onTranscript?.(transcript, data);
-          }
-        });
-
-        connection.on(LiveTranscriptionEvents.Error, (err) => {
-          console.error("❌ Deepgram Error:", {
-            message: err.message,
-            statusCode: err.statusCode,
-          });
-          clearTimeout(openTimeout);
-          connectionError = err;
-          if (keepAliveInterval) {
-            clearInterval(keepAliveInterval);
-            keepAliveInterval = null;
-          }
-          if (idleCheckInterval) {
-            clearInterval(idleCheckInterval);
-            idleCheckInterval = null;
-          }
-          isOpen = false;
-          isConnecting = false;
-          if (!hasBeenOpened) openReject?.(err);
-          onError?.(err);
-        });
-
-        connection.on(LiveTranscriptionEvents.Close, (closeEvent) => {
-          console.log("🔌 Deepgram Close:", {
-            code: closeEvent?.code,
-            reason: closeEvent?.reason,
-            wasClean: closeEvent?.wasClean,
-          });
-          clearTimeout(openTimeout);
-          if (keepAliveInterval) {
-            clearInterval(keepAliveInterval);
-            keepAliveInterval = null;
-          }
-          if (idleCheckInterval) {
-            clearInterval(idleCheckInterval);
-            idleCheckInterval = null;
-          }
-
-          const wasOpen = isOpen;
-          isOpen = false;
-          isConnecting = false;
-
-          if (!hasBeenOpened) {
-            const closeError = new Error(
-              `WebSocket closed before opening (code: ${closeEvent?.code})`,
-            );
-            connectionError = closeError;
-            openReject?.(closeError);
-          }
-
-          // Only fire onClose for unexpected drops, not deliberate finish()
-          // finish() sets isOpen=false BEFORE calling connection.finish()
-          // so wasOpen will be false here and onClose won't fire
-          if (wasOpen) onClose?.();
-        });
-
-        connection.on(LiveTranscriptionEvents.Warning, (w) =>
-          console.warn("⚠️ Deepgram warning:", w),
-        );
-        connection.on(LiveTranscriptionEvents.Metadata, (m) => {
-          console.log("ℹ️ Deepgram metadata:", {
-            requestId: m.request_id,
-            model: m.model_info?.name,
-          });
-        });
-
-        console.log("🔄 Deepgram WebSocket initiated, waiting for Open...");
-      } catch (error) {
-        console.error("❌ Exception creating Deepgram connection:", error);
-        clearTimeout(openTimeout);
-        if (keepAliveInterval) {
-          clearInterval(keepAliveInterval);
-          keepAliveInterval = null;
+    const scheduleIdle = () => {
+      clearIdleTimer();
+      if (idlePaused) return; // never start if paused
+      idleTimer = setTimeout(() => {
+        if (!idlePaused && !hasTranscript) {
+          console.log(`⏱️ STT idle after ${IDLE_TIMEOUT_MS}ms`);
+          onIdle?.();
         }
-        if (idleCheckInterval) {
-          clearInterval(idleCheckInterval);
-          idleCheckInterval = null;
-        }
-        isConnecting = false;
-        connectionError = error;
-        openReject?.(error);
-        onError?.(error);
+      }, IDLE_TIMEOUT_MS);
+    };
+
+    // ── Deepgram WebSocket ─────────────────────────────────────────────────
+    const conn = deepgram.listen.live({
+      model: "nova-2",
+      language: "en-US",
+      smart_format: true,
+      interim_results: true,
+      utterance_end_ms: String(UTTERANCE_END_MS),
+      vad_events: true,
+      endpointing: 300,
+      encoding: "linear16",
+      sample_rate: STT_SAMPLE_RATE,
+      channels: 1,
+    });
+
+    conn.on(LiveTranscriptionEvents.Open, () => {
+      wsReady = true;
+      wsReadyResolve?.();
+      console.log("🎙️ Deepgram STT open");
+    });
+
+    conn.on(LiveTranscriptionEvents.Error, (err) => {
+      console.error("❌ Deepgram STT error:", err);
+      onError?.(err);
+    });
+
+    conn.on(LiveTranscriptionEvents.Close, () => {
+      console.warn("⚠️ Deepgram STT closed");
+      clearIdleTimer();
+      wsReady = false;
+      onClose?.();
+    });
+
+    conn.on(LiveTranscriptionEvents.Transcript, (data) => {
+      const alt = data?.channel?.alternatives?.[0];
+      const text = alt?.transcript?.trim() ?? "";
+      const isFinal = data?.is_final ?? false;
+      const speech = data?.speech_final ?? false;
+
+      if (!text) return;
+
+      // Any speech resets the idle timer
+      scheduleIdle();
+
+      if (!isFinal) {
+        onInterim?.(text);
+        return;
       }
 
-      return {
-        send(chunk) {
-          if (!connection || !isOpen) return false;
-          try {
-            connection.send(chunk);
-            return true;
-          } catch (e) {
-            console.error("❌ Deepgram send error:", e.message);
-            isOpen = false;
-            return false;
-          }
-        },
+      if (speech || isFinal) {
+        hasTranscript = true;
+        clearIdleTimer();
+        onTranscript?.(text);
+      }
+    });
 
-        finish() {
-          console.log("🛑 Finishing Deepgram connection");
-          clearTimeout(openTimeout);
-          if (keepAliveInterval) {
-            clearInterval(keepAliveInterval);
-            keepAliveInterval = null;
-          }
-          if (idleCheckInterval) {
-            clearInterval(idleCheckInterval);
-            idleCheckInterval = null;
-          }
-          if (!connection) return false;
-          try {
-            // Set isOpen=false BEFORE finish() so Close handler sees wasOpen=false
-            // and does NOT fire onClose — prevents spurious reconnect on deliberate end
-            isOpen = false;
-            connection.finish();
-            console.log("✅ Deepgram finished");
-            return true;
-          } catch (e) {
-            console.error("❌ Error finishing Deepgram:", e.message);
-            return false;
-          }
-        },
+    conn.on(LiveTranscriptionEvents.UtteranceEnd, () => {
+      if (!hasTranscript) scheduleIdle(); // give extra grace time
+    });
 
-        isConnected() {
-          return isOpen;
-        },
+    conn.on(LiveTranscriptionEvents.SpeechStarted, () => {
+      clearIdleTimer(); // voice → cancel idle countdown
+    });
 
-        getReadyState() {
-          if (isConnecting) return 0;
-          return isOpen ? 1 : 3;
-        },
+    return {
+      send(buf) {
+        if (!wsReady) return;
+        try {
+          conn.send(buf);
+        } catch (e) {
+          console.error("STT send:", e);
+        }
+      },
 
-        async waitForReady(timeout = 5000) {
-          if (isOpen) return true;
-          if (connectionError) throw connectionError;
-          return Promise.race([
-            openPromise,
-            new Promise((_, reject) =>
-              setTimeout(
-                () =>
-                  reject(new Error(`waitForReady timeout after ${timeout}ms`)),
-                timeout,
-              ),
-            ),
-          ]);
-        },
+      finish() {
+        clearIdleTimer();
+        try {
+          conn.finish();
+        } catch (_) {}
+        wsReady = false;
+      },
 
-        resetIdleTimer() {
-          lastSpeechTime = Date.now();
-          idleAlreadyTriggered = false;
-        },
+      /** Call BEFORE TTS starts. Stops idle timer from running during playback. */
+      pauseIdleDetection() {
+        idlePaused = true;
+        clearIdleTimer();
+      },
 
-        pauseIdleDetection() {
-          if (idleCheckInterval) {
-            clearInterval(idleCheckInterval);
-            idleCheckInterval = null;
-            console.log("⏸️ Idle detection paused");
-          }
-          idleAlreadyTriggered = true;
-        },
+      /** Call AFTER TTS ends and listening_enabled is emitted to the client. */
+      resumeIdleDetection() {
+        hasTranscript = false;
+        idlePaused = false;
+        scheduleIdle();
+      },
 
-        resumeIdleDetection() {
-          if (!idleCheckInterval && isOpen) {
-            lastSpeechTime = Date.now();
-            idleAlreadyTriggered = false;
-            idleCheckInterval = setInterval(() => {
-              if (isOpen && !idleAlreadyTriggered) {
-                if (Date.now() - lastSpeechTime >= IDLE_TIMEOUT) {
-                  console.log("⏰ User idle detected (10s silence)");
-                  idleAlreadyTriggered = true;
-                  clearInterval(idleCheckInterval);
-                  idleCheckInterval = null;
-                  onIdle?.();
-                }
-              }
-            }, 2000);
-            console.log("▶️ Idle detection resumed");
-          }
-        },
+      resetTranscriptState() {
+        hasTranscript = false;
+      },
+      isConnected() {
+        return wsReady;
+      },
+      waitForReady(ms = 8000) {
+        return Promise.race([
+          wsReadyPromise,
+          new Promise((_, rej) =>
+            setTimeout(() => rej(new Error("Deepgram ready timeout")), ms),
+          ),
+        ]);
+      },
+    };
+  }
 
-        resetTranscriptState() {
-          // Overwritten by socket controller after creation
-        },
-      };
-    },
-  };
+  return { startLiveTranscription };
 }
 
 module.exports = { createSTTSession };
