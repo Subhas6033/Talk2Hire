@@ -154,6 +154,7 @@ const InterviewSetup = () => {
   const [micStream, setMicStream] = useState(null);
   const [micLevel, setMicLevel] = useState(0);
   const [isMicTesting, setIsMicTesting] = useState(false);
+  const [micConfirmed, setMicConfirmed] = useState(false);
 
   const [primaryCameraStream, setPrimaryCameraStream] = useState(null);
   const [primaryCameraError, setPrimaryCameraError] = useState(null);
@@ -301,7 +302,11 @@ const InterviewSetup = () => {
         if (!analyserRef.current || micTestCleanupRef.current) return;
         analyser.getByteFrequencyData(dataArray);
         const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-        setMicLevel(Math.min(100, (avg / 128) * 100));
+        setMicLevel((prev) => {
+          const next = Math.min(100, (avg / 128) * 100);
+          if (next > 10) setMicConfirmed(true);
+          return next;
+        });
         animationFrameRef.current = requestAnimationFrame(updateLevel);
       };
       updateLevel();
@@ -977,7 +982,8 @@ const InterviewSetup = () => {
                     <span className="text-xs text-slate-600">100%</span>
                   </div>
                 </div>
-                {micLevel > 10 && (
+
+                {micConfirmed && (
                   <div className="flex justify-center">
                     <InfoBadge variant="green">
                       <svg
@@ -997,14 +1003,19 @@ const InterviewSetup = () => {
                     </InfoBadge>
                   </div>
                 )}
+
                 <div className="flex justify-center">
-                  <Button
+                  <button
                     onClick={handleMicSuccess}
-                    disabled={micLevel < 10}
-                    className="px-10 h-11"
+                    disabled={!micConfirmed}
+                    className={`px-10 h-11 rounded-xl font-semibold text-sm transition-all duration-200 ${
+                      micConfirmed
+                        ? "bg-violet-600 hover:bg-violet-500 text-white cursor-pointer shadow-lg shadow-violet-500/20"
+                        : "bg-slate-800 text-slate-600 cursor-not-allowed border border-slate-700/40"
+                    }`}
                   >
                     Continue
-                  </Button>
+                  </button>
                 </div>
               </div>
             )}

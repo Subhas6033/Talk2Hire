@@ -950,7 +950,8 @@ const InterviewLive = () => {
                   className="w-full h-full object-cover"
                   style={{
                     transform: "scaleX(-1)",
-                    visibility: mobileTrackAttached ? "visible" : "hidden",
+                    opacity: mobileTrackAttached ? 1 : 0, // ← opacity not visibility
+                    transition: "opacity 0.3s ease",
                   }}
                 />
                 {!mobileCameraConnected && (

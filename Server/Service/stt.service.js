@@ -115,10 +115,14 @@ function createSTTSession() {
     conn.on(LiveTranscriptionEvents.SpeechStarted, () => {
       clearIdleTimer(); // voice → cancel idle countdown
     });
-
+    let audioChunkCount = 0;
     return {
       send(buf) {
         if (!wsReady) return;
+        audioChunkCount++;
+        if (audioChunkCount % 100 === 0) {
+          console.log(`🎙️ STT: ${audioChunkCount} chunks sent to Deepgram`);
+        }
         try {
           conn.send(buf);
         } catch (e) {

@@ -33,6 +33,28 @@ import { useTTS } from "./useSpeechHook";
 
 const MIC_SAMPLE_RATE = 48000;
 
+// ── Noise gate threshold ───────────────────────────────────────────────────
+// RMS below this value = fan / ambient noise → chunk is dropped.
+// 0.01 ≈ 1% of full scale. Raise to 0.015–0.02 if your fan is very loud.
+const NOISE_GATE_RMS = 0.01;
+
+// ── Helper: compute RMS of a Float32Array ──────────────────────────────────
+function getRMS(input) {
+  let sum = 0;
+  for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
+  return Math.sqrt(sum / input.length);
+}
+
+// ── Helper: convert Float32 → Int16 PCM ───────────────────────────────────
+function toPCM16(input) {
+  const pcm16 = new Int16Array(input.length);
+  for (let i = 0; i < input.length; i++) {
+    const s = Math.max(-1, Math.min(1, input[i]));
+    pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return pcm16;
+}
+
 export const useInterview = (interviewId, userId, cameraStream) => {
   const dispatch = useDispatch();
   const interview = useSelector((s) => s.interview);
@@ -86,8 +108,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     lkReadyPromiseRef.current = new Promise((resolve) => {
       lkReadyResolveRef.current = resolve;
     });
-    // If a room was somehow already connected before this effect (shouldn't happen
-    // but be safe) resolve immediately.
     if (livekitRoomRef.current) lkReadyResolveRef.current?.();
   }, []); // eslint-disable-line
 
@@ -227,7 +247,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   // LIVEKIT — join + publish mic
   // ═══════════════════════════════════════════════════════════════════════════
   const joinLiveKitRoom = useCallback(async (url, token) => {
-    // If already connected or a join is in flight, return existing promise
     if (livekitRoomRef.current) return livekitRoomRef.current;
     if (lkJoinPromiseRef.current) return lkJoinPromiseRef.current;
 
@@ -236,7 +255,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
     const doJoin = async () => {
       const room = new Room({
-        adaptiveStream: true,
+        // adaptiveStream: true,
         dynacast: true,
         audioCaptureDefaults: {
           autoGainControl: true,
@@ -256,7 +275,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         console.log("🏠 LiveKit connected:", room.name);
         livekitRoomRef.current = room;
         lkJoinPromiseRef.current = null;
-        // Unblock autoStartInterview which may be awaiting lkReadyPromise
         lkReadyResolveRef.current?.();
       });
 
@@ -301,7 +319,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       });
 
       await room.connect(url, token);
-      // RoomEvent.Connected fires above and sets livekitRoomRef + resolves lkReady
       return room;
     };
 
@@ -349,12 +366,12 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         if (!socketRef.current?.connected) return;
 
         const input = e.inputBuffer.getChannelData(0);
-        const pcm16 = new Int16Array(input.length);
-        for (let i = 0; i < input.length; i++) {
-          const s = Math.max(-1, Math.min(1, input[i]));
-          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-        }
-        socketRef.current.emit("user_audio_chunk", pcm16.buffer);
+
+        // ── Noise gate: drop fan/ambient noise chunks ──────────────────────
+        // Only send to Deepgram if RMS exceeds threshold (real speech).
+        if (getRMS(input) < NOISE_GATE_RMS) return;
+
+        socketRef.current.emit("user_audio_chunk", toPCM16(input).buffer);
       };
 
       console.log("🎤 PCM tap active at", ctx.sampleRate + "Hz → Deepgram");
@@ -407,18 +424,16 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
         processor.onaudioprocess = (e) => {
           if (!micStreamingActiveRef.current) return;
+          if (!isListeningRef.current || !canListenRef.current) return;
+          if (!socketRef.current?.connected) return;
+
           const input = e.inputBuffer.getChannelData(0);
-          const pcm16 = new Int16Array(input.length);
-          for (let i = 0; i < input.length; i++) {
-            const s = Math.max(-1, Math.min(1, input[i]));
-            pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-          }
-          if (
-            socketRef.current?.connected &&
-            isListeningRef.current &&
-            canListenRef.current
-          )
-            socketRef.current.emit("user_audio_chunk", pcm16.buffer);
+
+          // ── Noise gate: drop fan/ambient noise chunks ────────────────────
+          // Same threshold as LiveKit path — filters fan, A/C, hum etc.
+          if (getRMS(input) < NOISE_GATE_RMS) return;
+
+          socketRef.current.emit("user_audio_chunk", toPCM16(input).buffer);
         };
 
         console.log("✅ Socket mic PCM fallback at", ctx.sampleRate + "Hz");
@@ -432,13 +447,11 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   // ─── Start mic — prefer LiveKit, fall back to socket PCM ──────────────────
   const startMicStreaming = useCallback(
     async (existingStream = null) => {
-      // If the room is already up, publish immediately
       if (livekitRoomRef.current) {
         await publishLiveKitMic();
         return;
       }
 
-      // If a join is in flight, wait for it (up to 5 s) then publish
       if (lkJoinPromiseRef.current) {
         try {
           await Promise.race([
@@ -456,7 +469,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         }
       }
 
-      // Wait for lkReadyPromise — this resolves once RoomEvent.Connected fires
       try {
         await Promise.race([
           lkReadyPromiseRef.current,
@@ -472,7 +484,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         // fall through
       }
 
-      // True fallback — LiveKit never connected
       console.warn("⚠️ LiveKit room not ready — using socket PCM fallback");
       await startSocketMicFallback(existingStream);
     },
@@ -487,7 +498,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       try {
         await ensureAudioContext();
 
-        // If token already arrived, kick off the join now
         if (
           livekitTokenRef.current &&
           livekitUrlRef.current &&
@@ -499,7 +509,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
           );
         }
 
-        // Start mic — startMicStreaming waits internally for LiveKit to connect
         await startMicStreaming(existingMicStream);
 
         if (!serverReadyRef.current) {
@@ -524,7 +533,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch, ensureAudioContext, startMicStreaming, joinLiveKitRoom],
   );
 
-  // ─── handleLiveKitToken — called when socket receives livekit_token ────────
+  // ─── handleLiveKitToken ────────────────────────────────────────────────────
   const handleLiveKitToken = useCallback(
     async ({ token, url }) => {
       const resolvedToken = await Promise.resolve(token);
@@ -541,13 +550,28 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       }
       livekitTokenRef.current = resolvedToken;
       livekitUrlRef.current = url;
-      // Kick off join immediately — don't wait for autoStartInterview to call it
       if (!livekitRoomRef.current && !lkJoinPromiseRef.current) {
         joinLiveKitRoom(url, resolvedToken).catch(console.error);
       }
     },
     [joinLiveKitRoom],
   );
+
+  // ─── enableListening / disableListening ───────────────────────────────────
+  // FIX: Set refs immediately instead of waiting for the Redux render cycle.
+  // Without this, the ScriptProcessor sees stale ref values for ~16ms after
+  // listening_enabled arrives, dropping the very first audio chunks to Deepgram.
+  const enableListeningImmediate = useCallback(() => {
+    isListeningRef.current = true;
+    canListenRef.current = true;
+    dispatch(enableListening());
+  }, [dispatch]);
+
+  const disableListeningImmediate = useCallback(() => {
+    isListeningRef.current = false;
+    canListenRef.current = false;
+    dispatch(disableListening());
+  }, [dispatch]);
 
   // ─── cleanup ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -582,8 +606,9 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     setServerReady: (r) => dispatch(setServerReady(r)),
     setHasStarted: (v) => dispatch(setHasStarted(v)),
     setIsInitializing: (v) => dispatch(setIsInitializing(v)),
-    enableListening: () => dispatch(enableListening()),
-    disableListening: () => dispatch(disableListening()),
+    // FIX: use immediate versions so refs update before next audio frame
+    enableListening: enableListeningImmediate,
+    disableListening: disableListeningImmediate,
     setMicStreamingActive: (v) => dispatch(setMicStreamingActive(v)),
     initializeInterview: (d) => dispatch(initializeInterview(d)),
   };
