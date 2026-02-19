@@ -20,7 +20,6 @@ const SCREEN_SHARE_SUPPORTED =
   !IS_MOBILE && !!navigator.mediaDevices?.getDisplayMedia;
 
 /* ── tiny helpers ─────────────────────────────────────────────────────────── */
-
 const StatusIcon = ({ status }) => {
   if (status === true)
     return (
@@ -124,7 +123,6 @@ const Spinner = ({ size = "md", color = "violet" }) => {
 /* ══════════════════════════════════════════════════════════════════════════════
    MAIN COMPONENT
 ══════════════════════════════════════════════════════════════════════════════ */
-
 const InterviewSetup = () => {
   const navigate = useNavigate();
   const dispatch = useDispatch();
@@ -149,7 +147,6 @@ const InterviewSetup = () => {
 
   const [currentStep, setCurrentStep] = useState(1);
   const [error, setError] = useState(null);
-
   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
   const [questionsReady, setQuestionsReady] = useState(false);
   const [sessionData, setSessionData] = useState(null);
@@ -162,20 +159,15 @@ const InterviewSetup = () => {
   const [primaryCameraError, setPrimaryCameraError] = useState(null);
 
   const [mobileCameraConnected, setMobileCameraConnected] = useState(false);
-  const [mobileFramesReceived, setMobileFramesReceived] = useState(0);
 
   const [screenShareStream, setScreenShareStream] = useState(null);
   const [screenShareError, setScreenShareError] = useState(null);
   const screenShareStreamRef = useRef(null);
 
-  // ── Step 7 progress — simplified for LiveKit (no audio/video pre-warm) ────
   const [initProgress, setInitProgress] = useState({
     questions: false,
     socket: false,
     serverReady: false,
-    // LiveKit egress starts server-side when client_ready fires,
-    // so we don't pre-register audio/video sessions here anymore.
-    // These are shown as informational-only "n/a" items.
     audioRecording: "na",
     videoRecording: "na",
     screenRecording: "na",
@@ -183,7 +175,7 @@ const InterviewSetup = () => {
   });
   const [initError, setInitError] = useState(null);
 
-  /* ── refs ───────────────────────────────────────────────────────────────── */
+  /* ── refs ─────────────────────────────────────────────────────────────── */
   const primaryVideoRef = useRef(null);
   const mobileCanvasRef = useRef(null);
   const micTestCleanupRef = useRef(false);
@@ -195,9 +187,9 @@ const InterviewSetup = () => {
   const animationFrameRef = useRef(null);
   const questionStartedRef = useRef(false);
   const hasNavigatedRef = useRef(false);
-
   const sessionDataRef = useRef(null);
   const questionsReadyRef = useRef(false);
+
   useEffect(() => {
     sessionDataRef.current = sessionData;
   }, [sessionData]);
@@ -207,7 +199,7 @@ const InterviewSetup = () => {
 
   const hasExistingSkills = user?.skill?.trim();
 
-  /* ── STEP 1 ─────────────────────────────────────────────────────────────── */
+  /* ── Step handlers (unchanged logic) ──────────────────────────────────── */
   const handleStartSetup = () => {
     if (!hasExistingSkills && (!skills || skills.length === 0)) {
       setError("Please select at least one skill.");
@@ -215,7 +207,6 @@ const InterviewSetup = () => {
     }
     setError(null);
     setCurrentStep(2);
-
     if (!questionStartedRef.current) {
       questionStartedRef.current = true;
       setIsGeneratingQuestions(true);
@@ -237,14 +228,10 @@ const InterviewSetup = () => {
         .finally(() => setIsGeneratingQuestions(false));
     }
   };
-
-  /* ── STEP 2 ─────────────────────────────────────────────────────────────── */
   const handleAcceptGuidelines = () => {
     setError(null);
     setCurrentStep(3);
   };
-
-  /* ── STEP 3 ─────────────────────────────────────────────────────────────── */
   const handleMicSuccess = () => {
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
@@ -255,22 +242,17 @@ const InterviewSetup = () => {
     setError(null);
     setCurrentStep(4);
   };
-
-  /* ── STEP 4 ─────────────────────────────────────────────────────────────── */
   const handlePrimaryCameraSuccess = () => {
     setError(null);
     setCurrentStep(5);
     startScreenShareTest();
   };
-
-  /* ── STEP 5 ─────────────────────────────────────────────────────────────── */
   const handleScreenShareSuccess = () => {
     const isMicActive = micStream?.active;
     const isCameraActive = primaryCameraStream?.active;
     const isScreenActive = SCREEN_SHARE_SUPPORTED
       ? screenShareStream?.active
       : true;
-
     if (!isMicActive || !isCameraActive || !isScreenActive) {
       const missing = [];
       if (!isMicActive) missing.push("microphone");
@@ -284,14 +266,12 @@ const InterviewSetup = () => {
     setError(null);
     setCurrentStep(6);
   };
-
-  /* ── STEP 6 ─────────────────────────────────────────────────────────────── */
   const handleMobileCameraSuccess = () => {
     setError(null);
     setCurrentStep(7);
   };
 
-  /* ── MIC TEST ────────────────────────────────────────────────────────────── */
+  /* ── Mic test ─────────────────────────────────────────────────────────── */
   const startMicTest = async () => {
     try {
       setIsMicTesting(true);
@@ -332,21 +312,19 @@ const InterviewSetup = () => {
     }
   };
 
-  /* ── PRIMARY CAMERA ─────────────────────────────────────────────────────── */
+  /* ── Primary camera ───────────────────────────────────────────────────── */
   const startPrimaryCameraTest = async () => {
     try {
       setPrimaryCameraError(null);
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       setPrimaryCameraStream(stream);
-    } catch (err) {
+    } catch (_) {
       setPrimaryCameraError("Camera permission denied.");
     }
   };
-
   useEffect(() => {
     if (currentStep === 4) startPrimaryCameraTest();
   }, [currentStep]);
-
   useEffect(() => {
     if (primaryVideoRef.current && primaryCameraStream) {
       primaryVideoRef.current.srcObject = primaryCameraStream;
@@ -356,82 +334,7 @@ const InterviewSetup = () => {
     }
   }, [primaryCameraStream]);
 
-  /* ── MOBILE CAMERA SOCKET (setup preview only) ──────────────────────────── */
-  // In setup mode we still want to show the connection indicator.
-  // The mobile page now uses LiveKit, so it will emit secondary_camera_connected
-  // via the settings socket, giving us the "connected" signal.
-  // There are no more mobile_camera_frame events in LiveKit mode,
-  // so the canvas preview will be blank — that's expected and fine.
-  useEffect(() => {
-    if (currentStep !== 6) return;
-
-    let socket = null;
-    let cancelled = false;
-
-    const connect = (session) => {
-      if (cancelled) return;
-      socket = io(SOCKET_URL, {
-        query: {
-          interviewId: session.interviewId,
-          userId: session.userId,
-          type: "settings",
-        },
-      });
-      settingsSocketRef.current = socket;
-      socket.on("connect", () =>
-        console.log("✅ Settings socket connected:", socket.id),
-      );
-
-      // secondary_camera_ready fires when mobile page emits secondary_camera_connected
-      socket.on("secondary_camera_ready", () => {
-        console.log("📱 Mobile camera connected via LiveKit");
-        setMobileCameraConnected(true);
-      });
-
-      // mobile_camera_frame is no longer sent by the new MobileCameraPage,
-      // but we keep the listener in case of fallback / older clients.
-      socket.on("mobile_camera_frame", (data) => {
-        if (!data?.frame || !mobileCanvasRef.current) return;
-        const img = new Image();
-        img.onload = () => {
-          const ctx = mobileCanvasRef.current?.getContext("2d");
-          if (ctx) {
-            ctx.drawImage(
-              img,
-              0,
-              0,
-              mobileCanvasRef.current.width,
-              mobileCanvasRef.current.height,
-            );
-            setMobileFramesReceived((prev) => prev + 1);
-          }
-        };
-        img.src = data.frame;
-      });
-
-      socket.on("connect_error", () =>
-        setError("Failed to connect to server for mobile camera."),
-      );
-    };
-
-    if (sessionDataRef.current) {
-      connect(sessionDataRef.current);
-    } else {
-      const interval = setInterval(() => {
-        if (sessionDataRef.current) {
-          clearInterval(interval);
-          connect(sessionDataRef.current);
-        }
-      }, 300);
-    }
-
-    return () => {
-      cancelled = true;
-      socket?.disconnect();
-    };
-  }, [currentStep]);
-
-  /* ── SCREEN SHARE ───────────────────────────────────────────────────────── */
+  /* ── Screen share ─────────────────────────────────────────────────────── */
   const startScreenShareTest = async () => {
     if (!SCREEN_SHARE_SUPPORTED) return;
     try {
@@ -464,25 +367,92 @@ const InterviewSetup = () => {
   };
 
   /* ══════════════════════════════════════════════════════════════════════════
-     STEP 7: PRE-INITIALIZATION (LiveKit-aware)
-     
-     With LiveKit, the server starts egress automatically:
-       • composite egress starts in handleInterviewSocket on client_ready
-       • screen egress starts on livekit_track_published (screen_share source)  
-       • mobile egress starts on livekit_participant_joined (mobile_ identity)
-     
-     So in setup we only need to:
-       1. Connect the interview socket
-       2. Wait for server_ready
-       3. Wait for question generation to complete
-       4. Navigate to /interview/live
-     
-     We do NOT pre-register audio/video/screen sessions — those are owned by
-     the LiveKit egress pipeline on the server.
+     STEP 6: Mobile camera socket — websocket only, poll status on connect
+  ══════════════════════════════════════════════════════════════════════════ */
+  useEffect(() => {
+    if (currentStep !== 6) return;
+    let socket = null;
+    let cancelled = false;
+
+    const connect = (session) => {
+      if (cancelled) return;
+      socket = io(SOCKET_URL, {
+        query: {
+          interviewId: session.interviewId,
+          userId: session.userId,
+          type: "settings",
+        },
+        // FIX: websocket only — prevents 400 polling errors
+        transports: ["websocket"],
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000,
+        timeout: 20_000,
+      });
+      settingsSocketRef.current = socket;
+
+      socket.on("connect", () => {
+        console.log("✅ Settings socket connected:", socket.id);
+        // FIX: immediately poll for secondary camera state on connect
+        socket.emit("request_secondary_camera_status", {
+          interviewId: session.interviewId,
+        });
+      });
+
+      // FIX: listen to both events
+      socket.on("secondary_camera_ready", () => {
+        console.log("📱 Mobile camera connected via LiveKit");
+        setMobileCameraConnected(true);
+      });
+      socket.on("secondary_camera_status", (data) => {
+        if (data.connected) setMobileCameraConnected(true);
+      });
+
+      socket.on("mobile_camera_frame", (data) => {
+        if (!data?.frame || !mobileCanvasRef.current) return;
+        const img = new Image();
+        img.onload = () => {
+          const ctx = mobileCanvasRef.current?.getContext("2d");
+          if (ctx)
+            ctx.drawImage(
+              img,
+              0,
+              0,
+              mobileCanvasRef.current.width,
+              mobileCanvasRef.current.height,
+            );
+        };
+        img.src = data.frame;
+      });
+
+      socket.on("connect_error", (err) => {
+        console.error("❌ Settings socket connect_error:", err.message);
+        setError("Failed to connect to server for mobile camera.");
+      });
+    };
+
+    if (sessionDataRef.current) {
+      connect(sessionDataRef.current);
+    } else {
+      const interval = setInterval(() => {
+        if (sessionDataRef.current) {
+          clearInterval(interval);
+          connect(sessionDataRef.current);
+        }
+      }, 300);
+    }
+
+    return () => {
+      cancelled = true;
+      socket?.disconnect();
+    };
+  }, [currentStep]);
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     STEP 7: Pre-init — websocket only, poll secondary camera status
   ══════════════════════════════════════════════════════════════════════════ */
   useEffect(() => {
     if (currentStep !== 7) return;
-
     let mounted = true;
     let socket = null;
 
@@ -490,16 +460,12 @@ const InterviewSetup = () => {
       try {
         console.log("🔄 Starting pre-initialization (LiveKit mode)...");
 
-        // ── Wait for sessionData ──────────────────────────────────────────────
+        // Wait for sessionData
         if (!sessionDataRef.current) {
-          console.log("⏳ Waiting for session data...");
           await new Promise((resolve, reject) => {
             if (sessionDataRef.current) return resolve();
             const timeout = setTimeout(
-              () =>
-                reject(
-                  new Error("Session creation timed out. Please try again."),
-                ),
+              () => reject(new Error("Session creation timed out.")),
               60000,
             );
             const interval = setInterval(() => {
@@ -511,17 +477,16 @@ const InterviewSetup = () => {
             }, 300);
           });
         }
-
         const session = sessionDataRef.current;
 
-        // Disconnect settings socket if still open from Step 6
+        // Disconnect step-6 settings socket
         if (settingsSocketRef.current?.connected) {
           settingsSocketRef.current.disconnect();
           settingsSocketRef.current = null;
-          await new Promise((r) => setTimeout(r, 300));
+          await new Promise((r) => setTimeout(r, 200));
         }
 
-        // ── 1. Connect interview socket ───────────────────────────────────────
+        // 1. Connect interview socket — websocket only
         if (mounted)
           setInitProgress((prev) => ({ ...prev, socket: "connecting" }));
         socket = io(SOCKET_URL, {
@@ -530,11 +495,12 @@ const InterviewSetup = () => {
             userId: session.userId,
             type: "interview",
           },
-          transports: ["websocket", "polling"],
+          // FIX: websocket only
+          transports: ["websocket"],
           reconnection: true,
           reconnectionAttempts: 5,
           reconnectionDelay: 1000,
-          timeout: 20000,
+          timeout: 20_000,
         });
         interviewSocketRef.current = socket;
 
@@ -545,11 +511,14 @@ const InterviewSetup = () => {
           );
           socket.once("connect", () => {
             clearTimeout(timer);
-            // Tell server we are in setup mode (it will not emit client_ready egress yet)
             socket.emit("setup_mode", {
               setupInProgress: true,
               interviewId: session.interviewId,
               userId: session.userId,
+            });
+            // FIX: poll secondary camera status from the interview socket too
+            socket.emit("request_secondary_camera_status", {
+              interviewId: session.interviewId,
             });
             if (mounted) setInitProgress((prev) => ({ ...prev, socket: true }));
             resolve();
@@ -560,7 +529,15 @@ const InterviewSetup = () => {
           });
         });
 
-        // ── 2. Wait for server_ready ──────────────────────────────────────────
+        // FIX: listen for secondary camera status on the interview socket
+        socket.on("secondary_camera_ready", () => {
+          if (mounted) setMobileCameraConnected(true);
+        });
+        socket.on("secondary_camera_status", (data) => {
+          if (data.connected && mounted) setMobileCameraConnected(true);
+        });
+
+        // 2. Wait for server_ready
         if (mounted)
           setInitProgress((prev) => ({ ...prev, serverReady: "waiting" }));
         await new Promise((resolve, reject) => {
@@ -576,18 +553,14 @@ const InterviewSetup = () => {
           });
         });
 
-        // ── 3. Wait for question generation ──────────────────────────────────
+        // 3. Wait for question generation
         if (!questionsReadyRef.current) {
-          console.log("⏳ Questions still generating — waiting...");
           if (mounted)
             setInitProgress((prev) => ({ ...prev, questions: "waiting" }));
           await new Promise((resolve, reject) => {
             if (questionsReadyRef.current) return resolve();
             const timeout = setTimeout(
-              () =>
-                reject(
-                  new Error("Question generation timed out. Please try again."),
-                ),
+              () => reject(new Error("Question generation timed out.")),
               60000,
             );
             const interval = setInterval(() => {
@@ -601,32 +574,27 @@ const InterviewSetup = () => {
         }
         if (mounted) setInitProgress((prev) => ({ ...prev, questions: true }));
 
-        // ── 4. Mark LiveKit-managed items as handled by server ────────────────
-        // Audio, video, screen, and mobile recording are all managed server-side
-        // via LiveKit egress — no browser pre-registration needed.
+        // 4. Mark LiveKit-managed items done
         if (mounted) {
           setInitProgress((prev) => ({
             ...prev,
-            audioRecording: true, // LiveKit composite egress captures audio
-            videoRecording: true, // LiveKit composite egress captures primary cam
+            audioRecording: true,
+            videoRecording: true,
             screenRecording: SCREEN_SHARE_SUPPORTED ? true : "skipped",
             mobileRecording: mobileCameraConnected ? true : "skipped",
           }));
         }
 
-        // Small delay so the user sees the "done" state before navigating
         await new Promise((r) => setTimeout(r, 400));
-
         console.log("✅ Pre-initialization complete (LiveKit mode)!");
 
-        // ── 5. Bundle streams and navigate ────────────────────────────────────
+        // 5. Bundle streams and navigate
         const streamPayload = {
           micStream,
           primaryCameraStream,
           screenShareStream: screenShareStreamRef.current,
           sessionData: session,
           preInitializedSocket: socket,
-          // No pre-warm session IDs needed — LiveKit egress is server-managed.
           preWarmSessionIds: {},
           preWarmComplete: {
             audio: true,
@@ -670,7 +638,7 @@ const InterviewSetup = () => {
     streamsRef,
   ]);
 
-  /* ── CLEANUP ─────────────────────────────────────────────────────────────── */
+  /* ── Global cleanup ───────────────────────────────────────────────────── */
   useEffect(() => {
     return () => {
       if (hasNavigatedRef.current) {
@@ -692,7 +660,6 @@ const InterviewSetup = () => {
   /* ══════════════════════════════════════════════════════════════════════════
      RENDER
   ══════════════════════════════════════════════════════════════════════════ */
-
   const renderStepIndicator = () => (
     <div className="flex items-center justify-center gap-1 mb-10 overflow-x-auto pb-2">
       {steps.map((step, idx) => {
@@ -752,11 +719,7 @@ const InterviewSetup = () => {
     if (!isGeneratingQuestions && questionsReady) return null;
     return (
       <div
-        className={`mb-5 px-4 py-3 rounded-xl border flex items-center gap-3 transition-all duration-300 ${
-          isGeneratingQuestions
-            ? "bg-blue-500/8 border-blue-500/20"
-            : "bg-emerald-500/8 border-emerald-500/20"
-        }`}
+        className={`mb-5 px-4 py-3 rounded-xl border flex items-center gap-3 transition-all duration-300 ${isGeneratingQuestions ? "bg-blue-500/8 border-blue-500/20" : "bg-emerald-500/8 border-emerald-500/20"}`}
       >
         {isGeneratingQuestions ? (
           <>
@@ -799,7 +762,6 @@ const InterviewSetup = () => {
       }}
     >
       <div className="max-w-2xl mx-auto">
-        {/* Header */}
         <div className="text-center mb-10">
           <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-violet-500/10 border border-violet-500/20 rounded-full mb-4">
             <div className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
@@ -837,7 +799,7 @@ const InterviewSetup = () => {
           </div>
         )}
 
-        {/* ── STEP 1: Skills ──────────────────────────────────────────────────── */}
+        {/* STEP 1 */}
         {currentStep === 1 && (
           <Card className="p-7 bg-slate-900/60 border-slate-800/60 backdrop-blur-sm">
             {!hasExistingSkills ? (
@@ -908,7 +870,7 @@ const InterviewSetup = () => {
           </Card>
         )}
 
-        {/* ── STEP 2: Guidelines ──────────────────────────────────────────────── */}
+        {/* STEP 2 */}
         {currentStep === 2 && (
           <Card className="p-7 bg-slate-900/60 border-slate-800/60 backdrop-blur-sm">
             <h2 className="text-lg font-semibold text-white mb-1">
@@ -954,7 +916,7 @@ const InterviewSetup = () => {
           </Card>
         )}
 
-        {/* ── STEP 3: Microphone ──────────────────────────────────────────────── */}
+        {/* STEP 3 */}
         {currentStep === 3 && (
           <Card className="p-7 bg-slate-900/60 border-slate-800/60 backdrop-blur-sm">
             <h2 className="text-lg font-semibold text-white mb-1">
@@ -1049,7 +1011,7 @@ const InterviewSetup = () => {
           </Card>
         )}
 
-        {/* ── STEP 4: Primary Camera ──────────────────────────────────────────── */}
+        {/* STEP 4 */}
         {currentStep === 4 && (
           <Card className="p-7 bg-slate-900/60 border-slate-800/60 backdrop-blur-sm">
             <h2 className="text-lg font-semibold text-white mb-1">
@@ -1123,7 +1085,7 @@ const InterviewSetup = () => {
           </Card>
         )}
 
-        {/* ── STEP 5: Screen Share ─────────────────────────────────────────────── */}
+        {/* STEP 5 */}
         {currentStep === 5 && (
           <Card className="p-7 bg-slate-900/60 border-slate-800/60 backdrop-blur-sm">
             <h2 className="text-lg font-semibold text-white mb-1">
@@ -1236,7 +1198,7 @@ const InterviewSetup = () => {
           </Card>
         )}
 
-        {/* ── STEP 6: Mobile Camera ───────────────────────────────────────────── */}
+        {/* STEP 6 */}
         {currentStep === 6 && (
           <Card className="p-7 bg-slate-900/60 border-slate-800/60 backdrop-blur-sm">
             <h2 className="text-lg font-semibold text-white mb-1 text-center">
@@ -1246,7 +1208,6 @@ const InterviewSetup = () => {
               Connect a secondary angle from your phone (optional)
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* QR side */}
               <div className="flex flex-col items-center gap-5">
                 <div className="inline-block p-3 bg-white rounded-2xl shadow-xl shadow-black/40">
                   {sessionData ? (
@@ -1273,11 +1234,8 @@ const InterviewSetup = () => {
                   </ol>
                 </div>
               </div>
-
-              {/* Preview side */}
               <div className="flex flex-col gap-4">
                 <div className="relative w-full aspect-video bg-black rounded-xl overflow-hidden ring-1 ring-slate-700/50">
-                  {/* Canvas kept for backwards compat — blank in LiveKit mode */}
                   <canvas
                     ref={mobileCanvasRef}
                     width="640"
@@ -1323,7 +1281,6 @@ const InterviewSetup = () => {
                     </div>
                   )}
                 </div>
-
                 {mobileCameraConnected ? (
                   <div className="flex flex-col items-center gap-3">
                     <InfoBadge variant="green">
@@ -1367,7 +1324,7 @@ const InterviewSetup = () => {
           </Card>
         )}
 
-        {/* ── STEP 7: Initialization ───────────────────────────────────────────── */}
+        {/* STEP 7 */}
         {currentStep === 7 && (
           <Card className="p-7 bg-slate-900/60 border-slate-800/60 backdrop-blur-sm">
             <h2 className="text-lg font-semibold text-white mb-1 text-center">
@@ -1376,7 +1333,6 @@ const InterviewSetup = () => {
             <p className="text-slate-500 text-sm mb-7 text-center">
               Finalising connections and preparing your session…
             </p>
-
             {initError ? (
               <div className="space-y-5">
                 <div className="px-4 py-3 bg-red-500/8 border border-red-500/20 rounded-xl flex items-start gap-3">
@@ -1488,7 +1444,6 @@ const InterviewSetup = () => {
                     </div>
                   );
                 })}
-
                 <div className="flex justify-center pt-4">
                   <InfoBadge variant="blue">
                     <Spinner size="sm" color="blue" />

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import {
   Room,
@@ -31,7 +31,6 @@ import {
 import useAudioRecording from "./useAudioRecording";
 import { useTTS } from "./useSpeechHook";
 
-// 48kHz — matches Deepgram STT sample_rate and TTS output rate
 const MIC_SAMPLE_RATE = 48000;
 
 export const useInterview = (interviewId, userId, cameraStream) => {
@@ -49,7 +48,15 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const livekitTokenRef = useRef(null);
   const livekitUrlRef = useRef(null);
   const localAudioTrackRef = useRef(null);
+  // Single promise ref — prevents duplicate join races
   const lkJoinPromiseRef = useRef(null);
+  // Resolve fn so handleLiveKitToken can unblock autoStartInterview
+  const lkReadyResolveRef = useRef(null);
+  const lkReadyPromiseRef = useRef(
+    new Promise((resolve) => {
+      // Will be resolved once the room is actually connected
+    }),
+  );
 
   const isPlayingRef = useRef(false);
   const isListeningRef = useRef(false);
@@ -59,6 +66,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const ttsStreamActiveRef = useRef(false);
   const micStreamingActiveRef = useRef(false);
 
+  // Keep refs in sync with Redux state so closures always see current values
   useEffect(() => {
     isPlayingRef.current = interview.isPlaying;
     isListeningRef.current = interview.isListening;
@@ -72,7 +80,19 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const micProcessorRef = useRef(null);
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // AUDIO CONTEXT — mic capture only, 48kHz to match Deepgram STT
+  // Create the "lkReady" promise once on mount so autoStartInterview can await it
+  // ═══════════════════════════════════════════════════════════════════════════
+  useEffect(() => {
+    lkReadyPromiseRef.current = new Promise((resolve) => {
+      lkReadyResolveRef.current = resolve;
+    });
+    // If a room was somehow already connected before this effect (shouldn't happen
+    // but be safe) resolve immediately.
+    if (livekitRoomRef.current) lkReadyResolveRef.current?.();
+  }, []); // eslint-disable-line
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // AUDIO CONTEXT — 48 kHz to match Deepgram STT + TTS sample rate
   // ═══════════════════════════════════════════════════════════════════════════
   const ensureAudioContext = useCallback(async () => {
     if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
@@ -115,7 +135,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   }, [interview.isInitializing, interview.status, dispatch]);
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // TTS — isolated AudioContext at 48kHz, WAV-wrapped linear16 chunks
+  // TTS — isolated 48 kHz AudioContext, WAV-wrapped linear16 chunks
   // ═══════════════════════════════════════════════════════════════════════════
   const { enqueueTTSChunk, flushTTS, resetTTS } = useTTS({
     onPlayStart: () => {
@@ -201,9 +221,10 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   );
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // LIVEKIT
+  // LIVEKIT — join + publish mic
   // ═══════════════════════════════════════════════════════════════════════════
   const joinLiveKitRoom = useCallback(async (url, token) => {
+    // If already connected or a join is in flight, return existing promise
     if (livekitRoomRef.current) return livekitRoomRef.current;
     if (lkJoinPromiseRef.current) return lkJoinPromiseRef.current;
 
@@ -228,9 +249,14 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         },
       });
 
-      room.on(RoomEvent.Connected, () =>
-        console.log("🏠 LiveKit connected:", room.name),
-      );
+      room.on(RoomEvent.Connected, () => {
+        console.log("🏠 LiveKit connected:", room.name);
+        livekitRoomRef.current = room;
+        lkJoinPromiseRef.current = null;
+        // Unblock autoStartInterview which may be awaiting lkReadyPromise
+        lkReadyResolveRef.current?.();
+      });
+
       room.on(RoomEvent.Disconnected, () =>
         console.warn("🏠 LiveKit disconnected"),
       );
@@ -272,9 +298,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       });
 
       await room.connect(url, token);
-      livekitRoomRef.current = room;
-      lkJoinPromiseRef.current = null;
-      console.log("✅ Joined LiveKit room:", room.name);
+      // RoomEvent.Connected fires above and sets livekitRoomRef + resolves lkReady
       return room;
     };
 
@@ -282,6 +306,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     return lkJoinPromiseRef.current;
   }, []);
 
+  // ─── Publish microphone via LiveKit ────────────────────────────────────────
   const publishLiveKitMic = useCallback(async () => {
     const room = livekitRoomRef.current;
     if (!room) {
@@ -306,10 +331,10 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
       const micTrack = track.mediaStreamTrack;
       const micStream = new MediaStream([micTrack]);
-      const ctx = await ensureAudioContext(); // 48kHz
+      const ctx = await ensureAudioContext();
       const source = ctx.createMediaStreamSource(micStream);
 
-      // Buffer size 2048 = ~43ms at 48kHz — lower than 4096 for less latency
+      // 2048 samples ≈ 43 ms at 48 kHz — lower latency than 4096
       const processor = ctx.createScriptProcessor(2048, 1, 1);
       micProcessorRef.current = processor;
       source.connect(processor);
@@ -343,6 +368,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }
   }, [audioRecording, dispatch, ensureAudioContext]);
 
+  // ─── Socket PCM fallback when LiveKit room never connects ──────────────────
   const startSocketMicFallback = useCallback(
     async (existingStream = null) => {
       if (micStreamRef.current) return;
@@ -364,7 +390,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         micStreamRef.current = stream;
         dispatch(setMicPermissionGranted(true));
 
-        const ctx = await ensureAudioContext(); // 48kHz
+        const ctx = await ensureAudioContext();
         const source = ctx.createMediaStreamSource(stream);
         const processor = ctx.createScriptProcessor(2048, 1, 1);
         micProcessorRef.current = processor;
@@ -400,40 +426,79 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch, audioRecording, ensureAudioContext],
   );
 
+  // ─── Start mic — prefer LiveKit, fall back to socket PCM ──────────────────
   const startMicStreaming = useCallback(
     async (existingStream = null) => {
-      if (livekitRoomRef.current || lkJoinPromiseRef.current) {
-        await (lkJoinPromiseRef.current || Promise.resolve());
+      // If the room is already up, publish immediately
+      if (livekitRoomRef.current) {
+        await publishLiveKitMic();
+        return;
+      }
+
+      // If a join is in flight, wait for it (up to 5 s) then publish
+      if (lkJoinPromiseRef.current) {
+        try {
+          await Promise.race([
+            lkJoinPromiseRef.current,
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error("LiveKit join timeout")), 5000),
+            ),
+          ]);
+          if (livekitRoomRef.current) {
+            await publishLiveKitMic();
+            return;
+          }
+        } catch (_) {
+          // fall through to fallback
+        }
+      }
+
+      // Wait for lkReadyPromise — this resolves once RoomEvent.Connected fires
+      try {
+        await Promise.race([
+          lkReadyPromiseRef.current,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("LiveKit ready timeout")), 5000),
+          ),
+        ]);
         if (livekitRoomRef.current) {
           await publishLiveKitMic();
           return;
         }
+      } catch (_) {
+        // fall through
       }
-      await new Promise((r) => setTimeout(r, 300));
-      if (livekitRoomRef.current) {
-        await publishLiveKitMic();
-      } else {
-        console.warn("⚠️ LiveKit room not ready — using socket PCM fallback");
-        await startSocketMicFallback(existingStream);
-      }
+
+      // True fallback — LiveKit never connected
+      console.warn("⚠️ LiveKit room not ready — using socket PCM fallback");
+      await startSocketMicFallback(existingStream);
     },
     [publishLiveKitMic, startSocketMicFallback],
   );
 
+  // ─── autoStartInterview ────────────────────────────────────────────────────
   const autoStartInterview = useCallback(
     async (existingMicStream = null) => {
       if (hasStartedRef.current) return;
       hasStartedRef.current = true;
       try {
         await ensureAudioContext();
+
+        // If token already arrived, kick off the join now
         if (
           livekitTokenRef.current &&
           livekitUrlRef.current &&
-          !livekitRoomRef.current
+          !livekitRoomRef.current &&
+          !lkJoinPromiseRef.current
         ) {
-          await joinLiveKitRoom(livekitUrlRef.current, livekitTokenRef.current);
+          joinLiveKitRoom(livekitUrlRef.current, livekitTokenRef.current).catch(
+            console.error,
+          );
         }
+
+        // Start mic — startMicStreaming waits internally for LiveKit to connect
         await startMicStreaming(existingMicStream);
+
         if (!serverReadyRef.current) {
           console.error("❌ Server not ready");
           hasStartedRef.current = false;
@@ -456,6 +521,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch, ensureAudioContext, startMicStreaming, joinLiveKitRoom],
   );
 
+  // ─── handleLiveKitToken — called when socket receives livekit_token ────────
   const handleLiveKitToken = useCallback(
     async ({ token, url }) => {
       const resolvedToken = await Promise.resolve(token);
@@ -472,6 +538,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       }
       livekitTokenRef.current = resolvedToken;
       livekitUrlRef.current = url;
+      // Kick off join immediately — don't wait for autoStartInterview to call it
       if (!livekitRoomRef.current && !lkJoinPromiseRef.current) {
         joinLiveKitRoom(url, resolvedToken).catch(console.error);
       }
@@ -479,6 +546,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [joinLiveKitRoom],
   );
 
+  // ─── cleanup ───────────────────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       resetTTS();

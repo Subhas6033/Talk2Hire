@@ -2,10 +2,6 @@ import { useRef, useState, useCallback, useEffect } from "react";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 const CHUNK_DURATION = 20000; // 20-s chunks
-
-// In LiveKit mode the primary camera is recorded by the composite egress.
-// The local MediaRecorder still runs so chunks can be uploaded to FTP,
-// but only when a cameraStream is provided.
 const LIVEKIT_MODE = true;
 
 // ─── MIME type detection ──────────────────────────────────────────────────────

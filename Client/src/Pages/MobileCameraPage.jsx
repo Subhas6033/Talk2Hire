@@ -11,7 +11,7 @@ import {
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
-// ─── Status Dot ──────────────────────────────────────────────────────────────
+// ─── Status Dot ───────────────────────────────────────────────────────────────
 const Dot = ({ active, color = "green" }) => {
   const colors = {
     green: active ? "bg-emerald-400" : "bg-slate-600",
@@ -69,8 +69,8 @@ const MobileCameraPage = () => {
   const sessionId = searchParams.get("interviewId");
   const userId = searchParams.get("userId");
 
-  // ── State ─────────────────────────────────────────────────────────────────
-  const [phase, setPhase] = useState("connecting"); // connecting | camera | publishing | live | error
+  // ── State ──────────────────────────────────────────────────────────────────
+  const [phase, setPhase] = useState("connecting");
   const [error, setError] = useState(null);
   const [socketConnected, setSocketConnected] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
@@ -78,14 +78,14 @@ const MobileCameraPage = () => {
   const [trackPublished, setTrackPublished] = useState(false);
   const [retrying, setRetrying] = useState(false);
 
-  // ── Refs ──────────────────────────────────────────────────────────────────
+  // ── Refs ───────────────────────────────────────────────────────────────────
   const socketRef = useRef(null);
   const roomRef = useRef(null);
   const localVideoTrackRef = useRef(null);
-  const videoElRef = useRef(null); // preview <video>
+  const videoElRef = useRef(null);
   const mountedRef = useRef(true);
 
-  // ── Cleanup ───────────────────────────────────────────────────────────────
+  // ── Cleanup ────────────────────────────────────────────────────────────────
   const teardown = useCallback(async () => {
     if (localVideoTrackRef.current) {
       try {
@@ -113,7 +113,7 @@ const MobileCameraPage = () => {
     };
   }, [teardown]);
 
-  // ── Guard: invalid URL params ─────────────────────────────────────────────
+  // ── Guard: invalid URL params ──────────────────────────────────────────────
   useEffect(() => {
     if (!sessionId || !userId) {
       setPhase("error");
@@ -121,29 +121,113 @@ const MobileCameraPage = () => {
     }
   }, [sessionId, userId]);
 
-  // ── Step 1: Connect Socket ────────────────────────────────────────────────
+  // ── Step 3: Create & publish local video track ─────────────────────────────
+  const publishCamera = useCallback(async (room) => {
+    if (!mountedRef.current) return;
+    try {
+      const track = await createLocalVideoTrack({
+        resolution: VideoPresets.h720.resolution,
+        facingMode: "user",
+      });
+      localVideoTrackRef.current = track;
+      setCameraReady(true);
+
+      if (videoElRef.current) track.attach(videoElRef.current);
+
+      await room.localParticipant.publishTrack(track);
+      console.log("📷 Mobile camera published to LiveKit");
+    } catch (err) {
+      if (!mountedRef.current) return;
+      console.error("❌ Camera publish failed:", err);
+      let msg = "Unable to access front camera. ";
+      if (err.name === "NotAllowedError")
+        msg += "Please grant camera permission and refresh.";
+      else if (err.name === "NotFoundError")
+        msg += "No front camera found on this device.";
+      else if (err.name === "NotReadableError")
+        msg += "Camera is in use by another app.";
+      else msg += err.message;
+      setPhase("error");
+      setError(msg);
+    }
+  }, []);
+
+  // ── Step 2: Join LiveKit room ──────────────────────────────────────────────
+  const joinLiveKitRoom = useCallback(
+    async (url, token) => {
+      if (!mountedRef.current) return;
+      try {
+        setPhase("publishing");
+
+        const room = new Room({
+          adaptiveStream: true,
+          dynacast: true,
+          reconnectPolicy: {
+            nextRetryDelayInMs: (ctx) => {
+              if (ctx.retryCount < 3) return 300;
+              if (ctx.retryCount < 8) return 1000;
+              return null;
+            },
+          },
+        });
+        roomRef.current = room;
+
+        room.on(RoomEvent.Connected, () => {
+          if (mountedRef.current) setRoomConnected(true);
+        });
+        room.on(RoomEvent.Disconnected, () => {
+          if (mountedRef.current) {
+            setRoomConnected(false);
+            setTrackPublished(false);
+          }
+        });
+        room.on(RoomEvent.Reconnecting, () => {
+          if (mountedRef.current) setPhase("publishing");
+        });
+        room.on(RoomEvent.Reconnected, () => {
+          if (mountedRef.current) setPhase("live");
+        });
+        room.on(RoomEvent.LocalTrackPublished, (pub) => {
+          if (pub.kind === Track.Kind.Video && mountedRef.current) {
+            setTrackPublished(true);
+            setPhase("live");
+          }
+        });
+
+        await room.connect(url, token);
+        await publishCamera(room);
+      } catch (err) {
+        if (!mountedRef.current) return;
+        console.error("❌ LiveKit room join failed:", err);
+        setPhase("error");
+        setError("Failed to join the video room: " + err.message);
+      }
+    },
+    [publishCamera],
+  );
+
+  // ── Step 1: Connect Socket ─────────────────────────────────────────────────
   const connectSocket = useCallback(() => {
     if (!sessionId || !userId) return;
-
     setPhase("connecting");
     setError(null);
 
     const socket = io(SOCKET_URL, {
       query: { interviewId: sessionId, userId, type: "settings" },
-      transports: ["websocket", "polling"],
+      // FIX: websocket only — polling causes 400 errors when server disallows it
+      transports: ["websocket"],
       reconnection: true,
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
       timeout: 20_000,
     });
-
     socketRef.current = socket;
 
     socket.on("connect", () => {
       if (!mountedRef.current) return;
       setSocketConnected(true);
 
-      // Announce our presence; server will emit livekit_token in response
+      // Announce presence — server will emit livekit_token in response
       socket.emit("secondary_camera_connected", {
         interviewId: sessionId,
         userId,
@@ -163,122 +247,26 @@ const MobileCameraPage = () => {
       }
     });
 
-    socket.on("connect_error", () => {
+    socket.on("connect_error", (err) => {
       if (!mountedRef.current) return;
+      console.error("❌ Mobile socket connect_error:", err.message);
       setPhase("error");
       setError("Could not reach the server. Check your connection and retry.");
     });
 
-    // ── Step 2: LiveKit token received → join room ─────────────────────────
+    // FIX: server emits livekit_token — join room immediately on receipt
     socket.on("livekit_token", async ({ token, url }) => {
       if (!mountedRef.current) return;
       await joinLiveKitRoom(url, token);
     });
-  }, [sessionId, userId]); // eslint-disable-line
+  }, [sessionId, userId, joinLiveKitRoom]);
 
-  // ── Step 2: Join LiveKit room ─────────────────────────────────────────────
-  const joinLiveKitRoom = useCallback(async (url, token) => {
-    if (!mountedRef.current) return;
-
-    try {
-      setPhase("publishing");
-
-      const room = new Room({
-        adaptiveStream: true,
-        dynacast: true,
-        reconnectPolicy: {
-          nextRetryDelayInMs: (ctx) => {
-            if (ctx.retryCount < 3) return 300;
-            if (ctx.retryCount < 8) return 1000;
-            return null;
-          },
-        },
-      });
-
-      roomRef.current = room;
-
-      room.on(RoomEvent.Connected, () => {
-        if (mountedRef.current) setRoomConnected(true);
-      });
-
-      room.on(RoomEvent.Disconnected, () => {
-        if (mountedRef.current) {
-          setRoomConnected(false);
-          setTrackPublished(false);
-        }
-      });
-
-      room.on(RoomEvent.Reconnecting, () => {
-        if (mountedRef.current) setPhase("publishing");
-      });
-
-      room.on(RoomEvent.Reconnected, () => {
-        if (mountedRef.current) setPhase("live");
-      });
-
-      room.on(RoomEvent.LocalTrackPublished, (pub) => {
-        if (pub.kind === Track.Kind.Video && mountedRef.current) {
-          setTrackPublished(true);
-          setPhase("live");
-        }
-      });
-
-      await room.connect(url, token);
-
-      // ── Step 3: Publish front camera ────────────────────────────────────
-      await publishCamera(room);
-    } catch (err) {
-      if (!mountedRef.current) return;
-      console.error("❌ LiveKit room join failed:", err);
-      setPhase("error");
-      setError("Failed to join the video room: " + err.message);
-    }
-  }, []);
-
-  // ── Step 3: Create & publish local video track ────────────────────────────
-  const publishCamera = useCallback(async (room) => {
-    if (!mountedRef.current) return;
-
-    try {
-      const track = await createLocalVideoTrack({
-        resolution: VideoPresets.h720.resolution,
-        facingMode: "user",
-      });
-
-      localVideoTrackRef.current = track;
-      setCameraReady(true);
-
-      // Mirror preview into the <video> element
-      if (videoElRef.current) {
-        track.attach(videoElRef.current);
-      }
-
-      await room.localParticipant.publishTrack(track);
-      console.log("📷 Mobile camera published to LiveKit");
-    } catch (err) {
-      if (!mountedRef.current) return;
-      console.error("❌ Camera publish failed:", err);
-
-      let msg = "Unable to access front camera. ";
-      if (err.name === "NotAllowedError")
-        msg += "Please grant camera permission and refresh.";
-      else if (err.name === "NotFoundError")
-        msg += "No front camera found on this device.";
-      else if (err.name === "NotReadableError")
-        msg += "Camera is in use by another app.";
-      else msg += err.message;
-
-      setPhase("error");
-      setError(msg);
-    }
-  }, []);
-
-  // ── Kick off on mount ─────────────────────────────────────────────────────
+  // ── Kick off on mount ──────────────────────────────────────────────────────
   useEffect(() => {
     if (sessionId && userId) connectSocket();
   }, []); // eslint-disable-line
 
-  // ── Retry handler ─────────────────────────────────────────────────────────
+  // ── Retry ──────────────────────────────────────────────────────────────────
   const handleRetry = useCallback(async () => {
     setRetrying(true);
     await teardown();
@@ -295,7 +283,7 @@ const MobileCameraPage = () => {
     }, 600);
   }, [teardown, connectSocket]);
 
-  // ── Invalid link screen ───────────────────────────────────────────────────
+  // ── Invalid link screen ────────────────────────────────────────────────────
   if (!sessionId || !userId) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
@@ -327,7 +315,6 @@ const MobileCameraPage = () => {
     );
   }
 
-  // ── Derive header label + accent ──────────────────────────────────────────
   const phaseConfig = {
     connecting: {
       label: "Connecting…",
@@ -370,9 +357,8 @@ const MobileCameraPage = () => {
       }}
     >
       <div className="w-full max-w-sm flex flex-col gap-4">
-        {/* ── Header ───────────────────────────────────────────────────────── */}
+        {/* Header */}
         <div className="text-center mb-2">
-          {/* Camera icon */}
           <div
             className={`w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4 transition-all duration-500 ${
               isLive
@@ -420,9 +406,8 @@ const MobileCameraPage = () => {
           </p>
         </div>
 
-        {/* ── Video preview card ────────────────────────────────────────────── */}
+        {/* Video preview card */}
         <div className="relative bg-slate-900 rounded-2xl overflow-hidden border border-slate-800/80 shadow-2xl">
-          {/* Progress bar (top) */}
           <div className="h-0.5 w-full bg-slate-800">
             <div
               className={`h-full ${cfg.bar} transition-all duration-700 ${
@@ -430,8 +415,6 @@ const MobileCameraPage = () => {
               }`}
             />
           </div>
-
-          {/* Camera preview — portrait 9:16 */}
           <div className="relative" style={{ aspectRatio: "9/16" }}>
             <video
               ref={videoElRef}
@@ -441,8 +424,6 @@ const MobileCameraPage = () => {
               className="w-full h-full object-cover"
               style={{ transform: "scaleX(-1)" }}
             />
-
-            {/* Overlay when not yet live */}
             {!cameraReady && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/90 gap-3">
                 {isError ? (
@@ -467,8 +448,6 @@ const MobileCameraPage = () => {
                 </p>
               </div>
             )}
-
-            {/* LIVE badge */}
             {isLive && (
               <div className="absolute top-3 left-3">
                 <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/90 backdrop-blur-sm rounded-md">
@@ -479,8 +458,6 @@ const MobileCameraPage = () => {
                 </div>
               </div>
             )}
-
-            {/* Loading state badge */}
             {isLoading && cameraReady && (
               <div className="absolute top-3 left-3">
                 <div className="flex items-center gap-1.5 px-2.5 py-1 bg-violet-600/90 backdrop-blur-sm rounded-md">
@@ -494,7 +471,7 @@ const MobileCameraPage = () => {
           </div>
         </div>
 
-        {/* ── Error panel ───────────────────────────────────────────────────── */}
+        {/* Error panel */}
         {isError && error && (
           <div className="px-4 py-3 bg-red-500/8 border border-red-500/20 rounded-xl">
             <p className="text-red-300 text-sm mb-3">{error}</p>
@@ -515,7 +492,7 @@ const MobileCameraPage = () => {
           </div>
         )}
 
-        {/* ── Status panel ──────────────────────────────────────────────────── */}
+        {/* Status panel */}
         <div className="bg-slate-900/60 border border-slate-800/60 rounded-2xl px-4 py-1 backdrop-blur-sm">
           <StatusRow
             label="Server"
@@ -543,7 +520,6 @@ const MobileCameraPage = () => {
           />
         </div>
 
-        {/* ── Footer hint ───────────────────────────────────────────────────── */}
         <p className="text-center text-slate-700 text-xs pb-2">
           Keep this page open throughout the interview
         </p>

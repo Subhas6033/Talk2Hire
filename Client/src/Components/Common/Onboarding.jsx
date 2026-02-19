@@ -30,7 +30,7 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
   );
   const [registrationError, setRegistrationError] = useState(null);
 
-  const API_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5000";
+  const API_URL = import.meta.env.VITE_BACKEND_URL;
 
   const {
     register,

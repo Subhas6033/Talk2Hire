@@ -78,6 +78,7 @@ async function stopEgress(egressId) {
 function initInterviewSocket(httpServer) {
   const io = new Server(httpServer, {
     cors: { origin: process.env.CORS_ORIGIN, methods: ["GET", "POST"] },
+    // FIX: websocket only — eliminates 400 polling errors and reduces connection overhead
     transports: ["websocket"],
     maxHttpBufferSize: 5 * 1024 * 1024,
     pingTimeout: 60000,
@@ -85,6 +86,8 @@ function initInterviewSocket(httpServer) {
     perMessageDeflate: false,
     httpCompression: false,
     connectTimeout: 45000,
+    // FIX: allow upgrade from polling in case client tries it
+    allowUpgrades: true,
   });
 
   const interviewSessions = new Map();
@@ -116,7 +119,7 @@ function initInterviewSocket(httpServer) {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // SECONDARY CAMERA (mobile/settings socket)
+  // SECONDARY CAMERA (mobile / settings socket)
   // ══════════════════════════════════════════════════════════════════════════
   async function handleSettingsSocket(socket, interviewId, userId) {
     const session = getOrCreateSession(interviewId);
@@ -127,6 +130,7 @@ function initInterviewSocket(httpServer) {
       `📱 Secondary camera socket connected: ${socket.id} for interview ${interviewId}`,
     );
 
+    // Issue LiveKit token immediately so mobile can start joining the room
     const token = await createLiveKitToken(
       `mobile_${userId}`,
       roomName(interviewId),
@@ -138,13 +142,21 @@ function initInterviewSocket(httpServer) {
       role: "secondary_camera",
     });
 
-    // If desktop is already connected and camera was previously confirmed, re-notify
+    // FIX: if desktop already confirmed secondary camera, re-push state immediately
     if (session.secondaryCameraConnected) {
       socket.emit("secondary_camera_ready", {
         connected: true,
         timestamp: Date.now(),
       });
     }
+
+    // FIX: handle status poll from ANY socket (desktop or mobile)
+    socket.on("request_secondary_camera_status", () => {
+      io.to(`interview_${interviewId}`).emit("secondary_camera_status", {
+        connected: session.secondaryCameraConnected,
+        metadata: session.secondaryCameraMetadata || null,
+      });
+    });
 
     socket.on("secondary_camera_connected", (data) => {
       session.secondaryCameraConnected = true;
@@ -153,13 +165,10 @@ function initInterviewSocket(httpServer) {
         angle: data.angle || null,
         angleQuality: data.angleQuality || null,
       };
-
       console.log(`📱 Secondary camera confirmed for interview ${interviewId}`);
 
       const payload = { connected: true, timestamp: Date.now() };
-
-      // FIX: Broadcast to ALL sockets in the room (desktop + mobile)
-      // Previously only emitted back to the mobile socket — desktop never received it
+      // FIX: broadcast to ALL sockets in room (desktop needs this too)
       io.to(`interview_${interviewId}`).emit("secondary_camera_ready", payload);
       io.to(`interview_${interviewId}`).emit("secondary_camera_status", {
         connected: true,
@@ -167,27 +176,15 @@ function initInterviewSocket(httpServer) {
       });
     });
 
-    // FIX: Status poll — desktop can request current state at any time
-    // Previously this only replied to the mobile socket, not the requester
-    socket.on("request_secondary_camera_status", () => {
-      io.to(`interview_${interviewId}`).emit("secondary_camera_status", {
-        connected: session.secondaryCameraConnected,
-        metadata: session.secondaryCameraMetadata || null,
-      });
-    });
-
     const relayFrame = (data, ack) => {
       session.lastMobileFrame = data.frame;
       session.lastMobileFrameTimestamp = data.timestamp || Date.now();
-
-      // Only relay if desktop is actually connected — prevents frame queue buildup
       if (session.desktopSocketId) {
         socket.to(`interview_${interviewId}`).emit("mobile_camera_frame", {
           frame: data.frame,
           timestamp: data.timestamp || Date.now(),
         });
       }
-      // Always ack immediately so mobile doesn't back-pressure
       if (typeof ack === "function") ack();
     };
 
@@ -198,7 +195,7 @@ function initInterviewSocket(httpServer) {
       console.log(`📱 Secondary camera disconnected: ${socket.id}`);
       if (session.mobileSocketId === socket.id) {
         session.mobileSocketId = null;
-        // FIX: Notify desktop that mobile disconnected
+        // FIX: notify desktop that mobile disconnected
         io.to(`interview_${interviewId}`).emit("secondary_camera_status", {
           connected: false,
           metadata: null,
@@ -219,6 +216,7 @@ function initInterviewSocket(httpServer) {
       `🖥️ Desktop interview socket connected: ${socket.id} for interview ${interviewId}`,
     );
 
+    // Issue LiveKit token immediately — don't wait for client_ready
     const livekitToken = await createLiveKitToken(
       `user_${userId}`,
       roomName(interviewId),
@@ -230,7 +228,7 @@ function initInterviewSocket(httpServer) {
       role: "primary",
     });
 
-    // If secondary camera already confirmed before desktop connected, push state immediately
+    // FIX: push secondary camera state immediately if already connected
     if (session.secondaryCameraConnected) {
       socket.emit("secondary_camera_ready", {
         connected: true,
@@ -293,12 +291,11 @@ function initInterviewSocket(httpServer) {
 
       getTTSInstance(interviewId);
 
-      setTimeout(() => {
-        socket.emit("server_ready", {
-          setupMode: session.isSetupMode,
-          message: "Server ready",
-        });
-      }, 50);
+      // FIX: emit server_ready immediately — don't add artificial delay
+      socket.emit("server_ready", {
+        setupMode: session.isSetupMode,
+        message: "Server ready",
+      });
 
       socket.on("setup_mode", () => {
         session.isSetupMode = true;
@@ -306,6 +303,14 @@ function initInterviewSocket(httpServer) {
         socket.emit("server_ready", {
           setupMode: true,
           message: "Server ready in setup mode",
+        });
+      });
+
+      // FIX: handle status poll from desktop
+      socket.on("request_secondary_camera_status", () => {
+        io.to(`interview_${interviewId}`).emit("secondary_camera_status", {
+          connected: session.secondaryCameraConnected,
+          metadata: session.secondaryCameraMetadata || null,
         });
       });
 
@@ -320,16 +325,18 @@ function initInterviewSocket(httpServer) {
           currentQuestionText = firstQuestion.question;
           socket.emit("question", { question: firstQuestion.question });
 
-          // Warm up Deepgram before TTS so it's ready when user finishes speaking
-          await ensureDeepgramConnection();
-
-          // Fire egress in background — don't block TTS start
-          startCompositeEgress(
-            interviewId,
-            `/recordings/${interviewId}/composite.mp4`,
-          ).then((id) => {
-            if (id) session.compositeEgressId = id;
-          });
+          // FIX: warm up Deepgram in parallel with egress start — don't await egress
+          const [deepgramReady] = await Promise.all([
+            ensureDeepgramConnection(),
+            startCompositeEgress(
+              interviewId,
+              `/recordings/${interviewId}/composite.mp4`,
+            )
+              .then((id) => {
+                if (id) session.compositeEgressId = id;
+              })
+              .catch((err) => console.error("Egress start error:", err)),
+          ]);
 
           await streamTTSToClient(socket, firstQuestion.question, interviewId);
 
@@ -350,8 +357,7 @@ function initInterviewSocket(httpServer) {
         }
       });
 
-      // ── LiveKit track events ─────────────────────────────────────────────
-
+      // ── LiveKit track events ────────────────────────────────────────────
       socket.on("livekit_track_published", async (data) => {
         if (data.source === "screen_share" && !session.screenEgressId) {
           try {
@@ -401,9 +407,7 @@ function initInterviewSocket(httpServer) {
         }
       });
 
-      // ── Recording ack handlers ───────────────────────────────────────────
-      // Client hooks wait for these — without them they timeout after 10s
-
+      // ── Recording ack handlers ─────────────────────────────────────────
       socket.on("video_recording_start", (data) => {
         console.log(`📹 video_recording_start: ${data?.videoType}`);
         socket.emit("video_recording_ready", {
@@ -429,8 +433,7 @@ function initInterviewSocket(httpServer) {
         console.log(`🎙️ audio_recording_stop: chunks: ${data?.totalChunks}`);
       });
 
-      // ── Secondary camera events (desktop side) ───────────────────────────
-
+      // ── Secondary camera events (desktop side) ────────────────────────
       socket.on("secondary_camera_connected", (data) => {
         session.secondaryCameraConnected = true;
         session.secondaryCameraMetadata = {
@@ -455,31 +458,23 @@ function initInterviewSocket(httpServer) {
         });
       });
 
-      // FIX: request_secondary_camera_status from desktop broadcasts to full room
-      socket.on("request_secondary_camera_status", () => {
-        io.to(`interview_${interviewId}`).emit("secondary_camera_status", {
-          connected: session.secondaryCameraConnected,
-          metadata: session.secondaryCameraMetadata || null,
-        });
-      });
-
       const relayMobileFrame = (data, ack) => {
         session.lastMobileFrame = data.frame;
         session.lastMobileFrameTimestamp = data.timestamp || Date.now();
-        // Only relay if desktop socket is alive
         if (session.desktopSocketId) {
-          socket.to(`interview_${interviewId}`).emit("mobile_camera_frame", {
-            frame: data.frame,
-            timestamp: data.timestamp || Date.now(),
-          });
+          socket
+            .to(`interview_${interviewId}`)
+            .emit("mobile_camera_frame", {
+              frame: data.frame,
+              timestamp: data.timestamp || Date.now(),
+            });
         }
         if (typeof ack === "function") ack();
       };
       socket.on("mobile_camera_frame", relayMobileFrame);
       socket.on("security_frame_request", relayMobileFrame);
 
-      // ── Audio / STT ──────────────────────────────────────────────────────
-
+      // ── Audio / STT ───────────────────────────────────────────────────
       let lastNoConnWarn = 0;
       socket.on("user_audio_chunk", (audioData) => {
         if (
@@ -517,8 +512,7 @@ function initInterviewSocket(httpServer) {
         if (isListeningActive && !isProcessing) await handleIdle();
       });
 
-      // ── Face detection ───────────────────────────────────────────────────
-
+      // ── Face detection ────────────────────────────────────────────────
       socket.on(
         "holistic_detection_result",
         async ({ hasFace, faceCount, timestamp }) => {
@@ -535,7 +529,6 @@ function initInterviewSocket(httpServer) {
               }
               const absent = now - faceFirstMissingAt;
               if (absent < FACE_VIOLATION_WINDOW_MS) return;
-
               faceViolationCount++;
               socket.emit("face_violation", {
                 type: "NO_FACE",
@@ -543,7 +536,6 @@ function initInterviewSocket(httpServer) {
                 max: MAX_FACE_VIOLATIONS,
                 message: `No face detected — ${MAX_FACE_VIOLATIONS - faceViolationCount} warning(s) remaining`,
               });
-
               if (faceViolationCount >= MAX_FACE_VIOLATIONS) {
                 socket.emit("interview_terminated", {
                   reason: "NO_FACE_DETECTED",
@@ -582,8 +574,7 @@ function initInterviewSocket(httpServer) {
         },
       );
 
-      // ── Disconnect ───────────────────────────────────────────────────────
-
+      // ── Disconnect ────────────────────────────────────────────────────
       socket.on("disconnect", () => {
         console.log(`🖥️ Desktop socket disconnected: ${socket.id}`);
         if (session.desktopSocketId === socket.id)
@@ -602,13 +593,11 @@ function initInterviewSocket(httpServer) {
       // ════════════════════════════════════════════════════════════════════
       // DEEPGRAM LIFECYCLE
       // ════════════════════════════════════════════════════════════════════
-
       function ensureDeepgramConnection() {
         if (deepgramConnection?.isConnected?.()) {
           deepgramConnection.resetTranscriptState?.();
           return Promise.resolve(deepgramConnection);
         }
-
         if (deepgramConnection) {
           try {
             deepgramConnection.finish();
@@ -657,7 +646,7 @@ function initInterviewSocket(httpServer) {
             },
             onClose: () => {
               console.warn(
-                "⚠️ Deepgram closed unexpectedly — will reconnect on next question",
+                "⚠️ Deepgram closed — will reconnect on next question",
               );
               deepgramConnection = null;
             },
@@ -705,7 +694,6 @@ function initInterviewSocket(httpServer) {
       // ════════════════════════════════════════════════════════════════════
       // INTERVIEW FLOW
       // ════════════════════════════════════════════════════════════════════
-
       async function transitionToNextQuestion(questionText) {
         try {
           await ensureDeepgramConnection();
@@ -849,7 +837,6 @@ function initInterviewSocket(httpServer) {
           lower.includes(w),
         );
         awaitingRepeatResponse = false;
-
         if (yes) {
           socket.emit("question", { question: currentQuestionText });
           await transitionToNextQuestion(currentQuestionText);
@@ -872,7 +859,6 @@ function initInterviewSocket(httpServer) {
           message: "Interview completed!",
           totalQuestions: currentOrder,
         });
-
         destroyDeepgramConnection();
         if (faceViolationTimeout) {
           clearTimeout(faceViolationTimeout);
@@ -890,7 +876,6 @@ function initInterviewSocket(httpServer) {
             null;
 
         socket.emit("evaluation_started", { message: "Evaluating responses…" });
-
         evaluateInterview(interviewId)
           .then((results) => {
             socket.emit("evaluation_complete", {
@@ -901,7 +886,6 @@ function initInterviewSocket(httpServer) {
                 experienceLevel: results.overallEvaluation.experienceLevel,
               },
             });
-
             mergeInterviewMedia(interviewId, {
               layout: "picture-in-picture",
               screenPosition: "bottom-right",
@@ -909,21 +893,20 @@ function initInterviewSocket(httpServer) {
               deleteChunksAfter: true,
               generatePreview: true,
             })
-              .then((r) => {
+              .then((r) =>
                 socket.emit("media_merge_complete", {
                   message: "Interview video ready!",
                   finalVideoUrl: r.finalVideoUrl,
                   previewUrl: r.previewUrl,
                   duration: r.duration,
-                });
-              })
-              .catch((err) => {
+                }),
+              )
+              .catch((err) =>
                 socket.emit("media_merge_error", {
                   message: "Video processing failed.",
                   error: err.message,
-                });
-              });
-
+                }),
+              );
             cleanupSession(interviewId);
           })
           .catch(() =>
@@ -954,7 +937,6 @@ function initInterviewSocket(httpServer) {
   // ══════════════════════════════════════════════════════════════════════════
   // CONNECTION ROUTING
   // ══════════════════════════════════════════════════════════════════════════
-
   io.on("connection", async (socket) => {
     const { interviewId, userId, type } = socket.handshake.query;
     if (!interviewId || !userId) {
