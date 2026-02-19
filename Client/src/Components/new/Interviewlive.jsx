@@ -252,28 +252,27 @@ const InterviewLive = () => {
     [attachMobileTrack],
   );
 
-  // FIX 5: Extended poll timeout 60s → 90s, added RoomEvent.Reconnected
-  // handler to re-scan after LiveKit reconnects, and reset + re-scan
-  // immediately on ParticipantConnected since the participant may have
-  // already published their track by the time that event fires.
   useEffect(() => {
     let stopped = false;
     let pollTimer = null;
     let roomCleanup = null;
 
     const bindRoom = (room) => {
-      // Retroactive scan first — mobile may have already published
-      scanForExistingMobileTracks(room);
-
+      // Step 1: Register listeners BEFORE scanning
       const onTrackSubscribed = (track, _pub, p) => {
+        console.log(`📡 TrackSubscribed: ${p.identity} kind=${track.kind}`);
         if (
           track.kind !== Track.Kind.Video ||
           !p.identity?.startsWith("mobile_")
         )
           return;
-        console.log(`📱 TrackSubscribed from ${p.identity}`);
-        attachMobileTrack(track);
+        const el = mobileVideoRef.current;
+        if (!el) return;
+        track.attach(el);
+        setMobileTrackAttached(true);
+        setMobileCameraConnected(true);
       };
+
       const onTrackUnsubscribed = (track, _pub, p) => {
         if (
           track.kind !== Track.Kind.Video ||
@@ -284,51 +283,58 @@ const InterviewLive = () => {
           track.detach();
         } catch (_) {}
         setMobileTrackAttached(false);
-        console.log("📱 Mobile track detached");
       };
-      const onTrackPublished = (pub, p) => {
-        if (pub.kind !== Track.Kind.Video || !p.identity?.startsWith("mobile_"))
-          return;
-        console.log(`📱 TrackPublished — subscribed=${pub.isSubscribed}`);
-        if (pub.isSubscribed && pub.track) attachMobileTrack(pub.track);
-      };
+
       const onParticipantConnected = (p) => {
         if (!p.identity?.startsWith("mobile_")) return;
-        console.log(`📱 Mobile participant joined: ${p.identity}`);
         setMobileCameraConnected(true);
-        // FIX 5a: scan immediately — participant may have already published
-        mobileTrackScanDoneRef.current = false;
-        scanForExistingMobileTracks(room);
+        // They may have already published by now
+        p.trackPublications.forEach((pub) => {
+          if (pub.kind === Track.Kind.Video && pub.isSubscribed && pub.track) {
+            const el = mobileVideoRef.current;
+            if (el) {
+              pub.track.attach(el);
+              setMobileTrackAttached(true);
+            }
+          }
+        });
       };
+
       const onParticipantDisconnected = (p) => {
         if (!p.identity?.startsWith("mobile_")) return;
         setMobileCameraConnected(false);
         setMobileTrackAttached(false);
-        mobileTrackScanDoneRef.current = false;
-        console.log("📱 Mobile participant left");
-      };
-      // FIX 5b: re-scan after LiveKit reconnect in case mobile rejoined
-      // during the disconnect window.
-      const onReconnected = () => {
-        console.log("🔄 LiveKit reconnected — re-scanning for mobile tracks");
-        mobileTrackScanDoneRef.current = false;
-        scanForExistingMobileTracks(room);
       };
 
       room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
       room.on(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
-      room.on(RoomEvent.TrackPublished, onTrackPublished);
       room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
       room.on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
-      room.on(RoomEvent.Reconnected, onReconnected); // FIX 5b
+
+      // Step 2: Scan for participants already in the room
+      room.remoteParticipants.forEach((p) => {
+        if (!p.identity?.startsWith("mobile_")) return;
+        console.log(`📱 Existing participant found: ${p.identity}`);
+        setMobileCameraConnected(true);
+        p.trackPublications.forEach((pub) => {
+          console.log(
+            `  track: kind=${pub.kind} subscribed=${pub.isSubscribed}`,
+          );
+          if (pub.kind === Track.Kind.Video && pub.isSubscribed && pub.track) {
+            const el = mobileVideoRef.current;
+            if (el) {
+              pub.track.attach(el);
+              setMobileTrackAttached(true);
+            }
+          }
+        });
+      });
 
       return () => {
         room.off(RoomEvent.TrackSubscribed, onTrackSubscribed);
         room.off(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
-        room.off(RoomEvent.TrackPublished, onTrackPublished);
         room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
         room.off(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
-        room.off(RoomEvent.Reconnected, onReconnected); // FIX 5b
       };
     };
 
@@ -336,12 +342,10 @@ const InterviewLive = () => {
       const room = interview.livekitRoomRef?.current;
       if (!room) return false;
       clearInterval(pollTimer);
-      pollTimer = null;
       roomCleanup = bindRoom(room);
       return true;
     };
 
-    // Immediate attempt
     if (!tryBind()) {
       let elapsed = 0;
       pollTimer = setInterval(() => {
@@ -350,7 +354,7 @@ const InterviewLive = () => {
           return;
         }
         elapsed += 300;
-        if (tryBind() || elapsed >= 90_000) clearInterval(pollTimer); // FIX 5c: 60s → 90s
+        if (tryBind() || elapsed >= 90_000) clearInterval(pollTimer);
       }, 300);
     }
 
@@ -359,7 +363,7 @@ const InterviewLive = () => {
       if (pollTimer) clearInterval(pollTimer);
       if (roomCleanup) roomCleanup();
     };
-  }, []); // eslint-disable-line — intentional; polls internally
+  }, []); // eslint-disable-line
 
   // ── Screen share preview ───────────────────────────────────────────────────
   const attachScreenVideo = useCallback(() => {

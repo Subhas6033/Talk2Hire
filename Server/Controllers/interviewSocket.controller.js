@@ -146,6 +146,7 @@ async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
   socket.join(`interview_${interviewId}`);
   session.mobileSocketId = socket.id;
 
+  // Issue token immediately so mobile can join the LiveKit room
   const token = await createLiveKitToken(
     `mobile_${userId}`,
     roomName(interviewId),
@@ -157,11 +158,13 @@ async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
     role: "secondary_camera",
   });
 
-  if (session.secondaryCameraConnected)
+  // If already connected from a previous attempt, tell mobile immediately
+  if (session.secondaryCameraConnected) {
     socket.emit("secondary_camera_ready", {
       connected: true,
       timestamp: Date.now(),
     });
+  }
 
   socket.on("request_secondary_camera_status", () =>
     io.to(`interview_${interviewId}`).emit("secondary_camera_status", {
@@ -170,6 +173,8 @@ async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
     }),
   );
 
+  // Mobile emits this after its socket connects — marks camera as active
+  // and notifies the desktop (which may already be in the interview room)
   socket.on("secondary_camera_connected", (data) => {
     session.secondaryCameraConnected = true;
     session.secondaryCameraMetadata = {
@@ -235,6 +240,7 @@ async function handleInterviewSocket(
     role: "primary",
   });
 
+  // If mobile already connected before desktop loaded, push status immediately
   if (session.secondaryCameraConnected) {
     socket.emit("secondary_camera_ready", {
       connected: true,
@@ -265,8 +271,6 @@ async function handleInterviewSocket(
   let faceViolTimeout = null;
 
   let awaitingPlaybackDone = false;
-
-  // ── clientReadyHandled: one shot per socket instance ─────────────────────
   let clientReadyHandled = false;
 
   try {
@@ -312,36 +316,6 @@ async function handleInterviewSocket(
       }),
     );
 
-    // ══════════════════════════════════════════════════════════════════════
-    // client_ready
-    //
-    // ROOT CAUSE OF ALL BUGS SO FAR:
-    //
-    // The session object persists across socket reconnects because it lives
-    // in the `sessions` Map. When a new interview is started with the same
-    // interviewId (e.g. during testing), `session.interviewStarted` is
-    // still `true` from the previous attempt. This causes EVERY new socket
-    // to enter the reconnect branch — TTS plays the Q1 text again, and
-    // then the interview just listens forever because:
-    //   1. No transcript ever fires (user already answered in their head)
-    //   2. Idle detection doesn't fire because there was no real silence window
-    //   3. playback_done fires twice (two TTS completions overlapping)
-    //
-    // FIX: On fresh connection (session.interviewStarted is false OR the
-    // DB has no recorded answer for currentOrder yet, meaning we never
-    // actually got past Q1 last time), treat it as a fresh start.
-    //
-    // The simplest reliable heuristic:
-    //   - If session.interviewStarted is false → always fresh start
-    //   - If session.interviewStarted is true AND session.currentOrder > 1
-    //     → genuine reconnect mid-interview (user answered at least Q1)
-    //   - If session.interviewStarted is true AND session.currentOrder == 1
-    //     → stale session from a previous aborted attempt → reset and
-    //       treat as fresh start
-    //
-    // This means an aborted interview that never got past Q1 will restart
-    // cleanly instead of replaying Q1 in reconnect mode forever.
-    // ══════════════════════════════════════════════════════════════════════
     socket.on("client_ready", async () => {
       if (clientReadyHandled) {
         console.log(
@@ -351,23 +325,17 @@ async function handleInterviewSocket(
       }
       clientReadyHandled = true;
 
-      // ── Determine: genuine reconnect or fresh start? ───────────────────
-      // A genuine reconnect means the interview was already in progress
-      // (at least one answer was given, i.e. currentOrder > 1).
-      // If currentOrder == 1 and interviewStarted is true it means the
-      // previous attempt never got past Q1 — reset it.
       const isGenuineReconnect =
         session.interviewStarted && (session.currentOrder ?? 1) > 1;
 
       if (isGenuineReconnect) {
-        // ── Reconnect resume ─────────────────────────────────────────────
         console.log(`🔄 Reconnect detected — resuming Q${currentOrder}`);
         isProcessing = true;
         isListeningActive = false;
         awaitingPlaybackDone = false;
         try {
           socket.emit("question", { question: currentQText });
-          awaitingPlaybackDone = true; // set BEFORE await
+          awaitingPlaybackDone = true;
           await streamTTSToClient(socket, currentQText, interviewId);
           if (playbackDoneTimer) clearTimeout(playbackDoneTimer);
           playbackDoneTimer = setTimeout(() => {
@@ -387,9 +355,7 @@ async function handleInterviewSocket(
         return;
       }
 
-      // ── Fresh start (or reset of stale Q1 session) ─────────────────────
       if (session.interviewStarted) {
-        // Stale session — reset it so TTS instance is also fresh
         console.log("🔄 Stale Q1 session detected — resetting for fresh start");
         ttsInstanceCache.delete(interviewId);
         ttsInstanceCache.set(interviewId, createTTSStream());
@@ -409,8 +375,6 @@ async function handleInterviewSocket(
       try {
         socket.emit("question", { question: firstQuestion.question });
 
-        // await ensureDeepgramConn();
-
         startCompositeEgress(
           interviewId,
           `/recordings/${interviewId}/composite.mp4`,
@@ -420,7 +384,7 @@ async function handleInterviewSocket(
           })
           .catch(console.error);
 
-        awaitingPlaybackDone = true; // set BEFORE await
+        awaitingPlaybackDone = true;
         await streamTTSToClient(socket, firstQuestion.question, interviewId);
         if (playbackDoneTimer) clearTimeout(playbackDoneTimer);
         playbackDoneTimer = setTimeout(() => {
@@ -439,9 +403,6 @@ async function handleInterviewSocket(
 
     let playbackDoneTimer = null;
 
-    // ── enableListeningAfterPlayback ──────────────────────────────────────
-    // FIX: capture connSnapshot before the 500ms settle wait so onClose
-    // cannot null deepgramConn under our feet. Retries 3→4, settle 300→500ms.
     const enableListeningAfterPlayback = async () => {
       if (playbackDoneTimer) {
         clearTimeout(playbackDoneTimer);
@@ -452,11 +413,6 @@ async function handleInterviewSocket(
       if (isListeningActive) return;
 
       awaitingPlaybackDone = false;
-
-      // ── Always destroy the old connection first ────────────────────────────
-      // The connection opened during client_ready will have idled out during
-      // the TTS stream (Deepgram closes idle connections after ~10s).
-      // Reusing it causes the "No Deepgram conn" loop. Always open fresh.
       destroyDeepgramConn();
 
       let attempts = 0;
@@ -515,11 +471,6 @@ async function handleInterviewSocket(
       console.log(`✅ Listening for Q${currentOrder}`);
     };
 
-    // ── playback_done — deduplicated ──────────────────────────────────────
-    // The client sometimes emits this twice (once from the tts_end handler
-    // and once from a race in useTTS flush). enableListeningAfterPlayback
-    // is already guarded by `awaitingPlaybackDone` and `isListeningActive`
-    // so the second call is a no-op, but we log it for visibility.
     socket.on("playback_done", () => {
       console.log(
         `🔊 playback_done received (awaitingPlaybackDone=${awaitingPlaybackDone} isListeningActive=${isListeningActive})`,
@@ -527,7 +478,7 @@ async function handleInterviewSocket(
       enableListeningAfterPlayback();
     });
 
-    // ── LiveKit track events ───────────────────────────────────────────────
+    // ── LiveKit track events ──────────────────────────────────────────────
     socket.on("livekit_track_published", async ({ source, trackSid }) => {
       if (source === "screen_share" && !session.screenEgressId) {
         try {
@@ -555,27 +506,50 @@ async function handleInterviewSocket(
       }
     });
 
+    // ── FIXED: single livekit_participant_joined handler ──────────────────
+    // Handles BOTH the status broadcast AND egress start in one place.
+    // Previously two separate handlers existed causing the egress block to
+    // be empty in the first and the broadcast to be missing in the second.
     socket.on("livekit_participant_joined", async ({ identity }) => {
-      if (identity?.startsWith("mobile_") && !session.mobileEgressId) {
-        try {
-          const out = new EncodedFileOutput({
-            filepath: `/recordings/${interviewId}/mobile.mp4`,
-            fileType: 2,
-          });
-          const eg = await egressClient.startParticipantCompositeEgress(
-            roomName(interviewId),
-            { file: out },
-            { identity },
-          );
-          session.mobileEgressId = eg.egressId;
-          console.log(`🎬 Mobile egress: ${eg.egressId}`);
-        } catch (e) {
-          console.error("❌ Mobile egress:", e.message);
+      console.log(`👤 livekit_participant_joined: ${identity}`);
+
+      if (identity?.startsWith("mobile_")) {
+        // 1. Update session state
+        session.secondaryCameraConnected = true;
+
+        // 2. Notify ALL sockets in the room (desktop included) so the
+        //    InterviewLive UI updates mobileCameraConnected state immediately
+        io.to(`interview_${interviewId}`).emit("secondary_camera_ready", {
+          connected: true,
+          timestamp: Date.now(),
+        });
+        io.to(`interview_${interviewId}`).emit("secondary_camera_status", {
+          connected: true,
+          metadata: session.secondaryCameraMetadata,
+        });
+
+        // 3. Start mobile egress if not already running
+        if (!session.mobileEgressId) {
+          try {
+            const out = new EncodedFileOutput({
+              filepath: `/recordings/${interviewId}/mobile.mp4`,
+              fileType: 2,
+            });
+            const eg = await egressClient.startParticipantCompositeEgress(
+              roomName(interviewId),
+              { file: out },
+              { identity },
+            );
+            session.mobileEgressId = eg.egressId;
+            console.log(`🎬 Mobile egress started: ${eg.egressId}`);
+          } catch (e) {
+            console.error("❌ Mobile egress:", e.message);
+          }
         }
       }
     });
 
-    // ── Recording acks ─────────────────────────────────────────────────────
+    // ── Recording acks ────────────────────────────────────────────────────
     socket.on("video_recording_start", (d) =>
       socket.emit("video_recording_ready", {
         videoType: d?.videoType,
@@ -593,7 +567,7 @@ async function handleInterviewSocket(
     socket.on("audio_chunk", () => {});
     socket.on("audio_recording_stop", () => {});
 
-    // ── Secondary camera relay ─────────────────────────────────────────────
+    // ── Secondary camera relay ────────────────────────────────────────────
     socket.on("secondary_camera_connected", (data) => {
       session.secondaryCameraConnected = true;
       session.secondaryCameraMetadata = {
@@ -628,7 +602,7 @@ async function handleInterviewSocket(
     socket.on("mobile_camera_frame", relayMobile);
     socket.on("security_frame_request", relayMobile);
 
-    // ── Audio / STT ────────────────────────────────────────────────────────
+    // ── Audio / STT ───────────────────────────────────────────────────────
     let lastNoConnWarn = 0;
     socket.on("user_audio_chunk", (buf) => {
       if (
@@ -645,7 +619,6 @@ async function handleInterviewSocket(
         }
         return;
       }
-      // ADD THIS:
       if (!deepgramConn.isConnected?.()) {
         console.warn(
           "⚠️ Deepgram conn exists but not connected — audio dropped",
@@ -672,7 +645,7 @@ async function handleInterviewSocket(
       if (isListeningActive && !isProcessing) await handleIdle();
     });
 
-    // ── Face detection ─────────────────────────────────────────────────────
+    // ── Face detection ────────────────────────────────────────────────────
     socket.on("holistic_detection_result", async ({ faceCount, timestamp }) => {
       if (session.isSetupMode || !session.interviewStarted) return;
       const now = Date.now();
@@ -774,7 +747,6 @@ async function handleInterviewSocket(
               `📝 onTranscript fired: "${text?.slice(0, 50)}" isListening=${isListeningActive} isProcessing=${isProcessing}`,
             );
             if (!text?.trim() || !isListeningActive || isProcessing) return;
-            if (!text?.trim() || !isListeningActive || isProcessing) return;
             isListeningActive = false;
             deepgramConn?.pauseIdleDetection?.();
             socket.emit("transcript_received", { text });
@@ -793,7 +765,6 @@ async function handleInterviewSocket(
               reject(e);
             }
           },
-          // Only null outer ref if it still points to THIS connection
           onClose: () => {
             console.warn("⚠️ Deepgram connection closed");
             if (deepgramConn === conn) deepgramConn = null;
@@ -842,11 +813,9 @@ async function handleInterviewSocket(
     // ════════════════════════════════════════════════════════════════════════
     async function transitionToNextQuestion(text) {
       try {
-        // await ensureDeepgramConn();
         deepgramConn?.pauseIdleDetection?.();
         isListeningActive = false;
-
-        awaitingPlaybackDone = true; // set BEFORE await
+        awaitingPlaybackDone = true;
 
         await streamTTSToClient(socket, text, interviewId);
 
@@ -1028,7 +997,6 @@ async function handleInterviewSocket(
         session.mobileEgressId =
           null;
 
-      // FIX: Reset session so next connection is treated as fresh start
       session.interviewStarted = false;
       session.currentOrder = 1;
       session.currentQText = "";
