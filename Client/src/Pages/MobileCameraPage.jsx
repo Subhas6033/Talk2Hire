@@ -162,6 +162,7 @@ const MobileCameraPage = () => {
         const room = new Room({
           adaptiveStream: true,
           dynacast: true,
+          autoSubscribe: false,
           reconnectPolicy: {
             nextRetryDelayInMs: (ctx) => {
               if (ctx.retryCount < 3) return 300;
