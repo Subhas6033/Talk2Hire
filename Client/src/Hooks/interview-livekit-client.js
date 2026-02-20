@@ -164,6 +164,7 @@ export class InterviewClient {
     this.room = new Room({
       adaptiveStream: true,
       dynacast: true,
+      autoSubscribe: true,
       audioCaptureDefaults: {
         autoGainControl: true,
         echoCancellation: true,
@@ -184,72 +185,92 @@ export class InterviewClient {
   _bindRoomEvents() {
     const room = this.room;
 
-    room.on(RoomEvent.Connected, () =>
-      console.log("🏠 LiveKit room connected"),
-    );
+    console.log("🧠 Binding LiveKit room events...");
+    console.log("🧠 autoSubscribe:", room.options?.autoSubscribe);
+
+    room.on(RoomEvent.Connected, () => {
+      console.log("🏠 LiveKit room connected:", room.name);
+
+      // List existing participants
+      console.log("👥 Existing participants:");
+      room.remoteParticipants.forEach((p, id) => {
+        console.log("   ➜", id, p.identity);
+      });
+    });
+
     room.on(RoomEvent.Disconnected, () =>
       console.warn("🏠 LiveKit room disconnected"),
     );
+
     room.on(RoomEvent.Reconnecting, () =>
       console.log("🔄 LiveKit reconnecting…"),
     );
-    room.on(RoomEvent.Reconnected, () => console.log(" LiveKit reconnected"));
+
+    room.on(RoomEvent.Reconnected, () => console.log("✅ LiveKit reconnected"));
+
+    // 🔥 Remote track published (VERY IMPORTANT DEBUG)
+    room.on(RoomEvent.TrackPublished, (pub, participant) => {
+      console.log(
+        "📡 Remote track published:",
+        pub.kind,
+        "| source:",
+        pub.source,
+        "| from:",
+        participant.identity,
+      );
+    });
+
+    room.on(RoomEvent.TrackSubscriptionFailed, (trackSid, participant) => {
+      console.error(
+        "❌ Track subscription failed:",
+        trackSid,
+        "from",
+        participant?.identity,
+      );
+    });
 
     // Notify server when local tracks go live/offline
     room.on(RoomEvent.LocalTrackPublished, (pub) => {
       console.log(`📡 Local track published: ${pub.source} (${pub.kind})`);
-      this.socket.emit("livekit_track_published", {
-        kind: pub.kind,
-        source: pub.source,
-        trackSid: pub.trackSid,
-      });
     });
 
     room.on(RoomEvent.LocalTrackUnpublished, (pub) => {
       console.log(`📡 Local track unpublished: ${pub.source}`);
-      this.socket.emit("livekit_track_unpublished", {
-        source: pub.source,
-        trackSid: pub.trackSid,
-      });
     });
 
-    // Participant events (mobile camera)
+    // Participant events
     room.on(RoomEvent.ParticipantConnected, (participant) => {
-      console.log(`👤 Participant joined: ${participant.identity}`);
-      this.socket.emit("livekit_participant_joined", {
-        identity: participant.identity,
-      });
+      console.log("👤 Participant joined:", participant.identity);
     });
 
     room.on(RoomEvent.ParticipantDisconnected, (participant) => {
-      console.log(`👤 Participant left: ${participant.identity}`);
-      this.socket.emit("livekit_participant_left", {
-        identity: participant.identity,
-      });
+      console.log("👤 Participant left:", participant.identity);
     });
 
-    // Render remote tracks (e.g. the TTS audio track from the interviewer bot)
+    // 🔥 Track subscribed (video attach here)
     room.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
-      console.log(`🎧 Subscribed: ${participant.identity} / ${pub.source}`);
+      console.log(
+        "🎧 Track subscribed:",
+        track.kind,
+        "| source:",
+        pub.source,
+        "| from:",
+        participant.identity,
+      );
 
-      // AUDIO
       if (track.kind === Track.Kind.Audio) {
         const el = track.attach();
         el.style.display = "none";
         document.body.appendChild(el);
       }
 
-      // VIDEO  ✅ FIXED
       if (track.kind === Track.Kind.Video) {
-        console.log(
-          "📷 Remote video track received from:",
-          participant.identity,
-        );
+        console.log("📷 Attaching remote video:", participant.identity);
 
         const videoEl = document.createElement("video");
         videoEl.autoplay = true;
         videoEl.playsInline = true;
-        videoEl.muted = true; // important for autoplay
+        videoEl.muted = true;
         videoEl.style.width = "100%";
         videoEl.style.height = "100%";
 
