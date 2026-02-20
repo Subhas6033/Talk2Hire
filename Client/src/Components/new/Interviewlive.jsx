@@ -187,8 +187,6 @@ const InterviewLive = () => {
   const attachMobileTrack = useCallback((track) => {
     const el = mobileVideoRef.current;
     if (!el) {
-      // Element may not be in DOM yet (e.g. React hasn't committed yet).
-      // Retry on next animation frame.
       requestAnimationFrame(() => {
         const el2 = mobileVideoRef.current;
         if (!el2) {
@@ -216,9 +214,6 @@ const InterviewLive = () => {
     }
   }, []);
 
-  // FIX 4: Reset mobileTrackScanDoneRef if no track was actually attached so
-  // the next poll attempt can re-scan (handles the case where the participant
-  // was found but their track wasn't subscribed yet at scan time).
   const scanForExistingMobileTracks = useCallback(
     (room) => {
       if (mobileTrackScanDoneRef.current) return;
@@ -243,8 +238,6 @@ const InterviewLive = () => {
         });
       });
 
-      // FIX 4: if we found participants but couldn't attach (not subscribed
-      // yet), reset the flag so TrackSubscribed or a future scan can retry.
       if (!attached) {
         mobileTrackScanDoneRef.current = false;
       }
@@ -289,7 +282,6 @@ const InterviewLive = () => {
         setMobileTrackAttached(false);
       };
 
-      // FIX: handle tracks that are published but not yet subscribed
       const onTrackPublished = (pub, p) => {
         console.log(
           `📢 TrackPublished: ${p.identity} kind=${pub.kind} subscribed=${pub.isSubscribed}`,
@@ -297,7 +289,6 @@ const InterviewLive = () => {
         if (pub.kind !== Track.Kind.Video || !p.identity?.startsWith("mobile_"))
           return;
         setMobileCameraConnected(true);
-        // Force subscription if not already subscribed
         if (!pub.isSubscribed) {
           console.log("🔔 Track not subscribed — forcing subscription");
           pub.setSubscribed(true);
@@ -321,7 +312,6 @@ const InterviewLive = () => {
               console.log("✅ Mobile track attached via ParticipantConnected");
             }
           } else {
-            // Force subscription
             console.log("🔔 Forcing subscription on ParticipantConnected");
             pub.setSubscribed(true);
           }
@@ -336,7 +326,7 @@ const InterviewLive = () => {
 
       room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
       room.on(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
-      room.on(RoomEvent.TrackPublished, onTrackPublished); // ← NEW
+      room.on(RoomEvent.TrackPublished, onTrackPublished);
       room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
       room.on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
 
@@ -358,7 +348,6 @@ const InterviewLive = () => {
               console.log("✅ Mobile track attached via retroactive scan");
             }
           } else {
-            // Force subscription for already-published but unsubscribed tracks
             console.log("🔔 Forcing subscription in retroactive scan");
             pub.setSubscribed(true);
           }
@@ -368,7 +357,7 @@ const InterviewLive = () => {
       return () => {
         room.off(RoomEvent.TrackSubscribed, onTrackSubscribed);
         room.off(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
-        room.off(RoomEvent.TrackPublished, onTrackPublished); // ← NEW
+        room.off(RoomEvent.TrackPublished, onTrackPublished);
         room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
         room.off(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
       };
@@ -503,6 +492,9 @@ const InterviewLive = () => {
         interview.socketRef.current = socket;
 
         // ── 1. livekit_token — MUST come first ────────────────────────────
+        // Remove ALL existing livekit_token listeners (including early-buffer)
+        socket.off("livekit_token");
+
         const handleToken = (data) => {
           console.log(
             "🔑 handleLiveKitToken called, url:",
@@ -513,10 +505,10 @@ const InterviewLive = () => {
           interview.handleLiveKitToken(data).catch(console.error);
         };
 
-        // Remove ALL existing livekit_token listeners (including early-buffer)
-        socket.off("livekit_token");
+        // Register ONCE for all future tokens (re-request response + reconnect)
+        socket.on("livekit_token", handleToken);
 
-        // Check if token already arrived and was buffered
+        // Check if token already arrived and was buffered by the early handler
         if (pendingLkTokenRef.current) {
           console.log("🔑 Draining buffered livekit_token");
           interview
@@ -524,30 +516,14 @@ const InterviewLive = () => {
             .catch(console.error);
           pendingLkTokenRef.current = null;
         } else {
-          // Token was lost in the race window — request it again from server
+          // Token arrived before early-buffer registered OR was lost in race —
+          // request a fresh one from the server
           console.log("🔑 No buffered token — requesting from server");
           socket.emit("request_livekit_token", {
             interviewId: sessionData.interviewId,
             userId: sessionData.userId,
           });
         }
-
-        // Always register for future tokens (handles reconnect + re-request response)
-        socket.on("livekit_token", handleToken);
-
-        // eslint-disable-next-line no-use-before-define
-        const earlyBufferHandler = () => {}; // placeholder; defined below
-        socket.off("livekit_token"); // remove early-buffer handler registered at mount
-
-        // Drain the buffer
-        if (pendingLkTokenRef.current) {
-          console.log("🔑 Draining buffered livekit_token");
-          interview
-            .handleLiveKitToken(pendingLkTokenRef.current)
-            .catch(console.error);
-          pendingLkTokenRef.current = null;
-        }
-        socket.on("livekit_token", handleToken);
 
         // ── 2. All other listeners ─────────────────────────────────────────
         const silenced = new Set([
@@ -1005,7 +981,7 @@ const InterviewLive = () => {
                 {/*
                   IMPORTANT: <video> is ALWAYS in the DOM so mobileVideoRef
                   is never null when track.attach() calls it.
-                  visibility:hidden avoids the black rectangle before attach.
+                  opacity:0 avoids the black rectangle before attach.
                 */}
                 <video
                   ref={mobileVideoRef}
@@ -1015,7 +991,7 @@ const InterviewLive = () => {
                   className="w-full h-full object-cover"
                   style={{
                     transform: "scaleX(-1)",
-                    opacity: mobileTrackAttached ? 1 : 0, // ← opacity not visibility
+                    opacity: mobileTrackAttached ? 1 : 0,
                     transition: "opacity 0.3s ease",
                   }}
                 />
