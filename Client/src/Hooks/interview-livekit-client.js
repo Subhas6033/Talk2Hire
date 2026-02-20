@@ -231,11 +231,38 @@ export class InterviewClient {
     // Render remote tracks (e.g. the TTS audio track from the interviewer bot)
     room.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
       console.log(`🎧 Subscribed: ${participant.identity} / ${pub.source}`);
+
+      // AUDIO
       if (track.kind === Track.Kind.Audio) {
-        // Attach to a hidden <audio> element so the browser plays it
         const el = track.attach();
         el.style.display = "none";
         document.body.appendChild(el);
+      }
+
+      // VIDEO  ✅ FIXED
+      if (track.kind === Track.Kind.Video) {
+        console.log(
+          "📷 Remote video track received from:",
+          participant.identity,
+        );
+
+        const videoEl = document.createElement("video");
+        videoEl.autoplay = true;
+        videoEl.playsInline = true;
+        videoEl.muted = true; // important for autoplay
+        videoEl.style.width = "100%";
+        videoEl.style.height = "100%";
+
+        track.attach(videoEl);
+
+        const container = document.getElementById("secondary-camera-container");
+
+        if (container) {
+          container.innerHTML = "";
+          container.appendChild(videoEl);
+        } else {
+          console.warn("⚠ secondary-camera-container not found in DOM");
+        }
       }
     });
   }
