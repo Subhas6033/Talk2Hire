@@ -255,7 +255,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
     const doJoin = async () => {
       const room = new Room({
-        // adaptiveStream: true,
         dynacast: true,
         autoSubscribe: true,
         audioCaptureDefaults: {

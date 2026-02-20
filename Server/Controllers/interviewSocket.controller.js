@@ -242,7 +242,7 @@ async function handleInterviewSocket(
   sessions,
 ) {
   await ensureRoom(interviewId);
-  console.log("🔑 LIVEKIT_URL:", LIVEKIT_URL); // ← ADD
+  console.log("🔑 LIVEKIT_URL:", LIVEKIT_URL);
   console.log("🔑 API_KEY exists:", !!LIVEKIT_API_KEY);
   const session = getOrCreate(sessions, interviewId);
   session.desktopSocketId = socket.id;
