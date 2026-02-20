@@ -978,12 +978,8 @@ const InterviewLive = () => {
                 </span>
               </div>
               <div className="relative aspect-video bg-black">
-                {/*
-                  IMPORTANT: <video> is ALWAYS in the DOM so mobileVideoRef
-                  is never null when track.attach() calls it.
-                  opacity:0 avoids the black rectangle before attach.
-                */}
                 <video
+                  id="secondary-camera-video"
                   ref={mobileVideoRef}
                   autoPlay
                   playsInline

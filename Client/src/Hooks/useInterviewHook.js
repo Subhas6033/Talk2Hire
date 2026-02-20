@@ -325,17 +325,13 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
         // 🎥 Handle secondary camera video
         if (track.kind === Track.Kind.Video) {
-          console.log("🎥 Attaching secondary camera video");
-
-          const videoEl = document.getElementById("secondary-camera-video");
-
+          const videoEl = document.getElementById("secondary-camera-video"); // ← looks for ID
           if (videoEl) {
             track.attach(videoEl);
           } else {
-            console.warn("⚠️ secondary-camera-video element not found");
+            console.warn("⚠️ secondary-camera-video element not found"); // ← silently fails
           }
         }
-
         // 🔊 Handle interviewer audio
         if (track.kind === Track.Kind.Audio) {
           console.log(`🔊 Remote audio from: ${participant.identity}`);
@@ -504,7 +500,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         await Promise.race([
           lkReadyPromiseRef.current,
           new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("LiveKit ready timeout")), 5000),
+            setTimeout(() => reject(new Error("LiveKit ready timeout")), 10000),
           ),
         ]);
         if (livekitRoomRef.current) {
