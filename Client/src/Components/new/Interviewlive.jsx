@@ -504,11 +504,36 @@ const InterviewLive = () => {
 
         // ── 1. livekit_token — MUST come first ────────────────────────────
         const handleToken = (data) => {
-          console.log("🔑 livekit_token → joining room");
-          // Remove the early-buffer handler if it hasn't fired yet
-          socket.off("livekit_token", earlyBufferHandler);
+          console.log(
+            "🔑 handleLiveKitToken called, url:",
+            data?.url,
+            "token:",
+            data?.token?.slice(0, 30),
+          );
           interview.handleLiveKitToken(data).catch(console.error);
         };
+
+        // Remove ALL existing livekit_token listeners (including early-buffer)
+        socket.off("livekit_token");
+
+        // Check if token already arrived and was buffered
+        if (pendingLkTokenRef.current) {
+          console.log("🔑 Draining buffered livekit_token");
+          interview
+            .handleLiveKitToken(pendingLkTokenRef.current)
+            .catch(console.error);
+          pendingLkTokenRef.current = null;
+        } else {
+          // Token was lost in the race window — request it again from server
+          console.log("🔑 No buffered token — requesting from server");
+          socket.emit("request_livekit_token", {
+            interviewId: sessionData.interviewId,
+            userId: sessionData.userId,
+          });
+        }
+
+        // Always register for future tokens (handles reconnect + re-request response)
+        socket.on("livekit_token", handleToken);
 
         // eslint-disable-next-line no-use-before-define
         const earlyBufferHandler = () => {}; // placeholder; defined below

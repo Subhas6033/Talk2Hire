@@ -263,6 +263,20 @@ async function handleInterviewSocket(
     role: "primary",
   });
 
+  socket.on("request_livekit_token", async () => {
+    console.log("🔑 Desktop re-requesting LiveKit token");
+    const freshToken = await createLiveKitToken(
+      `user_${userId}`,
+      roomName(interviewId),
+    );
+    socket.emit("livekit_token", {
+      token: freshToken,
+      url: LIVEKIT_URL,
+      room: roomName(interviewId),
+      role: "primary",
+    });
+  });
+
   // If mobile already connected before desktop loaded, push status immediately
   if (session.secondaryCameraConnected) {
     socket.emit("secondary_camera_ready", {
