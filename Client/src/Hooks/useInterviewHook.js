@@ -313,7 +313,30 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         });
       });
 
-      room.on(RoomEvent.TrackSubscribed, (track, _pub, participant) => {
+      room.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
+        console.log(
+          "📡 Track subscribed:",
+          track.kind,
+          "from",
+          participant.identity,
+          "source:",
+          pub.source,
+        );
+
+        // 🎥 Handle secondary camera video
+        if (track.kind === Track.Kind.Video) {
+          console.log("🎥 Attaching secondary camera video");
+
+          const videoEl = document.getElementById("secondary-camera-video");
+
+          if (videoEl) {
+            track.attach(videoEl);
+          } else {
+            console.warn("⚠️ secondary-camera-video element not found");
+          }
+        }
+
+        // 🔊 Handle interviewer audio
         if (track.kind === Track.Kind.Audio) {
           console.log(`🔊 Remote audio from: ${participant.identity}`);
           const el = track.attach();

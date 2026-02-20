@@ -987,7 +987,7 @@ const InterviewLive = () => {
                   ref={mobileVideoRef}
                   autoPlay
                   playsInline
-                  muted
+                  // muted
                   className="w-full h-full object-cover"
                   style={{
                     transform: "scaleX(-1)",
