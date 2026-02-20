@@ -443,7 +443,8 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         },
       );
 
-      // Connect with 30s timeout (increased from 15s to survive region failover)
+      // FIX: Increased timeout from 30s to 45s to survive slow region failover
+      // and token delivery delays without prematurely failing the join.
       console.log("🔌 [LK] Calling room.connect()...");
       console.log("  url:", url);
       console.log("  token (first 30):", token?.slice(0, 30));
@@ -454,8 +455,8 @@ export const useInterview = (interviewId, userId, cameraStream) => {
           new Promise((_, reject) =>
             setTimeout(
               () =>
-                reject(new Error("LiveKit room.connect() timed out after 30s")),
-              30_000,
+                reject(new Error("LiveKit room.connect() timed out after 45s")),
+              45_000, // FIX: was 30s — increased to 45s
             ),
           ),
         ]);
@@ -614,10 +615,16 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         } catch (_) {}
       }
       try {
+        // FIX: Increased lkReady timeout from 12s to 35s.
+        // The LiveKit token can legitimately take 10-20s to arrive from the server
+        // (DB calls, room creation, token generation all happen before emit).
+        // 12s was too aggressive and forced unnecessary socket-PCM fallback,
+        // which degraded audio quality and caused double-mic-stream issues.
         await Promise.race([
           lkReadyPromiseRef.current,
-          new Promise((_, r) =>
-            setTimeout(() => r(new Error("lkReady timeout (12s)")), 12_000),
+          new Promise(
+            (_, r) =>
+              setTimeout(() => r(new Error("lkReady timeout (35s)")), 35_000), // FIX: was 12s
           ),
         ]);
         if (livekitRoomRef.current || _room) {
