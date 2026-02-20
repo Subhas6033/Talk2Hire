@@ -323,6 +323,10 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       });
 
       await room.connect(url, token);
+      room.on(RoomEvent.Connected, () => {
+        console.log("💻 LiveKit Connected Event Fired");
+        console.log("💻 Room name:", room.name);
+      });
       return room;
     };
 

@@ -242,6 +242,8 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
           });
         }
 
+        // TODO: Stream the video in the
+
         // Stop stream tracks
         const s = secondaryStreamRef.current;
         if (s) {

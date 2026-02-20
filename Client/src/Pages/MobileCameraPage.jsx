@@ -162,7 +162,7 @@ const MobileCameraPage = () => {
         const room = new Room({
           adaptiveStream: true,
           dynacast: true,
-          autoSubscribe: false,
+          autoSubscribe: true,
           reconnectPolicy: {
             nextRetryDelayInMs: (ctx) => {
               if (ctx.retryCount < 3) return 300;
@@ -257,6 +257,7 @@ const MobileCameraPage = () => {
 
     // FIX: server emits livekit_token — join room immediately on receipt
     socket.on("livekit_token", async ({ token, url }) => {
+      console.log("📱 Mobile LiveKit URL:", url);
       if (!mountedRef.current) return;
       await joinLiveKitRoom(url, token);
     });
