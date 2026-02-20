@@ -34,6 +34,47 @@ import { useTTS } from "./useSpeechHook";
 const MIC_SAMPLE_RATE = 48000;
 const NOISE_GATE_RMS = 0.01;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MODULE-LEVEL ROOM SINGLETON
+//
+// THE CORE PROBLEM THIS SOLVES:
+// React (even without StrictMode) can instantiate useInterview multiple times
+// before one unmounts. Each instance has its own `livekitRoomRef`. When the
+// livekit_token fires and is received by both instances simultaneously, both
+// see livekitRoomRef.current === null and both call joinLiveKitRoom, creating
+// two Room objects connecting with the same identity. LiveKit's server boots
+// the first connection when the second arrives (duplicate identity eviction),
+// destroying the working room and detaching the mobile video track.
+//
+// SOLUTION: Store the Room and join promise at MODULE level. All hook instances
+// share the same singleton. Only one Room is ever created per page load.
+// Reset only happens on explicit cleanup (page navigation away).
+// ─────────────────────────────────────────────────────────────────────────────
+let _room = null; // The single Room instance for this page
+let _joinPromise = null; // The in-flight room.connect() promise
+let _joinResolvers = []; // Callbacks waiting for room to be ready
+
+function _onRoomReady(cb) {
+  if (_room) {
+    cb(_room);
+    return;
+  }
+  _joinResolvers.push(cb);
+}
+
+function _resolveRoom(room) {
+  _room = room;
+  const cbs = _joinResolvers.splice(0);
+  cbs.forEach((cb) => cb(room));
+}
+
+function _resetSingleton() {
+  console.log("[LK-SINGLETON] Reset");
+  _room = null;
+  _joinPromise = null;
+  _joinResolvers = [];
+}
+
 function getRMS(input) {
   let sum = 0;
   for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
@@ -60,13 +101,23 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const audioRecording = useAudioRecording(socketRef, interviewId, userId);
 
+  // Each hook instance has its own ref that POINTS TO the module singleton.
+  // When _room is set, we sync it here so livekitRoomRef.current is always
+  // up to date for this instance. The polling effect in InterviewLive.jsx
+  // reads this ref to find the room.
   const livekitRoomRef = useRef(null);
-  const livekitTokenRef = useRef(null);
-  const livekitUrlRef = useRef(null);
-  const localAudioTrackRef = useRef(null);
-  const lkJoinPromiseRef = useRef(null);
+
+  // lkReady: resolves when the room is connected
   const lkReadyResolveRef = useRef(null);
-  const lkReadyPromiseRef = useRef(new Promise(() => {}));
+  const lkReadyPromiseRef = useRef(
+    new Promise((resolve) => {
+      lkReadyResolveRef.current = resolve;
+    }),
+  );
+
+  const localAudioTrackRef = useRef(null);
+  const micProcessorRef = useRef(null);
+  const micStreamRef = useRef(null);
 
   const isPlayingRef = useRef(false);
   const isListeningRef = useRef(false);
@@ -75,8 +126,28 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const serverReadyRef = useRef(false);
   const ttsStreamActiveRef = useRef(false);
   const micStreamingActiveRef = useRef(false);
-  const micStreamRef = useRef(null);
-  const micProcessorRef = useRef(null);
+
+  // Sync module singleton → instance ref on mount (handles case where room
+  // was created by a previous instance of this hook, e.g. after StrictMode remount)
+  useEffect(() => {
+    console.log(
+      "[LK] Hook instance mounted, syncing singleton → livekitRoomRef",
+    );
+    console.log("[LK] _room at mount:", _room ? "EXISTS ✅" : "null");
+
+    if (_room) {
+      livekitRoomRef.current = _room;
+      lkReadyResolveRef.current?.();
+      console.log("[LK] Synced existing room to new hook instance");
+    }
+
+    // Subscribe to be notified when room becomes ready
+    _onRoomReady((room) => {
+      livekitRoomRef.current = room;
+      lkReadyResolveRef.current?.();
+      console.log("[LK] Room ready callback fired — synced to livekitRoomRef");
+    });
+  }, []); // eslint-disable-line
 
   useEffect(() => {
     isPlayingRef.current = interview.isPlaying;
@@ -87,32 +158,26 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     micStreamingActiveRef.current = interview.micStreamingActive;
   }, [interview]);
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // lkReady promise — resolved once room.connect() succeeds
-  // ═══════════════════════════════════════════════════════════════════════════
   useEffect(() => {
-    lkReadyPromiseRef.current = new Promise((resolve) => {
-      lkReadyResolveRef.current = resolve;
-    });
-    console.log("🔧 [LK] lkReady promise initialized");
-    if (livekitRoomRef.current) {
-      console.log(
-        "🔧 [LK] Room already exists — resolving lkReady immediately",
+    if (!interview.isInitializing && interview.status === "live") {
+      dispatch(startRecording());
+      recordingTimerRef.current = setInterval(
+        () => dispatch(updateRecordingDuration()),
+        1000,
       );
-      lkReadyResolveRef.current?.();
+      return () => {
+        clearInterval(recordingTimerRef.current);
+        dispatch(stopRecording());
+      };
     }
-  }, []); // eslint-disable-line
+  }, [interview.isInitializing, interview.status, dispatch]);
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // AUDIO CONTEXT
-  // ═══════════════════════════════════════════════════════════════════════════
+  // ── Audio Context ──────────────────────────────────────────────────────────
   const ensureAudioContext = useCallback(async () => {
     try {
       if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
-        if (audioCtxRef.current.state === "suspended") {
+        if (audioCtxRef.current.state === "suspended")
           await audioCtxRef.current.resume();
-          console.log("▶️ AudioContext resumed from suspended");
-        }
         return audioCtxRef.current;
       }
       const ctx = new (window.AudioContext || window.webkitAudioContext)({
@@ -122,14 +187,10 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       audioCtxRef.current = ctx;
       if (ctx.state === "suspended") await ctx.resume();
       await audioRecording.setAudioContext(ctx);
-      console.log(
-        "✅ Mic AudioContext ready:",
-        ctx.state,
-        ctx.sampleRate + "Hz",
-      );
+      console.log("✅ AudioContext ready:", ctx.state, ctx.sampleRate + "Hz");
       return ctx;
     } catch (err) {
-      console.error("❌ ensureAudioContext FAILED:", err.message, err);
+      console.error("❌ ensureAudioContext FAILED:", err.message);
       throw err;
     }
   }, [audioRecording]);
@@ -137,15 +198,10 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   useEffect(() => {
     if (audioCtxInitRef.current) return;
     audioCtxInitRef.current = true;
-    ensureAudioContext().catch((err) =>
-      console.error("❌ Initial AudioContext error:", err.message),
-    );
-    const resumeOnGesture = () =>
-      ensureAudioContext().catch((err) =>
-        console.error("❌ Gesture AudioContext error:", err.message),
-      );
-    document.addEventListener("click", resumeOnGesture, { once: true });
-    return () => document.removeEventListener("click", resumeOnGesture);
+    ensureAudioContext().catch(console.error);
+    const resume = () => ensureAudioContext().catch(console.error);
+    document.addEventListener("click", resume, { once: true });
+    return () => document.removeEventListener("click", resume);
   }, []); // eslint-disable-line
 
   useEffect(() => {
@@ -162,9 +218,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }
   }, [interview.isInitializing, interview.status, dispatch]);
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // TTS
-  // ═══════════════════════════════════════════════════════════════════════════
+  // ── TTS ────────────────────────────────────────────────────────────────────
   const { enqueueTTSChunk, flushTTS, resetTTS } = useTTS({
     onPlayStart: () => {
       isPlayingRef.current = true;
@@ -213,7 +267,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const handleNextQuestion = useCallback(
     (payload) => {
-      console.log("❓ handleNextQuestion:", payload?.question?.slice(0, 80));
       resetTTS();
       dispatch(receiveNextQuestion(payload));
       dispatch(setTtsStreamActive(true));
@@ -224,7 +277,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const handleIdlePrompt = useCallback(
     ({ text }) => {
-      console.log("💤 handleIdlePrompt:", text?.slice(0, 80));
       resetTTS();
       dispatch(setIdlePrompt(text));
       dispatch(setTtsStreamActive(true));
@@ -235,7 +287,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const handleTranscriptReceived = useCallback(
     ({ text }) => {
-      console.log("📝 transcript received:", text?.slice(0, 80));
       dispatch(setUserText(text));
       dispatch(disableListening());
     },
@@ -244,10 +295,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const handleInterviewComplete = useCallback(
     (data) => {
-      console.log(
-        "🏁 Interview complete, totalQuestions:",
-        data.totalQuestions,
-      );
       dispatch(completeInterview({ totalQuestions: data.totalQuestions }));
       dispatch(setMicStreamingActive(false));
     },
@@ -259,35 +306,31 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch],
   );
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // LIVEKIT — join room
-  // ═══════════════════════════════════════════════════════════════════════════
+  // ── LiveKit Room Join ──────────────────────────────────────────────────────
   const joinLiveKitRoom = useCallback(async (url, token) => {
     console.log("🏠 [LK] joinLiveKitRoom called");
-    console.log("  url:", url);
-    console.log("  token type:", typeof token);
-    console.log("  token starts with ey:", token?.startsWith?.("ey"));
-    console.log("  token length:", token?.length);
-    console.log("  room already exists:", !!livekitRoomRef.current);
-    console.log("  join already in progress:", !!lkJoinPromiseRef.current);
+    console.log("  _room (singleton):", _room ? "EXISTS" : "null");
+    console.log("  _joinPromise:", _joinPromise ? "in-flight" : "null");
 
-    if (livekitRoomRef.current) {
-      console.log("♻️ [LK] Reusing existing room");
-      return livekitRoomRef.current;
+    // Guard 1: Room already connected (module singleton)
+    if (_room) {
+      console.log("♻️ [LK] Reusing existing module-singleton room");
+      livekitRoomRef.current = _room;
+      lkReadyResolveRef.current?.();
+      return _room;
     }
-    if (lkJoinPromiseRef.current) {
+
+    // Guard 2: Join already in progress (module singleton promise)
+    // Both hook instances will await the SAME promise instead of each creating a Room
+    if (_joinPromise) {
       console.log(
-        "⏳ [LK] Join already in progress, awaiting existing promise",
+        "⏳ [LK] Join already in progress (module singleton) — awaiting shared promise",
       );
-      return lkJoinPromiseRef.current;
+      return _joinPromise;
     }
-
-    livekitUrlRef.current = url;
-    livekitTokenRef.current = token;
 
     const doJoin = async () => {
-      console.log("🔧 [LK] doJoin: creating Room object...");
-
+      console.log("🔧 [LK] Creating Room object...");
       const room = new Room({
         dynacast: true,
         autoSubscribe: true,
@@ -305,47 +348,37 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         },
       });
 
-      // ── Room events ───────────────────────────────────────────────────────
       room.on(RoomEvent.Connected, () => {
-        console.log("🏠 ✅ [LK] RoomEvent.Connected fired!");
+        console.log("🏠 ✅ [LK] Room connected!");
         console.log("  room.name:", room.name);
-        console.log("  room.state:", room.state);
         console.log(
           "  remoteParticipants:",
           [...room.remoteParticipants.values()].map((p) => p.identity),
         );
+        // Set module singleton — all hook instances immediately see this
+        _resolveRoom(room);
         livekitRoomRef.current = room;
-        lkJoinPromiseRef.current = null;
         lkReadyResolveRef.current?.();
-        console.log("  lkReadyResolveRef resolved ✅");
+        _joinPromise = null;
       });
 
       room.on(RoomEvent.Disconnected, (reason) => {
         console.warn("🏠 [LK] Disconnected, reason:", reason);
+        // Only clear singleton if this is the current singleton room
+        if (_room === room) _room = null;
         livekitRoomRef.current = null;
       });
 
-      room.on(RoomEvent.Reconnecting, () =>
-        console.log("🔄 [LK] Reconnecting…"),
-      );
-
       room.on(RoomEvent.Reconnected, () => {
         console.log("✅ [LK] Reconnected");
+        _room = room;
         livekitRoomRef.current = room;
       });
 
       room.on(RoomEvent.LocalTrackPublished, (pub) => {
-        console.log("📡 [LK] LocalTrackPublished:", pub.kind, pub.source);
+        console.log("📡 [LK] LocalTrackPublished:", pub.kind);
         socketRef.current?.emit("livekit_track_published", {
           kind: pub.kind,
-          source: pub.source,
-          trackSid: pub.trackSid,
-        });
-      });
-
-      room.on(RoomEvent.LocalTrackUnpublished, (pub) => {
-        console.log("📡 [LK] LocalTrackUnpublished:", pub.source);
-        socketRef.current?.emit("livekit_track_unpublished", {
           source: pub.source,
           trackSid: pub.trackSid,
         });
@@ -358,82 +391,45 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         });
       });
 
-      room.on(RoomEvent.ParticipantDisconnected, (participant) => {
-        console.log("👤 [LK] ParticipantDisconnected:", participant.identity);
-      });
-
       room.on(RoomEvent.TrackPublished, (pub, participant) => {
         console.log(
           "📢 [LK] TrackPublished:",
           participant.identity,
           "kind:",
           pub.kind,
-          "isSubscribed:",
+          "subscribed:",
           pub.isSubscribed,
-          "trackSid:",
-          pub.trackSid,
         );
       });
 
-      // ─────────────────────────────────────────────────────────────────────
-      // FIX: TrackSubscribed — this hook now handles AUDIO ONLY.
-      //
-      // Video track attachment is intentionally NOT done here.
-      // InterviewLive.jsx's polling effect is the sole owner of mobile video
-      // attachment and the setMobileTrackAttached state update.
-      //
-      // Previously both places tried to attach the video track, but only
-      // InterviewLive.jsx calls setMobileTrackAttached(true) to make it
-      // visible. Since this hook's handler fired first (registered earlier),
-      // the track got attached here but the video stayed invisible because
-      // setMobileTrackAttached was never called. Then when the polling effect
-      // ran its retroactive scan, TrackSubscribed had already fired so its
-      // listener never triggered either.
-      //
-      // Solution: Remove video attachment from here entirely. Let
-      // InterviewLive.jsx own the full lifecycle (attach + show).
-      // ─────────────────────────────────────────────────────────────────────
+      // AUDIO ONLY — Video track attachment is owned by InterviewLive.jsx
       room.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
-        console.log("📡 [LK] TrackSubscribed:");
-        console.log("  participant:", participant.identity);
-        console.log("  track.kind:", track.kind);
-        console.log("  pub.source:", pub.source);
-        console.log("  pub.trackSid:", pub.trackSid);
-
-        // ✅ Audio only — append hidden element for playback
+        console.log(
+          "📡 [LK] TrackSubscribed:",
+          participant.identity,
+          "kind:",
+          track.kind,
+        );
         if (track.kind === Track.Kind.Audio) {
-          console.log("🔊 [LK] Remote audio from:", participant.identity);
           try {
             const el = track.attach();
             el.style.display = "none";
             document.body.appendChild(el);
-            console.log("✅ [LK] Remote audio element appended to body");
-          } catch (err) {
-            console.error(
-              "❌ [LK] Error attaching audio track:",
-              err.message,
-              err,
+            console.log(
+              "🔊 [LK] Remote audio attached for:",
+              participant.identity,
             );
+          } catch (err) {
+            console.error("❌ [LK] Audio attach failed:", err.message);
           }
         }
-
-        // ❌ Video attachment removed from here.
-        // InterviewLive.jsx polling effect handles mobile video exclusively.
         if (track.kind === Track.Kind.Video) {
           console.log(
-            "🎥 [LK] Video track subscribed from:",
+            "🎥 [LK] Video track from:",
             participant.identity,
-            "— deferring to InterviewLive polling effect for attachment",
+            "— deferring to InterviewLive polling effect",
           );
         }
-      });
-
-      room.on(RoomEvent.TrackUnsubscribed, (track, pub, participant) => {
-        console.log(
-          "📡 [LK] TrackUnsubscribed:",
-          participant.identity,
-          track.kind,
-        );
       });
 
       room.on(
@@ -441,20 +437,16 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         (trackSid, participant, reason) => {
           console.error(
             "❌ [LK] TrackSubscriptionFailed:",
-            "trackSid:",
-            trackSid,
-            "participant:",
             participant?.identity,
-            "reason:",
             reason,
           );
         },
       );
 
-      // ── room.connect() with 15s timeout ───────────────────────────────────
+      // Connect with 30s timeout (increased from 15s to survive region failover)
       console.log("🔌 [LK] Calling room.connect()...");
       console.log("  url:", url);
-      console.log("  token (first 30 chars):", token?.slice(0, 30));
+      console.log("  token (first 30):", token?.slice(0, 30));
 
       try {
         await Promise.race([
@@ -462,134 +454,102 @@ export const useInterview = (interviewId, userId, cameraStream) => {
           new Promise((_, reject) =>
             setTimeout(
               () =>
-                reject(new Error("LiveKit room.connect() timed out after 15s")),
-              15_000,
+                reject(new Error("LiveKit room.connect() timed out after 30s")),
+              30_000,
             ),
           ),
         ]);
-        console.log("✅ [LK] room.connect() resolved!");
-        console.log("  room.state after connect:", room.state);
+        console.log("✅ [LK] room.connect() resolved");
         console.log(
-          "  remoteParticipants after connect:",
+          "  remoteParticipants:",
           [...room.remoteParticipants.values()].map((p) => p.identity),
         );
+        return room;
       } catch (err) {
         console.error("❌ [LK] room.connect() FAILED:", err.message);
-        console.error("  Full error:", err);
-        livekitRoomRef.current = null;
-        lkJoinPromiseRef.current = null;
+        if (_room === room) _room = null;
+        _joinPromise = null;
         try {
           room.disconnect();
         } catch (_) {}
         throw err;
       }
-
-      return room;
     };
 
-    lkJoinPromiseRef.current = doJoin();
-    return lkJoinPromiseRef.current;
-  }, []);
+    _joinPromise = doJoin();
+    return _joinPromise;
+  }, []); // eslint-disable-line
 
-  // ─── publishLiveKitMic ────────────────────────────────────────────────────
+  // ── Mic publishing ─────────────────────────────────────────────────────────
   const publishLiveKitMic = useCallback(async () => {
-    console.log("🎤 [MIC] publishLiveKitMic called");
-    const room = livekitRoomRef.current;
+    const room = livekitRoomRef.current || _room;
     if (!room) {
-      console.error(
-        "❌ [MIC] publishLiveKitMic: Room not connected — livekitRoomRef is null",
-      );
+      console.error("❌ [MIC] No room to publish mic to");
       return;
     }
     if (localAudioTrackRef.current) {
-      console.log("♻️ [MIC] Mic already published, skipping");
+      console.log("♻️ [MIC] Already published");
       return;
     }
 
     try {
-      console.log("🎤 [MIC] Creating local audio track...");
       const track = await createLocalAudioTrack({
         ...AudioPresets.music,
         autoGainControl: true,
         echoCancellation: true,
         noiseSuppression: true,
       });
-      console.log("✅ [MIC] Local audio track created");
-
       localAudioTrackRef.current = track;
-      console.log("🎤 [MIC] Publishing track to LiveKit room...");
       await room.localParticipant.publishTrack(track);
-      console.log("✅ [MIC] LiveKit mic published successfully");
+      console.log("✅ [MIC] LiveKit mic published");
 
-      const micTrack = track.mediaStreamTrack;
-      const micStream = new MediaStream([micTrack]);
       const ctx = await ensureAudioContext();
-      const source = ctx.createMediaStreamSource(micStream);
+      const source = ctx.createMediaStreamSource(
+        new MediaStream([track.mediaStreamTrack]),
+      );
       const processor = ctx.createScriptProcessor(2048, 1, 1);
       micProcessorRef.current = processor;
       source.connect(processor);
       processor.connect(ctx.destination);
 
       processor.onaudioprocess = (e) => {
-        if (!micStreamingActiveRef.current) return;
-        if (!isListeningRef.current || !canListenRef.current) return;
+        if (
+          !micStreamingActiveRef.current ||
+          !isListeningRef.current ||
+          !canListenRef.current
+        )
+          return;
         if (!socketRef.current?.connected) return;
         const input = e.inputBuffer.getChannelData(0);
         if (getRMS(input) < NOISE_GATE_RMS) return;
         socketRef.current.emit("user_audio_chunk", toPCM16(input).buffer);
       };
 
-      console.log(
-        "🎤 [MIC] PCM tap active at",
-        ctx.sampleRate + "Hz → Deepgram",
-      );
-
-      if (audioRecording.connectMicrophoneAudio) {
-        await audioRecording.connectMicrophoneAudio(micTrack);
-        console.log("✅ [MIC] Mic connected to recording mix");
-      }
+      if (audioRecording.connectMicrophoneAudio)
+        await audioRecording.connectMicrophoneAudio(track.mediaStreamTrack);
 
       dispatch(setMicPermissionGranted(true));
       dispatch(setMicStreamingActive(true));
-      console.log("✅ [MIC] publishLiveKitMic complete");
     } catch (err) {
-      console.error("❌ [MIC] publishLiveKitMic FAILED:", err.message);
-      console.error("  Full error:", err);
+      console.error("❌ [MIC] publishLiveKitMic failed:", err.message);
       localAudioTrackRef.current = null;
-      alert("Microphone access denied or unavailable: " + err.message);
     }
   }, [audioRecording, dispatch, ensureAudioContext]);
 
-  // ─── startSocketMicFallback ───────────────────────────────────────────────
   const startSocketMicFallback = useCallback(
     async (existingStream = null) => {
-      console.log("🎤 [FALLBACK] startSocketMicFallback called");
-      if (micStreamRef.current) {
-        console.log("♻️ [FALLBACK] Fallback mic already active, skipping");
-        return;
-      }
-      if (!socketRef.current?.connected) {
-        console.error(
-          "❌ [FALLBACK] Socket not connected — cannot start mic fallback",
-        );
-        return;
-      }
+      if (micStreamRef.current) return;
+      if (!socketRef.current?.connected) return;
       try {
-        let stream = existingStream;
-        if (!stream) {
-          console.log("🎤 [FALLBACK] Requesting getUserMedia...");
-          stream = await navigator.mediaDevices.getUserMedia({
+        const stream =
+          existingStream ||
+          (await navigator.mediaDevices.getUserMedia({
             audio: {
               echoCancellation: true,
               noiseSuppression: true,
               channelCount: 1,
             },
-          });
-          console.log("✅ [FALLBACK] getUserMedia granted");
-        } else {
-          console.log("✅ [FALLBACK] Using existing mic stream");
-        }
-
+          }));
         micStreamRef.current = stream;
         dispatch(setMicPermissionGranted(true));
 
@@ -600,16 +560,18 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         source.connect(processor);
         processor.connect(ctx.destination);
 
-        if (audioRecording.connectMicrophoneAudio) {
+        if (audioRecording.connectMicrophoneAudio)
           await audioRecording.connectMicrophoneAudio(stream);
-          console.log("✅ [FALLBACK] Mic connected to recording mix");
-        }
 
         dispatch(setMicStreamingActive(true));
 
         processor.onaudioprocess = (e) => {
-          if (!micStreamingActiveRef.current) return;
-          if (!isListeningRef.current || !canListenRef.current) return;
+          if (
+            !micStreamingActiveRef.current ||
+            !isListeningRef.current ||
+            !canListenRef.current
+          )
+            return;
           if (!socketRef.current?.connected) return;
           const input = e.inputBuffer.getChannelData(0);
           if (getRMS(input) < NOISE_GATE_RMS) return;
@@ -617,231 +579,126 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         };
 
         console.log(
-          "✅ [FALLBACK] Socket mic PCM fallback active at",
+          "✅ [FALLBACK] Socket mic PCM active at",
           ctx.sampleRate + "Hz",
         );
       } catch (err) {
         console.error(
-          "❌ [FALLBACK] startSocketMicFallback FAILED:",
+          "❌ [FALLBACK] startSocketMicFallback failed:",
           err.message,
         );
-        console.error("  Full error:", err);
       }
     },
     [dispatch, audioRecording, ensureAudioContext],
   );
 
-  // ─── startMicStreaming ────────────────────────────────────────────────────
   const startMicStreaming = useCallback(
     async (existingStream = null) => {
-      console.log("🎤 [MIC] startMicStreaming called");
-      console.log("  livekitRoomRef.current:", !!livekitRoomRef.current);
-      console.log("  lkJoinPromiseRef.current:", !!lkJoinPromiseRef.current);
-
-      // Path 1: Room already connected
-      if (livekitRoomRef.current) {
-        console.log(
-          "✅ [MIC] Room already connected — publishing LiveKit mic directly",
-        );
+      const currentRoom = livekitRoomRef.current || _room;
+      if (currentRoom) {
         await publishLiveKitMic();
         return;
       }
-
-      // Path 2: Room join in progress — wait up to 5s
-      if (lkJoinPromiseRef.current) {
-        console.log("⏳ [MIC] Room join in progress — waiting up to 5s...");
+      if (_joinPromise) {
         try {
           await Promise.race([
-            lkJoinPromiseRef.current,
-            new Promise((_, reject) =>
-              setTimeout(
-                () => reject(new Error("LiveKit join timeout (5s)")),
-                5_000,
-              ),
+            _joinPromise,
+            new Promise((_, r) =>
+              setTimeout(() => r(new Error("timeout")), 8_000),
             ),
           ]);
-          if (livekitRoomRef.current) {
-            console.log(
-              "✅ [MIC] Room connected after waiting — publishing LiveKit mic",
-            );
+          if (livekitRoomRef.current || _room) {
             await publishLiveKitMic();
             return;
-          } else {
-            console.warn("⚠️ [MIC] lkJoinPromise resolved but room still null");
           }
-        } catch (err) {
-          console.warn(
-            "⚠️ [MIC] lkJoinPromise timed out or failed:",
-            err.message,
-          );
-        }
+        } catch (_) {}
       }
-
-      // Path 3: Wait for lkReady promise up to 10s
-      console.log("⏳ [MIC] Waiting on lkReady promise up to 10s...");
       try {
         await Promise.race([
           lkReadyPromiseRef.current,
-          new Promise((_, reject) =>
-            setTimeout(
-              () => reject(new Error("LiveKit ready timeout (10s)")),
-              10_000,
-            ),
+          new Promise((_, r) =>
+            setTimeout(() => r(new Error("lkReady timeout (12s)")), 12_000),
           ),
         ]);
-        if (livekitRoomRef.current) {
-          console.log("✅ [MIC] lkReady resolved — publishing LiveKit mic");
+        if (livekitRoomRef.current || _room) {
           await publishLiveKitMic();
           return;
-        } else {
-          console.warn("⚠️ [MIC] lkReady resolved but room still null");
         }
       } catch (err) {
-        console.warn("⚠️ [MIC] lkReady timed out or failed:", err.message);
+        console.warn(
+          "⚠️ [MIC] lkReady timed out — falling back to socket PCM:",
+          err.message,
+        );
       }
-
-      // Path 4: Fallback to socket PCM
-      console.warn(
-        "⚠️ [MIC] LiveKit room not ready — falling back to socket PCM",
-      );
       await startSocketMicFallback(existingStream);
     },
     [publishLiveKitMic, startSocketMicFallback],
   );
 
-  // ─── autoStartInterview ───────────────────────────────────────────────────
+  // ── autoStartInterview ─────────────────────────────────────────────────────
   const autoStartInterview = useCallback(
     async (existingMicStream = null) => {
-      console.log("🚀 [START] autoStartInterview called");
-      console.log("  hasStartedRef.current:", hasStartedRef.current);
-
-      if (hasStartedRef.current) {
-        console.log("⚠️ [START] Already started — skipping");
-        return;
-      }
+      if (hasStartedRef.current) return;
       hasStartedRef.current = true;
-
       try {
         await ensureAudioContext();
-        console.log("✅ [START] AudioContext ready");
-
-        console.log("  livekitTokenRef exists:", !!livekitTokenRef.current);
-        console.log("  livekitUrlRef:", livekitUrlRef.current);
-        console.log("  room exists:", !!livekitRoomRef.current);
-        console.log("  join in progress:", !!lkJoinPromiseRef.current);
-
-        if (
-          livekitTokenRef.current &&
-          livekitUrlRef.current &&
-          !livekitRoomRef.current &&
-          !lkJoinPromiseRef.current
-        ) {
-          console.log(
-            "🔌 [START] Triggering joinLiveKitRoom from autoStartInterview...",
-          );
-          joinLiveKitRoom(livekitUrlRef.current, livekitTokenRef.current).catch(
-            (err) =>
-              console.error("❌ [START] joinLiveKitRoom failed:", err.message),
-          );
-        } else {
-          console.log(
-            "ℹ️ [START] Skipping joinLiveKitRoom — conditions not met",
-          );
-          if (!livekitTokenRef.current) console.log("    reason: no token yet");
-          if (!livekitUrlRef.current) console.log("    reason: no url yet");
-          if (livekitRoomRef.current)
-            console.log("    reason: room already exists");
-          if (lkJoinPromiseRef.current)
-            console.log("    reason: join already in progress");
-        }
-
-        console.log("🎤 [START] Calling startMicStreaming...");
         await startMicStreaming(existingMicStream);
-        console.log("✅ [START] Mic streaming started");
-
-        if (!serverReadyRef.current) {
-          console.error("❌ [START] Server not ready — aborting");
+        if (!serverReadyRef.current || !socketRef.current?.connected) {
           hasStartedRef.current = false;
           return;
         }
-        if (!socketRef.current?.connected) {
-          console.error("❌ [START] Socket not connected — aborting");
-          hasStartedRef.current = false;
-          return;
-        }
-
         dispatch(setHasStarted(true));
-        console.log("✅ [START] Interview started successfully!");
+        console.log("✅ [START] Interview started");
       } catch (err) {
-        console.error("❌ [START] autoStartInterview FAILED:", err.message);
-        console.error("  Full error:", err);
+        console.error("❌ [START] autoStartInterview failed:", err.message);
         hasStartedRef.current = false;
         dispatch(setHasStarted(false));
-        alert("Failed to start interview: " + err.message);
       }
     },
-    [dispatch, ensureAudioContext, startMicStreaming, joinLiveKitRoom],
+    [dispatch, ensureAudioContext, startMicStreaming],
   );
 
-  // ─── handleLiveKitToken ───────────────────────────────────────────────────
+  // ── handleLiveKitToken ─────────────────────────────────────────────────────
   const handleLiveKitToken = useCallback(
     async ({ token, url }) => {
-      console.log("🔑 [TOKEN] handleLiveKitToken CALLED ✅");
+      console.log("🔑 [TOKEN] handleLiveKitToken called");
       console.log("  url:", url);
-      console.log("  token type:", typeof token);
       console.log("  token (first 30):", token?.slice?.(0, 30));
-      console.log("  token starts with ey:", token?.startsWith?.("ey"));
-      console.log("  token length:", token?.length);
+      console.log("  _room (singleton):", _room ? "EXISTS" : "null");
+      console.log("  _joinPromise:", _joinPromise ? "in-flight" : "null");
 
-      try {
-        const resolvedToken = await Promise.resolve(token);
-        console.log("  resolvedToken type:", typeof resolvedToken);
-        console.log(
-          "  resolvedToken valid:",
-          typeof resolvedToken === "string" && resolvedToken.startsWith("ey"),
-        );
-
-        if (
-          typeof resolvedToken !== "string" ||
-          !resolvedToken.startsWith("ey")
-        ) {
-          console.error("❌ [TOKEN] Invalid LiveKit token received!");
-          console.error("  type:", typeof resolvedToken);
-          console.error(
-            "  value (first 40):",
-            String(resolvedToken).slice(0, 40),
-          );
-          return;
-        }
-
-        livekitTokenRef.current = resolvedToken;
-        livekitUrlRef.current = url;
-        console.log(
-          "✅ [TOKEN] Token stored, checking if we should join room...",
-        );
-        console.log("  room already exists:", !!livekitRoomRef.current);
-        console.log("  join in progress:", !!lkJoinPromiseRef.current);
-
-        if (!livekitRoomRef.current && !lkJoinPromiseRef.current) {
-          console.log("🔌 [TOKEN] Calling joinLiveKitRoom...");
-          joinLiveKitRoom(url, resolvedToken).catch((err) => {
-            console.error("❌ [TOKEN] joinLiveKitRoom failed:", err.message);
-            console.error("  Full error:", err);
-          });
-        } else {
-          console.log(
-            "ℹ️ [TOKEN] Skipping joinLiveKitRoom — already connected or connecting",
-          );
-        }
-      } catch (err) {
-        console.error("❌ [TOKEN] handleLiveKitToken FAILED:", err.message);
-        console.error("  Full error:", err);
+      if (typeof token !== "string" || !token.startsWith("ey")) {
+        console.error("❌ [TOKEN] Invalid token received");
+        return;
       }
+
+      // Already have a room or join in progress — do nothing
+      if (_room) {
+        console.log("ℹ️ [TOKEN] Room already exists — skipping join");
+        livekitRoomRef.current = _room;
+        lkReadyResolveRef.current?.();
+        return;
+      }
+      if (_joinPromise) {
+        console.log(
+          "ℹ️ [TOKEN] Join already in progress — awaiting shared promise",
+        );
+        try {
+          await _joinPromise;
+        } catch (_) {}
+        return;
+      }
+
+      // First caller wins — all subsequent calls blocked by _joinPromise guard above
+      console.log("🔌 [TOKEN] Initiating joinLiveKitRoom...");
+      joinLiveKitRoom(url, token).catch((err) =>
+        console.error("❌ [TOKEN] joinLiveKitRoom failed:", err.message),
+      );
     },
     [joinLiveKitRoom],
   );
 
-  // ─── enableListening / disableListening ──────────────────────────────────
+  // ── Listening ──────────────────────────────────────────────────────────────
   const enableListeningImmediate = useCallback(() => {
     isListeningRef.current = true;
     canListenRef.current = true;
@@ -854,20 +711,13 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     dispatch(disableListening());
   }, [dispatch]);
 
-  // ─── cleanup ─────────────────────────────────────────────────────────────
+  // ── Cleanup ────────────────────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       console.log("🧹 [CLEANUP] useInterview unmounting...");
       resetTTS();
-      if (livekitRoomRef.current) {
-        console.log("🧹 [CLEANUP] Disconnecting LiveKit room");
-        try {
-          livekitRoomRef.current.disconnect();
-        } catch (err) {
-          console.error("❌ [CLEANUP] room.disconnect error:", err.message);
-        }
-        livekitRoomRef.current = null;
-      }
+      // Do NOT disconnect the room on unmount — StrictMode unmounts then remounts.
+      // Room disconnection only happens when InterviewLive explicitly leaves.
     };
   }, [resetTTS]);
 
@@ -897,5 +747,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     disableListening: disableListeningImmediate,
     setMicStreamingActive: (v) => dispatch(setMicStreamingActive(v)),
     initializeInterview: (d) => dispatch(initializeInterview(d)),
+    // Expose reset for InterviewLive cleanup on actual navigation away
+    resetLiveKitSingleton: _resetSingleton,
   };
 };
