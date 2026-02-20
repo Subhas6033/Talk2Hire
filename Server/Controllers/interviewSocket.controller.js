@@ -78,6 +78,22 @@ function cleanupSession(id) {
   roomService.deleteRoom(roomName(id)).catch(() => {});
 }
 
+async function ensureRoom(interviewId) {
+  const name = roomName(interviewId);
+  try {
+    await roomService.createRoom({
+      name,
+      emptyTimeout: 300,
+      maxParticipants: 10,
+    });
+    console.log(`✅ LiveKit room ensured: ${name}`);
+  } catch (e) {
+    if (!e.message?.includes("already exists")) {
+      console.error("❌ createRoom:", e.message);
+    }
+  }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // streamTTSToClient
 // ════════════════════════════════════════════════════════════════════════════
@@ -142,6 +158,7 @@ async function streamTTSToClient(socket, text, interviewId) {
 // handleSettingsSocket  (mobile / secondary camera)
 // ════════════════════════════════════════════════════════════════════════════
 async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
+  await ensureRoom(interviewId);
   const session = getOrCreate(sessions, interviewId);
   socket.join(`interview_${interviewId}`);
   session.mobileSocketId = socket.id;
@@ -224,6 +241,7 @@ async function handleInterviewSocket(
   io,
   sessions,
 ) {
+  await ensureRoom(interviewId);
   const session = getOrCreate(sessions, interviewId);
   session.desktopSocketId = socket.id;
   socket.join(`interview_${interviewId}`);
