@@ -541,6 +541,12 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   // ─── handleLiveKitToken ────────────────────────────────────────────────────
   const handleLiveKitToken = useCallback(
     async ({ token, url }) => {
+      console.log(
+        "🔑 handleLiveKitToken called, url:",
+        url,
+        "token:",
+        token?.slice(0, 30),
+      );
       const resolvedToken = await Promise.resolve(token);
       if (
         typeof resolvedToken !== "string" ||
@@ -553,6 +559,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         );
         return;
       }
+      console.log("🔑 Calling joinLiveKitRoom...");
       livekitTokenRef.current = resolvedToken;
       livekitUrlRef.current = url;
       if (!livekitRoomRef.current && !lkJoinPromiseRef.current) {

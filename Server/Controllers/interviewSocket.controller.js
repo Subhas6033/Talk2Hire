@@ -242,6 +242,8 @@ async function handleInterviewSocket(
   sessions,
 ) {
   await ensureRoom(interviewId);
+  console.log("🔑 LIVEKIT_URL:", LIVEKIT_URL); // ← ADD
+  console.log("🔑 API_KEY exists:", !!LIVEKIT_API_KEY);
   const session = getOrCreate(sessions, interviewId);
   session.desktopSocketId = socket.id;
   socket.join(`interview_${interviewId}`);
@@ -251,6 +253,9 @@ async function handleInterviewSocket(
     `user_${userId}`,
     roomName(interviewId),
   );
+
+  console.log("🔑 Token generated, emitting to desktop:", lkToken.slice(0, 30));
+
   socket.emit("livekit_token", {
     token: lkToken,
     url: LIVEKIT_URL,
