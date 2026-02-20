@@ -274,6 +274,10 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
       room.on(RoomEvent.Connected, () => {
         console.log("🏠 LiveKit connected:", room.name);
+        console.log(
+          "👥 Remote participants at connect:",
+          [...room.remoteParticipants.values()].map((p) => p.identity),
+        );
         livekitRoomRef.current = room;
         lkJoinPromiseRef.current = null;
         lkReadyResolveRef.current?.();

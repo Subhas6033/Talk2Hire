@@ -267,10 +267,14 @@ const InterviewLive = () => {
         )
           return;
         const el = mobileVideoRef.current;
-        if (!el) return;
+        if (!el) {
+          console.error("❌ mobileVideoRef is null at TrackSubscribed");
+          return;
+        }
         track.attach(el);
         setMobileTrackAttached(true);
         setMobileCameraConnected(true);
+        console.log("✅ Mobile track attached via TrackSubscribed");
       };
 
       const onTrackUnsubscribed = (track, _pub, p) => {
@@ -285,17 +289,41 @@ const InterviewLive = () => {
         setMobileTrackAttached(false);
       };
 
+      // FIX: handle tracks that are published but not yet subscribed
+      const onTrackPublished = (pub, p) => {
+        console.log(
+          `📢 TrackPublished: ${p.identity} kind=${pub.kind} subscribed=${pub.isSubscribed}`,
+        );
+        if (pub.kind !== Track.Kind.Video || !p.identity?.startsWith("mobile_"))
+          return;
+        setMobileCameraConnected(true);
+        // Force subscription if not already subscribed
+        if (!pub.isSubscribed) {
+          console.log("🔔 Track not subscribed — forcing subscription");
+          pub.setSubscribed(true);
+        }
+      };
+
       const onParticipantConnected = (p) => {
+        console.log(`👤 ParticipantConnected: ${p.identity}`);
         if (!p.identity?.startsWith("mobile_")) return;
         setMobileCameraConnected(true);
-        // They may have already published by now
         p.trackPublications.forEach((pub) => {
-          if (pub.kind === Track.Kind.Video && pub.isSubscribed && pub.track) {
+          console.log(
+            `  pub: kind=${pub.kind} subscribed=${pub.isSubscribed} hasTrack=${!!pub.track}`,
+          );
+          if (pub.kind !== Track.Kind.Video) return;
+          if (pub.isSubscribed && pub.track) {
             const el = mobileVideoRef.current;
             if (el) {
               pub.track.attach(el);
               setMobileTrackAttached(true);
+              console.log("✅ Mobile track attached via ParticipantConnected");
             }
+          } else {
+            // Force subscription
+            console.log("🔔 Forcing subscription on ParticipantConnected");
+            pub.setSubscribed(true);
           }
         });
       };
@@ -308,6 +336,7 @@ const InterviewLive = () => {
 
       room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
       room.on(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
+      room.on(RoomEvent.TrackPublished, onTrackPublished); // ← NEW
       room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
       room.on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
 
@@ -318,14 +347,20 @@ const InterviewLive = () => {
         setMobileCameraConnected(true);
         p.trackPublications.forEach((pub) => {
           console.log(
-            `  track: kind=${pub.kind} subscribed=${pub.isSubscribed}`,
+            `  track: kind=${pub.kind} subscribed=${pub.isSubscribed} hasTrack=${!!pub.track}`,
           );
-          if (pub.kind === Track.Kind.Video && pub.isSubscribed && pub.track) {
+          if (pub.kind !== Track.Kind.Video) return;
+          if (pub.isSubscribed && pub.track) {
             const el = mobileVideoRef.current;
             if (el) {
               pub.track.attach(el);
               setMobileTrackAttached(true);
+              console.log("✅ Mobile track attached via retroactive scan");
             }
+          } else {
+            // Force subscription for already-published but unsubscribed tracks
+            console.log("🔔 Forcing subscription in retroactive scan");
+            pub.setSubscribed(true);
           }
         });
       });
@@ -333,6 +368,7 @@ const InterviewLive = () => {
       return () => {
         room.off(RoomEvent.TrackSubscribed, onTrackSubscribed);
         room.off(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
+        room.off(RoomEvent.TrackPublished, onTrackPublished); // ← NEW
         room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
         room.off(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
       };
