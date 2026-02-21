@@ -249,7 +249,7 @@ const InterviewSetup = () => {
   const [isMicTesting, setIsMicTesting] = useState(false);
   const [micConfirmed, setMicConfirmed] = useState(false);
   const speakingStartRef = useRef(null);
-  const MIC_REQUIRED_MS = 1000;
+  const MIC_REQUIRED_MS = 5000;
 
   const [primaryCameraStream, setPrimaryCameraStream] = useState(null);
   const [primaryCameraError, setPrimaryCameraError] = useState(null);
@@ -1031,7 +1031,8 @@ const InterviewSetup = () => {
                         <div>
                           <div className="px-5 py-5 bg-slate-900/70 border border-slate-800/80 rounded-xl mb-4 space-y-3">
                             <p className="text-slate-400 text-xs text-center">
-                              Speak now — hold audio for 1 second to confirm
+                              Speak now — hold audio for{" "}
+                              {MIC_REQUIRED_MS / 1000} second to confirm
                             </p>
                             <div className="w-full h-4 bg-slate-800 rounded-full overflow-hidden">
                               <div
@@ -1290,7 +1291,7 @@ const InterviewSetup = () => {
                                     size={170}
                                   />
                                 ) : (
-                                  <div className="w-[170px] h-[170px] flex items-center justify-center">
+                                  <div className="w-42.5 h-42.5 flex items-center justify-center">
                                     <Spinner size="lg" color="violet" />
                                   </div>
                                 )}
