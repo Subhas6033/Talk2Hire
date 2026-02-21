@@ -1,16 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { io } from "socket.io-client";
-import {
-  Room,
-  RoomEvent,
-  Track,
-  LocalVideoTrack,
-  VideoPresets,
-} from "livekit-client";
+import { Room, RoomEvent, Track, LocalVideoTrack } from "livekit-client";
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
-const ZOOM_LEVEL = 0.5; // <1 = wider/zoomed-out, >1 = zoomed in
 
 // ─── Status Dot ───────────────────────────────────────────────────────────────
 const Dot = ({ active, color = "green" }) => {
@@ -63,7 +56,7 @@ const Spinner = ({ className = "" }) => (
 );
 
 // ══════════════════════════════════════════════════════════════════════════════
-// MobileCameraPage — LiveKit-based secondary camera with canvas zoom
+// MobileCameraPage — LiveKit secondary camera with hardware zoom-out
 // ══════════════════════════════════════════════════════════════════════════════
 const MobileCameraPage = () => {
   const [searchParams] = useSearchParams();
@@ -78,47 +71,30 @@ const MobileCameraPage = () => {
   const [roomConnected, setRoomConnected] = useState(false);
   const [trackPublished, setTrackPublished] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [zoomApplied, setZoomApplied] = useState(false);
 
   // ── Refs ───────────────────────────────────────────────────────────────────
   const socketRef = useRef(null);
   const roomRef = useRef(null);
   const localVideoTrackRef = useRef(null);
+  const rawStreamRef = useRef(null); // keep ref to stop raw tracks on cleanup
   const videoElRef = useRef(null);
   const mountedRef = useRef(true);
 
-  // Canvas zoom refs
-  const hiddenVideoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const animationFrameRef = useRef(null);
-  const rawStreamRef = useRef(null);
-
   // ── Cleanup ────────────────────────────────────────────────────────────────
   const teardown = useCallback(async () => {
-    // Stop canvas draw loop
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
-    }
-
-    // Release hidden video
-    if (hiddenVideoRef.current) {
-      hiddenVideoRef.current.srcObject = null;
-      hiddenVideoRef.current = null;
-    }
-    canvasRef.current = null;
-
-    // Stop raw camera tracks
-    if (rawStreamRef.current) {
-      rawStreamRef.current.getTracks().forEach((t) => t.stop());
-      rawStreamRef.current = null;
-    }
-
-    // Stop LiveKit local track
+    // Stop LiveKit track
     if (localVideoTrackRef.current) {
       try {
         localVideoTrackRef.current.stop();
       } catch (_) {}
       localVideoTrackRef.current = null;
+    }
+
+    // Stop raw camera tracks
+    if (rawStreamRef.current) {
+      rawStreamRef.current.getTracks().forEach((t) => t.stop());
+      rawStreamRef.current = null;
     }
 
     // Disconnect LiveKit room
@@ -152,94 +128,104 @@ const MobileCameraPage = () => {
     }
   }, [sessionId, userId]);
 
-  // ── Step 3: Create canvas-zoomed video track & publish ────────────────────
-  const publishCamera = useCallback(async (room) => {
-    if (!mountedRef.current) return;
+  // ── Apply hardware zoom-out to minimum (widest FOV) ───────────────────────
+  // Works on Android Chrome. On iOS/desktop it's a no-op — stream still works.
+  const applyHardwareZoomOut = useCallback(async (mediaStream) => {
     try {
-      // 1. Grab raw camera stream
-      const rawStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-        audio: false,
-      });
-      rawStreamRef.current = rawStream;
+      const track = mediaStream.getVideoTracks()[0];
+      if (!track) return false;
 
-      // 2. Feed into a hidden <video> element so we can draw frames
-      const hiddenVideo = document.createElement("video");
-      hiddenVideo.srcObject = rawStream;
-      hiddenVideo.playsInline = true;
-      hiddenVideo.muted = true;
-      hiddenVideoRef.current = hiddenVideo;
-
-      await new Promise((resolve, reject) => {
-        hiddenVideo.onloadedmetadata = () => {
-          hiddenVideo.play().then(resolve).catch(reject);
-        };
-        hiddenVideo.onerror = reject;
-      });
-
-      const vw = hiddenVideo.videoWidth;
-      const vh = hiddenVideo.videoHeight;
-
-      // 3. Setup canvas
-      const canvas = document.createElement("canvas");
-      canvas.width = vw;
-      canvas.height = vh;
-      canvasRef.current = canvas;
-      const ctx = canvas.getContext("2d");
-
-      // 4. Draw loop — applies zoom by cropping source rect
-      //    ZOOM_LEVEL < 1: crop is larger than video (clamped to full) → wide/zoomed-out
-      //    ZOOM_LEVEL > 1: crop is smaller than video → zoomed in
-      const drawFrame = () => {
-        if (!hiddenVideoRef.current || !canvasRef.current) return;
-
-        const sw = Math.min(vw / ZOOM_LEVEL, vw);
-        const sh = Math.min(vh / ZOOM_LEVEL, vh);
-        const sx = (vw - sw) / 2;
-        const sy = (vh - sh) / 2;
-
-        ctx.drawImage(hiddenVideo, sx, sy, sw, sh, 0, 0, vw, vh);
-        animationFrameRef.current = requestAnimationFrame(drawFrame);
-      };
-      drawFrame();
-
-      // 5. Capture canvas as stream
-      const canvasStream = canvas.captureStream(30);
-
-      // 6. Attach canvas stream to the preview <video> element
-      if (videoElRef.current) {
-        videoElRef.current.srcObject = canvasStream;
-        videoElRef.current.play().catch(() => {});
+      const capabilities = track.getCapabilities?.();
+      if (!capabilities?.zoom) {
+        console.log("ℹ️ Hardware zoom not supported — using raw stream as-is");
+        return false;
       }
 
-      setCameraReady(true);
+      const minZoom = capabilities.zoom.min;
+      console.log(
+        `🔍 Zoom supported: range ${capabilities.zoom.min}–${capabilities.zoom.max}, applying min: ${minZoom}`,
+      );
 
-      // 7. Wrap canvas track in a LiveKit LocalVideoTrack and publish
-      const canvasTrack = canvasStream.getVideoTracks()[0];
-      const livekitTrack = new LocalVideoTrack(canvasTrack);
-      localVideoTrackRef.current = livekitTrack;
+      await track.applyConstraints({
+        advanced: [{ zoom: minZoom }],
+      });
 
-      await room.localParticipant.publishTrack(livekitTrack);
-      console.log("📷 Mobile camera (canvas zoom) published to LiveKit");
+      console.log("✅ Hardware zoom set to minimum (widest view)");
+      return true;
     } catch (err) {
-      if (!mountedRef.current) return;
-      console.error("❌ Camera publish failed:", err);
-      let msg = "Unable to access front camera. ";
-      if (err.name === "NotAllowedError")
-        msg += "Please grant camera permission and refresh.";
-      else if (err.name === "NotFoundError")
-        msg += "No front camera found on this device.";
-      else if (err.name === "NotReadableError")
-        msg += "Camera is in use by another app.";
-      else msg += err.message;
-      setPhase("error");
-      setError(msg);
+      // Non-fatal — stream continues without zoom adjustment
+      console.warn("⚠️ applyConstraints zoom failed:", err.message);
+      return false;
     }
   }, []);
+
+  // ── Step 3: Acquire camera, apply zoom, publish to LiveKit ────────────────
+  const publishCamera = useCallback(
+    async (room) => {
+      if (!mountedRef.current) return;
+      try {
+        // 1. Get raw camera stream via getUserMedia.
+        //    We do this manually (instead of createLocalVideoTrack) so we can
+        //    call applyConstraints on the underlying MediaStreamTrack before
+        //    handing it to LiveKit.
+        const rawStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: "user",
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+          audio: false,
+        });
+        rawStreamRef.current = rawStream;
+
+        if (!mountedRef.current) {
+          rawStream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+
+        // 2. Apply hardware zoom to minimum = widest possible FOV.
+        //    On unsupported devices this returns false and the stream is unchanged.
+        const applied = await applyHardwareZoomOut(rawStream);
+        setZoomApplied(applied);
+
+        if (!mountedRef.current) return;
+
+        // 3. Attach the stream to the preview <video> element on this page
+        if (videoElRef.current) {
+          videoElRef.current.srcObject = rawStream;
+          videoElRef.current.play().catch(() => {});
+        }
+
+        setCameraReady(true);
+
+        // 4. Wrap the raw MediaStreamTrack in a LiveKit LocalVideoTrack.
+        //    This preserves the applyConstraints zoom that was already applied —
+        //    using createLocalVideoTrack would open a fresh track and lose it.
+        const rawVideoTrack = rawStream.getVideoTracks()[0];
+        const livekitTrack = new LocalVideoTrack(rawVideoTrack);
+        localVideoTrackRef.current = livekitTrack;
+
+        await room.localParticipant.publishTrack(livekitTrack);
+        console.log(
+          `📷 Mobile camera published to LiveKit (zoom: ${applied ? "hardware min" : "default"})`,
+        );
+      } catch (err) {
+        if (!mountedRef.current) return;
+        console.error("❌ Camera publish failed:", err);
+        let msg = "Unable to access front camera. ";
+        if (err.name === "NotAllowedError")
+          msg += "Please grant camera permission and refresh.";
+        else if (err.name === "NotFoundError")
+          msg += "No front camera found on this device.";
+        else if (err.name === "NotReadableError")
+          msg += "Camera is in use by another app.";
+        else msg += err.message;
+        setPhase("error");
+        setError(msg);
+      }
+    },
+    [applyHardwareZoomOut],
+  );
 
   // ── Step 2: Join LiveKit room ──────────────────────────────────────────────
   const joinLiveKitRoom = useCallback(
@@ -362,6 +348,7 @@ const MobileCameraPage = () => {
     setCameraReady(false);
     setRoomConnected(false);
     setTrackPublished(false);
+    setZoomApplied(false);
     setError(null);
     setTimeout(() => {
       if (mountedRef.current) {
@@ -504,11 +491,6 @@ const MobileCameraPage = () => {
             />
           </div>
           <div className="relative" style={{ aspectRatio: "9/16" }}>
-            {/*
-              Note: we set srcObject directly in publishCamera() via videoElRef,
-              so no need for a separate srcObject prop here. The canvas stream
-              is attached imperatively when the camera initializes.
-            */}
             <video
               ref={videoElRef}
               autoPlay
@@ -517,6 +499,7 @@ const MobileCameraPage = () => {
               className="w-full h-full object-cover"
               style={{ transform: "scaleX(-1)" }}
             />
+
             {!cameraReady && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/90 gap-3">
                 {isError ? (
@@ -541,16 +524,26 @@ const MobileCameraPage = () => {
                 </p>
               </div>
             )}
+
+            {/* LIVE badge + optional Wide badge */}
             {isLive && (
-              <div className="absolute top-3 left-3">
+              <div className="absolute top-3 left-3 flex items-center gap-1.5">
                 <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/90 backdrop-blur-sm rounded-md">
                   <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
                   <span className="text-white text-[10px] font-bold tracking-widest">
                     LIVE
                   </span>
                 </div>
+                {zoomApplied && (
+                  <div className="px-2 py-1 bg-slate-900/80 backdrop-blur-sm rounded-md border border-slate-700/60">
+                    <span className="text-slate-300 text-[10px] font-semibold tracking-wider">
+                      WIDE
+                    </span>
+                  </div>
+                )}
               </div>
             )}
+
             {isLoading && cameraReady && (
               <div className="absolute top-3 left-3">
                 <div className="flex items-center gap-1.5 px-2.5 py-1 bg-violet-600/90 backdrop-blur-sm rounded-md">
@@ -610,6 +603,18 @@ const MobileCameraPage = () => {
             value={trackPublished ? "Publishing via LiveKit" : "Not publishing"}
             active={trackPublished}
             color="green"
+          />
+          <StatusRow
+            label="Wide Angle"
+            value={
+              !cameraReady
+                ? "Pending…"
+                : zoomApplied
+                  ? "Active (hardware)"
+                  : "Not supported"
+            }
+            active={zoomApplied}
+            color="yellow"
           />
         </div>
 
