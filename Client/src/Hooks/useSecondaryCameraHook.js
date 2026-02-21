@@ -1,13 +1,15 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 
 const CHUNK_DURATION = 20000;
-const ZOOM_LEVEL = 0.5; // <1 = wider view, >1 = zoom in
 
 const useSecondaryCamera = (interviewId, userId, socketRef) => {
   const [isRecording, setIsRecording] = useState(false);
   const [recordedChunks, setRecordedChunks] = useState([]);
   const [secondaryCameraStream, setSecondaryCameraStream] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [zoomLevel, setZoomLevel] = useState(null); // current zoom applied
+  const [maxZoom, setMaxZoom] = useState(null); // max supported zoom
+  const [zoomSupported, setZoomSupported] = useState(false);
 
   const mediaRecorderRef = useRef(null);
   const chunkCountRef = useRef(0);
@@ -15,12 +17,7 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
   const isRequestingSessionRef = useRef(false);
   const hasStoppedRef = useRef(false);
   const secondaryStreamRef = useRef(null);
-
-  // Canvas zoom refs
-  const hiddenVideoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const animationFrameRef = useRef(null);
-  const rawStreamRef = useRef(null); // the real camera stream (to stop tracks on cleanup)
+  const videoTrackRef = useRef(null); // direct ref to the MediaStreamTrack
 
   const findSupportedMimeType = (stream) => {
     const mimeTypesToTry = [
@@ -54,103 +51,83 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
   };
 
   /**
-   * Stops the canvas draw loop and cleans up canvas/hidden video resources.
-   * Does NOT stop the raw camera stream — call stopRawStream() for that.
+   * Apply zoom to the current video track.
+   * Call this after requestSecondaryCamera() to change zoom level dynamically.
+   * level: number — must be within [minZoom, maxZoom] from capabilities.
    */
-  const stopCanvasPipeline = useCallback(() => {
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
+  const applyZoom = useCallback(async (level) => {
+    const track = videoTrackRef.current;
+    if (!track) {
+      console.warn("⚠️ No video track available to apply zoom");
+      return false;
     }
-    if (hiddenVideoRef.current) {
-      hiddenVideoRef.current.srcObject = null;
-      hiddenVideoRef.current = null;
+
+    const capabilities = track.getCapabilities();
+    if (!("zoom" in capabilities)) {
+      console.warn("⚠️ Zoom not supported on this device/browser");
+      return false;
     }
-    canvasRef.current = null;
+
+    const clamped = Math.min(
+      Math.max(level, capabilities.zoom.min),
+      capabilities.zoom.max,
+    );
+
+    try {
+      await track.applyConstraints({ advanced: [{ zoom: clamped }] });
+      setZoomLevel(clamped);
+      console.log(`✅ Zoom applied: ${clamped}`);
+      return true;
+    } catch (err) {
+      console.error("❌ applyConstraints zoom failed:", err.message);
+      return false;
+    }
   }, []);
 
   /**
-   * Stops the raw camera tracks.
-   */
-  const stopRawStream = useCallback(() => {
-    if (rawStreamRef.current) {
-      rawStreamRef.current.getTracks().forEach((t) => t.stop());
-      rawStreamRef.current = null;
-    }
-  }, []);
-
-  /**
-   * Creates a canvas stream that applies ZOOM_LEVEL to the raw camera stream.
-   * Returns the canvas MediaStream (to be used for recording/preview).
-   */
-  const createZoomedCanvasStream = useCallback(async (rawStream) => {
-    const hiddenVideo = document.createElement("video");
-    hiddenVideo.srcObject = rawStream;
-    hiddenVideo.playsInline = true;
-    hiddenVideo.muted = true;
-    hiddenVideoRef.current = hiddenVideo;
-
-    await new Promise((resolve) => {
-      hiddenVideo.onloadedmetadata = () => {
-        hiddenVideo.play();
-        resolve();
-      };
-    });
-
-    const vw = hiddenVideo.videoWidth;
-    const vh = hiddenVideo.videoHeight;
-
-    const canvas = document.createElement("canvas");
-    canvas.width = vw;
-    canvas.height = vh;
-    canvasRef.current = canvas;
-    const ctx = canvas.getContext("2d");
-
-    const drawFrame = () => {
-      if (!hiddenVideoRef.current || !canvasRef.current) return;
-
-      // ZOOM_LEVEL < 1 means crop > video size → clamped to full frame (wide/zoomed-out)
-      // ZOOM_LEVEL > 1 means crop < video size → zoomed in
-      const sw = Math.min(vw / ZOOM_LEVEL, vw);
-      const sh = Math.min(vh / ZOOM_LEVEL, vh);
-      const sx = (vw - sw) / 2;
-      const sy = (vh - sh) / 2;
-
-      ctx.drawImage(hiddenVideo, sx, sy, sw, sh, 0, 0, vw, vh);
-      animationFrameRef.current = requestAnimationFrame(drawFrame);
-    };
-
-    drawFrame();
-
-    // 30fps canvas stream — this is what gets recorded and previewed
-    return canvas.captureStream(30);
-  }, []);
-
-  /**
-   * Request secondary camera access and return a zoomed canvas stream.
+   * Request secondary camera access and detect zoom capabilities.
+   * Mirrors the pattern: getUserMedia → getCapabilities → read zoom range.
    */
   const requestSecondaryCamera = useCallback(async () => {
     try {
       console.log("📱 Requesting secondary camera (mobile front)...");
 
-      const rawStream = await navigator.mediaDevices.getUserMedia({
+      const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: "user",
-          width: { ideal: 480 }, // ← request lower res
-          height: { ideal: 640 },
-          aspectRatio: { ideal: 4 / 3 },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
         },
         audio: false,
       });
 
-      rawStreamRef.current = rawStream;
+      const videoTrack = stream.getVideoTracks()[0];
+      videoTrackRef.current = videoTrack;
 
-      // Build zoomed canvas stream
-      const canvasStream = await createZoomedCanvasStream(rawStream);
+      // ── Zoom capability detection (mirrors your pattern) ──────────────────
+      const capabilities = videoTrack.getCapabilities();
+      if ("zoom" in capabilities) {
+        const max = capabilities.zoom.max;
+        const min = capabilities.zoom.min;
+        setMaxZoom(max);
+        setZoomSupported(true);
+        console.log(`🔍 Zoom supported — range: ${min}–${max}`);
 
-      console.log("✅ Secondary camera access granted (canvas zoom active)");
-      secondaryStreamRef.current = canvasStream;
-      setSecondaryCameraStream(canvasStream);
+        // Set to minimum zoom immediately = widest possible view
+        await videoTrack.applyConstraints({
+          advanced: [{ zoom: min }],
+        });
+        setZoomLevel(min);
+        console.log(`✅ Initial zoom set to minimum (${min}) for widest view`);
+      } else {
+        setZoomSupported(false);
+        console.log("ℹ️ Zoom not supported on this device/browser");
+      }
+      // ─────────────────────────────────────────────────────────────────────
+
+      console.log("✅ Secondary camera access granted");
+      secondaryStreamRef.current = stream;
+      setSecondaryCameraStream(stream);
       setIsConnected(true);
 
       if (socketRef?.current?.connected) {
@@ -161,7 +138,7 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
         });
       }
 
-      return canvasStream;
+      return stream;
     } catch (error) {
       console.error("❌ Secondary camera access error:", error);
 
@@ -180,7 +157,7 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
       setIsConnected(false);
       return null;
     }
-  }, [interviewId, userId, socketRef, createZoomedCanvasStream]);
+  }, [interviewId, userId, socketRef]);
 
   const startRecording = useCallback(async () => {
     if (isRecording) {
@@ -250,7 +227,7 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
       mediaRecorderRef.current = mediaRecorder;
 
       videoTrack.onended = () => {
-        console.log("🛑 Secondary camera canvas track ended");
+        console.log("🛑 Secondary camera track ended");
         if (mediaRecorderRef.current?.state !== "inactive") {
           stopRecording();
         }
@@ -310,16 +287,16 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
           });
         }
 
-        // Stop canvas pipeline first, then raw camera
-        stopCanvasPipeline();
-        stopRawStream();
-
         const s = secondaryStreamRef.current;
         if (s) {
           s.getTracks().forEach((t) => t.stop());
           secondaryStreamRef.current = null;
+          videoTrackRef.current = null;
           setSecondaryCameraStream(null);
           setIsConnected(false);
+          setZoomLevel(null);
+          setZoomSupported(false);
+          setMaxZoom(null);
         }
       };
 
@@ -382,13 +359,7 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
       setIsRecording(false);
       alert("Failed to setup secondary camera recording: " + err.message);
     }
-  }, [
-    isRecording,
-    socketRef,
-    requestSecondaryCamera,
-    stopCanvasPipeline,
-    stopRawStream,
-  ]);
+  }, [isRecording, socketRef, requestSecondaryCamera]);
 
   const stopRecording = useCallback(async () => {
     console.log("🛑 Attempting to stop secondary camera recording...");
@@ -396,14 +367,12 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
     if (!mediaRecorderRef.current) {
       console.log("⚠️ No media recorder to stop");
 
-      stopCanvasPipeline();
-      stopRawStream();
-
       const s = secondaryStreamRef.current;
       if (s && s.active) {
         console.log("🧹 Cleaning up active stream");
         s.getTracks().forEach((t) => t.stop());
         secondaryStreamRef.current = null;
+        videoTrackRef.current = null;
         setSecondaryCameraStream(null);
         setIsConnected(false);
       }
@@ -435,14 +404,10 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
         resolve(null);
       }
     });
-  }, [stopCanvasPipeline, stopRawStream]);
+  }, []);
 
   const cleanup = useCallback(() => {
     console.log("🧹 Cleaning up secondary camera");
-
-    // Stop canvas pipeline and raw camera
-    stopCanvasPipeline();
-    stopRawStream();
 
     if (
       mediaRecorderRef.current &&
@@ -466,6 +431,7 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
         }
       });
       secondaryStreamRef.current = null;
+      videoTrackRef.current = null;
       setSecondaryCameraStream(null);
       setIsConnected(false);
     }
@@ -475,7 +441,10 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
     isRequestingSessionRef.current = false;
     hasStoppedRef.current = false;
     setIsRecording(false);
-  }, [stopCanvasPipeline, stopRawStream]);
+    setZoomLevel(null);
+    setZoomSupported(false);
+    setMaxZoom(null);
+  }, []);
 
   useEffect(() => {
     return () => cleanup();
@@ -490,6 +459,11 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
     stopRecording,
     requestSecondaryCamera,
     cleanup,
+    // Zoom controls — exposed so UI can build a zoom slider if needed
+    applyZoom,
+    zoomLevel,
+    maxZoom,
+    zoomSupported,
   };
 };
 
