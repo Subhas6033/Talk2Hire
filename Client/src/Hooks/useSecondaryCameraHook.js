@@ -136,8 +136,9 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
       const rawStream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: "user",
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 480 }, // ← request lower res
+          height: { ideal: 640 },
+          aspectRatio: { ideal: 4 / 3 },
         },
         audio: false,
       });
