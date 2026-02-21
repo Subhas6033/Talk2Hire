@@ -5,25 +5,17 @@ import Modal from "./Common/Modal";
 import { TrustedCompaniesSlider } from "./Slider/Slider";
 import { PricingSection } from "./Subscription/Pricing";
 import TestimonialsSection from "./Common/Testimonials";
-import ConfigureInterview from "./Others/UploadFile";
 import ScrollToTop from "./Others/ScrollToTop";
-import Guidlines from "./Others/Guidlines";
 import Avatar from "./Common/Avatar";
 import SocialMediaSection from "./SocialMedia";
 import PreviousInterview from "./PreviousInterview";
-import ResumeUploadCard from "./Others/UploadFile";
-import InterviewSettings from "./Others/InterviewSettings";
 import Select from "./Common/Select";
-import InterviewQuestions from "./Others/InterviewQuestions";
-import MicrophoneCheck from "./Others/MicrophoneCheck";
-import CameraCheck from "./Others/CamerCheck";
 import CandidateFilter from "./Filter/CandidateFilter";
-import MobileSecurityCamera from "./Others/MobileSecurityCamera";
-import SecurityMonitor from "./Others/SecurityMonitor";
 import AuthProvider from "./Loader/AuthProviders";
 import SkillsSelector from "./Others/SkillsSelector";
 import WelcomeCarousel from "./Common/WelcomeCarousal";
 import OnboardingFlow from "./Common/Onboarding";
+import InterviewSetup from "./Others/InterviewSetup";
 
 export {
   Nav,
@@ -33,23 +25,15 @@ export {
   TrustedCompaniesSlider,
   PricingSection,
   TestimonialsSection,
-  ConfigureInterview,
   ScrollToTop,
-  Guidlines,
   Avatar,
   SocialMediaSection,
   PreviousInterview,
-  ResumeUploadCard,
-  InterviewSettings,
   Select,
-  InterviewQuestions,
-  MicrophoneCheck,
-  CameraCheck,
   CandidateFilter,
-  MobileSecurityCamera,
-  SecurityMonitor,
   AuthProvider,
   SkillsSelector,
   WelcomeCarousel,
   OnboardingFlow,
+  InterviewSetup,
 };

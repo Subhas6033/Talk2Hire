@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { useInterview } from "../../Hooks/useInterviewHook";
-import useVideoRecording from "../../Hooks/useVideoRecordingHook";
-import useHolisticDetection from "../../Hooks/useHolisticDetectionHook";
-import useScreenRecording from "../../Hooks/useScreenRecording";
-import { Button } from "../index";
-import { Card } from "../Common/Card";
-import { useStreams } from "../../Hooks/streamContext";
-import streamStore from "../../Hooks/streamSingleton";
+import { useInterview } from "../Hooks/useInterviewHook";
+import useVideoRecording from "../Hooks/useVideoRecordingHook";
+import useHolisticDetection from "../Hooks/useHolisticDetectionHook";
+import useScreenRecording from "../Hooks/useScreenRecording";
+import { Button } from "../Components/index";
+import { Card } from "../Components/Common/Card";
+import { useStreams } from "../Hooks/streamContext";
+import streamStore from "../Hooks/streamSingleton";
 import { RoomEvent, Track } from "livekit-client";
 
 // Prevents double socket-init across renders (NOT used to prevent room creation —

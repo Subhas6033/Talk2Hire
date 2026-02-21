@@ -155,6 +155,8 @@ const InterviewSetup = () => {
   const [micLevel, setMicLevel] = useState(0);
   const [isMicTesting, setIsMicTesting] = useState(false);
   const [micConfirmed, setMicConfirmed] = useState(false);
+  const speakingStartRef = useRef(null);
+  const MIC_REQUIRED_MS = 1000;
 
   const [primaryCameraStream, setPrimaryCameraStream] = useState(null);
   const [primaryCameraError, setPrimaryCameraError] = useState(null);
@@ -200,7 +202,7 @@ const InterviewSetup = () => {
 
   const hasExistingSkills = user?.skill?.trim();
 
-  /* ── Step handlers (unchanged logic) ──────────────────────────────────── */
+  /* ── Step handlers ──────────────────────────────────── */
   const handleStartSetup = () => {
     if (!hasExistingSkills && (!skills || skills.length === 0)) {
       setError("Please select at least one skill.");
@@ -302,11 +304,21 @@ const InterviewSetup = () => {
         if (!analyserRef.current || micTestCleanupRef.current) return;
         analyser.getByteFrequencyData(dataArray);
         const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-        setMicLevel((prev) => {
-          const next = Math.min(100, (avg / 128) * 100);
-          if (next > 10) setMicConfirmed(true);
-          return next;
-        });
+        const next = Math.min(100, (avg / 128) * 100);
+        setMicLevel(next);
+
+        if (next > 10) {
+          // User is speaking — start or continue the timer
+          if (!speakingStartRef.current) {
+            speakingStartRef.current = Date.now();
+          } else if (Date.now() - speakingStartRef.current >= MIC_REQUIRED_MS) {
+            setMicConfirmed(true); // 1 second reached — unlock button
+          }
+        } else {
+          // Silence — reset the timer so they must speak continuously
+          speakingStartRef.current = null;
+        }
+
         animationFrameRef.current = requestAnimationFrame(updateLevel);
       };
       updateLevel();
@@ -1006,15 +1018,15 @@ const InterviewSetup = () => {
 
                 <div className="flex justify-center">
                   <button
-                    onClick={handleMicSuccess}
+                    onClick={micConfirmed ? handleMicSuccess : undefined}
                     disabled={!micConfirmed}
-                    className={`px-10 h-11 rounded-xl font-semibold text-sm transition-all duration-200 ${
+                    className={
                       micConfirmed
-                        ? "bg-violet-600 hover:bg-violet-500 text-white cursor-pointer shadow-lg shadow-violet-500/20"
-                        : "bg-slate-800 text-slate-600 cursor-not-allowed border border-slate-700/40"
-                    }`}
+                        ? "px-10 h-11 rounded-xl font-semibold text-sm bg-violet-600 hover:bg-violet-500 text-white cursor-pointer shadow-lg shadow-violet-500/20 transition-colors duration-200"
+                        : "px-10 h-11 rounded-xl font-semibold text-sm bg-slate-800 text-slate-600 cursor-not-allowed border border-slate-700/40"
+                    }
                   >
-                    Continue
+                    {micConfirmed ? "Continue" : "Speak for 1 second…"}
                   </button>
                 </div>
               </div>

@@ -21,11 +21,10 @@ import {
   Hire,
   MobileCameraPage,
   RegistrationForm,
+  InterviewLive,
 } from "./Pages/index.pages.js";
 
-import { Guidlines, MobileSecurityCamera } from "./Components/index.js";
-import InterviewSetup from "./Components/new/InterviewSetup.jsx";
-import InterviewLive from "./Components/new/Interviewlive.jsx";
+import { InterviewSetup } from "./Components/index.js";
 import { useStreams } from "./Hooks/streamContext";
 
 const App = () => {
@@ -96,12 +95,7 @@ const App = () => {
                     <Route path="/privacy" element={<Privacy />} />
                     <Route path="/terms" element={<Terms />} />
                     <Route path="/contact" element={<Contact />} />
-                    <Route path="/guidlines" element={<Guidlines />} />
                     <Route path="/hire" element={<Hire />} />
-                    <Route
-                      path="/mobile-security"
-                      element={<MobileSecurityCamera />}
-                    />
                     <Route
                       path="/verify-password"
                       element={<VerifyPassword />}

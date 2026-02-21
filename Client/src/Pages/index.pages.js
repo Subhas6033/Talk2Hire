@@ -11,6 +11,7 @@ import Profile from "./Profile.jsx";
 import VerifyPassword from "./Auth/VerifyPassword.jsx";
 import Hire from "./Hire.jsx";
 import MobileCameraPage from "./MobileCameraPage.jsx";
+import InterviewLive from "./Interviewlive.jsx";
 
 export {
   Home,
@@ -26,4 +27,5 @@ export {
   VerifyPassword,
   Hire,
   MobileCameraPage,
+  InterviewLive,
 };
