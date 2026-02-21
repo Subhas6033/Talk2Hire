@@ -38,3 +38,38 @@
   /* Glow & shadows */
   --shadow-glow: 0 0 40px rgba(155, 92, 255, 0.35);
 }
+
+/* ===== Scrollbar ===== */
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0b0f1f; /* bgDark */
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    var(--color-purpleSecondary),
+    var(--color-purpleMain)
+  );
+  border-radius: 8px;
+  border: 2px solid #0b0f1f;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(
+    180deg,
+    var(--color-purpleGlow),
+    var(--color-purpleSecondary)
+  );
+}
+
+/* Firefox Support */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-purpleSecondary) #0b0f1f;
+}

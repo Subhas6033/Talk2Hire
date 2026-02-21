@@ -360,7 +360,7 @@ async function handleInterviewSocket(
   let currentQText = session.currentQText ?? "";
   const MAX_Q = 10;
 
-  const MAX_FACE_VIOL = 5;
+  const MAX_FACE_VIOL = 3;
   const FACE_THROTTLE = 1000;
   const FACE_WINDOW = 3000;
   let lastHolisticTime = 0;

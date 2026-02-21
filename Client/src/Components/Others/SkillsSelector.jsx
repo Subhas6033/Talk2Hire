@@ -461,7 +461,7 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
                     rgba(139, 92, 246, 0.05);
                 }
               `}</style>
-              <div className="flex flex-wrap gap-2 p-4 bg-linear-to-br from-purple-500/5 via-pink-500/5 to-purple-500/5 rounded-xl border border-purple-400/20 max-h-60 overflow-y-auto shadow-sm custom-scrollbar">
+              <div className="flex flex-wrap gap-2 p-4 bg-linear-to-br from-purple-500/5 via-pink-500/5 to-purple-500/5 rounded-xl border border-purple-400/20 max-h-40 overflow-y-auto shadow-sm custom-scrollbar">
                 {selectedSkills.map((skill) => (
                   <div
                     key={skill}

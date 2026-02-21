@@ -12,6 +12,8 @@ import VerifyPassword from "./Auth/VerifyPassword.jsx";
 import Hire from "./Hire.jsx";
 import MobileCameraPage from "./MobileCameraPage.jsx";
 import InterviewLive from "./Interviewlive.jsx";
+import CompanyRegister from "./Auth/CompanyRegister.jsx";
+import Companylogin from "./Auth/Companylogin.jsx";
 
 export {
   Home,
@@ -28,4 +30,6 @@ export {
   Hire,
   MobileCameraPage,
   InterviewLive,
+  CompanyRegister,
+  Companylogin,
 };

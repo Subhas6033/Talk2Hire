@@ -240,7 +240,7 @@ const RegistrationForm = () => {
                   </div>
 
                   {/* Form */}
-                  <div className="space-y-6">
+                  <div className="space-y-5">
                     {/* Resume Upload */}
                     <div>
                       <label className="block text-sm font-medium text-white/80 mb-3">
@@ -362,7 +362,7 @@ const RegistrationForm = () => {
                     </Button>
 
                     {/* Terms */}
-                    <p className="text-xs text-white/50 text-center">
+                    <p className="text-xs text-white/50 text-center mt-2">
                       By continuing, you agree to our{" "}
                       <button className="text-purple-400 hover:text-purple-300 underline">
                         Terms of Service
@@ -375,14 +375,24 @@ const RegistrationForm = () => {
                   </div>
 
                   {/* Sign In Link */}
-                  <div className="text-center pt-4">
-                    <p className="text-white/60">
+                  <div className="text-center pt-5">
+                    <p className="text-white/60 mb-5">
                       Already have an account?{" "}
                       <button
                         onClick={() => navigate("/login")}
                         className="text-purple-400 hover:text-purple-300 font-semibold transition-colors"
                       >
                         Sign in
+                      </button>
+                    </p>
+
+                    <p className="text-white/60">
+                      Register as a Company?{" "}
+                      <button
+                        onClick={() => navigate("/login/company")}
+                        className="text-purple-400 hover:text-purple-300 font-semibold transition-colors"
+                      >
+                        Sign in here
                       </button>
                     </p>
                   </div>

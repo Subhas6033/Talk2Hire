@@ -179,7 +179,7 @@ const Login = () => {
               </Button>
             </div>
 
-            <CardFooter>
+            <CardFooter className="flex flex-col items-center gap-3">
               <p className="text-sm text-white/60">
                 Don't have an account?{" "}
                 <Link
@@ -190,6 +190,15 @@ const Login = () => {
                 </Link>
               </p>
             </CardFooter>
+            <p className="text-sm text-white/60 text-center py-2">
+              Register as Company?{" "}
+              <Link
+                to="/register/company"
+                className="text-purpleSoft hover:text-purpleGlow font-medium"
+              >
+                Create one
+              </Link>
+            </p>
           </Card>
         </div>
 

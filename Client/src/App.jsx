@@ -22,6 +22,8 @@ import {
   MobileCameraPage,
   RegistrationForm,
   InterviewLive,
+  CompanyRegister,
+  Companylogin,
 } from "./Pages/index.pages.js";
 
 import { InterviewSetup } from "./Components/index.js";
@@ -115,6 +117,24 @@ const App = () => {
                       element={
                         <PublicRoute>
                           <RegistrationForm />
+                        </PublicRoute>
+                      }
+                    />
+                    {/* Company Registrations */}
+                    <Route
+                      path="/register/company"
+                      element={
+                        <PublicRoute>
+                          <CompanyRegister />
+                        </PublicRoute>
+                      }
+                    />
+
+                    <Route
+                      path="/login/company"
+                      element={
+                        <PublicRoute>
+                          <Companylogin />
                         </PublicRoute>
                       }
                     />
