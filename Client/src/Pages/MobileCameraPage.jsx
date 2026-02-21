@@ -5,11 +5,12 @@ import {
   Room,
   RoomEvent,
   Track,
-  createLocalVideoTrack,
+  LocalVideoTrack,
   VideoPresets,
 } from "livekit-client";
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
+const ZOOM_LEVEL = 0.5; // <1 = wider/zoomed-out, >1 = zoomed in
 
 // ─── Status Dot ───────────────────────────────────────────────────────────────
 const Dot = ({ active, color = "green" }) => {
@@ -62,7 +63,7 @@ const Spinner = ({ className = "" }) => (
 );
 
 // ══════════════════════════════════════════════════════════════════════════════
-// MobileCameraPage — LiveKit-based secondary camera
+// MobileCameraPage — LiveKit-based secondary camera with canvas zoom
 // ══════════════════════════════════════════════════════════════════════════════
 const MobileCameraPage = () => {
   const [searchParams] = useSearchParams();
@@ -85,20 +86,50 @@ const MobileCameraPage = () => {
   const videoElRef = useRef(null);
   const mountedRef = useRef(true);
 
+  // Canvas zoom refs
+  const hiddenVideoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const animationFrameRef = useRef(null);
+  const rawStreamRef = useRef(null);
+
   // ── Cleanup ────────────────────────────────────────────────────────────────
   const teardown = useCallback(async () => {
+    // Stop canvas draw loop
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+
+    // Release hidden video
+    if (hiddenVideoRef.current) {
+      hiddenVideoRef.current.srcObject = null;
+      hiddenVideoRef.current = null;
+    }
+    canvasRef.current = null;
+
+    // Stop raw camera tracks
+    if (rawStreamRef.current) {
+      rawStreamRef.current.getTracks().forEach((t) => t.stop());
+      rawStreamRef.current = null;
+    }
+
+    // Stop LiveKit local track
     if (localVideoTrackRef.current) {
       try {
         localVideoTrackRef.current.stop();
       } catch (_) {}
       localVideoTrackRef.current = null;
     }
+
+    // Disconnect LiveKit room
     if (roomRef.current) {
       try {
         await roomRef.current.disconnect();
       } catch (_) {}
       roomRef.current = null;
     }
+
+    // Disconnect socket
     if (socketRef.current) {
       socketRef.current.disconnect();
       socketRef.current = null;
@@ -121,21 +152,79 @@ const MobileCameraPage = () => {
     }
   }, [sessionId, userId]);
 
-  // ── Step 3: Create & publish local video track ─────────────────────────────
+  // ── Step 3: Create canvas-zoomed video track & publish ────────────────────
   const publishCamera = useCallback(async (room) => {
     if (!mountedRef.current) return;
     try {
-      const track = await createLocalVideoTrack({
-        resolution: VideoPresets.h720.resolution,
-        facingMode: "user",
+      // 1. Grab raw camera stream
+      const rawStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
       });
-      localVideoTrackRef.current = track;
+      rawStreamRef.current = rawStream;
+
+      // 2. Feed into a hidden <video> element so we can draw frames
+      const hiddenVideo = document.createElement("video");
+      hiddenVideo.srcObject = rawStream;
+      hiddenVideo.playsInline = true;
+      hiddenVideo.muted = true;
+      hiddenVideoRef.current = hiddenVideo;
+
+      await new Promise((resolve, reject) => {
+        hiddenVideo.onloadedmetadata = () => {
+          hiddenVideo.play().then(resolve).catch(reject);
+        };
+        hiddenVideo.onerror = reject;
+      });
+
+      const vw = hiddenVideo.videoWidth;
+      const vh = hiddenVideo.videoHeight;
+
+      // 3. Setup canvas
+      const canvas = document.createElement("canvas");
+      canvas.width = vw;
+      canvas.height = vh;
+      canvasRef.current = canvas;
+      const ctx = canvas.getContext("2d");
+
+      // 4. Draw loop — applies zoom by cropping source rect
+      //    ZOOM_LEVEL < 1: crop is larger than video (clamped to full) → wide/zoomed-out
+      //    ZOOM_LEVEL > 1: crop is smaller than video → zoomed in
+      const drawFrame = () => {
+        if (!hiddenVideoRef.current || !canvasRef.current) return;
+
+        const sw = Math.min(vw / ZOOM_LEVEL, vw);
+        const sh = Math.min(vh / ZOOM_LEVEL, vh);
+        const sx = (vw - sw) / 2;
+        const sy = (vh - sh) / 2;
+
+        ctx.drawImage(hiddenVideo, sx, sy, sw, sh, 0, 0, vw, vh);
+        animationFrameRef.current = requestAnimationFrame(drawFrame);
+      };
+      drawFrame();
+
+      // 5. Capture canvas as stream
+      const canvasStream = canvas.captureStream(30);
+
+      // 6. Attach canvas stream to the preview <video> element
+      if (videoElRef.current) {
+        videoElRef.current.srcObject = canvasStream;
+        videoElRef.current.play().catch(() => {});
+      }
+
       setCameraReady(true);
 
-      if (videoElRef.current) track.attach(videoElRef.current);
+      // 7. Wrap canvas track in a LiveKit LocalVideoTrack and publish
+      const canvasTrack = canvasStream.getVideoTracks()[0];
+      const livekitTrack = new LocalVideoTrack(canvasTrack);
+      localVideoTrackRef.current = livekitTrack;
 
-      await room.localParticipant.publishTrack(track);
-      console.log("📷 Mobile camera published to LiveKit");
+      await room.localParticipant.publishTrack(livekitTrack);
+      console.log("📷 Mobile camera (canvas zoom) published to LiveKit");
     } catch (err) {
       if (!mountedRef.current) return;
       console.error("❌ Camera publish failed:", err);
@@ -215,7 +304,6 @@ const MobileCameraPage = () => {
 
     const socket = io(SOCKET_URL, {
       query: { interviewId: sessionId, userId, type: "settings" },
-      // FIX: websocket only — polling causes 400 errors when server disallows it
       transports: ["websocket"],
       reconnection: true,
       reconnectionAttempts: 10,
@@ -228,7 +316,6 @@ const MobileCameraPage = () => {
       if (!mountedRef.current) return;
       setSocketConnected(true);
 
-      // Announce presence — server will emit livekit_token in response
       socket.emit("secondary_camera_connected", {
         interviewId: sessionId,
         userId,
@@ -255,7 +342,6 @@ const MobileCameraPage = () => {
       setError("Could not reach the server. Check your connection and retry.");
     });
 
-    // FIX: server emits livekit_token — join room immediately on receipt
     socket.on("livekit_token", async ({ token, url }) => {
       console.log("📱 Mobile LiveKit URL:", url);
       if (!mountedRef.current) return;
@@ -418,6 +504,11 @@ const MobileCameraPage = () => {
             />
           </div>
           <div className="relative" style={{ aspectRatio: "9/16" }}>
+            {/*
+              Note: we set srcObject directly in publishCamera() via videoElRef,
+              so no need for a separate srcObject prop here. The canvas stream
+              is attached imperatively when the camera initializes.
+            */}
             <video
               ref={videoElRef}
               autoPlay

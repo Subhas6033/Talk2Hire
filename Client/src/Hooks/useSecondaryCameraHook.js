@@ -1,6 +1,7 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 
-const CHUNK_DURATION = 20000; // 20 seconds per chunk
+const CHUNK_DURATION = 20000;
+const ZOOM_LEVEL = 0.5; // <1 = wider view, >1 = zoom in
 
 const useSecondaryCamera = (interviewId, userId, socketRef) => {
   const [isRecording, setIsRecording] = useState(false);
@@ -15,9 +16,12 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
   const hasStoppedRef = useRef(false);
   const secondaryStreamRef = useRef(null);
 
-  /**
-   * Find supported MIME type for secondary camera
-   */
+  // Canvas zoom refs
+  const hiddenVideoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const animationFrameRef = useRef(null);
+  const rawStreamRef = useRef(null); // the real camera stream (to stop tracks on cleanup)
+
   const findSupportedMimeType = (stream) => {
     const mimeTypesToTry = [
       { type: "video/webm;codecs=vp9", bitrate: 2500000 },
@@ -31,51 +35,123 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
 
     for (const config of mimeTypesToTry) {
       const { type: mimeType, bitrate } = config;
-
       if (mimeType && !MediaRecorder.isTypeSupported(mimeType)) continue;
-
       try {
         const options = {};
         if (mimeType) options.mimeType = mimeType;
         if (bitrate) options.videoBitsPerSecond = bitrate;
-
         const testRecorder = new MediaRecorder(stream, options);
         if (testRecorder.state !== "inactive") testRecorder.stop();
-
         console.log(
-          ` Secondary camera MIME type: ${mimeType || "default"} @ ${bitrate}bps`,
+          `Secondary camera MIME type: ${mimeType || "default"} @ ${bitrate}bps`,
         );
         return { mimeType: mimeType || "default", bitrate, options };
       } catch {
         continue;
       }
     }
-
     return null;
   };
 
   /**
-   * Request secondary camera access (mobile front camera)
+   * Stops the canvas draw loop and cleans up canvas/hidden video resources.
+   * Does NOT stop the raw camera stream — call stopRawStream() for that.
+   */
+  const stopCanvasPipeline = useCallback(() => {
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    if (hiddenVideoRef.current) {
+      hiddenVideoRef.current.srcObject = null;
+      hiddenVideoRef.current = null;
+    }
+    canvasRef.current = null;
+  }, []);
+
+  /**
+   * Stops the raw camera tracks.
+   */
+  const stopRawStream = useCallback(() => {
+    if (rawStreamRef.current) {
+      rawStreamRef.current.getTracks().forEach((t) => t.stop());
+      rawStreamRef.current = null;
+    }
+  }, []);
+
+  /**
+   * Creates a canvas stream that applies ZOOM_LEVEL to the raw camera stream.
+   * Returns the canvas MediaStream (to be used for recording/preview).
+   */
+  const createZoomedCanvasStream = useCallback(async (rawStream) => {
+    const hiddenVideo = document.createElement("video");
+    hiddenVideo.srcObject = rawStream;
+    hiddenVideo.playsInline = true;
+    hiddenVideo.muted = true;
+    hiddenVideoRef.current = hiddenVideo;
+
+    await new Promise((resolve) => {
+      hiddenVideo.onloadedmetadata = () => {
+        hiddenVideo.play();
+        resolve();
+      };
+    });
+
+    const vw = hiddenVideo.videoWidth;
+    const vh = hiddenVideo.videoHeight;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = vw;
+    canvas.height = vh;
+    canvasRef.current = canvas;
+    const ctx = canvas.getContext("2d");
+
+    const drawFrame = () => {
+      if (!hiddenVideoRef.current || !canvasRef.current) return;
+
+      // ZOOM_LEVEL < 1 means crop > video size → clamped to full frame (wide/zoomed-out)
+      // ZOOM_LEVEL > 1 means crop < video size → zoomed in
+      const sw = Math.min(vw / ZOOM_LEVEL, vw);
+      const sh = Math.min(vh / ZOOM_LEVEL, vh);
+      const sx = (vw - sw) / 2;
+      const sy = (vh - sh) / 2;
+
+      ctx.drawImage(hiddenVideo, sx, sy, sw, sh, 0, 0, vw, vh);
+      animationFrameRef.current = requestAnimationFrame(drawFrame);
+    };
+
+    drawFrame();
+
+    // 30fps canvas stream — this is what gets recorded and previewed
+    return canvas.captureStream(30);
+  }, []);
+
+  /**
+   * Request secondary camera access and return a zoomed canvas stream.
    */
   const requestSecondaryCamera = useCallback(async () => {
     try {
       console.log("📱 Requesting secondary camera (mobile front)...");
 
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const rawStream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: "user", // Front camera
+          facingMode: "user",
           width: { ideal: 1280 },
           height: { ideal: 720 },
         },
         audio: false,
       });
 
-      console.log(" Secondary camera access granted");
-      secondaryStreamRef.current = stream;
-      setSecondaryCameraStream(stream);
+      rawStreamRef.current = rawStream;
+
+      // Build zoomed canvas stream
+      const canvasStream = await createZoomedCanvasStream(rawStream);
+
+      console.log("✅ Secondary camera access granted (canvas zoom active)");
+      secondaryStreamRef.current = canvasStream;
+      setSecondaryCameraStream(canvasStream);
       setIsConnected(true);
 
-      // Notify server about secondary camera connection
       if (socketRef?.current?.connected) {
         socketRef.current.emit("secondary_camera_connected", {
           interviewId,
@@ -84,7 +160,7 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
         });
       }
 
-      return stream;
+      return canvasStream;
     } catch (error) {
       console.error("❌ Secondary camera access error:", error);
 
@@ -103,11 +179,8 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
       setIsConnected(false);
       return null;
     }
-  }, [interviewId, userId, socketRef]);
+  }, [interviewId, userId, socketRef, createZoomedCanvasStream]);
 
-  /**
-   * Start recording secondary camera
-   */
   const startRecording = useCallback(async () => {
     if (isRecording) {
       console.log("⚠️ Secondary camera already recording");
@@ -134,7 +207,6 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
       secondarySessionReadyRef.current = false;
       chunkCountRef.current = 0;
 
-      // Get or request stream
       let stream = secondaryStreamRef.current;
       if (!stream || !stream.active) {
         stream = await requestSecondaryCamera();
@@ -144,7 +216,6 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
         }
       }
 
-      // Verify track is live
       const videoTrack = stream.getVideoTracks()[0];
       if (!videoTrack || videoTrack.readyState !== "live") {
         console.error("❌ Secondary camera video track is not live");
@@ -152,7 +223,6 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
         return;
       }
 
-      // Find MIME config
       const mimeConfig = findSupportedMimeType(stream);
       if (!mimeConfig) {
         throw new Error(
@@ -160,7 +230,6 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
         );
       }
 
-      // Create MediaRecorder
       let mediaRecorder;
       try {
         mediaRecorder = new MediaRecorder(stream, mimeConfig.options);
@@ -179,15 +248,13 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
 
       mediaRecorderRef.current = mediaRecorder;
 
-      // Handle track ended
       videoTrack.onended = () => {
-        console.log("🛑 Secondary camera stopped");
+        console.log("🛑 Secondary camera canvas track ended");
         if (mediaRecorderRef.current?.state !== "inactive") {
           stopRecording();
         }
       };
 
-      // Event handlers
       mediaRecorder.ondataavailable = (event) => {
         if (!event.data || event.data.size === 0) return;
 
@@ -221,7 +288,7 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
       };
 
       mediaRecorder.onstart = () => {
-        console.log(" Secondary camera MediaRecorder started");
+        console.log("✅ Secondary camera MediaRecorder started");
         setIsRecording(true);
       };
 
@@ -242,9 +309,10 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
           });
         }
 
-        // TODO: Stream the video in the
+        // Stop canvas pipeline first, then raw camera
+        stopCanvasPipeline();
+        stopRawStream();
 
-        // Stop stream tracks
         const s = secondaryStreamRef.current;
         if (s) {
           s.getTracks().forEach((t) => t.stop());
@@ -260,7 +328,6 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
         setIsRecording(false);
       };
 
-      // Request server session
       console.log("📤 Requesting secondary camera session from server...");
       socketRef.current.emit("video_recording_start", {
         videoType: "secondary_camera",
@@ -271,7 +338,6 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
         },
       });
 
-      // Wait for server confirmation
       const serverResponsePromise = new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
           socketRef.current.off("video_recording_ready", handler);
@@ -287,7 +353,7 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
           if (response.videoType !== "secondary_camera") return;
           clearTimeout(timeout);
           socketRef.current.off("video_recording_error", errorHandler);
-          console.log(" Server confirmed secondary camera ready:", response);
+          console.log("✅ Server confirmed secondary camera ready:", response);
           resolve(response);
         };
 
@@ -304,7 +370,7 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
 
       await serverResponsePromise;
       console.log(
-        " Secondary camera session confirmed, starting MediaRecorder",
+        "✅ Secondary camera session confirmed, starting MediaRecorder",
       );
       secondarySessionReadyRef.current = true;
       isRequestingSessionRef.current = false;
@@ -315,16 +381,22 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
       setIsRecording(false);
       alert("Failed to setup secondary camera recording: " + err.message);
     }
-  }, [isRecording, socketRef, requestSecondaryCamera]);
+  }, [
+    isRecording,
+    socketRef,
+    requestSecondaryCamera,
+    stopCanvasPipeline,
+    stopRawStream,
+  ]);
 
-  /**
-   * Stop recording
-   */
   const stopRecording = useCallback(async () => {
     console.log("🛑 Attempting to stop secondary camera recording...");
 
     if (!mediaRecorderRef.current) {
       console.log("⚠️ No media recorder to stop");
+
+      stopCanvasPipeline();
+      stopRawStream();
 
       const s = secondaryStreamRef.current;
       if (s && s.active) {
@@ -355,20 +427,21 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
 
       try {
         recorder.stop();
-        console.log(" Stop command sent to secondary camera recorder");
+        console.log("✅ Stop command sent to secondary camera recorder");
       } catch (error) {
         console.error("❌ Error stopping recorder:", error);
         mediaRecorderRef.current = null;
         resolve(null);
       }
     });
-  }, []);
+  }, [stopCanvasPipeline, stopRawStream]);
 
-  /**
-   * Cleanup
-   */
   const cleanup = useCallback(() => {
     console.log("🧹 Cleaning up secondary camera");
+
+    // Stop canvas pipeline and raw camera
+    stopCanvasPipeline();
+    stopRawStream();
 
     if (
       mediaRecorderRef.current &&
@@ -380,7 +453,6 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
         console.error("❌ Error during cleanup stop:", error);
       }
     }
-
     mediaRecorderRef.current = null;
 
     const s = secondaryStreamRef.current;
@@ -402,7 +474,7 @@ const useSecondaryCamera = (interviewId, userId, socketRef) => {
     isRequestingSessionRef.current = false;
     hasStoppedRef.current = false;
     setIsRecording(false);
-  }, []);
+  }, [stopCanvasPipeline, stopRawStream]);
 
   useEffect(() => {
     return () => cleanup();
