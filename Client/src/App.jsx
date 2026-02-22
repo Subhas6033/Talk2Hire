@@ -6,7 +6,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { pageTransition } from "./Animations/CommonAnimation";
 import { ScrollToTop, OnboardingFlow } from "./Components/index";
 import { useSelector } from "react-redux";
-import { ProtectedRoute, PublicRoute } from "./Security/ProtectedRoutes.jsx";
+import { RoleBasedRoute, PublicRoute } from "./Security/ProtectedRoutes.jsx";
 import {
   Home,
   About,
@@ -24,6 +24,9 @@ import {
   InterviewLive,
   CompanyRegister,
   Companylogin,
+  CompanyDashboard,
+  CompanyJob,
+  CompanyInterviews,
 } from "./Pages/index.pages.js";
 
 import { InterviewSetup } from "./Components/index.js";
@@ -37,12 +40,13 @@ const App = () => {
 
   // Read from Redux store
   const { hydrated } = useSelector((state) => state.auth);
+  const { hydrated: companyHydrated } = useSelector((state) => state.company);
 
   useEffect(() => {
-    if (hydrated) {
+    if (hydrated && companyHydrated) {
       setIsLoading(false);
     }
-  }, [hydrated]);
+  }, [hydrated, companyHydrated]);
 
   useEffect(() => {
     console.log("🔍 App mounted - StreamContext available:", {
@@ -120,9 +124,9 @@ const App = () => {
                         </PublicRoute>
                       }
                     />
-                    {/* Company Registrations */}
+
                     <Route
-                      path="/register/company"
+                      path="/signup/company"
                       element={
                         <PublicRoute>
                           <CompanyRegister />
@@ -138,48 +142,69 @@ const App = () => {
                         </PublicRoute>
                       }
                     />
-
-                    {/* PROTECTED ROUTES */}
-                    <Route
-                      path="/interview"
-                      element={
-                        <ProtectedRoute>
-                          <InterviewSetup />
-                        </ProtectedRoute>
-                      }
-                    />
-
-                    <Route
-                      path="/interview/live"
-                      element={
-                        <ProtectedRoute>
-                          <InterviewLive />
-                        </ProtectedRoute>
-                      }
-                    />
-
-                    <Route
-                      path="/mobile-camera"
-                      element={<MobileCameraPage />}
-                    />
+                    {/* USER ONLY ROUTES */}
                     <Route
                       path="/dashboard"
                       element={
-                        <ProtectedRoute>
+                        <RoleBasedRoute allowedRole="user">
                           <InterviewDashboard />
-                        </ProtectedRoute>
+                        </RoleBasedRoute>
                       }
                     />
                     <Route
                       path="/profile/:id"
                       element={
-                        <ProtectedRoute>
+                        <RoleBasedRoute allowedRole="user">
                           <Profile />
-                        </ProtectedRoute>
+                        </RoleBasedRoute>
+                      }
+                    />
+                    <Route
+                      path="/interview"
+                      element={
+                        <RoleBasedRoute allowedRole="user">
+                          <InterviewSetup />
+                        </RoleBasedRoute>
+                      }
+                    />
+                    <Route
+                      path="/interview/live"
+                      element={
+                        <RoleBasedRoute allowedRole="user">
+                          <InterviewLive />
+                        </RoleBasedRoute>
                       }
                     />
 
-                    {/* NOT FOUND */}
+                    {/* COMPANY ONLY ROUTES */}
+                    <Route
+                      path="/company/dashboard"
+                      element={
+                        <RoleBasedRoute allowedRole="company">
+                          <CompanyDashboard />
+                        </RoleBasedRoute>
+                      }
+                    />
+                    <Route
+                      path="/company/interviews"
+                      element={
+                        <RoleBasedRoute allowedRole="company">
+                          <CompanyInterviews />
+                        </RoleBasedRoute>
+                      }
+                    />
+                    <Route
+                      path="/company/jobs"
+                      element={
+                        <RoleBasedRoute allowedRole="company">
+                          <CompanyJob />
+                        </RoleBasedRoute>
+                      }
+                    />
+                    <Route
+                      path="/mobile-camera"
+                      element={<MobileCameraPage />}
+                    />
                     <Route path="*" element={<NotFound />} />
                   </Routes>
                 </motion.main>

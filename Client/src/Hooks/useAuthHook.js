@@ -25,6 +25,7 @@ export const useAuth = () => {
     loading,
     error,
     hydrated,
+    role: user?.role ?? "guest",
 
     // Async actions
     registerUser: (data) => dispatch(registerUser(data)),

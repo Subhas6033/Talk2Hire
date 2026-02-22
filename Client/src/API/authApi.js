@@ -136,7 +136,7 @@ const loadStateFromStorage = () => {
         isAuthenticated: false,
         loading: false,
         error: null,
-        hydrated: false,
+        hydrated: true,
         lastVerified: null,
       };
     }
@@ -148,7 +148,7 @@ const loadStateFromStorage = () => {
       isAuthenticated: parsedState.isAuthenticated || false,
       loading: false,
       error: null,
-      hydrated: false,
+      hydrated: true,
       lastVerified: parsedState.lastVerified || null,
     };
   } catch (err) {
@@ -159,7 +159,7 @@ const loadStateFromStorage = () => {
       isAuthenticated: false,
       loading: false,
       error: null,
-      hydrated: false,
+      hydrated: true,
       lastVerified: null,
     };
   }

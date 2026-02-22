@@ -4,6 +4,7 @@ import passwordReducer from "../API/passwordApi";
 import { setupInterceptors } from "../API/Setupinterceptor";
 import interviewReducer from "../API/interviewApi";
 import hiringReducer from "../API/hiringApi";
+import companyReducer from "../API/companyAuthApi";
 
 export const store = configureStore({
   reducer: {
@@ -11,6 +12,7 @@ export const store = configureStore({
     password: passwordReducer,
     interview: interviewReducer,
     hiring: hiringReducer,
+    company: companyReducer,
   },
 });
 

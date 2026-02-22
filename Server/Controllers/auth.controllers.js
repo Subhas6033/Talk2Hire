@@ -427,8 +427,8 @@ const completeRegistration = asyncHandler(async (req, res) => {
 
   // NOW create the actual user account
   const [result] = await pool.execute(
-    `INSERT INTO users (email, hashPassword, fullName, mobile, location, skills, resume, resume_upload_status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+    `INSERT INTO users (email, hashPassword, fullName, mobile, location, skills, resume, resume_upload_status, created_at, updated_at, role)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)`,
     [
       email,
       tempData.password_hash,
@@ -438,6 +438,7 @@ const completeRegistration = asyncHandler(async (req, res) => {
       skills,
       tempData.resume_url,
       "completed",
+      "user",
     ],
   );
 
@@ -488,6 +489,7 @@ const completeRegistration = asyncHandler(async (req, res) => {
           .map((s) => s.trim())
           .filter(Boolean),
         resumeStatus: "completed",
+        role: "user",
       },
       "Registration completed successfully",
     ),
@@ -640,7 +642,6 @@ const loginUser = asyncHandler(async (req, res) => {
     path: "/",
     maxAge: 24 * 60 * 60 * 1000,
   });
-
   res.status(200).json(
     new APIRES(
       200,
@@ -648,6 +649,7 @@ const loginUser = asyncHandler(async (req, res) => {
         id: isUserExist.id,
         email,
         fullName: isUserExist.fullName,
+        role: isUserExist.role,
       },
       "Successfully logged in",
     ),

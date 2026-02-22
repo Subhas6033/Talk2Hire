@@ -387,7 +387,7 @@ const RegistrationForm = () => {
                     </p>
 
                     <p className="text-white/60">
-                      Register as a Company?{" "}
+                      login as a Company?{" "}
                       <button
                         onClick={() => navigate("/login/company")}
                         className="text-purple-400 hover:text-purple-300 font-semibold transition-colors"

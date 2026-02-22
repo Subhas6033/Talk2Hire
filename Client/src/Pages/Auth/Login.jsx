@@ -45,13 +45,17 @@ const Login = () => {
   const onSubmit = async (data) => {
     try {
       // Login and wait for success
-      await login({
+      const result = await login({
         email: data.email,
         password: data.password,
       }).unwrap();
-
-      // Navigate to home after successful login
-      navigate("/", { replace: true });
+      // Navigate user according to the role
+      const userRole = result?.data?.role;
+      if (userRole === "company") {
+        navigate("/company/dashboard", { replace: true });
+      } else {
+        navigate("/", { replace: true });
+      }
     } catch (err) {
       //  Error is already in Redux state, just log it
       console.error("Login failed:", err);
@@ -179,7 +183,7 @@ const Login = () => {
               </Button>
             </div>
 
-            <CardFooter className="flex flex-col items-center gap-3">
+            <CardFooter className="flex flex-col items-center gap-3 mb-2">
               <p className="text-sm text-white/60">
                 Don't have an account?{" "}
                 <Link
@@ -191,9 +195,19 @@ const Login = () => {
               </p>
             </CardFooter>
             <p className="text-sm text-white/60 text-center py-2">
+              login as Company?{" "}
+              <Link
+                to="/login/company"
+                className="text-purpleSoft hover:text-purpleGlow font-medium"
+              >
+                Sign in
+              </Link>
+            </p>
+
+            <p className="text-sm text-white/60 text-center py-2">
               Register as Company?{" "}
               <Link
-                to="/register/company"
+                to="/signup/company"
                 className="text-purpleSoft hover:text-purpleGlow font-medium"
               >
                 Create one

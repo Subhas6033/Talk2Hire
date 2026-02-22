@@ -14,6 +14,9 @@ import MobileCameraPage from "./MobileCameraPage.jsx";
 import InterviewLive from "./Interviewlive.jsx";
 import CompanyRegister from "./Auth/CompanyRegister.jsx";
 import Companylogin from "./Auth/Companylogin.jsx";
+import CompanyDashboard from "./CompanyDashboard.jsx";
+import CompanyJob from "./CompanyJob.jsx";
+import CompanyInterviews from "./CompanyInterview.jsx";
 
 export {
   Home,
@@ -32,4 +35,7 @@ export {
   InterviewLive,
   CompanyRegister,
   Companylogin,
+  CompanyDashboard,
+  CompanyJob,
+  CompanyInterviews,
 };

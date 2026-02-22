@@ -1,3 +1,4 @@
+@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap");
 @import "tailwindcss";
 
 @theme {
@@ -37,6 +38,10 @@
 
   /* Glow & shadows */
   --shadow-glow: 0 0 40px rgba(155, 92, 255, 0.35);
+
+  /* Fonts */
+  --font-primary: "Playfair Display", serif;
+  --font-secondary: "DM Sans", sans-serif;
 }
 
 /* ===== Scrollbar ===== */
