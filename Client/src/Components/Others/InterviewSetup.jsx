@@ -19,6 +19,24 @@ const IS_MOBILE =
 const SCREEN_SHARE_SUPPORTED =
   !IS_MOBILE && !!navigator.mediaDevices?.getDisplayMedia;
 
+// Random Quotes for user talks
+const quotes = [
+  "Success usually comes to those who are too busy improving themselves to be distracted by doubt or fear.",
+  "Discipline is choosing between what you want now and what you want most in the long run.",
+  "Great developers are not defined by the languages they know, but by how they think and solve problems.",
+  "Confidence is built through consistent effort, learning from mistakes, and refusing to quit when things get difficult.",
+  "The best way to predict your future is to create it through action, persistence, and continuous self-improvement.",
+  "Every expert was once a beginner who decided to keep practicing even when progress felt slow and frustrating.",
+  "Technology changes rapidly, but the ability to adapt and learn will always remain your greatest competitive advantage.",
+  "Clear communication is just as important as technical skill when working on real-world software projects.",
+  "Challenges are opportunities in disguise, especially when they push you beyond your comfort zone.",
+  "Success in interviews is not about memorizing answers, but about demonstrating clarity, confidence, and structured thinking.",
+];
+
+const getQuote = () => {
+  return quotes[Math.floor(Math.random() * quotes.length)];
+};
+
 /* ── tiny helpers ─────────────────────────────────────────────────────────── */
 const StatusIcon = ({ status }) => {
   if (status === true)
@@ -245,6 +263,7 @@ const InterviewSetup = () => {
   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
   const [questionsReady, setQuestionsReady] = useState(false);
   const [sessionData, setSessionData] = useState(null);
+  const [currentQuote, setCurrentQuote] = useState("");
 
   const [micStream, setMicStream] = useState(null);
   const [micLevel, setMicLevel] = useState(0);
@@ -392,6 +411,7 @@ const InterviewSetup = () => {
   const startMicTest = async () => {
     try {
       setIsMicTesting(true);
+      setCurrentQuote(getQuote());
       setError(null);
       micTestCleanupRef.current = false;
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -993,15 +1013,23 @@ const InterviewSetup = () => {
 
                   {/* ════════════ STEP 3 — Microphone ════════════ */}
                   {currentStep === 3 && (
-                    <div className="max-w-2xl">
-                      <p className="text-slate-400 text-base leading-relaxed mb-5">
-                        Confirm your microphone is picking up audio clearly.
-                        Speak for at least one second.
-                      </p>
+                    <div className="max-w-2xl space-y-6">
+                      {/* Header */}
+                      <div>
+                        <h2 className="text-xl font-semibold text-white">
+                          Microphone Check
+                        </h2>
+                        <p className="text-slate-400 text-sm mt-1">
+                          Speak clearly for at least {MIC_REQUIRED_MS / 1000}{" "}
+                          second to confirm your microphone is working properly.
+                        </p>
+                      </div>
+
                       {!isMicTesting ? (
-                        <div>
-                          <div className="flex items-center gap-4 px-5 py-5 bg-slate-900/70 border border-slate-800/80 rounded-xl mb-6">
-                            <div className="w-11 h-11 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center shrink-0">
+                        <div className="space-y-6">
+                          {/* Info Card */}
+                          <div className="flex items-start gap-4 p-6 bg-slate-900/70 border border-slate-800 rounded-2xl">
+                            <div className="w-12 h-12 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center shrink-0">
                               <svg
                                 className="w-5 h-5 text-violet-400"
                                 fill="none"
@@ -1016,32 +1044,59 @@ const InterviewSetup = () => {
                                 />
                               </svg>
                             </div>
+
                             <div>
-                              <p className="text-slate-300 text-sm font-medium">
-                                Microphone not tested yet
+                              <p className="text-slate-200 font-medium">
+                                Microphone not tested
                               </p>
-                              <p className="text-slate-500 text-xs mt-0.5">
-                                Click the button below to start the audio check
+                              <p className="text-slate-500 text-sm mt-1">
+                                Click below and read the sample text aloud.
                               </p>
                             </div>
                           </div>
+
                           <button
                             onClick={startMicTest}
-                            className="flex items-center gap-2.5 px-7 h-11 rounded-xl font-semibold text-sm bg-violet-600 hover:bg-violet-500 text-white shadow-lg shadow-violet-500/25 transition-all"
+                            className="w-full flex items-center justify-center gap-2 px-6 h-12 rounded-2xl font-semibold text-sm bg-linear-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-lg shadow-violet-500/30 transition-all duration-200"
                           >
                             Start Microphone Test
                           </button>
                         </div>
                       ) : (
-                        <div>
-                          <div className="px-5 py-5 bg-slate-900/70 border border-slate-800/80 rounded-xl mb-4 space-y-3">
-                            <p className="text-slate-400 text-xs text-center">
-                              Speak now — hold audio for{" "}
-                              {MIC_REQUIRED_MS / 1000} second to confirm
+                        <div className="space-y-6">
+                          {/* Practice Quote */}
+                          <div className="p-6 bg-slate-900/70 border border-slate-800 rounded-2xl">
+                            <p className="text-xs uppercase tracking-wider text-slate-500 mb-3">
+                              Read this aloud
                             </p>
+                            <p className="text-slate-200 text-base leading-relaxed">
+                              {currentQuote}
+                            </p>
+                          </div>
+
+                          {/* Live Audio Card */}
+                          <div className="p-6 bg-slate-900/70 border border-slate-800 rounded-2xl space-y-4">
+                            {/* Status */}
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-slate-400">
+                                Microphone Level
+                              </span>
+
+                              <span
+                                className={`text-xs font-semibold px-3 py-1 rounded-full ${
+                                  micConfirmed
+                                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
+                                    : "bg-violet-500/10 text-violet-400 border border-violet-500/30"
+                                }`}
+                              >
+                                {micConfirmed ? "Confirmed" : "Listening..."}
+                              </span>
+                            </div>
+
+                            {/* Audio Bar */}
                             <div className="w-full h-4 bg-slate-800 rounded-full overflow-hidden">
                               <div
-                                className="h-full rounded-full transition-all duration-75"
+                                className="h-full transition-all duration-75 rounded-full"
                                 style={{
                                   width: `${micLevel}%`,
                                   background:
@@ -1053,16 +1108,17 @@ const InterviewSetup = () => {
                                 }}
                               />
                             </div>
-                            <div className="flex justify-between text-[10px]">
-                              <span className="text-slate-700">Low</span>
-                              <span className="text-slate-500 font-mono">
-                                {Math.round(micLevel)}%
-                              </span>
-                              <span className="text-slate-700">High</span>
+
+                            <div className="flex justify-between text-[11px] text-slate-500 font-mono">
+                              <span>Low</span>
+                              <span>{Math.round(micLevel)}%</span>
+                              <span>High</span>
                             </div>
                           </div>
+
+                          {/* Confirmation Message */}
                           {micConfirmed && (
-                            <div className="flex items-center gap-2 text-emerald-400 text-sm font-medium mb-2">
+                            <div className="flex items-center gap-2 text-emerald-400 text-sm font-medium animate-pulse">
                               <svg
                                 className="w-4 h-4"
                                 fill="none"
@@ -1076,9 +1132,10 @@ const InterviewSetup = () => {
                                   d="M5 13l4 4L19 7"
                                 />
                               </svg>
-                              Microphone confirmed — audio is working
+                              Microphone confirmed — you're ready to continue
                             </div>
                           )}
+
                           <ContinueBtn
                             onClick={
                               micConfirmed ? handleMicSuccess : undefined
