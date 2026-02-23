@@ -11,7 +11,7 @@ const bcrypt = require("bcrypt");
 
 const cookieOptions = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
+  secure: process.env.NODE_ENV === "production" ? true : false,
   sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
   path: "/",
 };
@@ -179,7 +179,7 @@ const logoutCompany = asyncHandler(async (req, res) => {
 
   const clearOptions = {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.NODE_ENV === "production" ? true : false,
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     path: "/",
   };

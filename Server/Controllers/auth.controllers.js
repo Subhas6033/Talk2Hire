@@ -73,7 +73,7 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
 
   res.cookie("accessToken", accessToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.NODE_ENV === "production" ? true : false,
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     path: "/",
     maxAge: 24 * 60 * 60 * 1000,
@@ -457,7 +457,7 @@ const completeRegistration = asyncHandler(async (req, res) => {
   // Set cookies
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.NODE_ENV === "production" ? true : false,
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     path: "/",
     maxAge: 15 * 24 * 60 * 60 * 1000,
@@ -465,7 +465,7 @@ const completeRegistration = asyncHandler(async (req, res) => {
 
   res.cookie("accessToken", accessToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.NODE_ENV === "production" ? true : false,
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     path: "/",
     maxAge: 24 * 60 * 60 * 1000,
@@ -631,7 +631,7 @@ const loginUser = asyncHandler(async (req, res) => {
 
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.NODE_ENV === "production" ? true : false,
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     path: "/",
     maxAge: 15 * 24 * 60 * 60 * 1000,
@@ -639,7 +639,7 @@ const loginUser = asyncHandler(async (req, res) => {
 
   res.cookie("accessToken", accessToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.NODE_ENV === "production" ? true : false,
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     path: "/",
     maxAge: 24 * 60 * 60 * 1000,
@@ -730,14 +730,14 @@ Rules:
 const logoutUser = asyncHandler(async (req, res) => {
   res.clearCookie("refreshToken", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.NODE_ENV === "production" ? true : false,
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     path: "/",
   });
 
   res.clearCookie("accessToken", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.NODE_ENV === "production" ? true : false,
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     path: "/",
   });
