@@ -4,7 +4,7 @@ const {
   getEvaluationController,
   getEvaluationSummary,
 } = require("../Controllers/evaluation.controller.js");
-const authMiddleware = require("../Middlewares/auth.middlewares.js");
+const { authMiddleware } = require("../Middlewares/auth.middlewares.js");
 
 const router = express.Router();
 

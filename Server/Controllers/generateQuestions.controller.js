@@ -26,8 +26,6 @@ const extractJSON = (text) => {
 };
 
 // ─── Fallback opening questions ───────────────────────────────────────────────
-// Used when resume text extraction fails entirely (image-only PDF, OCR error).
-// Generic enough to work for any profession.
 const OPENING_FALLBACKS = [
   "Could you start by walking me through your professional background and the roles you've held that you're most proud of?",
   "Can you tell me about a significant project or achievement in your career and the impact it had?",
@@ -43,10 +41,7 @@ function getOpeningFallback() {
 }
 
 // ─── Safe resume text extraction ──────────────────────────────────────────────
-// Returns { rawText, resumeUrl } — never throws.
-// If extraction fails, rawText is "" and the caller uses a generic question.
 async function safeExtractResume({ user, req }) {
-  // Case A: Resume already in DB
   if (user?.resume) {
     console.log("✅ Resume found in DB:", user.resume);
     try {
@@ -72,7 +67,6 @@ async function safeExtractResume({ user, req }) {
     }
   }
 
-  // Case B: New file upload
   if (!req.file) {
     throw new APIERR(400, "Resume file is required for first-time upload");
   }
@@ -104,7 +98,6 @@ async function safeExtractResume({ user, req }) {
     return { rawText, resumeUrl };
   } catch (err) {
     console.error("❌ Resume upload/processing error:", err.message);
-    // If upload itself failed, we don't have a resumeUrl — re-throw
     if (err instanceof APIERR) throw err;
     throw new APIERR(500, "Failed to process resume: " + err.message);
   }
@@ -115,7 +108,10 @@ const generateQuestions = asyncHandler(async (req, res) => {
   if (!req.user?.id) throw new APIERR(401, "Unauthorized");
 
   const userId = req.user.id;
+  const jobId = req.body.jobId;
   let skills = req.body.skills;
+
+  if (!jobId) throw new APIERR(400, "Job ID is required");
 
   if (typeof skills === "string") {
     try {
@@ -135,6 +131,10 @@ const generateQuestions = asyncHandler(async (req, res) => {
   const user = await User.findById(userId);
   if (!user) throw new APIERR(404, "User not found");
 
+  // ✅ Extract candidate name from user record
+  const candidateName = user.fullName ?? user.name ?? "";
+  console.log("👤 Candidate name:", candidateName);
+
   // STEP 2: Save interview skills
   if (skills?.length > 0) {
     await User.updateInterviewSkills(userId, skills);
@@ -144,16 +144,14 @@ const generateQuestions = asyncHandler(async (req, res) => {
   // STEP 3: Extract resume text (never throws — falls back gracefully)
   const { rawText, resumeUrl } = await safeExtractResume({ user, req });
 
-  // STEP 4: Create session
-  const sessionId = await Interview.createSession(userId);
+  // STEP 4: Create session with candidate name
+  const sessionId = await Interview.createSession(userId, jobId, candidateName);
   console.log("✅ Interview session created:", sessionId);
 
   // STEP 5: Generate first question
   let firstQuestion;
 
   if (!rawText) {
-    // Resume extraction failed — use a generic opening question so the
-    // interview can still start rather than returning a 500 error.
     firstQuestion = getOpeningFallback();
     console.warn(
       "⚠️ Using fallback opening question (no resume text available)",
@@ -223,7 +221,6 @@ FORMAT:
       firstQuestion = parsed.question.trim();
       console.log("✅ AI question generated:", firstQuestion);
     } catch (aiError) {
-      // AI failed — use fallback rather than 500-ing the whole flow
       console.error("❌ Ollama API error:", aiError.message);
       firstQuestion = getOpeningFallback();
       console.warn("⚠️ Using fallback opening question due to AI error");

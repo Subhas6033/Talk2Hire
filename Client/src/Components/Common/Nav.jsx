@@ -51,6 +51,12 @@ const Nav = () => {
               >
                 Interview
               </Link>
+              <Link
+                to="/jobs"
+                className="hover:text-purpleGlow transition-colors"
+              >
+                Jobs
+              </Link>
             </>
           )}
         </div>

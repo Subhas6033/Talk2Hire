@@ -3,7 +3,7 @@ const multer = require("multer");
 const {
   generateQuestions,
 } = require("../Controllers/generateQuestions.controller");
-const authMiddleware = require("./auth.middlewares");
+const { authMiddleware } = require("./auth.middlewares");
 
 const router = Router();
 
@@ -13,7 +13,7 @@ router.post(
   "/generate-questions",
   authMiddleware,
   upload.single("file"),
-  generateQuestions
+  generateQuestions,
 );
 
 module.exports = router;

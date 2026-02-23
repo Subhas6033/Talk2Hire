@@ -12,7 +12,7 @@ const {
   verifyVideoIntegrityController,
   deleteVideoController,
 } = require("../Controllers/uploadVideo.controllers.js");
-const authMiddleware = require("../Middlewares/auth.middlewares.js");
+const { authMiddleware } = require("../Middlewares/auth.middlewares.js");
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -38,13 +38,13 @@ router
   .post(
     "/upload-video-chunk",
     videoUpload.single("video"),
-    uploadVideoChunkController
+    uploadVideoChunkController,
   )
 
   .post(
     "/upload-video-final",
     videoUpload.single("video"),
-    uploadVideoFinalController
+    uploadVideoFinalController,
   )
 
   // Finalize chunked video (merge chunks)

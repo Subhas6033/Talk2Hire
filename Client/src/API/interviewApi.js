@@ -5,7 +5,7 @@ const baseURL = import.meta.env.VITE_BACKEND_URL;
 
 export const startInterview = createAsyncThunk(
   "interview/start",
-  async ({ resume, skills }, { rejectWithValue }) => {
+  async ({ resume, skills, jobId }, { rejectWithValue }) => {
     try {
       const fd = new FormData();
 
@@ -17,6 +17,10 @@ export const startInterview = createAsyncThunk(
       //  Add skills to form data if provided
       if (skills && skills.length > 0) {
         fd.append("skills", JSON.stringify(skills));
+      }
+
+      if (jobId) {
+        fd.append("jobId", jobId);
       }
 
       const res = await axios.post(

@@ -44,21 +44,21 @@ const registerCompany = asyncHandler(async (req, res) => {
       password,
     ].some((field) => !field || field.trim() === "")
   ) {
-    throw new APIERR("All fields are required", 400);
+    throw new APIERR(400, "All fields are required"); // ✅ (statusCode, message)
   }
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(companyMail)) {
-    throw new APIERR("Invalid email format", 400);
+    throw new APIERR(400, "Invalid email format");
   }
 
   if (!/^\d{10}$/.test(companyMobile)) {
-    throw new APIERR("Invalid mobile number format", 400);
+    throw new APIERR(400, "Invalid mobile number format");
   }
 
   if (
     !/^(https?:\/\/)?([\w-]+\.)+[\w-]+(\/[\w- ./?%&=]*)?$/.test(companySite)
   ) {
-    throw new APIERR("Invalid website URL format", 400);
+    throw new APIERR(400, "Invalid website URL format");
   }
 
   if (
@@ -69,21 +69,18 @@ const registerCompany = asyncHandler(async (req, res) => {
     !/[@$!%*?&]/.test(password)
   ) {
     throw new APIERR(
-      "Password must be at least 8 characters long and include uppercase, lowercase, digit, and special characters",
       400,
+      "Password must be at least 8 characters long and include uppercase, lowercase, digit, and special characters",
     );
   }
 
-  // Check if company already exists
   const existingCompany = await getCompanyByEmail(companyMail);
   if (existingCompany) {
-    throw new APIERR("Company with this email already exists", 409);
+    throw new APIERR(409, "Company with this email already exists");
   }
 
-  // Hash password
   const hashedPassword = await bcrypt.hash(password, 10);
-  let role = "";
-  // Create company
+
   const result = await createCompany({
     companyName,
     industry,
@@ -98,12 +95,10 @@ const registerCompany = asyncHandler(async (req, res) => {
     role: "company",
   });
 
-  // Generate tokens
-  const newCompany = { id: result.insertId, companyMail };
+  const newCompany = { id: result.insertId, companyMail, role: "company" };
   const { accessToken, refreshToken } =
     await generateRefreshAndAccessTokens(newCompany);
 
-  // Save refresh token in DB
   await updateRefreshToken(result.insertId, refreshToken);
 
   return res
@@ -119,7 +114,7 @@ const registerCompany = asyncHandler(async (req, res) => {
     .json(
       new APIRES(
         201,
-        { id: result.insertId, role },
+        { id: result.insertId, role: "company" },
         "Company created successfully",
       ),
     );
@@ -129,7 +124,7 @@ const loginCompany = asyncHandler(async (req, res) => {
   const { companyMail, password } = req.body;
 
   if (!companyMail || !password) {
-    throw new APIERR(400, "Please enter all the fields");
+    throw new APIERR(400, "Please enter all the fields"); // ✅ (statusCode, message)
   }
 
   const isCompanyExist = await getCompanyByEmail(companyMail);
@@ -148,11 +143,12 @@ const loginCompany = asyncHandler(async (req, res) => {
   const { accessToken, refreshToken } = await generateRefreshAndAccessTokens({
     id: isCompanyExist.id,
     companyMail,
+    role: "company",
   });
 
   await updateRefreshToken(isCompanyExist.id, refreshToken);
 
-  res
+  return res
     .status(200)
     .cookie("accessToken", accessToken, {
       ...cookieOptions,
@@ -176,7 +172,24 @@ const loginCompany = asyncHandler(async (req, res) => {
     );
 });
 
-const logoutCompany = asyncHandler(async (req, res) => {});
+const logoutCompany = asyncHandler(async (req, res) => {
+  if (req.company?.id) {
+    await updateRefreshToken(req.company.id, null);
+  }
+
+  const clearOptions = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    path: "/",
+  };
+
+  return res
+    .status(200)
+    .clearCookie("accessToken", clearOptions)
+    .clearCookie("refreshToken", clearOptions)
+    .json(new APIRES(200, {}, "Logged out successfully"));
+});
 
 module.exports = {
   registerCompany,

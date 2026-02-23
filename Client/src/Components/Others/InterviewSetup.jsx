@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { useDispatch, useSelector } from "react-redux";
 import { SkillsSelector } from "../index";
@@ -231,6 +231,8 @@ const InterviewSetup = () => {
   const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
   const streamsRef = useStreams();
+  const [searchParams] = useSearchParams();
+  const jobId = searchParams.get("jobId");
 
   const { watch, setValue } = useForm({
     mode: "onChange",
@@ -323,7 +325,10 @@ const InterviewSetup = () => {
       questionStartedRef.current = true;
       setIsGeneratingQuestions(true);
       dispatch(
-        startInterview({ skills: !hasExistingSkills ? skills : undefined }),
+        startInterview({
+          skills: !hasExistingSkills ? skills : undefined,
+          jobId: jobId,
+        }),
       )
         .unwrap()
         .then((res) => {

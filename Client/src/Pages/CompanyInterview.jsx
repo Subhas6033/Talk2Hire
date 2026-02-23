@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import {
   Video,
   Search,
@@ -14,7 +14,6 @@ import {
   MapPin,
   Mail,
   Phone,
-  FileText,
   Monitor,
   Camera,
   Smartphone,
@@ -28,252 +27,12 @@ import {
   ChevronRight,
   AlertCircle,
   BarChart2,
+  RefreshCw,
+  Loader2,
 } from "lucide-react";
+import { useCompanyInterviews } from "../Hooks/useCompanyInterviewHook";
 
-// ─── Mock Data ───────────────────────────────────────────────
-const JOBS = [
-  { id: 1, title: "Senior Frontend Developer", applicants: 24 },
-  { id: 2, title: "Product Designer", applicants: 18 },
-  { id: 3, title: "Backend Engineer", applicants: 31 },
-];
-
-const CANDIDATES = [
-  {
-    id: 1,
-    name: "Rahul Sharma",
-    avatar: "RS",
-    color: "#6366f1",
-    role: "Senior Frontend Developer",
-    jobId: 1,
-    email: "rahul.sharma@gmail.com",
-    phone: "+91 98765 43210",
-    location: "Mumbai, India",
-    experience: "4 years",
-    score: 87,
-    status: "pending",
-    date: "Today, 2:30 PM",
-    duration: "28 min",
-    skills: ["React", "TypeScript", "Node.js", "GraphQL"],
-    summary:
-      "Rahul demonstrated strong React fundamentals and excellent problem-solving skills. He handled complex state management questions confidently and showed good understanding of performance optimization.",
-    strengths: [
-      "Strong React knowledge",
-      "Clear communication",
-      "Good problem solving",
-    ],
-    improvements: [
-      "Could improve on system design",
-      "Needs more backend exposure",
-    ],
-    answers: [
-      {
-        q: "Explain the React reconciliation algorithm.",
-        score: 90,
-        time: "2:10",
-      },
-      {
-        q: "How do you handle state in large applications?",
-        score: 85,
-        time: "3:45",
-      },
-      {
-        q: "What are React hooks and when to use them?",
-        score: 92,
-        time: "2:55",
-      },
-      {
-        q: "Describe your experience with TypeScript.",
-        score: 78,
-        time: "2:30",
-      },
-    ],
-    videos: {
-      screen: { url: null, duration: "28:14", size: "420 MB", available: true },
-      primary: {
-        url: null,
-        duration: "28:14",
-        size: "310 MB",
-        available: true,
-      },
-      mobile: { url: null, duration: "28:14", size: "280 MB", available: true },
-    },
-  },
-  {
-    id: 2,
-    name: "Priya Mehta",
-    avatar: "PM",
-    color: "#8b5cf6",
-    role: "Product Designer",
-    jobId: 2,
-    email: "priya.mehta@gmail.com",
-    phone: "+91 87654 32109",
-    location: "Bangalore, India",
-    experience: "3 years",
-    score: 92,
-    status: "hired",
-    date: "Yesterday, 11:00 AM",
-    duration: "32 min",
-    skills: ["Figma", "UI/UX", "Prototyping", "User Research"],
-    summary:
-      "Priya showed exceptional design thinking and articulated her process clearly. Her portfolio examples were impressive and she demonstrated deep understanding of user-centered design principles.",
-    strengths: [
-      "Outstanding portfolio",
-      "Strong design thinking",
-      "Excellent UX knowledge",
-    ],
-    improvements: ["Could strengthen data analysis skills"],
-    answers: [
-      { q: "Walk us through your design process.", score: 95, time: "4:20" },
-      {
-        q: "How do you handle conflicting stakeholder feedback?",
-        score: 90,
-        time: "3:10",
-      },
-      {
-        q: "Describe a challenging design problem you solved.",
-        score: 93,
-        time: "5:00",
-      },
-      { q: "How do you measure design success?", score: 88, time: "2:45" },
-    ],
-    videos: {
-      screen: { url: null, duration: "32:08", size: "480 MB", available: true },
-      primary: {
-        url: null,
-        duration: "32:08",
-        size: "360 MB",
-        available: true,
-      },
-      mobile: {
-        url: null,
-        duration: "32:08",
-        size: "320 MB",
-        available: false,
-      },
-    },
-  },
-  {
-    id: 3,
-    name: "Arjun Patel",
-    avatar: "AP",
-    color: "#f59e0b",
-    role: "Backend Engineer",
-    jobId: 3,
-    email: "arjun.patel@gmail.com",
-    phone: "+91 76543 21098",
-    location: "Delhi, India",
-    experience: "2 years",
-    score: 74,
-    status: "rejected",
-    date: "Dec 18, 10:15 AM",
-    duration: "25 min",
-    skills: ["Node.js", "PostgreSQL", "Docker"],
-    summary:
-      "Arjun showed foundational backend knowledge but struggled with advanced database optimization and system design questions. Experience level may not match the senior requirements.",
-    strengths: ["Good Node.js basics", "Eager to learn"],
-    improvements: [
-      "Needs more database experience",
-      "System design needs work",
-      "Limited cloud experience",
-    ],
-    answers: [
-      {
-        q: "Explain database indexing and when to use it.",
-        score: 70,
-        time: "3:00",
-      },
-      {
-        q: "Design a scalable REST API architecture.",
-        score: 68,
-        time: "4:30",
-      },
-      { q: "How do you handle database migrations?", score: 80, time: "2:20" },
-      { q: "Explain microservices vs monolith.", score: 75, time: "3:15" },
-    ],
-    videos: {
-      screen: { url: null, duration: "25:30", size: "380 MB", available: true },
-      primary: {
-        url: null,
-        duration: "25:30",
-        size: "290 MB",
-        available: true,
-      },
-      mobile: { url: null, duration: "25:30", size: "260 MB", available: true },
-    },
-  },
-  {
-    id: 4,
-    name: "Sneha Kapoor",
-    avatar: "SK",
-    color: "#10b981",
-    role: "Senior Frontend Developer",
-    jobId: 1,
-    email: "sneha.kapoor@gmail.com",
-    phone: "+91 65432 10987",
-    location: "Pune, India",
-    experience: "5 years",
-    score: 81,
-    status: "pending",
-    date: "Dec 17, 3:00 PM",
-    duration: "30 min",
-    skills: ["Vue.js", "React", "CSS", "Webpack"],
-    summary:
-      "Sneha has solid frontend experience with both Vue and React. She gave thoughtful answers and demonstrated good architectural thinking. Her communication was clear and structured.",
-    strengths: [
-      "Multi-framework experience",
-      "Good architectural thinking",
-      "Clear communication",
-    ],
-    improvements: [
-      "TypeScript skills need improvement",
-      "Less familiar with testing",
-    ],
-    answers: [
-      {
-        q: "Compare Vue and React — when to use which?",
-        score: 88,
-        time: "3:30",
-      },
-      { q: "How do you optimize bundle size?", score: 82, time: "2:50" },
-      { q: "Explain CSS-in-JS vs traditional CSS.", score: 79, time: "2:15" },
-      {
-        q: "How do you approach component architecture?",
-        score: 84,
-        time: "3:45",
-      },
-    ],
-    videos: {
-      screen: { url: null, duration: "30:22", size: "455 MB", available: true },
-      primary: {
-        url: null,
-        duration: "30:22",
-        size: "340 MB",
-        available: true,
-      },
-      mobile: { url: null, duration: "30:22", size: "300 MB", available: true },
-    },
-  },
-];
-
-// ─── Helpers ─────────────────────────────────────────────────
-const statusConfig = {
-  pending: {
-    label: "Under Review",
-    cls: "bg-amber-50 text-amber-600 border border-amber-200",
-    dot: "bg-amber-400",
-  },
-  hired: {
-    label: "Hired",
-    cls: "bg-emerald-50 text-emerald-600 border border-emerald-200",
-    dot: "bg-emerald-400",
-  },
-  rejected: {
-    label: "Rejected",
-    cls: "bg-red-50 text-red-500 border border-red-200",
-    dot: "bg-red-400",
-  },
-};
-
+/* ── Score helpers ───────────────────────────────────────────────────────── */
 const scoreColor = (s) =>
   s >= 85 ? "text-emerald-600" : s >= 70 ? "text-amber-500" : "text-red-500";
 const scoreBg = (s) =>
@@ -285,37 +44,68 @@ const scoreBg = (s) =>
 const scoreBar = (s) =>
   s >= 85 ? "bg-emerald-400" : s >= 70 ? "bg-amber-400" : "bg-red-400";
 
-// ─── Video Player Card ───────────────────────────────────────
+/* ── Status config ───────────────────────────────────────────────────────── */
+const STATUS = {
+  pending: {
+    label: "Under Review",
+    cls: "bg-amber-50 text-amber-600 border border-amber-200",
+  },
+  hired: {
+    label: "Hired",
+    cls: "bg-emerald-50 text-emerald-600 border border-emerald-200",
+  },
+  rejected: {
+    label: "Rejected",
+    cls: "bg-red-50 text-red-500 border border-red-200",
+  },
+};
+
+/* ── Skeleton loader ─────────────────────────────────────────────────────── */
+const Skeleton = ({ className }) => (
+  <div className={`animate-pulse bg-gray-100 rounded-xl ${className}`} />
+);
+
+const CardSkeleton = () => (
+  <div className="bg-white rounded-2xl border border-gray-200 p-5 space-y-4">
+    <div className="flex items-center gap-3">
+      <Skeleton className="w-11 h-11 rounded-xl" />
+      <div className="flex-1 space-y-2">
+        <Skeleton className="h-4 w-32" />
+        <Skeleton className="h-3 w-24" />
+      </div>
+    </div>
+    <Skeleton className="h-2 w-full" />
+    <Skeleton className="h-3 w-20" />
+  </div>
+);
+
+/* ── Video Card ──────────────────────────────────────────────────────────── */
 const VideoCard = ({ icon: Icon, label, subtitle, video, color }) => {
   const [playing, setPlaying] = useState(false);
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
-      {/* Preview area */}
-      <div className="relative bg-gray-900 aspect-video flex items-center justify-center group">
+      <div className="relative bg-gray-900 aspect-video flex items-center justify-center">
         {video.available ? (
           <>
-            {/* Simulated video thumbnail */}
             <div
               className="absolute inset-0 flex items-center justify-center"
               style={{
-                background: `linear-gradient(135deg, ${color}20, ${color}05)`,
+                background: `linear-gradient(135deg, ${color}22, ${color}08)`,
               }}
             >
               <div className="text-center">
                 <Icon
                   size={36}
                   style={{ color }}
-                  className="mx-auto mb-2 opacity-60"
+                  className="mx-auto mb-2 opacity-50"
                 />
                 <p className="text-xs text-gray-400">Recording available</p>
               </div>
             </div>
-
-            {/* Play button overlay */}
             <button
               onClick={() => setPlaying((p) => !p)}
-              className="absolute inset-0 flex items-center justify-center bg-black/0 hover:bg-black/20 transition-all group"
+              className="absolute inset-0 flex items-center justify-center hover:bg-black/20 transition-all group"
             >
               <div className="w-14 h-14 rounded-full bg-white/90 backdrop-blur-sm flex items-center justify-center shadow-xl group-hover:scale-110 transition-transform">
                 {playing ? (
@@ -325,27 +115,20 @@ const VideoCard = ({ icon: Icon, label, subtitle, video, color }) => {
                 )}
               </div>
             </button>
-
-            {/* Duration badge */}
-            <div className="absolute bottom-3 right-3 px-2 py-1 bg-black/60 rounded-lg text-[11px] text-white font-medium backdrop-blur-sm">
-              {video.duration}
-            </div>
           </>
         ) : (
           <div className="text-center px-4">
             <AlertCircle size={28} className="text-gray-600 mx-auto mb-2" />
-            <p className="text-xs text-gray-500">Recording not available</p>
+            <p className="text-xs text-gray-500">Not available</p>
           </div>
         )}
       </div>
-
-      {/* Info */}
       <div className="p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div
               className="w-7 h-7 rounded-lg flex items-center justify-center"
-              style={{ background: `${color}15` }}
+              style={{ background: `${color}18` }}
             >
               <Icon size={14} style={{ color }} />
             </div>
@@ -354,8 +137,10 @@ const VideoCard = ({ icon: Icon, label, subtitle, video, color }) => {
               <p className="text-[11px] text-gray-400">{subtitle}</p>
             </div>
           </div>
-          {video.available && (
-            <button
+          {video.available && video.url && (
+            <a
+              href={video.url}
+              download
               className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors"
               title="Download"
             >
@@ -363,57 +148,54 @@ const VideoCard = ({ icon: Icon, label, subtitle, video, color }) => {
                 size={13}
                 className="text-gray-400 hover:text-indigo-500"
               />
-            </button>
+            </a>
           )}
         </div>
-
-        {video.available && (
-          <div className="flex items-center gap-3 mt-3 pt-3 border-t border-gray-100">
-            <span className="text-[11px] text-gray-400">
-              Size: {video.size}
-            </span>
-            <span className="w-1 h-1 rounded-full bg-gray-300" />
-            <span className="text-[11px] text-gray-400">
-              Duration: {video.duration}
-            </span>
-          </div>
-        )}
       </div>
     </div>
   );
 };
 
-// ─── Candidate Detail Modal ───────────────────────────────────
-const CandidateModal = ({ candidate, onClose, onHire, onReject }) => {
+/* ── Candidate Detail Modal ──────────────────────────────────────────────── */
+const CandidateModal = ({
+  interview,
+  onClose,
+  onHire,
+  onReject,
+  isDeciding,
+}) => {
   const [activeTab, setActiveTab] = useState("overview");
-  const [deciding, setDeciding] = useState(null);
+  const [confirming, setConfirming] = useState(null); // "hire" | "reject" | null
+
+  const { candidate, job, answers = [], videos = {} } = interview;
 
   const handleDecision = async (action) => {
-    setDeciding(action);
-    await new Promise((r) => setTimeout(r, 800));
-    action === "hire" ? onHire(candidate.id) : onReject(candidate.id);
-    setDeciding(null);
-    onClose();
+    if (confirming !== action) {
+      setConfirming(action);
+      return;
+    }
+    const ok =
+      action === "hire"
+        ? await onHire(interview.id)
+        : await onReject(interview.id);
+    if (ok) onClose();
+    setConfirming(null);
   };
-
-  const tabs = ["overview", "answers", "recordings"];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
-        className="absolute inset-0 bg-black/25 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/30 backdrop-blur-sm"
         onClick={onClose}
       />
-
       <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden">
-        {/* ── Header ── */}
+        {/* Header */}
         <div className="flex items-start justify-between px-7 py-5 border-b border-gray-100">
           <div className="flex items-center gap-4">
-            {/* Avatar */}
             <div
               className="w-14 h-14 rounded-2xl flex items-center justify-center text-white text-lg font-bold shadow-lg shrink-0"
               style={{
-                background: `linear-gradient(135deg, ${candidate.color}, ${candidate.color}cc)`,
+                background: `linear-gradient(135deg, ${interview.color}, ${interview.color}bb)`,
               }}
             >
               {candidate.avatar}
@@ -424,38 +206,42 @@ const CandidateModal = ({ candidate, onClose, onHire, onReject }) => {
                   {candidate.name}
                 </h2>
                 <span
-                  className={`text-[11px] font-semibold px-2.5 py-1 rounded-full ${statusConfig[candidate.status].cls}`}
+                  className={`text-[11px] font-semibold px-2.5 py-1 rounded-full ${STATUS[interview.status]?.cls}`}
                 >
-                  {statusConfig[candidate.status].label}
+                  {STATUS[interview.status]?.label}
                 </span>
               </div>
-              <p className="text-sm text-gray-500 mt-0.5">{candidate.role}</p>
+              <p className="text-sm text-gray-500 mt-0.5">{job.title}</p>
               <div className="flex items-center gap-3 mt-1 flex-wrap">
-                <span className="flex items-center gap-1 text-xs text-gray-400">
-                  <Mail size={11} />
-                  {candidate.email}
-                </span>
-                <span className="flex items-center gap-1 text-xs text-gray-400">
-                  <MapPin size={11} />
-                  {candidate.location}
-                </span>
-                <span className="flex items-center gap-1 text-xs text-gray-400">
-                  <Clock size={11} />
-                  {candidate.duration} interview
-                </span>
+                {candidate.email && (
+                  <span className="flex items-center gap-1 text-xs text-gray-400">
+                    <Mail size={11} />
+                    {candidate.email}
+                  </span>
+                )}
+                {candidate.location && (
+                  <span className="flex items-center gap-1 text-xs text-gray-400">
+                    <MapPin size={11} />
+                    {candidate.location}
+                  </span>
+                )}
+                {interview.duration && (
+                  <span className="flex items-center gap-1 text-xs text-gray-400">
+                    <Clock size={11} />
+                    {interview.duration}
+                  </span>
+                )}
               </div>
             </div>
           </div>
-
           <div className="flex items-center gap-2 shrink-0">
-            {/* Score badge */}
             <div
-              className={`px-3 py-2 rounded-xl border text-center ${scoreBg(candidate.score)}`}
+              className={`px-3 py-2 rounded-xl border text-center ${scoreBg(interview.score)}`}
             >
               <p
-                className={`text-xl font-black ${scoreColor(candidate.score)}`}
+                className={`text-xl font-black ${scoreColor(interview.score)}`}
               >
-                {candidate.score}
+                {interview.score}
               </p>
               <p className="text-[10px] text-gray-400 font-medium">AI Score</p>
             </div>
@@ -468,9 +254,9 @@ const CandidateModal = ({ candidate, onClose, onHire, onReject }) => {
           </div>
         </div>
 
-        {/* ── Tabs ── */}
-        <div className="flex items-center gap-1 px-7 pt-4 pb-0 border-b border-gray-100">
-          {tabs.map((tab) => (
+        {/* Tabs */}
+        <div className="flex items-center gap-1 px-7 pt-4 border-b border-gray-100">
+          {["overview", "answers", "recordings"].map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -489,34 +275,36 @@ const CandidateModal = ({ candidate, onClose, onHire, onReject }) => {
           ))}
         </div>
 
-        {/* ── Body ── */}
+        {/* Body */}
         <div className="flex-1 overflow-y-auto px-7 py-6">
-          {/* OVERVIEW TAB */}
+          {/* OVERVIEW */}
           {activeTab === "overview" && (
             <div className="space-y-6">
-              {/* Quick stats */}
               <div className="grid grid-cols-3 gap-4">
                 {[
                   {
                     label: "Experience",
-                    value: candidate.experience,
+                    value: candidate.experience ?? "—",
                     icon: Briefcase,
                     color: "#6366f1",
                   },
                   {
                     label: "Interview Date",
-                    value: candidate.date,
+                    value: new Date(interview.created_at).toLocaleDateString(
+                      "en-IN",
+                      { day: "numeric", month: "short", year: "numeric" },
+                    ),
                     icon: Clock,
                     color: "#8b5cf6",
                   },
                   {
                     label: "AI Score",
-                    value: `${candidate.score}/100`,
+                    value: `${interview.score}/100`,
                     icon: Award,
                     color:
-                      candidate.score >= 85
+                      interview.score >= 85
                         ? "#10b981"
-                        : candidate.score >= 70
+                        : interview.score >= 70
                           ? "#f59e0b"
                           : "#ef4444",
                   },
@@ -528,7 +316,7 @@ const CandidateModal = ({ candidate, onClose, onHire, onReject }) => {
                     <div className="flex items-center gap-2 mb-2">
                       <div
                         className="w-7 h-7 rounded-lg flex items-center justify-center"
-                        style={{ background: `${color}15` }}
+                        style={{ background: `${color}18` }}
                       >
                         <Icon size={14} style={{ color }} />
                       </div>
@@ -541,183 +329,198 @@ const CandidateModal = ({ candidate, onClose, onHire, onReject }) => {
                 ))}
               </div>
 
-              {/* Skills */}
-              <div>
-                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
-                  Skills
-                </h3>
-                <div className="flex flex-wrap gap-2">
-                  {candidate.skills.map((sk) => (
-                    <span
-                      key={sk}
-                      className="px-3 py-1.5 bg-indigo-50 text-indigo-600 text-xs font-semibold rounded-xl border border-indigo-100"
-                    >
-                      {sk}
-                    </span>
-                  ))}
+              {candidate.skills?.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
+                    Skills
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    {candidate.skills.map((sk) => (
+                      <span
+                        key={sk}
+                        className="px-3 py-1.5 bg-indigo-50 text-indigo-600 text-xs font-semibold rounded-xl border border-indigo-100"
+                      >
+                        {sk}
+                      </span>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
-              {/* AI Summary */}
-              <div>
-                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-                  <MessageSquare size={13} /> AI Summary
-                </h3>
-                <div className="bg-indigo-50/50 border border-indigo-100 rounded-2xl p-4">
-                  <p className="text-sm text-gray-600 leading-relaxed">
-                    {candidate.summary}
-                  </p>
-                </div>
-              </div>
-
-              {/* Strengths & Improvements */}
-              <div className="grid grid-cols-2 gap-4">
+              {interview.summary && (
                 <div>
                   <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-                    <CheckCircle size={13} className="text-emerald-500" />{" "}
-                    Strengths
+                    <MessageSquare size={13} /> AI Summary
                   </h3>
-                  <div className="space-y-2">
-                    {candidate.strengths.map((s) => (
-                      <div
-                        key={s}
-                        className="flex items-center gap-2 bg-emerald-50 border border-emerald-100 rounded-xl px-3 py-2"
-                      >
-                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
-                        <p className="text-xs text-emerald-700 font-medium">
-                          {s}
-                        </p>
+                  <div className="bg-indigo-50/50 border border-indigo-100 rounded-2xl p-4">
+                    <p className="text-sm text-gray-600 leading-relaxed">
+                      {interview.summary}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {(interview.strengths?.length > 0 ||
+                interview.improvements?.length > 0) && (
+                <div className="grid grid-cols-2 gap-4">
+                  {interview.strengths?.length > 0 && (
+                    <div>
+                      <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+                        <CheckCircle size={13} className="text-emerald-500" />{" "}
+                        Strengths
+                      </h3>
+                      <div className="space-y-2">
+                        {interview.strengths.map((s) => (
+                          <div
+                            key={s}
+                            className="flex items-center gap-2 bg-emerald-50 border border-emerald-100 rounded-xl px-3 py-2"
+                          >
+                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                            <p className="text-xs text-emerald-700 font-medium">
+                              {s}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {interview.improvements?.length > 0 && (
+                    <div>
+                      <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+                        <AlertCircle size={13} className="text-amber-500" />{" "}
+                        Areas to Improve
+                      </h3>
+                      <div className="space-y-2">
+                        {interview.improvements.map((s) => (
+                          <div
+                            key={s}
+                            className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2"
+                          >
+                            <div className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+                            <p className="text-xs text-amber-700 font-medium">
+                              {s}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {answers.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+                    <BarChart2 size={13} /> Score Breakdown
+                  </h3>
+                  <div className="space-y-3">
+                    {answers.map((a) => (
+                      <div key={a.id ?? a.order_index}>
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-xs text-gray-600 truncate max-w-[70%]">
+                            {a.question}
+                          </p>
+                          <span
+                            className={`text-xs font-bold ${scoreColor(a.score)}`}
+                          >
+                            {a.score}
+                          </span>
+                        </div>
+                        <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all ${scoreBar(a.score)}`}
+                            style={{ width: `${a.score}%` }}
+                          />
+                        </div>
                       </div>
                     ))}
                   </div>
                 </div>
-                <div>
-                  <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-                    <AlertCircle size={13} className="text-amber-500" /> Areas
-                    to Improve
-                  </h3>
-                  <div className="space-y-2">
-                    {candidate.improvements.map((s) => (
-                      <div
-                        key={s}
-                        className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2"
-                      >
-                        <div className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
-                        <p className="text-xs text-amber-700 font-medium">
-                          {s}
+              )}
+            </div>
+          )}
+
+          {/* Q&A */}
+          {activeTab === "answers" && (
+            <div className="space-y-4">
+              {answers.length === 0 ? (
+                <div className="text-center py-12 text-gray-400 text-sm">
+                  No answer data available.
+                </div>
+              ) : (
+                answers.map((a, i) => (
+                  <div
+                    key={a.id ?? i}
+                    className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm"
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="flex items-start gap-3">
+                        <div className="w-7 h-7 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-xs font-bold text-indigo-600 shrink-0 mt-0.5">
+                          {i + 1}
+                        </div>
+                        <p className="text-sm font-semibold text-gray-800">
+                          {a.question}
                         </p>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Score breakdown bar */}
-              <div>
-                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-                  <BarChart2 size={13} /> Score Breakdown
-                </h3>
-                <div className="space-y-3">
-                  {candidate.answers.map((a) => (
-                    <div key={a.q}>
-                      <div className="flex items-center justify-between mb-1">
-                        <p className="text-xs text-gray-600 truncate max-w-[70%]">
-                          {a.q}
-                        </p>
-                        <span
-                          className={`text-xs font-bold ${scoreColor(a.score)}`}
+                      <div
+                        className={`px-3 py-1.5 rounded-xl border text-center shrink-0 ${scoreBg(a.score)}`}
+                      >
+                        <p
+                          className={`text-base font-black ${scoreColor(a.score)}`}
                         >
                           {a.score}
-                        </span>
+                        </p>
                       </div>
-                      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                    </div>
+                    <div className="flex items-center gap-4 ml-10">
+                      {a.time_taken && (
+                        <span className="flex items-center gap-1.5 text-xs text-gray-400">
+                          <Clock size={11} /> Answered in {a.time_taken}
+                        </span>
+                      )}
+                      <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
                         <div
-                          className={`h-full rounded-full transition-all ${scoreBar(a.score)}`}
+                          className={`h-full rounded-full ${scoreBar(a.score)}`}
                           style={{ width: `${a.score}%` }}
                         />
                       </div>
                     </div>
-                  ))}
-                </div>
-              </div>
+                  </div>
+                ))
+              )}
             </div>
           )}
 
-          {/* Q&A TAB */}
-          {activeTab === "answers" && (
-            <div className="space-y-4">
-              {candidate.answers.map((a, i) => (
-                <div
-                  key={i}
-                  className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm"
-                >
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <div className="flex items-start gap-3">
-                      <div className="w-7 h-7 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-xs font-bold text-indigo-600 shrink-0 mt-0.5">
-                        {i + 1}
-                      </div>
-                      <p className="text-sm font-semibold text-gray-800">
-                        {a.q}
-                      </p>
-                    </div>
-                    <div
-                      className={`px-3 py-1.5 rounded-xl border text-center shrink-0 ${scoreBg(a.score)}`}
-                    >
-                      <p
-                        className={`text-base font-black ${scoreColor(a.score)}`}
-                      >
-                        {a.score}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4 ml-10">
-                    <span className="flex items-center gap-1.5 text-xs text-gray-400">
-                      <Clock size={11} /> Answered in {a.time}
-                    </span>
-                    <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full ${scoreBar(a.score)}`}
-                        style={{ width: `${a.score}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* RECORDINGS TAB */}
+          {/* Recordings */}
           {activeTab === "recordings" && (
             <div className="space-y-4">
               <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 flex items-start gap-3">
                 <Video size={16} className="text-indigo-500 mt-0.5 shrink-0" />
                 <p className="text-sm text-indigo-700">
-                  Three recordings are available for each interview — screen
-                  share, primary webcam, and mobile camera for a complete view
-                  of the candidate.
+                  Three recordings are available — screen share, primary webcam,
+                  and mobile camera.
                 </p>
               </div>
-
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <VideoCard
                   icon={Monitor}
                   label="Screen Recording"
                   subtitle="Full screen capture"
-                  video={candidate.videos.screen}
+                  video={videos.screen ?? { available: false }}
                   color="#6366f1"
                 />
                 <VideoCard
                   icon={Camera}
                   label="Primary Camera"
                   subtitle="Webcam recording"
-                  video={candidate.videos.primary}
+                  video={videos.primary ?? { available: false }}
                   color="#8b5cf6"
                 />
                 <VideoCard
                   icon={Smartphone}
                   label="Mobile Camera"
                   subtitle="Secondary angle"
-                  video={candidate.videos.mobile}
+                  video={videos.mobile ?? { available: false }}
                   color="#10b981"
                 />
               </div>
@@ -725,39 +528,53 @@ const CandidateModal = ({ candidate, onClose, onHire, onReject }) => {
           )}
         </div>
 
-        {/* ── Footer Actions ── */}
-        {candidate.status === "pending" && (
+        {/* Footer — decision buttons (pending only) */}
+        {interview.status === "pending" && (
           <div className="flex items-center justify-between px-7 py-4 border-t border-gray-100 bg-gray-50">
             <p className="text-xs text-gray-400">
-              Make your decision based on the interview results
+              {confirming
+                ? `Click "${confirming === "hire" ? "Hire" : "Reject"}" again to confirm.`
+                : "Make your decision based on the interview results"}
             </p>
             <div className="flex items-center gap-3">
               <button
                 onClick={() => handleDecision("reject")}
-                disabled={!!deciding}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-red-500 bg-red-50 border border-red-200 hover:bg-red-100 transition-all disabled:opacity-60"
+                disabled={isDeciding}
+                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all disabled:opacity-60 ${
+                  confirming === "reject"
+                    ? "bg-red-500 text-white border border-red-500"
+                    : "text-red-500 bg-red-50 border border-red-200 hover:bg-red-100"
+                }`}
               >
-                {deciding === "reject" ? (
-                  <div className="w-4 h-4 border-2 border-red-300 border-t-red-500 rounded-full animate-spin" />
+                {isDeciding && confirming === "reject" ? (
+                  <Loader2 size={15} className="animate-spin" />
                 ) : (
                   <XCircle size={15} />
                 )}
-                Reject
+                {confirming === "reject" ? "Confirm Reject" : "Reject"}
               </button>
               <button
                 onClick={() => handleDecision("hire")}
-                disabled={!!deciding}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-md hover:shadow-lg transition-all disabled:opacity-60"
-                style={{
-                  background: "linear-gradient(135deg, #10b981, #059669)",
-                }}
+                disabled={isDeciding}
+                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold shadow-md hover:shadow-lg transition-all disabled:opacity-60 ${
+                  confirming === "hire"
+                    ? "bg-emerald-700 text-white"
+                    : "text-white"
+                }`}
+                style={
+                  confirming !== "hire"
+                    ? {
+                        background: "linear-gradient(135deg, #10b981, #059669)",
+                      }
+                    : {}
+                }
               >
-                {deciding === "hire" ? (
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                {isDeciding && confirming === "hire" ? (
+                  <Loader2 size={15} className="animate-spin" />
                 ) : (
                   <CheckCircle size={15} />
                 )}
-                Hire Candidate
+                {confirming === "hire" ? "Confirm Hire" : "Hire Candidate"}
               </button>
             </div>
           </div>
@@ -767,9 +584,9 @@ const CandidateModal = ({ candidate, onClose, onHire, onReject }) => {
   );
 };
 
-// ─── Candidate Card ───────────────────────────────────────────
-const CandidateCard = ({ candidate, onClick }) => {
-  const s = statusConfig[candidate.status];
+/* ── Candidate Card ──────────────────────────────────────────────────────── */
+const CandidateCard = ({ interview, onClick }) => {
+  const s = STATUS[interview.status] ?? STATUS.pending;
   return (
     <div
       onClick={onClick}
@@ -780,16 +597,18 @@ const CandidateCard = ({ candidate, onClick }) => {
           <div
             className="w-11 h-11 rounded-xl flex items-center justify-center text-white text-sm font-bold shrink-0"
             style={{
-              background: `linear-gradient(135deg, ${candidate.color}, ${candidate.color}cc)`,
+              background: `linear-gradient(135deg, ${interview.color}, ${interview.color}bb)`,
             }}
           >
-            {candidate.avatar}
+            {interview.candidate.avatar}
           </div>
           <div>
             <p className="text-sm font-bold text-gray-800 group-hover:text-indigo-600 transition-colors">
-              {candidate.name}
+              {interview.candidate.name}
             </p>
-            <p className="text-xs text-gray-400 mt-0.5">{candidate.role}</p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {interview.job.title}
+            </p>
           </div>
         </div>
         <div
@@ -801,34 +620,39 @@ const CandidateCard = ({ candidate, onClick }) => {
 
       <div className="flex items-center gap-4 mb-4">
         <div
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border ${scoreBg(candidate.score)}`}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border ${scoreBg(interview.score)}`}
         >
           <Star
             size={12}
-            className={scoreColor(candidate.score)}
+            className={scoreColor(interview.score)}
             fill="currentColor"
           />
-          <span className={`text-sm font-black ${scoreColor(candidate.score)}`}>
-            {candidate.score}
+          <span className={`text-sm font-black ${scoreColor(interview.score)}`}>
+            {interview.score}
           </span>
           <span className="text-[10px] text-gray-400">/100</span>
         </div>
-        <div className="flex items-center gap-1.5 text-xs text-gray-400">
-          <Clock size={11} /> {candidate.duration}
-        </div>
+        {interview.duration && (
+          <div className="flex items-center gap-1.5 text-xs text-gray-400">
+            <Clock size={11} /> {interview.duration}
+          </div>
+        )}
       </div>
 
-      {/* Score bar */}
       <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden mb-4">
         <div
-          className={`h-full rounded-full ${scoreBar(candidate.score)}`}
-          style={{ width: `${candidate.score}%` }}
+          className={`h-full rounded-full ${scoreBar(interview.score)}`}
+          style={{ width: `${interview.score}%` }}
         />
       </div>
 
       <div className="flex items-center justify-between">
         <span className="text-[11px] text-gray-400 flex items-center gap-1">
-          <Clock size={10} /> {candidate.date}
+          <Clock size={10} />
+          {new Date(interview.created_at).toLocaleDateString("en-IN", {
+            day: "numeric",
+            month: "short",
+          })}
         </span>
         <span className="flex items-center gap-1 text-xs text-indigo-500 font-medium group-hover:gap-2 transition-all">
           View Details <ChevronRight size={13} />
@@ -838,42 +662,37 @@ const CandidateCard = ({ candidate, onClick }) => {
   );
 };
 
-// ─── Main Page ────────────────────────────────────────────────
+/* ── Main Page ───────────────────────────────────────────────────────────── */
 const CompanyInterviews = () => {
-  const [candidates, setCandidates] = useState(CANDIDATES);
-  const [selected, setSelected] = useState(null);
-  const [search, setSearch] = useState("");
-  const [filterStatus, setFilterStatus] = useState("all");
-  const [filterJob, setFilterJob] = useState("all");
+  const {
+    interviews,
+    counts,
+    jobs,
+    selectedInterview,
+    filterStatus,
+    filterJobId,
+    search,
+    changeStatus,
+    changeJob,
+    changeSearch,
+    openInterview,
+    closeInterview,
+    hire,
+    reject,
+    isLoadingList,
+    isLoadingDetail,
+    isDeciding,
+    listFailed,
+    loadInterviews,
+  } = useCompanyInterviews();
 
-  const handleHire = (id) =>
-    setCandidates((p) =>
-      p.map((c) => (c.id === id ? { ...c, status: "hired" } : c)),
-    );
-  const handleReject = (id) =>
-    setCandidates((p) =>
-      p.map((c) => (c.id === id ? { ...c, status: "rejected" } : c)),
-    );
-
-  const filtered = candidates.filter((c) => {
-    const matchSearch =
-      c.name.toLowerCase().includes(search.toLowerCase()) ||
-      c.role.toLowerCase().includes(search.toLowerCase());
-    const matchStatus = filterStatus === "all" || c.status === filterStatus;
-    const matchJob = filterJob === "all" || c.jobId === Number(filterJob);
-    return matchSearch && matchStatus && matchJob;
+  // Group by job
+  const byJob = {};
+  interviews.forEach((c) => {
+    const key = c.job?.id ?? "unknown";
+    if (!byJob[key]) byJob[key] = { job: c.job, items: [] };
+    byJob[key].items.push(c);
   });
-
-  const counts = {
-    all: candidates.length,
-    pending: candidates.filter((c) => c.status === "pending").length,
-    hired: candidates.filter((c) => c.status === "hired").length,
-    rejected: candidates.filter((c) => c.status === "rejected").length,
-  };
-
-  const avgScore = Math.round(
-    candidates.reduce((a, c) => a + c.score, 0) / candidates.length,
-  );
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -887,9 +706,20 @@ const CompanyInterviews = () => {
                 Review candidates and make hiring decisions
               </p>
             </div>
+            <button
+              onClick={() => loadInterviews()}
+              disabled={isLoadingList}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition-all disabled:opacity-50"
+            >
+              <RefreshCw
+                size={14}
+                className={isLoadingList ? "animate-spin" : ""}
+              />
+              Refresh
+            </button>
           </div>
 
-          {/* Top stats */}
+          {/* Stats strip */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
             {[
               {
@@ -912,7 +742,7 @@ const CompanyInterviews = () => {
               },
               {
                 label: "Avg. AI Score",
-                value: avgScore,
+                value: counts.avg_score,
                 icon: TrendingUp,
                 color: "violet",
               },
@@ -946,9 +776,13 @@ const CompanyInterviews = () => {
                 >
                   <Icon size={18} className={colors.text} />
                   <div>
-                    <p className={`text-xl font-black ${colors.text}`}>
-                      {value}
-                    </p>
+                    {isLoadingList ? (
+                      <Skeleton className="h-6 w-8 mb-1" />
+                    ) : (
+                      <p className={`text-xl font-black ${colors.text}`}>
+                        {value}
+                      </p>
+                    )}
                     <p className="text-[11px] text-gray-400">{label}</p>
                   </div>
                 </div>
@@ -961,7 +795,7 @@ const CompanyInterviews = () => {
             {["all", "pending", "hired", "rejected"].map((s) => (
               <button
                 key={s}
-                onClick={() => setFilterStatus(s)}
+                onClick={() => changeStatus(s)}
                 className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium capitalize transition-all ${
                   filterStatus === s
                     ? "bg-indigo-50 text-indigo-600"
@@ -970,13 +804,9 @@ const CompanyInterviews = () => {
               >
                 {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
                 <span
-                  className={`text-[11px] px-1.5 py-0.5 rounded-full font-semibold ${
-                    filterStatus === s
-                      ? "bg-indigo-100 text-indigo-600"
-                      : "bg-gray-100 text-gray-500"
-                  }`}
+                  className={`text-[11px] px-1.5 py-0.5 rounded-full font-semibold ${filterStatus === s ? "bg-indigo-100 text-indigo-600" : "bg-gray-100 text-gray-500"}`}
                 >
-                  {counts[s] ?? candidates.filter((c) => c.status === s).length}
+                  {counts[s] ?? 0}
                 </span>
               </button>
             ))}
@@ -984,8 +814,9 @@ const CompanyInterviews = () => {
         </div>
       </div>
 
+      {/* ── Content ── */}
       <div className="max-w-7xl mx-auto px-6 py-6">
-        {/* ── Search + filter bar ── */}
+        {/* Search + job filter */}
         <div className="flex items-center gap-3 mb-6 flex-wrap">
           <div className="relative flex-1 min-w-50">
             <Search
@@ -994,12 +825,11 @@ const CompanyInterviews = () => {
             />
             <input
               className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm bg-white outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 transition-all"
-              placeholder="Search candidates..."
+              placeholder="Search candidates or roles..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => changeSearch(e.target.value)}
             />
           </div>
-
           <div className="relative">
             <Filter
               size={14}
@@ -1007,11 +837,11 @@ const CompanyInterviews = () => {
             />
             <select
               className="pl-8 pr-8 py-2.5 rounded-xl border border-gray-200 text-sm bg-white outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 transition-all appearance-none cursor-pointer text-gray-600"
-              value={filterJob}
-              onChange={(e) => setFilterJob(e.target.value)}
+              value={filterJobId}
+              onChange={(e) => changeJob(e.target.value)}
             >
               <option value="all">All Jobs</option>
-              {JOBS.map((j) => (
+              {jobs.map((j) => (
                 <option key={j.id} value={j.id}>
                   {j.title}
                 </option>
@@ -1024,56 +854,77 @@ const CompanyInterviews = () => {
           </div>
         </div>
 
-        {/* ── Per-job sections ── */}
-        {filterJob === "all" ? (
-          <div className="space-y-8">
-            {JOBS.map((job) => {
-              const jobCandidates = filtered.filter((c) => c.jobId === job.id);
-              if (jobCandidates.length === 0) return null;
-              return (
-                <div key={job.id}>
-                  {/* Job header */}
+        {/* Error state */}
+        {listFailed && (
+          <div className="bg-red-50 border border-red-200 rounded-2xl p-6 text-center mb-6">
+            <AlertCircle size={28} className="text-red-400 mx-auto mb-2" />
+            <p className="text-sm font-semibold text-red-600 mb-3">
+              Failed to load interviews
+            </p>
+            <button
+              onClick={() => loadInterviews()}
+              className="px-4 py-2 rounded-xl bg-red-100 text-red-600 text-sm font-medium hover:bg-red-200 transition-all"
+            >
+              Try Again
+            </button>
+          </div>
+        )}
+
+        {/* Skeleton */}
+        {isLoadingList && (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <CardSkeleton key={i} />
+            ))}
+          </div>
+        )}
+
+        {/* Candidate list */}
+        {!isLoadingList &&
+          !listFailed &&
+          (filterJobId === "all" ? (
+            <div className="space-y-8">
+              {Object.values(byJob).map(({ job, items }) => (
+                <div key={job?.id ?? "unknown"}>
                   <div className="flex items-center gap-3 mb-4">
                     <div className="w-8 h-8 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center">
                       <Briefcase size={14} className="text-indigo-500" />
                     </div>
                     <div>
                       <h2 className="text-sm font-bold text-gray-800">
-                        {job.title}
+                        {job?.title ?? "Unknown Position"}
                       </h2>
                       <p className="text-xs text-gray-400">
-                        {jobCandidates.length} candidate
-                        {jobCandidates.length !== 1 ? "s" : ""}
+                        {items.length} candidate{items.length !== 1 ? "s" : ""}
                       </p>
                     </div>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                    {jobCandidates.map((c) => (
+                    {items.map((c) => (
                       <CandidateCard
                         key={c.id}
-                        candidate={c}
-                        onClick={() => setSelected(c)}
+                        interview={c}
+                        onClick={() => openInterview(c.id)}
                       />
                     ))}
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {filtered.map((c) => (
-              <CandidateCard
-                key={c.id}
-                candidate={c}
-                onClick={() => setSelected(c)}
-              />
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {interviews.map((c) => (
+                <CandidateCard
+                  key={c.id}
+                  interview={c}
+                  onClick={() => openInterview(c.id)}
+                />
+              ))}
+            </div>
+          ))}
 
         {/* Empty state */}
-        {filtered.length === 0 && (
+        {!isLoadingList && !listFailed && interviews.length === 0 && (
           <div className="bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col items-center justify-center py-20 text-center">
             <div className="w-16 h-16 rounded-2xl bg-indigo-50 flex items-center justify-center mb-4">
               <Users size={28} className="text-indigo-300" />
@@ -1088,13 +939,25 @@ const CompanyInterviews = () => {
         )}
       </div>
 
-      {/* ── Modal ── */}
-      {selected && (
+      {/* ── Detail modal ── */}
+      {isLoadingDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl p-8 flex items-center gap-4 shadow-xl">
+            <Loader2 size={22} className="animate-spin text-indigo-500" />
+            <p className="text-sm text-gray-600 font-medium">
+              Loading interview details…
+            </p>
+          </div>
+        </div>
+      )}
+
+      {selectedInterview && !isLoadingDetail && (
         <CandidateModal
-          candidate={candidates.find((c) => c.id === selected.id)}
-          onClose={() => setSelected(null)}
-          onHire={handleHire}
-          onReject={handleReject}
+          interview={selectedInterview}
+          onClose={closeInterview}
+          onHire={hire}
+          onReject={reject}
+          isDeciding={isDeciding}
         />
       )}
     </div>

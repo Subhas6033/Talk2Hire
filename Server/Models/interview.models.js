@@ -2,14 +2,15 @@ const { pool } = require("../Config/database.config");
 const { APIERR } = require("../Utils/index.utils.js");
 
 const Interview = {
-  async createSession(userId) {
+  async createSession(userId, jobId, candidateName = "") {
     if (!userId) throw new APIERR(400, "User ID is required");
+    if (!jobId) throw new APIERR(400, "Job ID is required");
 
     try {
       const db = await pool;
       const [result] = await db.execute(
-        "INSERT INTO interviews (user_id) VALUES (?)",
-        [userId],
+        "INSERT INTO interviews (user_id, job_id, candidate_name) VALUES (?, ?, ?)",
+        [userId, jobId, candidateName],
       );
       return result.insertId;
     } catch (error) {
@@ -224,11 +225,6 @@ const Interview = {
     }
   },
 
-  /**
-   * FIX: saveViolation was called by safeRecordViolation() in the socket
-   * controller but never implemented — violations were silently dropped.
-   * Requires the interview_violations table from migration.sql (Fix 2).
-   */
   async saveViolation({ interviewId, violationType, details, timestamp }) {
     try {
       const db = await pool;
@@ -243,7 +239,6 @@ const Interview = {
         `🚨 Violation saved: ${violationType} for interview ${interviewId}`,
       );
     } catch (error) {
-      // Non-fatal — log but don't throw so the socket handler never crashes
       console.error("❌ Database error in saveViolation:", error.message);
     }
   },

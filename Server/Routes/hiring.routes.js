@@ -1,6 +1,6 @@
 const express = require("express");
 const HiringController = require("../Controllers/hiring.controller.js");
-const authMiddleware = require("../Middlewares/auth.middlewares.js");
+const { authMiddleware } = require("../Middlewares/auth.middlewares.js");
 
 const router = express.Router();
 

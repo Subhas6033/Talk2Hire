@@ -22,6 +22,7 @@ const generateRefreshAndAccessTokens = async (user) => {
     {
       id: user.id,
       email: user.email,
+      role: user.role,
     },
     process.env.REFRESH_TOKEN_SECRET,
     {
@@ -33,6 +34,7 @@ const generateRefreshAndAccessTokens = async (user) => {
     {
       id: user.id,
       email: user.email,
+      role: user.role,
     },
     process.env.ACCESS_TOKEN_SECRET,
     {

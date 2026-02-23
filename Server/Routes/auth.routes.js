@@ -14,7 +14,7 @@ const {
   checkResumeStatus,
   getCVSkills,
 } = require("../Controllers/auth.controllers.js");
-const authMiddleware = require("../Middlewares/auth.middlewares.js");
+const { authMiddleware } = require("../Middlewares/auth.middlewares.js");
 const {
   uploadSingle,
   uploadProfileFiles,

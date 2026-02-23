@@ -27,6 +27,8 @@ import {
   CompanyDashboard,
   CompanyJob,
   CompanyInterviews,
+  UserJob,
+  UserJobDetail,
 } from "./Pages/index.pages.js";
 
 import { InterviewSetup } from "./Components/index.js";
@@ -172,6 +174,23 @@ const App = () => {
                       element={
                         <RoleBasedRoute allowedRole="user">
                           <InterviewLive />
+                        </RoleBasedRoute>
+                      }
+                    />
+                    <Route
+                      path="/jobs"
+                      element={
+                        <RoleBasedRoute allowedRole="user">
+                          <UserJob />
+                        </RoleBasedRoute>
+                      }
+                    />
+
+                    <Route
+                      path="/jobs/:id"
+                      element={
+                        <RoleBasedRoute allowedRole="user">
+                          <UserJobDetail />
                         </RoleBasedRoute>
                       }
                     />

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCompany } from "../Hooks/useCompanyAuthHook";
+import useDashboard from "../Hooks/useCompanyDashboardHook";
 import {
   Briefcase,
   Users,
@@ -19,108 +20,16 @@ import {
   Zap,
   Target,
   ChevronRight,
+  AlertCircle,
 } from "lucide-react";
 
-// ─── Mock Data ───────────────────────────────────────────────
-const RECENT_JOBS = [
-  {
-    id: 1,
-    title: "Senior Frontend Developer",
-    dept: "Engineering",
-    applicants: 24,
-    status: "active",
-    posted: "2 days ago",
-    location: "Remote",
-  },
-  {
-    id: 2,
-    title: "Product Designer",
-    dept: "Design",
-    applicants: 18,
-    status: "active",
-    posted: "5 days ago",
-    location: "New York",
-  },
-  {
-    id: 3,
-    title: "Backend Engineer",
-    dept: "Engineering",
-    applicants: 31,
-    status: "closed",
-    posted: "2 weeks ago",
-    location: "San Francisco",
-  },
-];
-
-const RECENT_INTERVIEWS = [
-  {
-    id: 1,
-    candidate: "Rahul Sharma",
-    role: "Senior Frontend Developer",
-    score: 87,
-    status: "pending",
-    date: "Today, 2:30 PM",
-    avatar: "RS",
-  },
-  {
-    id: 2,
-    candidate: "Priya Mehta",
-    role: "Product Designer",
-    score: 92,
-    status: "hired",
-    date: "Yesterday",
-    avatar: "PM",
-  },
-  {
-    id: 3,
-    candidate: "Arjun Patel",
-    role: "Backend Engineer",
-    score: 74,
-    status: "rejected",
-    date: "Dec 18",
-    avatar: "AP",
-  },
-  {
-    id: 4,
-    candidate: "Sneha Kapoor",
-    role: "Senior Frontend Developer",
-    score: 81,
-    status: "pending",
-    date: "Dec 17",
-    avatar: "SK",
-  },
-];
-
-const STATS = [
-  {
-    label: "Active Jobs",
-    value: "12",
-    change: "+3 this month",
-    icon: Briefcase,
-    color: "indigo",
-  },
-  {
-    label: "Total Applicants",
-    value: "248",
-    change: "+42 this week",
-    icon: Users,
-    color: "violet",
-  },
-  {
-    label: "Interviews Done",
-    value: "67",
-    change: "+8 today",
-    icon: Video,
-    color: "blue",
-  },
-  {
-    label: "Hired This Month",
-    value: "9",
-    change: "+2 vs last month",
-    icon: TrendingUp,
-    color: "emerald",
-  },
-];
+// ─── Constants ────────────────────────────────────────────────
+const STAT_ICONS = {
+  indigo: Briefcase,
+  violet: Users,
+  blue: Video,
+  emerald: TrendingUp,
+};
 
 const HOW_IT_WORKS = [
   {
@@ -149,7 +58,6 @@ const HOW_IT_WORKS = [
   },
 ];
 
-// ─── Color maps ──────────────────────────────────────────────
 const colorMap = {
   indigo: {
     bg: "bg-indigo-50",
@@ -200,14 +108,39 @@ const statusConfig = {
   },
 };
 
+/**
+ * Safe status lookup — never crashes on unexpected/undefined status
+ * values returned from the API (e.g. "completed", null, etc.)
+ */
+const getStatus = (status) =>
+  statusConfig[status] ?? {
+    label: status ? status.charAt(0).toUpperCase() + status.slice(1) : "—",
+    cls: "bg-gray-100 text-gray-500 border border-gray-200",
+  };
+
 const scoreColor = (s) =>
   s >= 85 ? "text-emerald-600" : s >= 70 ? "text-amber-500" : "text-red-500";
 
-// ─── Component ───────────────────────────────────────────────
+// ─── Skeleton ─────────────────────────────────────────────────
+const Skeleton = ({ className }) => (
+  <div className={`animate-pulse bg-gray-100 rounded-xl ${className}`} />
+);
+
+// ─── Component ────────────────────────────────────────────────
 const CompanyDashboard = () => {
   const { company } = useCompany();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("overview");
+
+  const {
+    statCards,
+    pipelineBars,
+    recentJobs,
+    recentInterviews,
+    isLoading,
+    error,
+    refetch,
+  } = useDashboard();
 
   const firstName = company?.companyName?.split(" ")[0] ?? "there";
   const hour = new Date().getHours();
@@ -216,6 +149,21 @@ const CompanyDashboard = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* ── Error Banner ── */}
+      {error && (
+        <div className="bg-red-50 border-b border-red-200 px-6 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm text-red-600">
+            <AlertCircle size={15} /> {error}
+          </div>
+          <button
+            onClick={refetch}
+            className="text-xs font-semibold text-red-600 hover:underline"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* ── Hero Banner ── */}
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-6 py-8">
@@ -239,12 +187,10 @@ const CompanyDashboard = () => {
                 background: "linear-gradient(135deg, #6366f1, #4f46e5)",
               }}
             >
-              <Plus size={16} />
-              Post a New Job
+              <Plus size={16} /> Post a New Job
             </button>
           </div>
 
-          {/* Tabs */}
           <div className="flex items-center gap-1 mt-6">
             {["overview", "how it works"].map((tab) => (
               <button
@@ -268,35 +214,50 @@ const CompanyDashboard = () => {
           <>
             {/* ── Stats Grid ── */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {STATS.map(({ label, value, change, icon: Icon, color }) => {
-                const c = colorMap[color];
-                return (
-                  <div
-                    key={label}
-                    className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-shadow"
-                  >
-                    <div className="flex items-center justify-between mb-4">
-                      <p className="text-sm font-medium text-gray-500">
-                        {label}
-                      </p>
-                      <div
-                        className={`w-9 h-9 rounded-xl flex items-center justify-center ${c.bg} ${c.border} border`}
-                      >
-                        <Icon size={17} className={c.icon} />
+              {isLoading
+                ? [...Array(4)].map((_, i) => (
+                    <div
+                      key={i}
+                      className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm space-y-3"
+                    >
+                      <div className="flex justify-between">
+                        <Skeleton className="h-4 w-24" />
+                        <Skeleton className="h-9 w-9" />
                       </div>
+                      <Skeleton className="h-8 w-16" />
+                      <Skeleton className="h-3 w-28" />
                     </div>
-                    <p className={`text-3xl font-bold ${c.text} mb-1`}>
-                      {value}
-                    </p>
-                    <p className="text-xs text-gray-400">{change}</p>
-                  </div>
-                );
-              })}
+                  ))
+                : statCards.map(({ label, value, change, color }) => {
+                    const c = colorMap[color] ?? colorMap.indigo;
+                    const Icon = STAT_ICONS[color] ?? Briefcase;
+                    return (
+                      <div
+                        key={label}
+                        className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-shadow"
+                      >
+                        <div className="flex items-center justify-between mb-4">
+                          <p className="text-sm font-medium text-gray-500">
+                            {label}
+                          </p>
+                          <div
+                            className={`w-9 h-9 rounded-xl flex items-center justify-center ${c.bg} ${c.border} border`}
+                          >
+                            <Icon size={17} className={c.icon} />
+                          </div>
+                        </div>
+                        <p className={`text-3xl font-bold ${c.text} mb-1`}>
+                          {value}
+                        </p>
+                        <p className="text-xs text-gray-400">{change}</p>
+                      </div>
+                    );
+                  })}
             </div>
 
             {/* ── Main Content Grid ── */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Recent Jobs — 2/3 width */}
+              {/* Recent Jobs */}
               <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
                   <div className="flex items-center gap-2">
@@ -314,75 +275,99 @@ const CompanyDashboard = () => {
                 </div>
 
                 <div className="divide-y divide-gray-50">
-                  {RECENT_JOBS.map((job) => {
-                    const s = statusConfig[job.status];
-                    return (
+                  {isLoading ? (
+                    [...Array(3)].map((_, i) => (
                       <div
-                        key={job.id}
-                        className="flex items-center justify-between px-6 py-4 hover:bg-gray-50 transition-colors group"
+                        key={i}
+                        className="flex items-center gap-4 px-6 py-4"
                       >
-                        <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center shrink-0">
-                            <Briefcase size={16} className="text-indigo-500" />
-                          </div>
-                          <div>
-                            <p className="text-sm font-semibold text-gray-800 group-hover:text-indigo-600 transition-colors">
-                              {job.title}
-                            </p>
-                            <div className="flex items-center gap-3 mt-0.5">
-                              <span className="text-xs text-gray-400">
-                                {job.dept}
-                              </span>
-                              <span className="w-1 h-1 rounded-full bg-gray-300" />
-                              <span className="flex items-center gap-1 text-xs text-gray-400">
-                                <MapPin size={10} /> {job.location}
-                              </span>
-                              <span className="w-1 h-1 rounded-full bg-gray-300" />
-                              <span className="flex items-center gap-1 text-xs text-gray-400">
-                                <Clock size={10} /> {job.posted}
-                              </span>
+                        <Skeleton className="w-10 h-10 shrink-0" />
+                        <div className="flex-1 space-y-2">
+                          <Skeleton className="h-4 w-48" />
+                          <Skeleton className="h-3 w-32" />
+                        </div>
+                        <Skeleton className="h-6 w-16" />
+                      </div>
+                    ))
+                  ) : recentJobs.length === 0 ? (
+                    <p className="text-sm text-gray-400 text-center py-10">
+                      No jobs posted yet.
+                    </p>
+                  ) : (
+                    recentJobs.map((job) => {
+                      // ✅ Use getStatus — safe against undefined
+                      const s = getStatus(job.status);
+                      return (
+                        <div
+                          key={job.id}
+                          className="flex items-center justify-between px-6 py-4 hover:bg-gray-50 transition-colors group"
+                        >
+                          <div className="flex items-center gap-4">
+                            <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center shrink-0">
+                              <Briefcase
+                                size={16}
+                                className="text-indigo-500"
+                              />
+                            </div>
+                            <div>
+                              <p className="text-sm font-semibold text-gray-800 group-hover:text-indigo-600 transition-colors">
+                                {job.title}
+                              </p>
+                              <div className="flex items-center gap-3 mt-0.5">
+                                <span className="text-xs text-gray-400">
+                                  {job.dept}
+                                </span>
+                                <span className="w-1 h-1 rounded-full bg-gray-300" />
+                                <span className="flex items-center gap-1 text-xs text-gray-400">
+                                  <MapPin size={10} /> {job.location}
+                                </span>
+                                <span className="w-1 h-1 rounded-full bg-gray-300" />
+                                <span className="flex items-center gap-1 text-xs text-gray-400">
+                                  <Clock size={10} /> {job.posted}
+                                </span>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                        <div className="flex items-center gap-3 shrink-0">
-                          <div className="text-right hidden sm:block">
-                            <p className="text-sm font-semibold text-gray-700">
-                              {job.applicants}
-                            </p>
-                            <p className="text-xs text-gray-400">applicants</p>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <div className="text-right hidden sm:block">
+                              <p className="text-sm font-semibold text-gray-700">
+                                {job.applicants}
+                              </p>
+                              <p className="text-xs text-gray-400">
+                                applicants
+                              </p>
+                            </div>
+                            <span
+                              className={`text-[11px] font-medium px-2.5 py-1 rounded-full ${s.cls}`}
+                            >
+                              {s.label}
+                            </span>
+                            <button className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-indigo-50 transition-colors">
+                              <Eye
+                                size={14}
+                                className="text-gray-400 hover:text-indigo-500"
+                              />
+                            </button>
                           </div>
-                          <span
-                            className={`text-[11px] font-medium px-2.5 py-1 rounded-full ${s.cls}`}
-                          >
-                            {s.label}
-                          </span>
-                          <button className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-indigo-50 transition-colors">
-                            <Eye
-                              size={14}
-                              className="text-gray-400 hover:text-indigo-500"
-                            />
-                          </button>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })
+                  )}
                 </div>
 
-                {/* Post job CTA */}
                 <div className="px-6 py-4 bg-gray-50 border-t border-gray-100">
                   <button
                     onClick={() => navigate("/company/jobs")}
                     className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-indigo-200 text-sm text-indigo-500 font-medium hover:border-indigo-400 hover:bg-indigo-50 transition-all"
                   >
-                    <Plus size={15} />
-                    Post a New Job
+                    <Plus size={15} /> Post a New Job
                   </button>
                 </div>
               </div>
 
-              {/* Quick Stats sidebar — 1/3 width */}
+              {/* Sidebar */}
               <div className="space-y-4">
-                {/* Pipeline card */}
+                {/* Pipeline */}
                 <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
                   <div className="flex items-center gap-2 mb-4">
                     <BarChart3 size={16} className="text-indigo-500" />
@@ -390,50 +375,35 @@ const CompanyDashboard = () => {
                       Hiring Pipeline
                     </h2>
                   </div>
-                  {[
-                    {
-                      label: "Applied",
-                      count: 248,
-                      pct: 100,
-                      color: "bg-indigo-400",
-                    },
-                    {
-                      label: "Interviewed",
-                      count: 67,
-                      pct: 27,
-                      color: "bg-violet-400",
-                    },
-                    {
-                      label: "Under Review",
-                      count: 24,
-                      pct: 10,
-                      color: "bg-amber-400",
-                    },
-                    {
-                      label: "Hired",
-                      count: 9,
-                      pct: 4,
-                      color: "bg-emerald-400",
-                    },
-                  ].map(({ label, count, pct, color }) => (
-                    <div key={label} className="mb-3">
-                      <div className="flex justify-between text-xs text-gray-500 mb-1">
-                        <span>{label}</span>
-                        <span className="font-semibold text-gray-700">
-                          {count}
-                        </span>
-                      </div>
-                      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full ${color}`}
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                    </div>
-                  ))}
+                  {isLoading
+                    ? [...Array(4)].map((_, i) => (
+                        <div key={i} className="mb-3 space-y-1">
+                          <div className="flex justify-between">
+                            <Skeleton className="h-3 w-20" />
+                            <Skeleton className="h-3 w-8" />
+                          </div>
+                          <Skeleton className="h-1.5 w-full" />
+                        </div>
+                      ))
+                    : pipelineBars.map(({ label, count, pct, color }) => (
+                        <div key={label} className="mb-3">
+                          <div className="flex justify-between text-xs text-gray-500 mb-1">
+                            <span>{label}</span>
+                            <span className="font-semibold text-gray-700">
+                              {count}
+                            </span>
+                          </div>
+                          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all duration-500 ${color}`}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))}
                 </div>
 
-                {/* Quick actions */}
+                {/* Quick Actions */}
                 <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
                   <div className="flex items-center gap-2 mb-4">
                     <Zap size={16} className="text-indigo-500" />
@@ -500,79 +470,95 @@ const CompanyDashboard = () => {
               </div>
 
               <div className="divide-y divide-gray-50">
-                {RECENT_INTERVIEWS.map((iv) => {
-                  const s = statusConfig[iv.status];
-                  return (
+                {isLoading ? (
+                  [...Array(3)].map((_, i) => (
                     <div
-                      key={iv.id}
-                      className="flex items-center justify-between px-6 py-4 hover:bg-gray-50 transition-colors"
+                      key={i}
+                      className="flex items-center justify-between px-6 py-4"
                     >
                       <div className="flex items-center gap-4">
-                        {/* Avatar */}
-                        <div
-                          className="w-10 h-10 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
-                          style={{
-                            background:
-                              "linear-gradient(135deg, #6366f1, #4f46e5)",
-                          }}
-                        >
-                          {iv.avatar}
-                        </div>
-                        <div>
-                          <p className="text-sm font-semibold text-gray-800">
-                            {iv.candidate}
-                          </p>
-                          <p className="text-xs text-gray-400">{iv.role}</p>
+                        <Skeleton className="w-10 h-10 rounded-full shrink-0" />
+                        <div className="space-y-2">
+                          <Skeleton className="h-4 w-32" />
+                          <Skeleton className="h-3 w-24" />
                         </div>
                       </div>
-
-                      <div className="flex items-center gap-4 shrink-0">
-                        {/* Score */}
-                        <div className="text-center hidden sm:block">
-                          <div className="flex items-center gap-1">
-                            <Star
-                              size={12}
-                              className="text-amber-400 fill-amber-400"
-                            />
-                            <span
-                              className={`text-sm font-bold ${scoreColor(iv.score)}`}
-                            >
-                              {iv.score}
-                            </span>
-                          </div>
-                          <p className="text-[10px] text-gray-400">AI Score</p>
-                        </div>
-
-                        {/* Date */}
-                        <div className="text-right hidden md:block">
-                          <p className="text-xs text-gray-400">{iv.date}</p>
-                        </div>
-
-                        {/* Status */}
-                        <span
-                          className={`text-[11px] font-medium px-2.5 py-1 rounded-full ${s.cls}`}
-                        >
-                          {s.label}
-                        </span>
-
-                        {/* Actions */}
-                        {iv.status === "pending" && (
-                          <div className="flex items-center gap-1">
-                            <button className="w-7 h-7 flex items-center justify-center rounded-lg bg-emerald-50 hover:bg-emerald-100 transition-colors">
-                              <CheckCircle
-                                size={14}
-                                className="text-emerald-500"
-                              />
-                            </button>
-                            <button className="w-7 h-7 flex items-center justify-center rounded-lg bg-red-50 hover:bg-red-100 transition-colors">
-                              <XCircle size={14} className="text-red-400" />
-                            </button>
-                          </div>
-                        )}
-                      </div>
+                      <Skeleton className="h-6 w-16" />
                     </div>
-                  );
-                })}
+                  ))
+                ) : recentInterviews.length === 0 ? (
+                  <p className="text-sm text-gray-400 text-center py-10">
+                    No interviews yet.
+                  </p>
+                ) : (
+                  recentInterviews.map((iv) => {
+                    // ✅ Use getStatus — safe against undefined
+                    const s = getStatus(iv.status);
+                    return (
+                      <div
+                        key={iv.id}
+                        className="flex items-center justify-between px-6 py-4 hover:bg-gray-50 transition-colors"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div
+                            className="w-10 h-10 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
+                            style={{
+                              background:
+                                "linear-gradient(135deg, #6366f1, #4f46e5)",
+                            }}
+                          >
+                            {iv.avatar}
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold text-gray-800">
+                              {iv.candidate}
+                            </p>
+                            <p className="text-xs text-gray-400">{iv.role}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4 shrink-0">
+                          <div className="text-center hidden sm:block">
+                            <div className="flex items-center gap-1">
+                              <Star
+                                size={12}
+                                className="text-amber-400 fill-amber-400"
+                              />
+                              <span
+                                className={`text-sm font-bold ${scoreColor(iv.score ?? 0)}`}
+                              >
+                                {iv.score ?? "—"}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-gray-400">
+                              AI Score
+                            </p>
+                          </div>
+                          <div className="text-right hidden md:block">
+                            <p className="text-xs text-gray-400">{iv.date}</p>
+                          </div>
+                          <span
+                            className={`text-[11px] font-medium px-2.5 py-1 rounded-full ${s.cls}`}
+                          >
+                            {s.label}
+                          </span>
+                          {iv.status === "pending" && (
+                            <div className="flex items-center gap-1">
+                              <button className="w-7 h-7 flex items-center justify-center rounded-lg bg-emerald-50 hover:bg-emerald-100 transition-colors">
+                                <CheckCircle
+                                  size={14}
+                                  className="text-emerald-500"
+                                />
+                              </button>
+                              <button className="w-7 h-7 flex items-center justify-center rounded-lg bg-red-50 hover:bg-red-100 transition-colors">
+                                <XCircle size={14} className="text-red-400" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
           </>
@@ -580,7 +566,6 @@ const CompanyDashboard = () => {
 
         {activeTab === "how it works" && (
           <div className="max-w-4xl mx-auto">
-            {/* Header */}
             <div className="text-center mb-12">
               <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-indigo-50 border border-indigo-100 mb-4">
                 <Zap size={13} className="text-indigo-500" />
@@ -599,7 +584,6 @@ const CompanyDashboard = () => {
               </p>
             </div>
 
-            {/* Steps */}
             <div className="space-y-4">
               {HOW_IT_WORKS.map(({ step, icon: Icon, title, desc }, i) => (
                 <div
@@ -639,9 +623,8 @@ const CompanyDashboard = () => {
               ))}
             </div>
 
-            {/* CTA */}
             <div
-              className="mt-10 bg-white rounded-2xl border border-indigo-200 shadow-sm p-8 text-center"
+              className="mt-10 rounded-2xl border border-indigo-200 shadow-sm p-8 text-center"
               style={{
                 background: "linear-gradient(135deg, #f0f0ff 0%, #fafaff 100%)",
               }}
@@ -659,9 +642,7 @@ const CompanyDashboard = () => {
                   background: "linear-gradient(135deg, #6366f1, #4f46e5)",
                 }}
               >
-                <Plus size={16} />
-                Post Your First Job
-                <ArrowRight size={15} />
+                <Plus size={16} /> Post Your First Job <ArrowRight size={15} />
               </button>
             </div>
           </div>

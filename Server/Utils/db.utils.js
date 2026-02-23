@@ -206,6 +206,34 @@ CREATE TABLE IF NOT EXISTS interview_video_chunks (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 `;
 
+const CREATE_JOBS_TABLE = `
+  CREATE TABLE IF NOT EXISTS jobs (
+    id               INT AUTO_INCREMENT PRIMARY KEY,
+    title            VARCHAR(255)   NOT NULL,
+    department       VARCHAR(100)   NOT NULL,
+    location         VARCHAR(150)   NOT NULL,
+    type             ENUM('Full-time', 'Part-time', 'Contract', 'Internship', 'Remote')
+                                    NOT NULL DEFAULT 'Full-time',
+    experience       VARCHAR(50)    NOT NULL,
+    salary           VARCHAR(100)   DEFAULT NULL,
+    status           ENUM('active', 'closed', 'draft')
+                                    NOT NULL DEFAULT 'active',
+    applicants       INT UNSIGNED   NOT NULL DEFAULT 0,
+    description      TEXT           NOT NULL,
+    responsibilities TEXT           DEFAULT NULL,
+    requirements     TEXT           DEFAULT NULL,
+    skills           JSON           DEFAULT NULL COMMENT 'Array of skill strings e.g. ["React","TypeScript"]',
+    posted           DATE           NOT NULL DEFAULT (CURRENT_DATE),
+    created_at       TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                    ON UPDATE CURRENT_TIMESTAMP,
+
+    INDEX idx_status     (status),
+    INDEX idx_department (department),
+    INDEX idx_posted     (posted)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+`;
+
 const createTable = async (pool, tableName, query) => {
   try {
     await pool.query(query);
@@ -244,6 +272,7 @@ const createAllTables = async (pool) => {
       interviewVideoChunksTableQuery,
     );
 
+    await createTable(pool, "job_details", CREATE_JOBS_TABLE);
     console.log(" All tables created successfully.");
   } catch (error) {
     console.error("❌ Error creating tables:", error);

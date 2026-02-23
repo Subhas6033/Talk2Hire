@@ -5,6 +5,9 @@ import { setupInterceptors } from "../API/Setupinterceptor";
 import interviewReducer from "../API/interviewApi";
 import hiringReducer from "../API/hiringApi";
 import companyReducer from "../API/companyAuthApi";
+import jobReducer from "../API/jobApi";
+import dashboardReducer from "../API/companyDashboardApi";
+import companyInterviewReducer from "../API/companyInterviewApi";
 
 export const store = configureStore({
   reducer: {
@@ -13,6 +16,9 @@ export const store = configureStore({
     interview: interviewReducer,
     hiring: hiringReducer,
     company: companyReducer,
+    jobs: jobReducer,
+    dashboard: dashboardReducer,
+    companyInterviews: companyInterviewReducer,
   },
 });
 

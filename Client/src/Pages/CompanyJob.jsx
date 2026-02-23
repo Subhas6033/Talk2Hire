@@ -1,4 +1,3 @@
-import React, { useState } from "react";
 import {
   Plus,
   Search,
@@ -19,68 +18,10 @@ import {
   ToggleRight,
   DollarSign,
 } from "lucide-react";
+import { useState } from "react";
+import useJobs from "../Hooks/useJobHook";
 
-// ─── Mock Data ───────────────────────────────────────────────
-const INITIAL_JOBS = [
-  {
-    id: 1,
-    title: "Senior Frontend Developer",
-    department: "Engineering",
-    location: "Remote",
-    type: "Full-time",
-    experience: "3-5 years",
-    salary: "$80,000 - $120,000",
-    status: "active",
-    applicants: 24,
-    posted: "Dec 15, 2024",
-    description:
-      "We are looking for a skilled Frontend Developer to join our engineering team. You will be responsible for building and maintaining high-quality web applications.",
-    skills: ["React", "TypeScript", "Tailwind CSS", "Node.js"],
-    responsibilities:
-      "Build and maintain web applications\nCollaborate with design team\nCode reviews and mentorship\nOptimize application performance",
-    requirements:
-      "3+ years React experience\nStrong TypeScript skills\nExperience with REST APIs\nGood communication skills",
-  },
-  {
-    id: 2,
-    title: "Product Designer",
-    department: "Design",
-    location: "New York, NY",
-    type: "Full-time",
-    experience: "2-4 years",
-    salary: "$70,000 - $100,000",
-    status: "active",
-    applicants: 18,
-    posted: "Dec 12, 2024",
-    description:
-      "Join our design team to create beautiful, user-centered digital experiences. You will work closely with product and engineering teams.",
-    skills: ["Figma", "UI/UX", "Prototyping", "User Research"],
-    responsibilities:
-      "Create wireframes and prototypes\nConduct user research\nDesign system maintenance\nCollaborate with stakeholders",
-    requirements:
-      "Portfolio demonstrating UI/UX work\nFigma proficiency\nUnderstanding of design systems\nExcellent communication",
-  },
-  {
-    id: 3,
-    title: "Backend Engineer",
-    department: "Engineering",
-    location: "San Francisco, CA",
-    type: "Full-time",
-    experience: "4-6 years",
-    salary: "$100,000 - $150,000",
-    status: "closed",
-    applicants: 31,
-    posted: "Nov 28, 2024",
-    description:
-      "We need an experienced Backend Engineer to scale our infrastructure and build robust APIs.",
-    skills: ["Node.js", "PostgreSQL", "AWS", "Docker"],
-    responsibilities:
-      "Design and build scalable APIs\nDatabase optimization\nCloud infrastructure management\nCode reviews",
-    requirements:
-      "4+ years backend experience\nStrong SQL skills\nAWS experience\nMicroservices knowledge",
-  },
-];
-
+// ─── Constants ────────────────────────────────────────────────
 const DEPARTMENTS = [
   "Engineering",
   "Design",
@@ -138,7 +79,23 @@ const EMPTY_JOB = {
   requirements: "",
 };
 
-// ─── Reusable Field ──────────────────────────────────────────
+// ─── Helper: always returns an array from skills ──────────────
+const parseSkills = (skills) => {
+  if (Array.isArray(skills)) return skills;
+  if (typeof skills === "string") {
+    try {
+      return JSON.parse(skills);
+    } catch {
+      return skills
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+  }
+  return [];
+};
+
+// ─── Field wrapper ────────────────────────────────────────────
 const Field = ({ label, error, required, children }) => (
   <div>
     <label className="block text-xs font-semibold text-gray-600 mb-1.5 tracking-wide uppercase">
@@ -147,8 +104,7 @@ const Field = ({ label, error, required, children }) => (
     {children}
     {error && (
       <p className="mt-1 text-xs text-red-500 flex items-center gap-1">
-        <AlertCircle size={11} />
-        {error}
+        <AlertCircle size={11} /> {error}
       </p>
     )}
   </div>
@@ -163,13 +119,12 @@ const inputCls = (err) =>
 
 const selectCls = inputCls(false) + " cursor-pointer appearance-none";
 
-// ─── Job Form Modal ──────────────────────────────────────────
-const JobFormModal = ({ job, onClose, onSave }) => {
+// ─── Job Form Modal ───────────────────────────────────────────
+const JobFormModal = ({ job, onClose, onSave, isSaving }) => {
   const isEdit = !!job?.id;
   const [form, setForm] = useState(job || EMPTY_JOB);
   const [skillInput, setSkillInput] = useState("");
   const [errors, setErrors] = useState({});
-  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
   const set = (key, val) => {
@@ -180,9 +135,8 @@ const JobFormModal = ({ job, onClose, onSave }) => {
   const addSkill = (e) => {
     if ((e.key === "Enter" || e.key === ",") && skillInput.trim()) {
       e.preventDefault();
-      if (!form.skills.includes(skillInput.trim())) {
+      if (!form.skills.includes(skillInput.trim()))
         set("skills", [...form.skills, skillInput.trim()]);
-      }
       setSkillInput("");
     }
   };
@@ -206,33 +160,16 @@ const JobFormModal = ({ job, onClose, onSave }) => {
 
   const handleSave = async () => {
     if (!validate()) return;
-    setSaving(true);
-    await new Promise((r) => setTimeout(r, 800)); // simulate API
-    setSaving(false);
-    setSaved(true);
-    setTimeout(() => {
-      onSave({
-        ...form,
-        id: form.id || Date.now(),
-        posted: new Date().toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        }),
-        applicants: form.applicants || 0,
-      });
-    }, 600);
+    const result = await onSave(form);
+    if (!result?.error) setSaved(true);
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/20 backdrop-blur-sm"
         onClick={onClose}
       />
-
-      {/* Modal */}
       <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-7 py-5 border-b border-gray-100">
@@ -256,7 +193,6 @@ const JobFormModal = ({ job, onClose, onSave }) => {
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-7 py-6 space-y-5">
-          {/* Title */}
           <Field label="Job Title" required error={errors.title}>
             <input
               className={inputCls(errors.title)}
@@ -266,7 +202,6 @@ const JobFormModal = ({ job, onClose, onSave }) => {
             />
           </Field>
 
-          {/* Dept + Type */}
           <div className="grid grid-cols-2 gap-4">
             <Field label="Department" required error={errors.department}>
               <div className="relative">
@@ -305,7 +240,6 @@ const JobFormModal = ({ job, onClose, onSave }) => {
             </Field>
           </div>
 
-          {/* Location + Experience */}
           <div className="grid grid-cols-2 gap-4">
             <Field label="Location" required error={errors.location}>
               <input
@@ -335,7 +269,6 @@ const JobFormModal = ({ job, onClose, onSave }) => {
             </Field>
           </div>
 
-          {/* Salary + Status */}
           <div className="grid grid-cols-2 gap-4">
             <Field label="Salary Range">
               <div className="relative">
@@ -372,18 +305,16 @@ const JobFormModal = ({ job, onClose, onSave }) => {
             </Field>
           </div>
 
-          {/* Description */}
           <Field label="Job Description" required error={errors.description}>
             <textarea
               rows={3}
               className={inputCls(errors.description) + " resize-none"}
-              placeholder="Describe the role and what the candidate will be doing..."
+              placeholder="Describe the role..."
               value={form.description}
               onChange={(e) => set("description", e.target.value)}
             />
           </Field>
 
-          {/* Responsibilities */}
           <Field label="Responsibilities">
             <textarea
               rows={3}
@@ -394,7 +325,6 @@ const JobFormModal = ({ job, onClose, onSave }) => {
             />
           </Field>
 
-          {/* Requirements */}
           <Field label="Requirements">
             <textarea
               rows={3}
@@ -405,7 +335,6 @@ const JobFormModal = ({ job, onClose, onSave }) => {
             />
           </Field>
 
-          {/* Skills */}
           <Field label="Required Skills">
             <div
               className={`${inputCls(false)} min-h-11 flex flex-wrap gap-2 items-center cursor-text`}
@@ -454,7 +383,7 @@ const JobFormModal = ({ job, onClose, onSave }) => {
           </button>
           <button
             onClick={handleSave}
-            disabled={saving || saved}
+            disabled={isSaving || saved}
             className="flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-semibold text-white shadow-md hover:shadow-lg transition-all disabled:opacity-70"
             style={{
               background: saved
@@ -466,15 +395,14 @@ const JobFormModal = ({ job, onClose, onSave }) => {
               <>
                 <CheckCircle size={15} /> Saved!
               </>
-            ) : saving ? (
+            ) : isSaving ? (
               <>
                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />{" "}
                 Saving...
               </>
             ) : (
               <>
-                <Save size={15} />
-                {isEdit ? "Update Job" : "Post Job"}
+                <Save size={15} /> {isEdit ? "Update Job" : "Post Job"}
               </>
             )}
           </button>
@@ -484,20 +412,20 @@ const JobFormModal = ({ job, onClose, onSave }) => {
   );
 };
 
-// ─── Job Card ────────────────────────────────────────────────
-const JobCard = ({ job, onEdit, onDelete, onToggleStatus }) => {
-  const [deleting, setDeleting] = useState(false);
-  const s = statusConfig[job.status];
-
-  const handleDelete = async () => {
-    setDeleting(true);
-    await new Promise((r) => setTimeout(r, 500));
-    onDelete(job.id);
-  };
+// ─── Job Card ─────────────────────────────────────────────────
+const JobCard = ({
+  job,
+  onEdit,
+  onDelete,
+  onToggleStatus,
+  isDeleting,
+  isToggling,
+}) => {
+  const s = statusConfig[job.status] || statusConfig.closed;
+  const skills = parseSkills(job.skills); // ← FIXED: always an array
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-md transition-all group overflow-hidden">
-      {/* Top accent */}
       <div
         className="h-1"
         style={{
@@ -511,7 +439,6 @@ const JobCard = ({ job, onEdit, onDelete, onToggleStatus }) => {
       />
 
       <div className="p-5">
-        {/* Header row */}
         <div className="flex items-start justify-between gap-3 mb-4">
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-indigo-50 border border-indigo-100">
@@ -531,26 +458,24 @@ const JobCard = ({ job, onEdit, onDelete, onToggleStatus }) => {
           </span>
         </div>
 
-        {/* Meta */}
         <div className="flex flex-wrap gap-x-4 gap-y-1.5 mb-4">
           {[
             { icon: MapPin, text: job.location },
             { icon: Clock, text: job.type },
-            { icon: Users, text: `${job.applicants} applicants` },
+            { icon: Users, text: `${job.applicants ?? 0} applicants` },
           ].map(({ icon: Icon, text }) => (
             <span
               key={text}
               className="flex items-center gap-1.5 text-xs text-gray-400"
             >
-              <Icon size={12} className="text-gray-300" />
-              {text}
+              <Icon size={12} className="text-gray-300" /> {text}
             </span>
           ))}
         </div>
 
-        {/* Skills */}
+        {/* ← FIXED: using parsed skills array */}
         <div className="flex flex-wrap gap-1.5 mb-4">
-          {job.skills.slice(0, 4).map((sk) => (
+          {skills.slice(0, 4).map((sk) => (
             <span
               key={sk}
               className="text-[11px] px-2 py-0.5 bg-gray-100 text-gray-500 rounded-md font-medium"
@@ -558,14 +483,13 @@ const JobCard = ({ job, onEdit, onDelete, onToggleStatus }) => {
               {sk}
             </span>
           ))}
-          {job.skills.length > 4 && (
+          {skills.length > 4 && (
             <span className="text-[11px] px-2 py-0.5 bg-gray-100 text-gray-400 rounded-md">
-              +{job.skills.length - 4}
+              +{skills.length - 4}
             </span>
           )}
         </div>
 
-        {/* Salary + Posted */}
         {job.salary && (
           <div className="flex items-center gap-1.5 mb-4">
             <DollarSign size={12} className="text-emerald-500" />
@@ -575,27 +499,28 @@ const JobCard = ({ job, onEdit, onDelete, onToggleStatus }) => {
           </div>
         )}
 
-        {/* Footer actions */}
         <div className="flex items-center justify-between pt-3 border-t border-gray-100">
           <span className="text-[11px] text-gray-400 flex items-center gap-1">
             <Clock size={10} /> Posted {job.posted}
           </span>
-
           <div className="flex items-center gap-1">
-            {/* Toggle active/closed */}
+            {/* Toggle */}
             <button
               onClick={() => onToggleStatus(job.id)}
-              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors"
+              disabled={isToggling}
+              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors disabled:opacity-50"
               title={job.status === "active" ? "Deactivate" : "Activate"}
             >
-              {job.status === "active" ? (
+              {isToggling ? (
+                <div className="w-3 h-3 border border-gray-300 border-t-gray-500 rounded-full animate-spin" />
+              ) : job.status === "active" ? (
                 <ToggleRight size={16} className="text-emerald-500" />
               ) : (
                 <ToggleLeft size={16} className="text-gray-400" />
               )}
             </button>
 
-            {/* View applicants */}
+            {/* View */}
             <button
               className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-indigo-50 transition-colors"
               title="View applicants"
@@ -617,12 +542,12 @@ const JobCard = ({ job, onEdit, onDelete, onToggleStatus }) => {
 
             {/* Delete */}
             <button
-              onClick={handleDelete}
-              disabled={deleting}
+              onClick={() => onDelete(job.id)}
+              disabled={isDeleting}
               className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 transition-colors"
               title="Delete job"
             >
-              {deleting ? (
+              {isDeleting ? (
                 <div className="w-3 h-3 border border-red-300 border-t-red-500 rounded-full animate-spin" />
               ) : (
                 <Trash2
@@ -638,61 +563,49 @@ const JobCard = ({ job, onEdit, onDelete, onToggleStatus }) => {
   );
 };
 
-// ─── Main Page ───────────────────────────────────────────────
+// ─── Main Page ────────────────────────────────────────────────
 const CompanyJob = () => {
-  const [jobs, setJobs] = useState(INITIAL_JOBS);
-  const [modal, setModal] = useState(null); // null | "create" | job object
-  const [search, setSearch] = useState("");
-  const [filterStatus, setFilterStatus] = useState("all");
-  const [filterDept, setFilterDept] = useState("all");
-
-  const openCreate = () => setModal("create");
-  const openEdit = (job) => setModal(job);
-  const closeModal = () => setModal(null);
-
-  const handleSave = (updatedJob) => {
-    setJobs((prev) => {
-      const exists = prev.find((j) => j.id === updatedJob.id);
-      return exists
-        ? prev.map((j) => (j.id === updatedJob.id ? updatedJob : j))
-        : [updatedJob, ...prev];
-    });
-    closeModal();
-  };
-
-  const handleDelete = (id) =>
-    setJobs((prev) => prev.filter((j) => j.id !== id));
-
-  const handleToggleStatus = (id) => {
-    setJobs((prev) =>
-      prev.map((j) =>
-        j.id === id
-          ? { ...j, status: j.status === "active" ? "closed" : "active" }
-          : j,
-      ),
-    );
-  };
-
-  const filtered = jobs.filter((j) => {
-    const matchSearch =
-      j.title.toLowerCase().includes(search.toLowerCase()) ||
-      j.department.toLowerCase().includes(search.toLowerCase());
-    const matchStatus = filterStatus === "all" || j.status === filterStatus;
-    const matchDept = filterDept === "all" || j.department === filterDept;
-    return matchSearch && matchStatus && matchDept;
-  });
-
-  const counts = {
-    all: jobs.length,
-    active: jobs.filter((j) => j.status === "active").length,
-    closed: jobs.filter((j) => j.status === "closed").length,
-    draft: jobs.filter((j) => j.status === "draft").length,
-  };
-
-  const uniqueDepts = [...new Set(jobs.map((j) => j.department))];
+  const {
+    jobs,
+    counts,
+    uniqueDepts,
+    search,
+    setSearch,
+    filterStatus,
+    setFilterStatus,
+    filterDept,
+    setFilterDept,
+    modal,
+    openCreate,
+    openEdit,
+    closeModal,
+    handleSave,
+    handleDelete,
+    handleToggleStatus,
+    isFetching,
+    isSaving,
+    isDeleting,
+    isToggling,
+    error,
+    successMessage,
+  } = useJobs();
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* ── Toast Notifications ── */}
+      <div className="fixed top-4 right-4 z-50 flex flex-col gap-2">
+        {successMessage && (
+          <div className="flex items-center gap-2 px-4 py-3 bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm rounded-xl shadow-md">
+            <CheckCircle size={15} /> {successMessage}
+          </div>
+        )}
+        {error && (
+          <div className="flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl shadow-md">
+            <AlertCircle size={15} /> {error}
+          </div>
+        )}
+      </div>
+
       {/* ── Header ── */}
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-6 py-6">
@@ -714,7 +627,7 @@ const CompanyJob = () => {
             </button>
           </div>
 
-          {/* Status filter tabs */}
+          {/* Status tabs */}
           <div className="flex items-center gap-1 mt-5">
             {["all", "active", "closed", "draft"].map((s) => (
               <button
@@ -745,9 +658,8 @@ const CompanyJob = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-6 py-6">
-        {/* ── Search + Filter bar ── */}
+        {/* ── Search + Filter ── */}
         <div className="flex items-center gap-3 mb-6 flex-wrap">
-          {/* Search */}
           <div className="relative flex-1 min-w-55">
             <Search
               size={15}
@@ -760,8 +672,6 @@ const CompanyJob = () => {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-
-          {/* Department filter */}
           <div className="relative">
             <Filter
               size={14}
@@ -784,65 +694,85 @@ const CompanyJob = () => {
           </div>
         </div>
 
-        {/* ── Jobs Grid ── */}
-        {filtered.length > 0 ? (
+        {/* ── Loading skeleton ── */}
+        {isFetching && jobs.length === 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-            {filtered.map((job) => (
-              <JobCard
-                key={job.id}
-                job={job}
-                onEdit={openEdit}
-                onDelete={handleDelete}
-                onToggleStatus={handleToggleStatus}
-              />
+            {[...Array(3)].map((_, i) => (
+              <div
+                key={i}
+                className="bg-white rounded-2xl border border-gray-200 h-64 animate-pulse"
+              >
+                <div className="h-1 bg-gray-200 rounded-t-2xl" />
+                <div className="p-5 space-y-3">
+                  <div className="h-4 bg-gray-100 rounded w-3/4" />
+                  <div className="h-3 bg-gray-100 rounded w-1/2" />
+                  <div className="h-3 bg-gray-100 rounded w-2/3" />
+                </div>
+              </div>
             ))}
-
-            {/* Create new card */}
-            <button
-              onClick={openCreate}
-              className="bg-white rounded-2xl border-2 border-dashed border-gray-200 hover:border-indigo-300 hover:bg-indigo-50/30 transition-all flex flex-col items-center justify-center gap-3 p-8 min-h-50 group"
-            >
-              <div className="w-12 h-12 rounded-2xl bg-gray-100 group-hover:bg-indigo-100 flex items-center justify-center transition-colors">
-                <Plus
-                  size={22}
-                  className="text-gray-400 group-hover:text-indigo-500 transition-colors"
-                />
-              </div>
-              <div className="text-center">
-                <p className="text-sm font-semibold text-gray-500 group-hover:text-indigo-600 transition-colors">
-                  Post New Job
-                </p>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  Click to create a new listing
-                </p>
-              </div>
-            </button>
-          </div>
-        ) : (
-          /* Empty state */
-          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col items-center justify-center py-20 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-indigo-50 flex items-center justify-center mb-4">
-              <Briefcase size={28} className="text-indigo-300" />
-            </div>
-            <h3 className="text-base font-bold text-gray-700 mb-1">
-              No jobs found
-            </h3>
-            <p className="text-sm text-gray-400 mb-6 max-w-xs">
-              {search || filterStatus !== "all" || filterDept !== "all"
-                ? "Try adjusting your filters or search terms."
-                : "You haven't posted any jobs yet. Create your first listing!"}
-            </p>
-            <button
-              onClick={openCreate}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-md"
-              style={{
-                background: "linear-gradient(135deg, #6366f1, #4f46e5)",
-              }}
-            >
-              <Plus size={15} /> Post Your First Job
-            </button>
           </div>
         )}
+
+        {/* ── Jobs Grid ── */}
+        {!isFetching || jobs.length > 0 ? (
+          jobs.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+              {jobs.map((job) => (
+                <JobCard
+                  key={job.id}
+                  job={job}
+                  onEdit={openEdit}
+                  onDelete={handleDelete}
+                  onToggleStatus={handleToggleStatus}
+                  isDeleting={isDeleting(job.id)}
+                  isToggling={isToggling(job.id)}
+                />
+              ))}
+              <button
+                onClick={openCreate}
+                className="bg-white rounded-2xl border-2 border-dashed border-gray-200 hover:border-indigo-300 hover:bg-indigo-50/30 transition-all flex flex-col items-center justify-center gap-3 p-8 min-h-50 group"
+              >
+                <div className="w-12 h-12 rounded-2xl bg-gray-100 group-hover:bg-indigo-100 flex items-center justify-center transition-colors">
+                  <Plus
+                    size={22}
+                    className="text-gray-400 group-hover:text-indigo-500 transition-colors"
+                  />
+                </div>
+                <div className="text-center">
+                  <p className="text-sm font-semibold text-gray-500 group-hover:text-indigo-600 transition-colors">
+                    Post New Job
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Click to create a new listing
+                  </p>
+                </div>
+              </button>
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col items-center justify-center py-20 text-center">
+              <div className="w-16 h-16 rounded-2xl bg-indigo-50 flex items-center justify-center mb-4">
+                <Briefcase size={28} className="text-indigo-300" />
+              </div>
+              <h3 className="text-base font-bold text-gray-700 mb-1">
+                No jobs found
+              </h3>
+              <p className="text-sm text-gray-400 mb-6 max-w-xs">
+                {search || filterStatus !== "all" || filterDept !== "all"
+                  ? "Try adjusting your filters or search terms."
+                  : "You haven't posted any jobs yet. Create your first listing!"}
+              </p>
+              <button
+                onClick={openCreate}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-md"
+                style={{
+                  background: "linear-gradient(135deg, #6366f1, #4f46e5)",
+                }}
+              >
+                <Plus size={15} /> Post Your First Job
+              </button>
+            </div>
+          )
+        ) : null}
       </div>
 
       {/* ── Modal ── */}
@@ -851,6 +781,7 @@ const CompanyJob = () => {
           job={modal === "create" ? null : modal}
           onClose={closeModal}
           onSave={handleSave}
+          isSaving={isSaving}
         />
       )}
     </div>

@@ -17,6 +17,8 @@ import Companylogin from "./Auth/Companylogin.jsx";
 import CompanyDashboard from "./CompanyDashboard.jsx";
 import CompanyJob from "./CompanyJob.jsx";
 import CompanyInterviews from "./CompanyInterview.jsx";
+import UserJob from "./UserJob.jsx";
+import UserJobDetail from "./UserJobDetails.jsx";
 
 export {
   Home,
@@ -38,4 +40,6 @@ export {
   CompanyDashboard,
   CompanyJob,
   CompanyInterviews,
+  UserJob,
+  UserJobDetail,
 };

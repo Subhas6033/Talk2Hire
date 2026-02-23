@@ -10,6 +10,9 @@ const videoUploadRoutes = require("./Routes/videoUpload.routes.js");
 const VideoProcessingJobs = require("./Jobs/videoProcessing.jobs.js");
 const hiringRoutes = require("./Routes/hiring.routes.js");
 const companyAuthRoutes = require("./Admin/routes/auth.admin.routes.js");
+const jobRoutes = require("./Admin/routes/job.routes.js");
+const companyDashboardRoutes = require("./Admin/routes/dashboard.routes.js");
+const companyInterviewRoutes = require("./Admin/routes/interview.routes.js");
 
 dotenv.config();
 
@@ -108,6 +111,9 @@ app.use("/api/v1/hiring", hiringRoutes);
 
 // Company Routes
 app.use("/api/v1/company/auth", companyAuthRoutes);
+app.use("/api/v1/jobs", jobRoutes);
+app.use("/api/v1/dashboard", companyDashboardRoutes);
+app.use("/api/v1/company/interview", companyInterviewRoutes);
 
 // Health check endpoint
 app.get("/health", (req, res) => {
