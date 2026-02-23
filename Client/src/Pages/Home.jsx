@@ -82,8 +82,8 @@ const Home = () => {
               </p>
 
               <div className="mt-8 flex flex-wrap gap-4">
-                <Button size="lg" onClick={() => navigate("/interview")}>
-                  Start Interview
+                <Button size="lg" onClick={() => navigate("/jobs")}>
+                  See Openings
                 </Button>
 
                 <Button
