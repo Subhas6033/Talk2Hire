@@ -70,7 +70,7 @@ const UserJobDetail = () => {
 
   return (
     <div className="min-h-screen">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
         {/* Back */}
         <button
           onClick={() => navigate("/jobs")}
@@ -198,13 +198,6 @@ const UserJobDetail = () => {
                 )}
               </div>
             </Section>
-
-            <button
-              onClick={() => navigate(`/interview?jobId=${job.id}`)}
-              className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold rounded-xl transition-colors shadow-lg shadow-indigo-900/30"
-            >
-              Apply for this Position
-            </button>
           </div>
         </div>
       </div>

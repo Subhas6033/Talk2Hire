@@ -240,7 +240,7 @@ const UserJob = () => {
     <div className="min-h-screen">
       {/* ── Header ── */}
       <div className="border-b border-white/10 bg-white/5 backdrop-blur-sm">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
           <div className="mb-6">
             <h1 className="text-2xl font-bold text-textLight flex items-center gap-2">
               <Briefcase className="text-indigo-400" size={24} />
@@ -341,7 +341,7 @@ const UserJob = () => {
       </div>
 
       {/* ── Content ── */}
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
         {isFetching ? (
           /* Loading skeletons */
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
