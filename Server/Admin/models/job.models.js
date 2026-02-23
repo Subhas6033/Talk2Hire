@@ -113,6 +113,14 @@ const Job = {
     return rows.length ? parseRow(rows[0]) : null;
   },
 
+  // ── GET STATUS BY ID ────────────────────────────────────────
+  async getStatus(id) {
+    const [rows] = await pool.execute("SELECT status FROM jobs WHERE id = ?", [
+      id,
+    ]);
+    return rows.length ? rows[0].status : null;
+  },
+
   // ── UPDATE ──────────────────────────────────────────────────
   async update(id, data) {
     const allowed = [
@@ -187,8 +195,8 @@ const Job = {
       counts.all += Number(count);
     });
     return counts;
-  }, // ← comma, not semicolon (it's an object method, not a standalone function)
-}; // ← closes the Job object
+  },
+};
 
 // ─── Helper: parse JSON skills & format posted date ───────────
 function parseRow(row) {

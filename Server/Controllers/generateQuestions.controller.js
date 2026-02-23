@@ -4,6 +4,7 @@ const { mistralResponse } = require("./mistral.controllers.js");
 const { ollama } = require("../Config/openai.config.js");
 const { Interview } = require("../Models/interview.models.js");
 const User = require("../Models/user.models.js");
+const Job = require("../Admin/models/job.models.js");
 
 // ─── JSON extraction helper ───────────────────────────────────────────────────
 const extractJSON = (text) => {
@@ -111,7 +112,15 @@ const generateQuestions = asyncHandler(async (req, res) => {
   const jobId = req.body.jobId;
   let skills = req.body.skills;
 
-  if (!jobId) throw new APIERR(400, "Job ID is required");
+  if (!jobId || isNaN(jobId)) {
+    throw new APIERR(400, "Invalid Job ID");
+  }
+
+  const job = await Job.findById(Number(jobId));
+
+  if (!job || job.status !== "active") {
+    throw new APIERR(404, "Job not found");
+  }
 
   if (typeof skills === "string") {
     try {
