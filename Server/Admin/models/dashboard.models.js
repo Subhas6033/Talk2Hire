@@ -128,7 +128,6 @@ const Dashboard = {
   },
 };
 
-// ─── Helpers ──────────────────────────────────────────────────
 function formatPostedDate(date) {
   if (!date) return "";
   const now = new Date();

@@ -1,8 +1,6 @@
 const Dashboard = require("../models/dashboard.models.js");
 const { asyncHandler, APIERR, APIRES } = require("../../Utils/index.utils.js");
 
-// ─── GET /api/company/dashboard ───────────────────────────────
-// Returns stats, pipeline, recentJobs, recentInterviews in one call
 const getDashboard = asyncHandler(async (req, res) => {
   const companyId = req.company.id;
 
@@ -13,7 +11,6 @@ const getDashboard = asyncHandler(async (req, res) => {
     .json(new APIRES(200, data, "Dashboard data fetched successfully"));
 });
 
-// ─── GET /api/company/dashboard/stats ─────────────────────────
 const getDashboardStats = asyncHandler(async (req, res) => {
   const companyId = req.company.id;
 
@@ -24,7 +21,6 @@ const getDashboardStats = asyncHandler(async (req, res) => {
     .json(new APIRES(200, stats, "Stats fetched successfully"));
 });
 
-// ─── GET /api/company/dashboard/pipeline ──────────────────────
 const getDashboardPipeline = asyncHandler(async (req, res) => {
   const companyId = req.company.id;
 
@@ -35,7 +31,6 @@ const getDashboardPipeline = asyncHandler(async (req, res) => {
     .json(new APIRES(200, pipeline, "Pipeline fetched successfully"));
 });
 
-// ─── GET /api/company/dashboard/recent-jobs ───────────────────
 const getRecentJobs = asyncHandler(async (req, res) => {
   const companyId = req.company.id;
 
@@ -46,7 +41,6 @@ const getRecentJobs = asyncHandler(async (req, res) => {
     .json(new APIRES(200, recentJobs, "Recent jobs fetched successfully"));
 });
 
-// ─── GET /api/company/dashboard/recent-interviews ─────────────
 const getRecentInterviews = asyncHandler(async (req, res) => {
   const companyId = req.company.id;
 

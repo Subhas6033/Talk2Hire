@@ -2,7 +2,7 @@ const { uploadFileToFTP } = require("../Upload/uploadOnFTP");
 const { asyncHandler, APIRES } = require("../Utils/index.utils");
 
 // Micro-function for internal use
-const uploadFileMicro = async (file) => {
+const uploadFileMicro = async (file, remoteDir = "/public") => {
   if (!file) throw new Error("No file uploaded");
   if (file.size > 5 * 1024 * 1024) throw new Error("File too large (max 5MB)");
 
@@ -13,7 +13,7 @@ const uploadFileMicro = async (file) => {
   const result = await uploadFileToFTP(
     file.buffer,
     file.originalname,
-    "/public",
+    remoteDir,
   );
   console.log(" FTP uploaded URL:", result.url);
   return result; // <-- this returns the FTP URL and file info

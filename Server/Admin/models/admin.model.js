@@ -1,6 +1,5 @@
 const { pool } = require("../../Config/database.config.js");
 
-// Create Company
 const createCompany = async (companyData) => {
   const {
     companyName,
@@ -39,13 +38,11 @@ const createCompany = async (companyData) => {
   return result;
 };
 
-// Get All Companies
 const getAllCompanies = async () => {
   const [rows] = await pool.query("SELECT * FROM company_details");
   return rows;
 };
 
-// Get Company By ID
 const getCompanyById = async (id) => {
   const [rows] = await pool.query(
     "SELECT * FROM company_details WHERE id = ?",
@@ -54,7 +51,6 @@ const getCompanyById = async (id) => {
   return rows[0];
 };
 
-// Get Company By Email
 const getCompanyByEmail = async (companyMail) => {
   const [rows] = await pool.query(
     "SELECT * FROM company_details WHERE companyMail = ?",
@@ -63,7 +59,6 @@ const getCompanyByEmail = async (companyMail) => {
   return rows[0];
 };
 
-// Update Company
 const updateCompany = async (id, companyData) => {
   const {
     companyName,
@@ -107,7 +102,6 @@ const updateCompany = async (id, companyData) => {
   return result;
 };
 
-// Delete Company
 const deleteCompany = async (id) => {
   const [result] = await pool.query(
     "DELETE FROM company_details WHERE id = ?",
@@ -124,6 +118,14 @@ const updateRefreshToken = async (id, refreshToken) => {
   return result;
 };
 
+const updateCompanyLogoUrl = async (companyId, logoUrl) => {
+  const [result] = await pool.execute(
+    "UPDATE company_details SET logo = ? WHERE id = ?",
+    [logoUrl, companyId],
+  );
+  return result;
+};
+
 module.exports = {
   createCompany,
   getAllCompanies,
@@ -132,4 +134,5 @@ module.exports = {
   updateCompany,
   deleteCompany,
   updateRefreshToken,
+  updateCompanyLogoUrl,
 };

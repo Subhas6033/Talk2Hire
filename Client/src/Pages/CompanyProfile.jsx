@@ -2,7 +2,6 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useCompany } from "../Hooks/useCompanyAuthHook";
 
-// ─── Animation Variants ──────────────────────────────────────────────────────
 const fadeUp = {
   hidden: { opacity: 0, y: 24 },
   show: (i = 0) => ({
@@ -109,9 +108,7 @@ const VALUE_COLORS = [
   },
 ];
 
-// ─── Sub-Components ───────────────────────────────────────────────────────────
-
-function Avatar({ logo, name, size = 108 }) {
+function Avatar({ logo, name, size = 108, isUploading }) {
   const initials = (name || "Co")
     .split(" ")
     .map((w) => w[0])
@@ -119,27 +116,54 @@ function Avatar({ logo, name, size = 108 }) {
     .slice(0, 2)
     .toUpperCase();
 
-  if (logo) {
-    return (
-      <img
-        src={logo}
-        alt="Company Logo"
-        style={{ width: size, height: size }}
-        className="rounded-2xl object-cover shadow-md ring-4 ring-white"
-      />
-    );
-  }
   return (
-    <div
-      style={{ width: size, height: size }}
-      className="rounded-2xl bg-linear-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-md ring-4 ring-white"
-    >
-      <span
-        className="text-white font-black tracking-tight"
-        style={{ fontSize: size * 0.33 }}
-      >
-        {initials}
-      </span>
+    <div className="relative" style={{ width: size, height: size }}>
+      {logo ? (
+        <img
+          src={logo}
+          alt="Company Logo"
+          style={{ width: size, height: size }}
+          className="rounded-2xl object-cover shadow-md ring-4 ring-white"
+        />
+      ) : (
+        <div
+          style={{ width: size, height: size }}
+          className="rounded-2xl bg-linear-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-md ring-4 ring-white"
+        >
+          <span
+            className="text-white font-black tracking-tight"
+            style={{ fontSize: size * 0.33 }}
+          >
+            {initials}
+          </span>
+        </div>
+      )}
+      {isUploading && (
+        <div
+          style={{ width: size, height: size }}
+          className="absolute inset-0 rounded-2xl bg-black/40 flex items-center justify-center"
+        >
+          <svg
+            className="w-8 h-8 text-white animate-spin"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle
+              className="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              strokeWidth="4"
+            />
+            <path
+              className="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+            />
+          </svg>
+        </div>
+      )}
     </div>
   );
 }
@@ -159,7 +183,7 @@ function Tag({ label, color = "indigo" }) {
   );
 }
 
-function InputField({ label, value, onChange, multiline, editing }) {
+function InfoField({ label, value }) {
   return (
     <div className="w-full">
       {label && (
@@ -167,51 +191,9 @@ function InputField({ label, value, onChange, multiline, editing }) {
           {label}
         </label>
       )}
-      <AnimatePresence mode="wait">
-        {editing ? (
-          <motion.div
-            key="edit"
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            transition={{ duration: 0.18 }}
-          >
-            {multiline ? (
-              <textarea
-                value={value || ""}
-                onChange={(e) => onChange(e.target.value)}
-                rows={4}
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-gray-800 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-400/60 focus:border-indigo-300 transition-all placeholder:text-gray-300"
-                placeholder={
-                  label ? `Enter ${label.toLowerCase()}...` : "Enter details..."
-                }
-              />
-            ) : (
-              <input
-                value={value || ""}
-                onChange={(e) => onChange(e.target.value)}
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400/60 focus:border-indigo-300 transition-all placeholder:text-gray-300"
-                placeholder={
-                  label ? `Enter ${label.toLowerCase()}...` : "Enter value..."
-                }
-              />
-            )}
-          </motion.div>
-        ) : (
-          <motion.p
-            key="view"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.18 }}
-            className="text-gray-700 text-sm leading-relaxed"
-          >
-            {value || (
-              <span className="text-gray-300 italic">Not provided</span>
-            )}
-          </motion.p>
-        )}
-      </AnimatePresence>
+      <p className="text-gray-700 text-sm leading-relaxed">
+        {value || <span className="text-gray-300 italic">Not provided</span>}
+      </p>
     </div>
   );
 }
@@ -232,121 +214,112 @@ function Skeleton({ className = "" }) {
   );
 }
 
-// ─── Main Page Component ──────────────────────────────────────────────────────
+function PageSkeleton() {
+  return (
+    <div className="min-h-screen bg-gray-50 p-5 md:p-10">
+      <div className="max-w-5xl mx-auto space-y-5">
+        <div className="bg-white rounded-3xl border border-gray-100 p-8 shadow-sm">
+          <div className="flex gap-6 items-start">
+            <Skeleton className="w-28 h-28 rounded-2xl" />
+            <div className="flex-1 space-y-3 pt-1">
+              <Skeleton className="h-8 w-52" />
+              <Skeleton className="h-4 w-40" />
+              <div className="flex gap-2 pt-1">
+                <Skeleton className="h-6 w-24 rounded-full" />
+                <Skeleton className="h-6 w-20 rounded-full" />
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-4 gap-4">
+          {[...Array(4)].map((_, i) => (
+            <Skeleton key={i} className="h-24 rounded-2xl" />
+          ))}
+        </div>
+        <Skeleton className="h-72 rounded-2xl" />
+      </div>
+    </div>
+  );
+}
 
 export default function CompanyProfile() {
-  const { company, loading, error, updateCompany, clearError } = useCompany();
+  const {
+    company,
+    loading,
+    error,
+    hydrated,
+    updateCompanyLogo,
+    getCurrentCompany,
+    clearError,
+  } = useCompany();
 
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState({});
   const [tab, setTab] = useState("overview");
-  const [toast, setToast] = useState(null); // { type: "success"|"error", msg }
+  const [toast, setToast] = useState(null);
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const [logoPreview, setLogoPreview] = useState(null);
-  const [isSaving, setIsSaving] = useState(false);
   const fileRef = useRef();
 
-  // ── Push Redux errors into the local toast ────────────────────────────────
+  // Fetch fresh data on mount so the page always reflects server state after navigation
+  useEffect(() => {
+    getCurrentCompany();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (error) {
       showToast("error", error);
       clearError();
     }
-  }, [error]);
+  }, [error]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const showToast = (type, msg) => {
     setToast({ type, msg });
     setTimeout(() => setToast(null), 3200);
   };
 
-  const set = (key) => (val) => setDraft((d) => ({ ...d, [key]: val }));
-
-  const handleEdit = () => {
-    setDraft({ ...(company || {}) });
-    setLogoPreview(company?.logo || null);
-    setEditing(true);
-  };
-
-  const handleCancel = () => {
-    setDraft({});
-    setLogoPreview(null);
-    setEditing(false);
-  };
-
-  const handleSave = async () => {
-    setIsSaving(true);
-    const payload = { ...draft };
-    if (logoPreview && logoPreview !== company?.logo) {
-      payload.logo = logoPreview;
-    }
-    try {
-      const result = await updateCompany(payload);
-      if (result?.error || result?.payload?.error) {
-        showToast(
-          "error",
-          result?.payload?.message || "Failed to update profile.",
-        );
-      } else {
-        showToast("success", "Company profile updated!");
-        setEditing(false);
-        setLogoPreview(null);
-      }
-    } catch {
-      showToast("error", "Something went wrong. Please try again.");
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleLogoChange = (e) => {
+  const handleLogoChange = async (e) => {
     const file = e.target.files[0];
+    e.target.value = "";
     if (!file) return;
+
+    // Show optimistic preview immediately before the upload resolves
     const reader = new FileReader();
     reader.onload = (ev) => setLogoPreview(ev.target.result);
     reader.readAsDataURL(file);
+
+    setIsUploadingLogo(true);
+    try {
+      const formData = new FormData();
+      formData.append("logo", file);
+      const result = await updateCompanyLogo(formData);
+      if (result?.error) {
+        setLogoPreview(null);
+        showToast("error", result.payload || "Failed to upload logo.");
+      } else {
+        showToast("success", "Logo updated!");
+        setLogoPreview(null);
+      }
+    } catch {
+      setLogoPreview(null);
+      showToast("error", "Something went wrong. Please try again.");
+    } finally {
+      setIsUploadingLogo(false);
+    }
   };
 
-  // Active display data — show draft while editing, company data otherwise
-  const cur = editing ? draft : company || {};
-  const currentLogo = editing ? logoPreview : company?.logo;
-  const values = Array.isArray(cur?.values)
-    ? cur.values
+  const currentLogo = logoPreview || company?.logo;
+  const values = Array.isArray(company?.values)
+    ? company.values
     : ["Innovation", "Integrity", "Impact", "Inclusivity"];
 
-  if (loading && !company) {
-    return (
-      <div className="min-h-screen bg-gray-50 p-5 md:p-10">
-        <div className="max-w-5xl mx-auto space-y-5">
-          <div className="bg-white rounded-3xl border border-gray-100 p-8 shadow-sm">
-            <div className="flex gap-6 items-start">
-              <Skeleton className="w-28 h-28 rounded-2xl" />
-              <div className="flex-1 space-y-3 pt-1">
-                <Skeleton className="h-8 w-52" />
-                <Skeleton className="h-4 w-40" />
-                <div className="flex gap-2 pt-1">
-                  <Skeleton className="h-6 w-24 rounded-full" />
-                  <Skeleton className="h-6 w-20 rounded-full" />
-                </div>
-              </div>
-            </div>
-          </div>
-          <div className="grid grid-cols-4 gap-4">
-            {[...Array(4)].map((_, i) => (
-              <Skeleton key={i} className="h-24 rounded-2xl" />
-            ))}
-          </div>
-          <Skeleton className="h-72 rounded-2xl" />
-        </div>
-      </div>
-    );
+  if (!hydrated || loading || (!company && hydrated)) {
+    return <PageSkeleton />;
   }
 
-  // ── Main Render ───────────────────────────────────────────────────────────
   return (
     <div
       className="min-h-screen bg-gray-50 overflow-x-hidden"
       style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif" }}
     >
-      {/* Ambient background blobs */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
         <div className="absolute -top-48 -right-48 w-160 h-160 bg-indigo-100/50 rounded-full blur-3xl" />
         <div className="absolute -bottom-48 -left-48 w-130 h-130 bg-violet-100/40 rounded-full blur-3xl" />
@@ -354,7 +327,6 @@ export default function CompanyProfile() {
       </div>
 
       <div className="relative max-w-7xl mx-auto px-4 md:px-6 py-8 md:py-12">
-        {/* ── Toast ──────────────────────────────────────────────────────── */}
         <AnimatePresence>
           {toast && (
             <motion.div
@@ -402,7 +374,7 @@ export default function CompanyProfile() {
           )}
         </AnimatePresence>
 
-        {/* ── Hero Card ───────────────────────────────────────────────────── */}
+        {/* Hero card */}
         <motion.div
           variants={stagger}
           initial="hidden"
@@ -413,30 +385,107 @@ export default function CompanyProfile() {
             variants={fadeUp}
             className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden"
           >
-            {/* Gradient accent bar */}
             <div className="h-1.5 w-full bg-linear-to-r from-indigo-500 via-violet-500 to-purple-400" />
-
             <div className="p-7 md:p-9">
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6">
-                {/* Logo */}
+                {/* Logo upload — only editable element on this page */}
                 <div className="relative shrink-0">
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleLogoChange}
+                  />
                   <motion.div
-                    whileHover={{ scale: 1.04 }}
+                    whileHover={{ scale: isUploadingLogo ? 1 : 1.04 }}
                     transition={{ type: "spring", stiffness: 280 }}
                   >
                     <Avatar
                       logo={currentLogo}
-                      name={cur?.name || "Company"}
+                      name={company?.companyName || "Company"}
                       size={100}
+                      isUploading={isUploadingLogo}
                     />
                   </motion.div>
                   <motion.button
                     whileHover={{ scale: 1.18 }}
                     whileTap={{ scale: 0.88 }}
-                    onClick={() => fileRef.current.click()}
-                    title="Upload company logo"
-                    className="absolute -bottom-2 -right-2 w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-indigo-700 transition-colors"
+                    onClick={() => !isUploadingLogo && fileRef.current.click()}
+                    disabled={isUploadingLogo}
+                    title="Change company logo"
+                    className="absolute -bottom-2 -right-2 w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
+                    {isUploadingLogo ? (
+                      <svg
+                        className="w-3.5 h-3.5 animate-spin"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle
+                          className="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        />
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                        />
+                      </svg>
+                    ) : (
+                      <svg
+                        className="w-3.5 h-3.5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2.5}
+                          d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"
+                        />
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2.5}
+                          d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"
+                        />
+                      </svg>
+                    )}
+                  </motion.button>
+                </div>
+
+                <div className="flex-1 min-w-0">
+                  <div className="mb-3">
+                    <h1 className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight leading-tight">
+                      {company?.companyName || "Your Company"}
+                    </h1>
+                    {company?.companyAddress && (
+                      <p className="text-gray-400 text-sm mt-1 italic">
+                        {company.companyAddress}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {company?.industry && (
+                      <Tag label={company.industry} color="indigo" />
+                    )}
+                    {company?.companySize && (
+                      <Tag label={company.companySize} color="violet" />
+                    )}
+                    {company?.companyLocation && (
+                      <Tag label={company.companyLocation} color="sky" />
+                    )}
+                  </div>
+                </div>
+
+                <div className="shrink-0 self-start sm:self-center">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-gray-50 text-gray-400 border border-gray-100">
                     <svg
                       className="w-3.5 h-3.5"
                       fill="none"
@@ -446,187 +495,19 @@ export default function CompanyProfile() {
                       <path
                         strokeLinecap="round"
                         strokeLinejoin="round"
-                        strokeWidth={2.5}
-                        d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"
-                      />
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2.5}
-                        d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"
+                        strokeWidth={2}
+                        d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
                       />
                     </svg>
-                  </motion.button>
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={handleLogoChange}
-                  />
-                </div>
-
-                {/* Name & Tags */}
-                <div className="flex-1 min-w-0">
-                  <AnimatePresence mode="wait">
-                    {editing ? (
-                      <motion.div
-                        key="name-edit"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="space-y-2.5 mb-3"
-                      >
-                        <input
-                          value={draft.name || ""}
-                          onChange={(e) => set("name")(e.target.value)}
-                          placeholder="Company name"
-                          className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 text-gray-900 text-2xl font-bold focus:outline-none focus:ring-2 focus:ring-indigo-400/60 focus:border-indigo-300 transition-all"
-                        />
-                        <input
-                          value={draft.tagline || ""}
-                          onChange={(e) => set("tagline")(e.target.value)}
-                          placeholder="Company tagline"
-                          className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 text-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400/60 focus:border-indigo-300 transition-all"
-                        />
-                      </motion.div>
-                    ) : (
-                      <motion.div
-                        key="name-view"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="mb-3"
-                      >
-                        <h1 className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight leading-tight">
-                          {cur?.name || "Your Company"}
-                        </h1>
-                        {cur?.tagline && (
-                          <p className="text-gray-400 text-sm mt-1 italic">
-                            {cur.tagline}
-                          </p>
-                        )}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                  <div className="flex flex-wrap gap-2">
-                    {cur?.industry && (
-                      <Tag label={cur.industry} color="indigo" />
-                    )}
-                    {cur?.founded && (
-                      <Tag label={`Est. ${cur.founded}`} color="violet" />
-                    )}
-                    {cur?.headquarters && (
-                      <Tag label={cur.headquarters} color="sky" />
-                    )}
-                  </div>
-                </div>
-
-                {/* Action Buttons */}
-                <div className="shrink-0 self-start sm:self-center">
-                  <AnimatePresence mode="wait">
-                    {editing ? (
-                      <motion.div
-                        key="edit-btns"
-                        initial={{ opacity: 0, x: 10 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        exit={{ opacity: 0, x: 10 }}
-                        className="flex gap-2"
-                      >
-                        <motion.button
-                          whileHover={{ scale: 1.02 }}
-                          whileTap={{ scale: 0.97 }}
-                          onClick={handleCancel}
-                          disabled={isSaving}
-                          className="px-4 py-2.5 rounded-xl text-sm font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors disabled:opacity-50"
-                        >
-                          Cancel
-                        </motion.button>
-                        <motion.button
-                          whileHover={{ scale: 1.02 }}
-                          whileTap={{ scale: 0.97 }}
-                          onClick={handleSave}
-                          disabled={isSaving}
-                          className="px-5 py-2.5 rounded-xl text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 shadow-md shadow-indigo-200/60 transition-colors flex items-center gap-2 disabled:opacity-60"
-                        >
-                          {isSaving ? (
-                            <>
-                              <svg
-                                className="w-4 h-4 animate-spin"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                              >
-                                <circle
-                                  className="opacity-25"
-                                  cx="12"
-                                  cy="12"
-                                  r="10"
-                                  stroke="currentColor"
-                                  strokeWidth="4"
-                                />
-                                <path
-                                  className="opacity-75"
-                                  fill="currentColor"
-                                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                                />
-                              </svg>
-                              Saving…
-                            </>
-                          ) : (
-                            <>
-                              <svg
-                                className="w-4 h-4"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                                stroke="currentColor"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2.5}
-                                  d="M5 13l4 4L19 7"
-                                />
-                              </svg>
-                              Save Changes
-                            </>
-                          )}
-                        </motion.button>
-                      </motion.div>
-                    ) : (
-                      <motion.button
-                        key="view-btn"
-                        initial={{ opacity: 0, x: 10 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        exit={{ opacity: 0, x: 10 }}
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.97 }}
-                        onClick={handleEdit}
-                        className="px-5 py-2.5 rounded-xl text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 shadow-md shadow-indigo-200/60 transition-colors flex items-center gap-2"
-                      >
-                        <svg
-                          className="w-4 h-4"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2.5}
-                            d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                          />
-                        </svg>
-                        Edit Profile
-                      </motion.button>
-                    )}
-                  </AnimatePresence>
+                    Read Only
+                  </span>
                 </div>
               </div>
             </div>
           </motion.div>
         </motion.div>
 
-        {/* ── Stats Row ───────────────────────────────────────────────────── */}
+        {/* Stats row */}
         <motion.div
           variants={stagger}
           initial="hidden"
@@ -635,8 +516,8 @@ export default function CompanyProfile() {
         >
           {[
             {
-              label: "Employees",
-              value: company?.employees || "—",
+              label: "Company Size",
+              value: company?.companySize || "—",
               bg: "bg-indigo-50",
               icon: (
                 <svg
@@ -655,8 +536,8 @@ export default function CompanyProfile() {
               ),
             },
             {
-              label: "Founded",
-              value: company?.founded || "—",
+              label: "Register No.",
+              value: company?.companyRegisterNumber || "—",
               bg: "bg-violet-50",
               icon: (
                 <svg
@@ -669,7 +550,7 @@ export default function CompanyProfile() {
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
-                    d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
                   />
                 </svg>
               ),
@@ -696,7 +577,7 @@ export default function CompanyProfile() {
             },
             {
               label: "Location",
-              value: company?.headquarters || "—",
+              value: company?.companyLocation || "—",
               bg: "bg-emerald-50",
               icon: (
                 <svg
@@ -746,7 +627,7 @@ export default function CompanyProfile() {
           ))}
         </motion.div>
 
-        {/* ── Tabs ────────────────────────────────────────────────────────── */}
+        {/* Tabs */}
         <motion.div
           variants={fadeUp}
           initial="hidden"
@@ -757,9 +638,7 @@ export default function CompanyProfile() {
             <motion.button
               key={t}
               onClick={() => setTab(t)}
-              className={`relative px-5 py-2 rounded-xl text-sm font-semibold capitalize transition-colors duration-200 ${
-                tab === t ? "text-white" : "text-gray-400 hover:text-gray-700"
-              }`}
+              className={`relative px-5 py-2 rounded-xl text-sm font-semibold capitalize transition-colors duration-200 ${tab === t ? "text-white" : "text-gray-400 hover:text-gray-700"}`}
             >
               {tab === t && (
                 <motion.div
@@ -774,9 +653,7 @@ export default function CompanyProfile() {
           ))}
         </motion.div>
 
-        {/* ── Tab Content ─────────────────────────────────────────────────── */}
         <AnimatePresence mode="wait">
-          {/* OVERVIEW */}
           {tab === "overview" && (
             <motion.div
               key="overview"
@@ -788,21 +665,15 @@ export default function CompanyProfile() {
             >
               <InfoCard>
                 <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4">
-                  About the Company
+                  Company Address
                 </h3>
-                <InputField
-                  value={cur?.description}
-                  onChange={set("description")}
-                  multiline
-                  editing={editing}
-                />
+                <InfoField value={company?.companyAddress} />
               </InfoCard>
-
               <div className="grid md:grid-cols-2 gap-4">
                 {[
                   {
                     label: "Industry",
-                    key: "industry",
+                    value: company?.industry,
                     iconBg: "bg-indigo-50",
                     iconColor: "text-indigo-500",
                     icon: (
@@ -822,31 +693,10 @@ export default function CompanyProfile() {
                     ),
                   },
                   {
-                    label: "Founded",
-                    key: "founded",
+                    label: "Company Size",
+                    value: company?.companySize,
                     iconBg: "bg-violet-50",
                     iconColor: "text-violet-500",
-                    icon: (
-                      <svg
-                        className="w-4 h-4"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        strokeWidth={2}
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-                        />
-                      </svg>
-                    ),
-                  },
-                  {
-                    label: "Number of Employees",
-                    key: "employees",
-                    iconBg: "bg-sky-50",
-                    iconColor: "text-sky-500",
                     icon: (
                       <svg
                         className="w-4 h-4"
@@ -864,8 +714,29 @@ export default function CompanyProfile() {
                     ),
                   },
                   {
-                    label: "Headquarters",
-                    key: "headquarters",
+                    label: "Register Number",
+                    value: company?.companyRegisterNumber,
+                    iconBg: "bg-sky-50",
+                    iconColor: "text-sky-500",
+                    icon: (
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                        />
+                      </svg>
+                    ),
+                  },
+                  {
+                    label: "Location",
+                    value: company?.companyLocation,
                     iconBg: "bg-emerald-50",
                     iconColor: "text-emerald-500",
                     icon: (
@@ -889,20 +760,15 @@ export default function CompanyProfile() {
                       </svg>
                     ),
                   },
-                ].map(({ label, key, icon, iconBg, iconColor }) => (
-                  <InfoCard key={key}>
+                ].map(({ label, value, icon, iconBg, iconColor }) => (
+                  <InfoCard key={label}>
                     <div className="flex items-start gap-3">
                       <div
                         className={`w-9 h-9 rounded-xl ${iconBg} ${iconColor} flex items-center justify-center shrink-0 mt-0.5`}
                       >
                         {icon}
                       </div>
-                      <InputField
-                        label={label}
-                        value={cur?.[key]}
-                        onChange={set(key)}
-                        editing={editing}
-                      />
+                      <InfoField label={label} value={value} />
                     </div>
                   </InfoCard>
                 ))}
@@ -910,7 +776,6 @@ export default function CompanyProfile() {
             </motion.div>
           )}
 
-          {/* CONTACT */}
           {tab === "contact" && (
             <motion.div
               key="contact"
@@ -923,7 +788,7 @@ export default function CompanyProfile() {
               {[
                 {
                   label: "Website",
-                  key: "website",
+                  value: company?.companySite,
                   bg: "bg-indigo-50",
                   text: "text-indigo-600",
                   icon: (
@@ -944,7 +809,7 @@ export default function CompanyProfile() {
                 },
                 {
                   label: "Email Address",
-                  key: "email",
+                  value: company?.companyMail,
                   bg: "bg-violet-50",
                   text: "text-violet-600",
                   icon: (
@@ -965,7 +830,7 @@ export default function CompanyProfile() {
                 },
                 {
                   label: "Phone Number",
-                  key: "phone",
+                  value: company?.companyMobile,
                   bg: "bg-emerald-50",
                   text: "text-emerald-600",
                   icon: (
@@ -984,9 +849,9 @@ export default function CompanyProfile() {
                     </svg>
                   ),
                 },
-              ].map(({ label, key, icon, bg, text }) => (
+              ].map(({ label, value, icon, bg, text }) => (
                 <motion.div
-                  key={key}
+                  key={label}
                   whileHover={{ y: -3 }}
                   transition={{ type: "spring", stiffness: 350 }}
                 >
@@ -996,19 +861,13 @@ export default function CompanyProfile() {
                     >
                       {icon}
                     </div>
-                    <InputField
-                      label={label}
-                      value={cur?.[key]}
-                      onChange={set(key)}
-                      editing={editing}
-                    />
+                    <InfoField label={label} value={value} />
                   </InfoCard>
                 </motion.div>
               ))}
             </motion.div>
           )}
 
-          {/* SETTINGS */}
           {tab === "settings" && (
             <motion.div
               key="settings"
@@ -1084,14 +943,13 @@ export default function CompanyProfile() {
           )}
         </AnimatePresence>
 
-        {/* ── Footer ──────────────────────────────────────────────────────── */}
         <motion.p
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.8 }}
           className="text-center text-gray-300 text-xs mt-12"
         >
-          {company?.name || "Company"} · Profile ·{" "}
+          {company?.companyName || "Company"} · Profile ·{" "}
           {new Date().toLocaleDateString("en-US", {
             year: "numeric",
             month: "long",

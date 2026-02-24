@@ -1,8 +1,6 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import api from "./api";
 
-// ─── Async Thunks ───────────────────────────────────────────
-
 export const registerCompany = createAsyncThunk(
   "company/register",
   async (formData, { rejectWithValue }) => {
@@ -54,9 +52,11 @@ export const getCurrentCompany = createAsyncThunk(
       });
       return response.data;
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Not authenticated",
-      );
+      // Pass the status code through so the reducer can act on it
+      return rejectWithValue({
+        message: error.response?.data?.message || "Not authenticated",
+        status: error.response?.status,
+      });
     }
   },
 );
@@ -65,7 +65,7 @@ export const updateCompany = createAsyncThunk(
   "company/update",
   async (data, { rejectWithValue }) => {
     try {
-      const response = await api.patch("/company/auth/update", data, {
+      const response = await api.patch("/company/auth/update-details", data, {
         withCredentials: true,
       });
       return response.data;
@@ -75,7 +75,20 @@ export const updateCompany = createAsyncThunk(
   },
 );
 
-// ─── LocalStorage Helpers ────────────────────────────────────
+export const updateCompanyLogo = createAsyncThunk(
+  "company/updateLogo",
+  async (formData, { rejectWithValue }) => {
+    try {
+      const response = await api.patch("/company/auth/update-logo", formData, {
+        withCredentials: true,
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      return response.data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.message || error.message);
+    }
+  },
+);
 
 const saveCompanyState = (company, isAuthenticated) => {
   try {
@@ -118,8 +131,6 @@ const defaultState = () => ({
   lastVerified: null,
 });
 
-// ─── Slice ───────────────────────────────────────────────────
-
 const companySlice = createSlice({
   name: "company",
   initialState: loadCompanyState(),
@@ -144,7 +155,6 @@ const companySlice = createSlice({
 
   extraReducers: (builder) => {
     builder
-      // ── REGISTER ──
       .addCase(registerCompany.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -163,7 +173,6 @@ const companySlice = createSlice({
         state.hydrated = true;
       })
 
-      // ── LOGIN ──
       .addCase(loginCompany.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -182,7 +191,6 @@ const companySlice = createSlice({
         state.hydrated = true;
       })
 
-      // ── LOGOUT ──
       .addCase(logoutCompany.pending, (state) => {
         state.loading = true;
       })
@@ -191,12 +199,10 @@ const companySlice = createSlice({
         localStorage.removeItem("companyAuthState");
       })
       .addCase(logoutCompany.rejected, (state) => {
-        // Logout locally even if API fails
         Object.assign(state, defaultState(), { hydrated: true });
         localStorage.removeItem("companyAuthState");
       })
 
-      // ── GET CURRENT ──
       .addCase(getCurrentCompany.pending, (state) => {
         state.loading = true;
       })
@@ -208,25 +214,45 @@ const companySlice = createSlice({
         state.lastVerified = Date.now();
         saveCompanyState(state.company, true);
       })
-      .addCase(getCurrentCompany.rejected, (state) => {
-        Object.assign(state, defaultState(), { hydrated: true });
-        localStorage.removeItem("companyAuthState");
+      .addCase(getCurrentCompany.rejected, (state, action) => {
+        state.loading = false;
+        state.hydrated = true;
+
+        // Only clear auth on a confirmed 401 (token invalid/expired).
+        // Any other failure (network error, 500) keeps the existing session
+        // so the user is not logged out due to a transient server error.
+        if (action.payload?.status === 401) {
+          state.company = null;
+          state.isAuthenticated = false;
+          state.lastVerified = null;
+          localStorage.removeItem("companyAuthState");
+        }
       })
 
-      // ── UPDATE ──
       .addCase(updateCompany.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
       .addCase(updateCompany.fulfilled, (state, action) => {
         state.loading = false;
-        if (state.company) {
-          state.company = { ...state.company, ...action.payload.data };
-          saveCompanyState(state.company, state.isAuthenticated);
-        }
+        state.company = action.payload.data;
+        saveCompanyState(state.company, state.isAuthenticated);
       })
       .addCase(updateCompany.rejected, (state, action) => {
         state.loading = false;
+        state.error = action.payload;
+      })
+
+      .addCase(updateCompanyLogo.pending, (state) => {
+        state.error = null;
+      })
+      .addCase(updateCompanyLogo.fulfilled, (state, action) => {
+        if (state.company) {
+          state.company.logo = action.payload.data?.logo;
+          saveCompanyState(state.company, state.isAuthenticated);
+        }
+      })
+      .addCase(updateCompanyLogo.rejected, (state, action) => {
         state.error = action.payload;
       });
   },

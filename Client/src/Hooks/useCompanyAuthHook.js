@@ -5,6 +5,7 @@ import {
   logoutCompany,
   getCurrentCompany,
   updateCompany,
+  updateCompanyLogo,
   clearCompanyError,
   updateCompanyLocal,
   clearCompanySession,
@@ -32,6 +33,7 @@ export const useCompany = () => {
     logout: () => dispatch(logoutCompany()),
     getCurrentCompany: () => dispatch(getCurrentCompany()),
     updateCompany: (data) => dispatch(updateCompany(data)),
+    updateCompanyLogo: (formData) => dispatch(updateCompanyLogo(formData)),
 
     // Sync actions
     clearError: () => dispatch(clearCompanyError()),

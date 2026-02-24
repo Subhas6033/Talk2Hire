@@ -1,11 +1,6 @@
-// Admin/Controllers/companyInterview.controller.js
-// Ownership check: interviews belong to a company via jobs.company_id
-// (interviews table has no company_id column directly).
-
 const { CompanyInterview } = require("../models/companyInterview.models.js");
 const { asyncHandler, APIERR, APIRES } = require("../../Utils/index.utils.js");
 
-// ─── GET /api/v1/company/interview ────────────────────────────
 const getAllInterviews = asyncHandler(async (req, res) => {
   const { status, job_id, search } = req.query;
   const company_id = req.company.id;
@@ -27,7 +22,6 @@ const getAllInterviews = asyncHandler(async (req, res) => {
     );
 });
 
-// ─── GET /api/v1/company/interview/counts ─────────────────────
 const getInterviewCounts = asyncHandler(async (req, res) => {
   const counts = await CompanyInterview.getCounts(req.company.id);
   return res
@@ -35,7 +29,6 @@ const getInterviewCounts = asyncHandler(async (req, res) => {
     .json(new APIRES(200, counts, "Counts fetched successfully"));
 });
 
-// ─── GET /api/v1/company/interview/:id ────────────────────────
 const getInterviewById = asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!id || isNaN(id)) throw new APIERR(400, "Invalid interview ID");
@@ -52,7 +45,6 @@ const getInterviewById = asyncHandler(async (req, res) => {
     .json(new APIRES(200, interview, "Interview fetched successfully"));
 });
 
-// ─── PATCH /api/v1/company/interview/:id/hire ─────────────────
 const hireCandidate = asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!id || isNaN(id)) throw new APIERR(400, "Invalid interview ID");
@@ -73,7 +65,6 @@ const hireCandidate = asyncHandler(async (req, res) => {
     .json(new APIRES(200, updated, "Candidate hired successfully"));
 });
 
-// ─── PATCH /api/v1/company/interview/:id/reject ───────────────
 const rejectCandidate = asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!id || isNaN(id)) throw new APIERR(400, "Invalid interview ID");

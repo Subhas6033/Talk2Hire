@@ -1,6 +1,5 @@
 import React from "react";
-import { Nav, Footer } from "../Components";
-import { CompanyNavbar } from "../Admin/index.company.js";
+import { Nav, Footer, CompanyNavbar } from "../Components/index.js";
 import { motion } from "motion/react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../Hooks/useAuthHook.js";
@@ -26,8 +25,6 @@ const Layout = ({ children }) => {
 
   const isFullscreen = FULLSCREEN_ROUTES.includes(pathname);
 
-  // ✅ FIX: Use && (same as ProtectedRoutes) so the navbar never renders
-  // before both auth slices have resolved — avoids a flash of the wrong nav.
   const hydrated = userHydrated && companyHydrated;
 
   const role = isCompanyAuth ? "company" : userRole;

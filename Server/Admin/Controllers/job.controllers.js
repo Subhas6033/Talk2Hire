@@ -1,7 +1,6 @@
 const Job = require("../models/job.models.js");
 const { APIERR, APIRES, asyncHandler } = require("../../Utils/index.utils.js");
 
-// ─── CREATE ───────────────────────────────────────────────────
 const createJob = asyncHandler(async (req, res) => {
   const {
     title,
@@ -43,7 +42,6 @@ const createJob = asyncHandler(async (req, res) => {
   return res.status(201).json(new APIRES(201, job, "Job posted successfully"));
 });
 
-// ─── GET ALL (scoped to company) ──────────────────────────────
 const getAllJobs = asyncHandler(async (req, res) => {
   const { status, department, search } = req.query;
   const company_id = req.company.id;
@@ -64,7 +62,6 @@ const getAllJobs = asyncHandler(async (req, res) => {
     );
 });
 
-// ─── GET COUNTS ───────────────────────────────────────────────
 const getJobCounts = asyncHandler(async (req, res) => {
   const counts = await Job.getCounts(req.company.id);
 
@@ -73,7 +70,6 @@ const getJobCounts = asyncHandler(async (req, res) => {
     .json(new APIRES(200, counts, "Job counts fetched successfully"));
 });
 
-// ─── GET BY ID (verify ownership) ────────────────────────────
 const getJobById = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
@@ -92,7 +88,6 @@ const getJobById = asyncHandler(async (req, res) => {
   return res.status(200).json(new APIRES(200, job, "Job fetched successfully"));
 });
 
-// ─── UPDATE (verify ownership) ────────────────────────────────
 const updateJob = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
@@ -123,7 +118,6 @@ const updateJob = asyncHandler(async (req, res) => {
     .json(new APIRES(200, updatedJob, "Job updated successfully"));
 });
 
-// ─── TOGGLE STATUS (verify ownership) ────────────────────────
 const toggleJobStatus = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
@@ -154,8 +148,6 @@ const toggleJobStatus = asyncHandler(async (req, res) => {
   return res.status(200).json(new APIRES(200, updatedJob, message));
 });
 
-// ─── INCREMENT APPLICANTS ─────────────────────────────────────
-// Called when a candidate applies — no ownership check needed
 const incrementApplicants = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
@@ -174,7 +166,6 @@ const incrementApplicants = asyncHandler(async (req, res) => {
     .json(new APIRES(200, null, "Application submitted successfully"));
 });
 
-// ─── DELETE (verify ownership) ────────────────────────────────
 const deleteJob = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
