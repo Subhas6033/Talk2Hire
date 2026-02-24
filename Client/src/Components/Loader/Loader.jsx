@@ -31,7 +31,7 @@ export default function Loader({ label = "" }) {
       <div className="text-center">
         <p className="text-lg text-slate-200 font-semibold">{label}</p>
         <p className="mt-1 text-sm text-muted-foreground text-white">
-          AI interviewer is thinking…
+          Talk2Hireer is thinking…
         </p>
       </div>
 

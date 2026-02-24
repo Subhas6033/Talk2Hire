@@ -103,7 +103,7 @@ const Login = () => {
               <div className="text-center">
                 <h1 className="text-2xl font-bold text-white">Welcome back</h1>
                 <p className="mt-2 text-sm text-white/60">
-                  Sign in to continue your AI interview preparation
+                  Sign in to continue your interview preparation
                 </p>
               </div>
             </CardHeader>

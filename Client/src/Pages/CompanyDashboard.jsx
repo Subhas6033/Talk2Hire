@@ -47,7 +47,7 @@ const HOW_IT_WORKS = [
   {
     step: "03",
     icon: Video,
-    title: "AI Interviews",
+    title: "Interviews",
     desc: "Candidates take a fully automated AI-powered interview tailored to the skills you need. No scheduling hassle.",
   },
   {
@@ -530,7 +530,7 @@ const CompanyDashboard = () => {
                               </span>
                             </div>
                             <p className="text-[10px] text-gray-400">
-                              AI Score
+                              Candidate Score
                             </p>
                           </div>
                           <div className="text-right hidden md:block">

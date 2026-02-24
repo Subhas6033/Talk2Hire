@@ -1,16 +1,3 @@
-/**
- * tts.service.js — Deepgram TTS streaming
- *
- * FIX (Q2+ hang, no lag): speakStream calls are deduplicated by a per-call
- * promise. If a second speakStream fires while the first is still streaming,
- * it does NOT queue or block — instead it starts its own fetch immediately
- * (so the audio is ready with zero extra delay) but buffers the chunks
- * internally and only hands them to onChunk once the previous call has
- * emitted its null sentinel. This means:
- *   - No lag: Q2 fetch starts in parallel with Q1 playback
- *   - No collision: Q1's null sentinel never leaks into Q2's callback
- */
-
 const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY;
 const TTS_MODEL = "aura-asteria-en";
 const TTS_SAMPLE_RATE = 48000;

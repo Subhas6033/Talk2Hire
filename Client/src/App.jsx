@@ -29,6 +29,7 @@ import {
   CompanyInterviews,
   UserJob,
   UserJobDetail,
+  CompanyProfile,
 } from "./Pages/index.pages.js";
 
 import { InterviewSetup } from "./Components/index.js";
@@ -220,6 +221,15 @@ const App = () => {
                         </RoleBasedRoute>
                       }
                     />
+                    <Route
+                      path="/company/profile"
+                      element={
+                        <RoleBasedRoute allowedRole="company">
+                          <CompanyProfile />
+                        </RoleBasedRoute>
+                      }
+                    />
+                    {/* Mobile camera Route */}
                     <Route
                       path="/mobile-camera"
                       element={<MobileCameraPage />}

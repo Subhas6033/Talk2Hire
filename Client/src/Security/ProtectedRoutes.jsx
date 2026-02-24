@@ -29,10 +29,7 @@ export const PublicRoute = ({ children }) => {
   if (isAuthenticated) {
     // User → /dashboard | Company → /company/dashboard | never stays on public page
     return (
-      <Navigate
-        to={role === "company" ? "/company/dashboard" : "/dashboard"}
-        replace
-      />
+      <Navigate to={role === "company" ? "/company/dashboard" : "/"} replace />
     );
   }
 

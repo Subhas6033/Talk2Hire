@@ -46,7 +46,7 @@ export const PricingSection = () => {
             Pricing Plans
           </h2>
           <p className="mt-4 text-white/60">
-            Choose the plan that fits your AI interview preparation needs.
+            Choose the plan that fits your interview preparation needs.
           </p>
         </motion.div>
 

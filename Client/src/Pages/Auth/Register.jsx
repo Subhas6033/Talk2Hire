@@ -33,8 +33,14 @@ const RegistrationForm = () => {
       return;
     }
 
-    if (file.type !== "application/pdf") {
-      setUploadError("Only PDF files are allowed");
+    const allowedTypes = [
+      "application/pdf",
+      "application/msword", // .doc
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
+    ];
+
+    if (!allowedTypes.includes(file.type)) {
+      setUploadError("Only PDF or Word files (.doc, .docx) are allowed");
       setResumeFile(null);
       return;
     }
@@ -142,7 +148,7 @@ const RegistrationForm = () => {
                   <h1 className="text-5xl md:text-6xl font-bold text-white leading-tight">
                     Join the Future of{" "}
                     <span className="bg-linear-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-                      AI Interviews
+                      interviews
                     </span>
                   </h1>
 
@@ -261,14 +267,14 @@ const RegistrationForm = () => {
                                 Click to upload or drag and drop
                               </span>
                               <span className="text-xs text-white/50 mt-1 block">
-                                PDF only (max 5MB)
+                                PDF or Word (.doc, .docx) – max 5MB
                               </span>
                             </div>
                           </div>
                           <input
                             id="resume-upload"
                             type="file"
-                            accept=".pdf"
+                            accept=".pdf,.doc,.docx"
                             onChange={handleResumeChange}
                             className="hidden"
                             disabled={isUploading}

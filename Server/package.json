@@ -1,7 +1,7 @@
 {
   "name": "server",
   "version": "1.0.0",
-  "description": "This is the backend for the AI interview platform",
+  "description": "This is the backend for the Talk2Hire platform",
   "keywords": [
     "nodejs",
     "expressjs",

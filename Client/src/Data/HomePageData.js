@@ -17,9 +17,9 @@ export const pricingPlans = [
   {
     name: "Basic",
     price: "$0",
-    description: "For beginners who want to try AI interviews.",
+    description: "For beginners who want to try Talk2Hires.",
     features: [
-      "5 AI interview questions per month",
+      "5 Talk2Hire questions per month",
       "Basic scoring & feedback",
       "Resume upload support",
     ],
@@ -31,7 +31,7 @@ export const pricingPlans = [
     price: "$29",
     description: "Ideal for active job seekers and professionals.",
     features: [
-      "Unlimited AI interviews",
+      "Unlimited Talk2Hires",
       "Detailed scoring reports",
       "Real-time voice analysis",
       "Priority support",
@@ -59,7 +59,7 @@ export const testimonials = [
     name: "Rahul Sharma",
     role: "Frontend Developer",
     quote:
-      "This AI interview platform completely changed how I prepare. The feedback feels incredibly real.",
+      "This Talk2Hire platform completely changed how I prepare. The feedback feels incredibly real.",
   },
   {
     name: "Ananya Patel",

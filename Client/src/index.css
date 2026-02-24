@@ -1,4 +1,5 @@
 @import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Sour+Gummy:ital,wght@0,100..900;1,100..900&display=swap");
 @import "tailwindcss";
 
 @theme {
@@ -42,6 +43,7 @@
   /* Fonts */
   --font-primary: "Playfair Display", serif;
   --font-secondary: "DM Sans", sans-serif;
+  --: "Sour Gummy", sans-serif;
 }
 
 /* ===== Scrollbar ===== */

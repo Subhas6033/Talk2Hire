@@ -47,8 +47,8 @@ export default function CompanyNavbar() {
               <Building2 size={18} className="text-white" />
             </div>
             <div className="flex flex-col items-start leading-none">
-              <span className="text-sm font-bold text-gray-900 tracking-tight">
-                AI Interview
+              <span className="font-bold text-gray-900 tracking-tight  taxt-lg">
+                Talk2Hire
               </span>
               <span className="text-[10px] text-indigo-500 font-medium tracking-wide">
                 Business Portal

@@ -20,12 +20,12 @@ const Footer = () => (
         <div className="text-sm text-center md:text-left">
           <div
             className="
-              text-lg font-bold
-              bg-linear-to-r from-purpleGlow to-purpleSoft
+              text-lg font-semibold 
+              bg-white
               bg-clip-text text-transparent
             "
           >
-            AI Interview System
+            Talk2Hire
           </div>
           <p className="mt-1 text-xs text-white/70">
             Secure AI-powered voice interview platform
@@ -57,8 +57,7 @@ const Footer = () => (
 
       {/* Bottom bar */}
       <div className="mt-8 border-t border-white/10 pt-4 text-center text-xs text-white/60">
-        &copy; {new Date().getFullYear()} AI Interview System. All rights
-        reserved.
+        &copy; {new Date().getFullYear()} Talk2Hire. All rights reserved.
       </div>
     </div>
   </footer>

@@ -243,7 +243,9 @@ const CandidateModal = ({
               >
                 {interview.score}
               </p>
-              <p className="text-[10px] text-gray-400 font-medium">AI Score</p>
+              <p className="text-[10px] text-gray-400 font-medium">
+                Candidate Score
+              </p>
             </div>
             <button
               onClick={onClose}
@@ -298,7 +300,7 @@ const CandidateModal = ({
                     color: "#8b5cf6",
                   },
                   {
-                    label: "AI Score",
+                    label: "Candidate Score",
                     value: `${interview.score}/100`,
                     icon: Award,
                     color:
@@ -741,7 +743,7 @@ const CompanyInterviews = () => {
                 color: "emerald",
               },
               {
-                label: "Avg. AI Score",
+                label: "Avg. Candidate Score",
                 value: counts.avg_score,
                 icon: TrendingUp,
                 color: "violet",

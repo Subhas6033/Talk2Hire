@@ -48,7 +48,7 @@ const Home = () => {
       />
       <meta
         name="keywords"
-        content="AI interview, technical interview, voice interview, AI interview preparation, mock interviews"
+        content="Talk2Hire, technical interview, voice interview, Talk2Hire preparation, mock interviews"
       />
       <meta name="robots" content="index, follow" />
       <link rel="canonical" href="https://www.google.com/" />
@@ -105,7 +105,7 @@ const Home = () => {
             >
               <div className="relative w-full max-w-lg rounded-2xl overflow-hidden shadow-[0_0_60px_rgba(155,92,255,0.35)] border border-white/10 bg-black/20">
                 <video
-                  src="/interviewPreview.mp4"
+                  src="/talk2hireVideo.mp4"
                   autoPlay
                   loop
                   muted

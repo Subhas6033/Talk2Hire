@@ -76,7 +76,7 @@ pool
     console.log(" Connected to DB");
     app.get("/", (req, res) => {
       res.send(
-        "Welcome to the Quantamhash Corporation AI Interview Platform Server",
+        "Welcome to the Quantamhash Corporation Talk2Hire Platform Server",
       );
     });
 

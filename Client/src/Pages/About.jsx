@@ -10,7 +10,7 @@ const AboutPage = () => {
     <>
       <title>QuantamHash Corporation | About</title>
 
-      <div className="min-h-screen bg-linear-to-br from-[#0b0f1f] via-[#11162a] to-[#0b0f1f] px-4 py-16 flex justify-center">
+      <div className="min-h-screen bg-linear-to-br from-bgDark via-[#11162a] to-bgDark px-4 py-16 flex justify-center">
         <div className="max-w-5xl w-full space-y-8">
           {/* Page Header */}
           <Card
@@ -20,7 +20,7 @@ const AboutPage = () => {
           >
             <CardHeader>
               <h1 className="text-4xl sm:text-5xl font-bold text-white mb-2">
-                About AI Interview Platform
+                About Talk2Hire Platform
               </h1>
             </CardHeader>
             <CardBody>
@@ -37,7 +37,7 @@ const AboutPage = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             {[
               {
-                title: "Realistic AI Interviews",
+                title: "Realistic Interviews",
                 desc: "Simulate real interview conditions with AI-driven questions and voice recognition.",
               },
               {

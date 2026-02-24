@@ -716,7 +716,7 @@ const InterviewLive = () => {
                     </span>
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-white">AI Interview</p>
+                    <p className="text-sm font-bold text-white">Talk2Hire</p>
                     <p className="text-xs text-gray-400">
                       {interview.isPlaying
                         ? "Speaking…"

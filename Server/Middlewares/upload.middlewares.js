@@ -53,13 +53,23 @@ const fileFilter = (req, file, cb) => {
   });
 
   if (file.fieldname === "resume") {
-    // Only accept PDF files for resume
-    if (file.mimetype === "application/pdf") {
-      console.log(" Resume file accepted");
+    const allowedMimeTypes = [
+      "application/pdf",
+      "application/msword", // .doc
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
+    ];
+
+    if (allowedMimeTypes.includes(file.mimetype)) {
+      console.log("✅ Resume file accepted");
       cb(null, true);
     } else {
-      console.log("❌ Resume file rejected - not PDF");
-      cb(new Error("Only PDF files are allowed for resume"), false);
+      console.log("❌ Resume file rejected - not PDF or Word file");
+      cb(
+        new Error(
+          "Only PDF or Word files (.doc, .docx) are allowed for resume",
+        ),
+        false,
+      );
     }
   } else if (file.fieldname === "profileImage") {
     // Only accept images for profile

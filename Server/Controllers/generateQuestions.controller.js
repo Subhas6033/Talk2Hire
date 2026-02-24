@@ -26,19 +26,129 @@ const extractJSON = (text) => {
   return JSON.parse(cleaned.substring(jsonStart, jsonEnd + 1));
 };
 
-// ─── Fallback opening questions ───────────────────────────────────────────────
-const OPENING_FALLBACKS = [
-  "Could you start by walking me through your professional background and the roles you've held that you're most proud of?",
-  "Can you tell me about a significant project or achievement in your career and the impact it had?",
-  "What drew you to your current field, and how has your career developed since you started?",
-  "Could you describe your most recent role and the key responsibilities you handled day to day?",
-  "What would you say is the core skill or strength that defines your professional career so far?",
-];
+// ─── Determine candidate level from resume ────────────────────────────────────
 
-function getOpeningFallback() {
-  return OPENING_FALLBACKS[
-    Math.floor(Math.random() * OPENING_FALLBACKS.length)
+function detectCandidateLevel(rawText) {
+  // Simple heuristic: look for year ranges like "2018 – 2022" or "2018 - 2022" or "3 years"
+  let totalYears = 0;
+
+  // Match patterns like "X years" or "X+ years"
+  const yearsMentioned = [...rawText.matchAll(/(\d+)\+?\s*years?/gi)].map((m) =>
+    parseInt(m[1]),
+  );
+
+  // Match date ranges like 2015-2020 or 2015 – 2020
+  const dateRanges = [
+    ...rawText.matchAll(
+      /\b(20\d{2}|19\d{2})\s*[-–—]\s*(20\d{2}|19\d{2}|present|current|now)\b/gi,
+    ),
   ];
+
+  if (dateRanges.length > 0) {
+    const currentYear = new Date().getFullYear();
+    totalYears = dateRanges.reduce((sum, m) => {
+      const start = parseInt(m[1]);
+      const endRaw = m[2].toLowerCase();
+      const end =
+        endRaw === "present" || endRaw === "current" || endRaw === "now"
+          ? currentYear
+          : parseInt(m[2]);
+      return sum + Math.max(0, end - start);
+    }, 0);
+  } else if (yearsMentioned.length > 0) {
+    totalYears = Math.max(...yearsMentioned);
+  }
+
+  console.log(`📊 Detected total experience: ~${totalYears} years`);
+
+  if (totalYears < 4) {
+    return {
+      level: "entry",
+      yearsExp: totalYears,
+      label: "🟢 Entry-Level (0–4 years)",
+      weights: {
+        coreKnowledge: 45,
+        experience: 10,
+        behavioral: 20,
+        problemSolving: 15,
+        cvValidation: 5,
+        motivation: 5,
+      },
+    };
+  } else if (totalYears < 8) {
+    return {
+      level: "mid",
+      yearsExp: totalYears,
+      label: "🔵 Mid-Level (4–8 years)",
+      weights: {
+        coreKnowledge: 35,
+        experience: 30,
+        behavioral: 15,
+        problemSolving: 10,
+        cvValidation: 5,
+        motivation: 5,
+      },
+    };
+  } else if (totalYears < 12) {
+    return {
+      level: "senior",
+      yearsExp: totalYears,
+      label: "🔴 Senior (8–12 years)",
+      weights: {
+        coreKnowledge: 25,
+        experience: 35,
+        behavioral: 20,
+        problemSolving: 5,
+        cvValidation: 5,
+        strategicThinking: 10,
+      },
+    };
+  } else {
+    return {
+      level: "leadership",
+      yearsExp: totalYears,
+      label: "⚫ Leadership (12+ years)",
+      weights: {
+        coreKnowledge: 15,
+        experience: 30,
+        behavioral: 20,
+        problemSolving: 5,
+        cvValidation: 5,
+        strategicThinking: 15,
+        leadership: 10,
+      },
+    };
+  }
+}
+
+/**
+ * Converts the weights object into a human-readable instruction block for the AI prompt.
+ */
+function buildWeightInstructions(levelInfo) {
+  const { label, weights } = levelInfo;
+  const lines = Object.entries(weights)
+    .map(([key, val]) => {
+      const readable = key
+        .replace(/([A-Z])/g, " $1")
+        .replace(/^./, (s) => s.toUpperCase());
+      return `  - ${readable}: ${val}%`;
+    })
+    .join("\n");
+
+  return `Candidate Level: ${label}
+Question Distribution (follow these weights across the full interview):
+${lines}
+
+When generating THIS question, pick the category that is most under-represented so far in the history.
+Category definitions:
+  - Core Knowledge: Domain/technical concepts, tools, frameworks relevant to their field
+  - Experience: Specific past projects, roles, accomplishments from the resume
+  - Behavioral: Soft skills, teamwork, conflict, communication (STAR-format friendly)
+  - Problem Solving: Hypothetical or real scenarios requiring analytical thinking
+  - CV Validation: Clarify or verify specific items mentioned in the resume
+  - Motivation: Career goals, why they applied, what drives them
+  - Strategic Thinking: Long-term planning, business impact, cross-team decisions (senior+)
+  - Leadership: Managing teams, mentoring, org decisions (leadership only)`;
 }
 
 // ─── Safe resume text extraction ──────────────────────────────────────────────
@@ -140,7 +250,6 @@ const generateQuestions = asyncHandler(async (req, res) => {
   const user = await User.findById(userId);
   if (!user) throw new APIERR(404, "User not found");
 
-  // ✅ Extract candidate name from user record
   const candidateName = user.fullName ?? user.name ?? "";
   console.log("👤 Candidate name:", candidateName);
 
@@ -150,93 +259,33 @@ const generateQuestions = asyncHandler(async (req, res) => {
     console.log("✅ Interview skills saved");
   }
 
-  // STEP 3: Extract resume text (never throws — falls back gracefully)
+  // STEP 3: Extract resume text
   const { rawText, resumeUrl } = await safeExtractResume({ user, req });
 
-  // STEP 4: Create session with candidate name
+  // STEP 4: Create session
   const sessionId = await Interview.createSession(userId, jobId, candidateName);
   console.log("✅ Interview session created:", sessionId);
 
-  // STEP 5: Generate first question
-  let firstQuestion;
+  // ─── STEP 5: The very FIRST message is always the standard interview opener ───
+  // This never changes regardless of resume content or level.
+  const firstQuestion =
+    "Hi! I am your interviewer — hope you're doing well today! 😊 Before we dive in, I'd love to get to know you a little better. So, tell me about yourself — your background, experience, and what brings you here today?";
 
-  if (!rawText) {
-    firstQuestion = getOpeningFallback();
-    console.warn(
-      "⚠️ Using fallback opening question (no resume text available)",
-    );
-  } else {
-    console.log("🤖 Generating first interview question from resume...");
-    console.log("📄 Resume preview:", rawText.substring(0, 100) + "...");
+  console.log("✅ Using standard interview opening message");
 
-    const skillsContext =
-      skills?.length > 0
-        ? `\n\nCandidate has selected these skills for the interview: ${skills.join(", ")}\nFocus the question on one of these skills if relevant to their resume.`
-        : "";
-
-    const prompt = `
-You are an expert interviewer analyzing a candidate's resume for ANY profession or domain.
-
-Resume Content:
-${rawText}${skillsContext}
-
-TASK:
-Generate ONE opening interview question based on the candidate's field and resume.
-
-RULES:
-1. First identify the candidate's profession/domain from the resume (e.g., Software Developer, Nurse, Teacher, Marketing Manager, Chef, Accountant, Construction Worker, Sales Representative, etc.)
-2. Choose ONE specific skill, project, experience, or responsibility explicitly mentioned in their resume
-3. Ask a clear, focused question appropriate for their field
-4. Make it suitable for starting an interview (not too complex)
-5. Do NOT use placeholders like [technology], [project], [skill], [experience], etc.
-6. Use EXACT names, tools, experiences, or job titles from the resume
-7. Output ONLY valid JSON, no markdown, no explanations
-
-FORMAT:
-{ "question": "Your complete question here?" }
-`;
-
-    try {
-      const completion = await ollama.chat({
-        model: "deepseek-v3.1:671b-cloud",
-        format: "json",
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are an expert technical interviewer who asks specific, clear questions based on candidate resumes. Return ONLY valid JSON with no extra text.",
-          },
-          { role: "user", content: prompt },
-        ],
-      });
-
-      console.log(
-        "📄 Full Ollama response:",
-        JSON.stringify(completion, null, 2),
-      );
-
-      const raw = completion?.message?.content;
-      if (!raw) throw new Error("AI returned empty response");
-
-      const parsed = extractJSON(raw);
-      if (
-        !parsed.question ||
-        typeof parsed.question !== "string" ||
-        parsed.question.length < 10
-      ) {
-        throw new Error("AI returned invalid question");
-      }
-
-      firstQuestion = parsed.question.trim();
-      console.log("✅ AI question generated:", firstQuestion);
-    } catch (aiError) {
-      console.error("❌ Ollama API error:", aiError.message);
-      firstQuestion = getOpeningFallback();
-      console.warn("⚠️ Using fallback opening question due to AI error");
-    }
+  // STEP 6: Detect level from resume (saved to session for use in next questions)
+  let levelInfo = {
+    level: "entry",
+    yearsExp: 0,
+    label: "🟢 Entry-Level",
+    weights: {},
+  };
+  if (rawText) {
+    levelInfo = detectCandidateLevel(rawText);
+    console.log(`📊 Detected level: ${levelInfo.label}`);
   }
 
-  // STEP 6: Save question
+  // STEP 7: Save opening question
   let qnaId;
   try {
     qnaId = await Interview.saveQuestion({
@@ -257,20 +306,27 @@ FORMAT:
 
   console.log("✅ Question generation complete!");
 
-  res
-    .status(200)
-    .json(
-      new APIRES(
-        200,
-        { sessionId, question: firstQuestion, qnaId, resumeUrl },
-        "First question generated successfully",
-      ),
-    );
+  res.status(200).json(
+    new APIRES(
+      200,
+      {
+        sessionId,
+        question: firstQuestion,
+        qnaId,
+        resumeUrl,
+        // Pass level info to the frontend so it can be sent back with each next-question request
+        candidateLevel: levelInfo.level,
+        candidateLevelLabel: levelInfo.label,
+      },
+      "First question generated successfully",
+    ),
+  );
 });
 
 // ─── generateNextQuestion ─────────────────────────────────────────────────────
 const generateNextQuestion = asyncHandler(async (req, res) => {
-  const { sessionId, resumeText, history } = req.body;
+  // Accept candidateLevel from the frontend (passed back from generateQuestions response)
+  const { sessionId, resumeText, history, candidateLevel } = req.body;
 
   if (!sessionId) throw new APIERR(400, "Session ID is required");
   if (!history || !Array.isArray(history))
@@ -278,9 +334,74 @@ const generateNextQuestion = asyncHandler(async (req, res) => {
 
   console.log("🤖 Generating next question for session:", sessionId);
   console.log("📊 Current history length:", history.length);
+  console.log("🎯 Candidate level from client:", candidateLevel);
+
+  // Re-detect level from resume text if available, otherwise use what frontend sent
+  let levelInfo;
+  if (resumeText && resumeText.length > 30) {
+    levelInfo = detectCandidateLevel(resumeText);
+  } else {
+    // Fallback: build a minimal levelInfo from the string passed by frontend
+    const levelMap = {
+      entry: {
+        level: "entry",
+        label: "🟢 Entry-Level (0–4 years)",
+        weights: {
+          coreKnowledge: 45,
+          experience: 10,
+          behavioral: 20,
+          problemSolving: 15,
+          cvValidation: 5,
+          motivation: 5,
+        },
+      },
+      mid: {
+        level: "mid",
+        label: "🔵 Mid-Level (4–8 years)",
+        weights: {
+          coreKnowledge: 35,
+          experience: 30,
+          behavioral: 15,
+          problemSolving: 10,
+          cvValidation: 5,
+          motivation: 5,
+        },
+      },
+      senior: {
+        level: "senior",
+        label: "🔴 Senior (8–12 years)",
+        weights: {
+          coreKnowledge: 25,
+          experience: 35,
+          behavioral: 20,
+          problemSolving: 5,
+          cvValidation: 5,
+          strategicThinking: 10,
+        },
+      },
+      leadership: {
+        level: "leadership",
+        label: "⚫ Leadership (12+ years)",
+        weights: {
+          coreKnowledge: 15,
+          experience: 30,
+          behavioral: 20,
+          problemSolving: 5,
+          cvValidation: 5,
+          strategicThinking: 15,
+          leadership: 10,
+        },
+      },
+    };
+    levelInfo = levelMap[candidateLevel] ?? levelMap["entry"];
+  }
+
+  const weightInstructions = buildWeightInstructions(levelInfo);
 
   const prompt = `
-You are conducting an interview for a professional candidate across ANY industry or domain.
+You are conducting a professional interview for a candidate across ANY industry or domain.
+
+${weightInstructions}
 
 Resume:
 ${resumeText || "Not provided"}
@@ -290,8 +411,9 @@ ${history.map((h, i) => `Q${i + 1}: ${h.question}\nA${i + 1}: ${h.answer}`).join
 
 TASK:
 - Analyze the candidate's profession/domain from the resume and previous answers
-- Identify strengths, weaknesses, or knowledge gaps in their latest answer
-- Ask ONE relevant follow-up interview question appropriate for their field
+- Look at the Q&A history and count which question categories have already been covered
+- Pick the next category that is most under-represented according to the weight percentages above
+- Ask ONE relevant interview question for that category
 - Adjust difficulty based on their performance
 - Avoid repeating topics already covered
 
@@ -304,7 +426,7 @@ MANDATORY RULES:
 6. If no specific item is available, ask a general professional question relevant to their field WITHOUT placeholders
 
 STRICT OUTPUT: Return ONLY valid JSON, no markdown, no code blocks.
-{ "question": "Your complete question here?" }
+{ "question": "Your complete question here?", "category": "coreKnowledge|experience|behavioral|problemSolving|cvValidation|motivation|strategicThinking|leadership" }
 `;
 
   let completion;
@@ -317,7 +439,7 @@ STRICT OUTPUT: Return ONLY valid JSON, no markdown, no code blocks.
         {
           role: "system",
           content:
-            "You are a senior technical interviewer who asks specific, clear follow-up questions. Return ONLY valid JSON with no extra text.",
+            "You are a senior professional interviewer who follows a structured question weighting system. Return ONLY valid JSON with no extra text.",
         },
         { role: "user", content: prompt },
       ],
@@ -363,6 +485,8 @@ STRICT OUTPUT: Return ONLY valid JSON, no markdown, no code blocks.
       technology: null,
       difficulty: null,
       questionOrder,
+      // Optionally store which category this question belongs to
+      category: parsed.category ?? null,
     });
     console.log("✅ Question saved with ID:", qnaId);
   } catch (dbError) {
@@ -370,15 +494,17 @@ STRICT OUTPUT: Return ONLY valid JSON, no markdown, no code blocks.
     throw new APIERR(500, "Failed to save question: " + dbError.message);
   }
 
-  res
-    .status(200)
-    .json(
-      new APIRES(
-        200,
-        { question: parsed.question.trim(), qnaId },
-        "Next question generated successfully",
-      ),
-    );
+  res.status(200).json(
+    new APIRES(
+      200,
+      {
+        question: parsed.question.trim(),
+        qnaId,
+        category: parsed.category ?? null,
+      },
+      "Next question generated successfully",
+    ),
+  );
 });
 
 module.exports = { generateQuestions, generateNextQuestion };

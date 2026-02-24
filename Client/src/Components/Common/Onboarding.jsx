@@ -52,7 +52,7 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
     {
       icon: Sparkles,
       gradient: "from-purple-500 via-pink-500 to-orange-500",
-      title: "Welcome to AI Interview System",
+      title: "Welcome to Talk2Hire",
       description:
         "Experience the future of technical interviews with our cutting-edge AI-powered platform",
       features: [

@@ -1,12 +1,3 @@
-/**
- * stt.service.js — Deepgram live STT with controllable idle detection
- *
- * KEY FIX: idleDetection starts PAUSED on every new connection.
- * The server must call resumeIdleDetection() ONLY after TTS finishes
- * and the mic is genuinely open for the user. This prevents the
- * "Can I repeat the question?" firing while TTS is still playing.
- */
-
 const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
 
 const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY;

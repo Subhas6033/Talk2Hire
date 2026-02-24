@@ -7,7 +7,7 @@ This application helps users practice interviews, receive AI-driven feedback, ex
 
 ## 🚀 Features
 
-### 🧠 AI Interview Experience
+### 🧠 Talk2Hire Experience
 
 - Voice-based AI mock interviews
 - Adaptive interview flow

@@ -26,13 +26,13 @@ const Nav = () => {
         <Link
           to="/"
           className="
-            text-xl font-bold
+            text-2xl 
             bg-linear-to-r from-purpleGlow to-purpleSoft
             bg-clip-text text-white
             tracking-tight
           "
         >
-          AI Interview System
+          Talk2Hire
         </Link>
 
         {/* Links */}
