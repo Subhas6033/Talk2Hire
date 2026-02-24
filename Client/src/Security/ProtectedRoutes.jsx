@@ -3,50 +3,64 @@ import { useAuth } from "../Hooks/useAuthHook";
 import { useCompany } from "../Hooks/useCompanyAuthHook";
 import Loader from "../Components/Loader/Loader";
 
+// ─── Unified auth hook ────────────────────────────────────────────────────────
+// Single source of truth for "who is logged in right now".
+// Uses && for hydrated so we NEVER make an access decision until
+// BOTH the user slice AND the company slice have finished their API checks.
 const useUnifiedAuth = () => {
   const {
     isAuthenticated: isUserAuth,
     hydrated: userHydrated,
     role: userRole,
   } = useAuth();
+
   const { isAuthenticated: isCompanyAuth, hydrated: companyHydrated } =
     useCompany();
 
   return {
+    // ✅ AND — both must resolve before we trust the auth state
     hydrated: userHydrated && companyHydrated,
     isAuthenticated: isUserAuth || isCompanyAuth,
     role: isCompanyAuth ? "company" : isUserAuth ? userRole : "guest",
   };
 };
 
-// ─── PublicRoute ───────────────────────────────────────────
-// Rule: guests only — logged in users get redirected to their dashboard
+// ─── PublicRoute ──────────────────────────────────────────────────────────────
+// Accessible only by guests (not logged in).
+// Authenticated users are redirected to their respective dashboard.
 export const PublicRoute = ({ children }) => {
   const { isAuthenticated, hydrated, role } = useUnifiedAuth();
 
+  // Wait for both auth checks to complete before deciding
   if (!hydrated) return <Loader label="Loading" />;
 
   if (isAuthenticated) {
-    // User → /dashboard | Company → /company/dashboard | never stays on public page
     return (
       <Navigate to={role === "company" ? "/company/dashboard" : "/"} replace />
     );
   }
 
-  return children; // ✅ guest: show login/signup
+  // ✅ Guest — show the login / signup page
+  return children;
 };
 
-// ─── RoleBasedRoute ────────────────────────────────────────
-// Rule: authenticated + correct role only
-// Blocks: guests, wrong-role users, cross-role access
+// ─── RoleBasedRoute ───────────────────────────────────────────────────────────
+// Accessible only when:
+//   1. Auth has fully hydrated (both slices resolved)
+//   2. User is authenticated
+//   3. User's role matches the required allowedRole
+//
+// Redirects:
+//   • Not logged in  → correct login page for the attempted role
+//   • Wrong role     → own dashboard (no infinite loops)
 export const RoleBasedRoute = ({ children, allowedRole }) => {
   const { isAuthenticated, hydrated, role } = useUnifiedAuth();
 
+  // ── Still checking auth state — show loader, never redirect yet ──
   if (!hydrated) return <Loader label="Verifying access" />;
 
-  // ── Guest: not logged in at all ──
+  // ── Not logged in at all ──────────────────────────────────────────
   if (!isAuthenticated) {
-    // Send to the correct login page for the route they tried to access
     return (
       <Navigate
         to={allowedRole === "company" ? "/login/company" : "/login"}
@@ -55,10 +69,10 @@ export const RoleBasedRoute = ({ children, allowedRole }) => {
     );
   }
 
-  // ── Wrong role: logged in but as the other type ──
+  // ── Logged in but wrong role ──────────────────────────────────────
+  // e.g. a company account trying to hit /dashboard  → /company/dashboard
+  //      a user account trying to hit /company/jobs  → /dashboard
   if (role !== allowedRole) {
-    // Company trying to access /dashboard → /company/dashboard
-    // User trying to access /company/dashboard → /dashboard
     return (
       <Navigate
         to={role === "company" ? "/company/dashboard" : "/dashboard"}
@@ -67,5 +81,6 @@ export const RoleBasedRoute = ({ children, allowedRole }) => {
     );
   }
 
-  return children; // ✅ correct role: allow access
+  // ✅ Authenticated + correct role — render the page
+  return children;
 };

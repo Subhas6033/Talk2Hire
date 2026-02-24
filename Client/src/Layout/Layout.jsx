@@ -7,10 +7,11 @@ import { useAuth } from "../Hooks/useAuthHook.js";
 import { useCompany } from "../Hooks/useCompanyAuthHook.js";
 
 const FULLSCREEN_ROUTES = ["/interview", "/interview/live"];
+
 const ROLE_NAV = {
   company: CompanyNavbar,
-  user: Nav, // Candidate / applicant nav
-  guest: Nav, // Unauthenticated — falls back to user nav
+  user: Nav,
+  guest: Nav,
 };
 
 const Layout = ({ children }) => {
@@ -24,11 +25,14 @@ const Layout = ({ children }) => {
     useCompany();
 
   const isFullscreen = FULLSCREEN_ROUTES.includes(pathname);
-  const hydrated = userHydrated || companyHydrated;
+
+  // ✅ FIX: Use && (same as ProtectedRoutes) so the navbar never renders
+  // before both auth slices have resolved — avoids a flash of the wrong nav.
+  const hydrated = userHydrated && companyHydrated;
+
   const role = isCompanyAuth ? "company" : userRole;
   const RoleNav = ROLE_NAV[role] ?? Nav;
 
-  // ✅ Different backgrounds per role
   const bgClass =
     role === "company"
       ? "min-h-screen bg-gray-50 text-gray-900 flex flex-col"
@@ -36,6 +40,7 @@ const Layout = ({ children }) => {
 
   return (
     <div className={bgClass}>
+      {/* Only render the navbar once we know who the user is */}
       {!isFullscreen && hydrated && <RoleNav />}
 
       <motion.main
@@ -47,7 +52,6 @@ const Layout = ({ children }) => {
         {children}
       </motion.main>
 
-      {/* ✅ Hide footer for company routes — or show a different one */}
       {!isFullscreen && role !== "company" && <Footer />}
     </div>
   );
