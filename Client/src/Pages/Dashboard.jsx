@@ -15,7 +15,6 @@ import {
   Share2,
   ChevronRight,
   CheckCircle2,
-  XCircle,
   AlertCircle,
 } from "lucide-react";
 import { motion } from "motion/react";
@@ -25,7 +24,7 @@ const Dashboard = () => {
   const [selectedInterview, setSelectedInterview] = useState(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const navigate = useNavigate();
-  // Mock data - replace with real data from your API/Redux
+
   const dashboardStats = {
     totalInterviews: 12,
     averageScore: 78,
@@ -104,7 +103,9 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="min-h-screen bg-linear-to-br from-bgDark via-[#11162a] to-bgDark py-8 px-4">
+    // Removed bg-linear-to-br — Layout already provides the dark background.
+    // Keeping only spacing/layout classes here.
+    <div className="min-h-screen py-8 px-4">
       <div className="max-w-7xl mx-auto space-y-8">
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -332,7 +333,6 @@ const Dashboard = () => {
       >
         {selectedInterview && (
           <div className="space-y-6">
-            {/* Header */}
             <div className="flex items-start justify-between">
               <div>
                 <h3 className="text-xl font-bold text-white mb-2">
@@ -360,7 +360,6 @@ const Dashboard = () => {
               </div>
             </div>
 
-            {/* Performance Metrics */}
             <div className="grid grid-cols-2 gap-4">
               <div className="p-4 rounded-xl bg-white/5 border border-white/10">
                 <p className="text-white/60 text-sm mb-1">Questions Asked</p>
@@ -376,7 +375,6 @@ const Dashboard = () => {
               </div>
             </div>
 
-            {/* Strengths */}
             <div>
               <div className="flex items-center gap-2 mb-3">
                 <CheckCircle2 className="text-green-400" size={18} />
@@ -394,7 +392,6 @@ const Dashboard = () => {
               </div>
             </div>
 
-            {/* Areas for Improvement */}
             <div>
               <div className="flex items-center gap-2 mb-3">
                 <AlertCircle className="text-yellow-400" size={18} />
@@ -414,7 +411,6 @@ const Dashboard = () => {
               </div>
             </div>
 
-            {/* Feedback */}
             <div className="p-4 rounded-xl bg-purpleGlow/10 border border-purpleGlow/30">
               <div className="flex items-center gap-2 mb-2">
                 <Award className="text-purpleGlow" size={18} />

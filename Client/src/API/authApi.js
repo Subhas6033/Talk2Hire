@@ -1,15 +1,12 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import api from "./api";
 
-// Register User
 export const registerUser = createAsyncThunk(
   "auth/register",
   async (formData, { rejectWithValue }) => {
     try {
       const response = await api.post("/auth/register", formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
+        headers: { "Content-Type": "multipart/form-data" },
         withCredentials: true,
       });
       return response.data;
@@ -19,7 +16,6 @@ export const registerUser = createAsyncThunk(
   },
 );
 
-// Get CV Skills
 export const getCVSkills = createAsyncThunk(
   "auth/getCVSkills",
   async (_, { rejectWithValue }) => {
@@ -36,7 +32,6 @@ export const getCVSkills = createAsyncThunk(
   },
 );
 
-// Login User
 export const loginUser = createAsyncThunk(
   "auth/login",
   async ({ email, password }, { rejectWithValue }) => {
@@ -46,7 +41,6 @@ export const loginUser = createAsyncThunk(
         { email, password },
         { withCredentials: true },
       );
-      console.log("Login response:", response.data);
       return response.data;
     } catch (error) {
       return rejectWithValue(error.response?.data?.message || error.message);
@@ -54,7 +48,6 @@ export const loginUser = createAsyncThunk(
   },
 );
 
-// Logout User
 export const logoutUser = createAsyncThunk(
   "auth/logout",
   async (_, { rejectWithValue }) => {
@@ -67,7 +60,6 @@ export const logoutUser = createAsyncThunk(
   },
 );
 
-// Get Current User (verify session)
 export const getCurrentUser = createAsyncThunk(
   "auth/getCurrentUser",
   async (_, { rejectWithValue }) => {
@@ -77,29 +69,25 @@ export const getCurrentUser = createAsyncThunk(
       });
       return response.data;
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Not authenticated",
-      );
+      return rejectWithValue({
+        message: error.response?.data?.message || "Not authenticated",
+        status: error.response?.status,
+      });
     }
   },
 );
 
-// Update User Profile
 export const updateUser = createAsyncThunk(
   "auth/updateUser",
   async (userData, { rejectWithValue }) => {
     try {
       const isFormData = userData instanceof FormData;
-
       const config = {
         withCredentials: true,
         ...(isFormData && {
-          headers: {
-            "Content-Type": "multipart/form-data",
-          },
+          headers: { "Content-Type": "multipart/form-data" },
         }),
       };
-
       const response = await api.patch(
         "/auth/update-profile",
         userData,
@@ -112,58 +100,54 @@ export const updateUser = createAsyncThunk(
   },
 );
 
-// Save to localStorage (user data only, NO tokens)
 const saveAuthState = (user, isAuthenticated) => {
   try {
-    const authState = {
-      user,
-      isAuthenticated,
-      lastVerified: Date.now(),
-    };
-    localStorage.setItem("authState", JSON.stringify(authState));
+    localStorage.setItem(
+      "authState",
+      JSON.stringify({ user, isAuthenticated, lastVerified: Date.now() }),
+    );
   } catch (err) {
     console.error("Failed to save auth state:", err);
   }
 };
 
-// Load from localStorage
 const loadStateFromStorage = () => {
   try {
-    const serializedState = localStorage.getItem("authState");
-    if (!serializedState) {
-      return {
-        user: null,
-        isAuthenticated: false,
-        loading: false,
-        error: null,
-        hydrated: true,
-        lastVerified: null,
-      };
-    }
+    const serialized = localStorage.getItem("authState");
+    if (!serialized) return defaultState();
 
-    const parsedState = JSON.parse(serializedState);
-
+    const parsed = JSON.parse(serialized);
     return {
-      user: parsedState.user || null,
-      isAuthenticated: parsedState.isAuthenticated || false,
+      user: parsed.user || null,
+      isAuthenticated: parsed.isAuthenticated || false,
       loading: false,
       error: null,
       hydrated: true,
-      lastVerified: parsedState.lastVerified || null,
+      lastVerified: parsed.lastVerified || null,
     };
   } catch (err) {
     console.error("Failed to load auth state:", err);
     localStorage.removeItem("authState");
-    return {
-      user: null,
-      isAuthenticated: false,
-      loading: false,
-      error: null,
-      hydrated: true,
-      lastVerified: null,
-    };
+    return defaultState();
   }
 };
+
+const defaultState = () => ({
+  user: null,
+  isAuthenticated: false,
+  loading: false,
+  error: null,
+  hydrated: true,
+  lastVerified: null,
+});
+
+// Sessions verified within the last 5 minutes are considered fresh.
+// This prevents a race where getCurrentUser rejects and wipes a user
+// who just registered/logged in moments ago.
+const SESSION_GRACE_MS = 5 * 60 * 1000;
+
+const isRecentSession = (lastVerified) =>
+  lastVerified && Date.now() - lastVerified < SESSION_GRACE_MS;
 
 const initialState = loadStateFromStorage();
 
@@ -171,25 +155,18 @@ const authSlice = createSlice({
   name: "auth",
   initialState,
   reducers: {
-    // Mark state as hydrated
     setAuthHydrated: (state) => {
       state.hydrated = true;
     },
-
-    // Clear any errors
     clearError: (state) => {
       state.error = null;
     },
-
-    // Update user locally without API call
     updateUserLocal: (state, action) => {
       if (state.user) {
         state.user = { ...state.user, ...action.payload };
         saveAuthState(state.user, state.isAuthenticated);
       }
     },
-
-    // Clear session (force logout)
     clearSession: (state) => {
       state.user = null;
       state.isAuthenticated = false;
@@ -201,20 +178,17 @@ const authSlice = createSlice({
 
   extraReducers: (builder) => {
     builder
-      // ========== REGISTER ==========
+      // REGISTER
       .addCase(registerUser.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
       .addCase(registerUser.fulfilled, (state, action) => {
         state.loading = false;
-        // Backend returns user data (tokens are in httpOnly cookies)
         state.user = action.payload.data;
         state.isAuthenticated = true;
         state.hydrated = true;
         state.lastVerified = Date.now();
-
-        // Save user data to localStorage (NO tokens)
         saveAuthState(state.user, state.isAuthenticated);
       })
       .addCase(registerUser.rejected, (state, action) => {
@@ -223,13 +197,12 @@ const authSlice = createSlice({
         state.hydrated = true;
       })
 
-      // ========== GET CV SKILLS ==========
+      // GET CV SKILLS
       .addCase(getCVSkills.pending, (state) => {
         state.loading = true;
       })
       .addCase(getCVSkills.fulfilled, (state, action) => {
         state.loading = false;
-        // Update user object with CV skills
         if (state.user) {
           state.user = {
             ...state.user,
@@ -240,23 +213,19 @@ const authSlice = createSlice({
       })
       .addCase(getCVSkills.rejected, (state) => {
         state.loading = false;
-        // Keep existing user data, just don't update CV skills
       })
 
-      // ========== LOGIN ==========
+      // LOGIN
       .addCase(loginUser.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
       .addCase(loginUser.fulfilled, (state, action) => {
         state.loading = false;
-        // Backend returns user data (tokens are in httpOnly cookies)
         state.user = action.payload.data;
         state.isAuthenticated = true;
         state.hydrated = true;
         state.lastVerified = Date.now();
-
-        // Save user data to localStorage (NO tokens)
         saveAuthState(state.user, state.isAuthenticated);
       })
       .addCase(loginUser.rejected, (state, action) => {
@@ -265,32 +234,20 @@ const authSlice = createSlice({
         state.hydrated = true;
       })
 
-      // ========== LOGOUT ==========
+      // LOGOUT
       .addCase(logoutUser.pending, (state) => {
         state.loading = true;
       })
       .addCase(logoutUser.fulfilled, (state) => {
-        state.loading = false;
-        state.user = null;
-        state.isAuthenticated = false;
-        state.hydrated = true;
-        state.lastVerified = null;
-
-        // Clear localStorage
+        Object.assign(state, defaultState(), { hydrated: true });
         localStorage.removeItem("authState");
       })
       .addCase(logoutUser.rejected, (state) => {
-        // Even if API fails, logout locally
-        state.loading = false;
-        state.user = null;
-        state.isAuthenticated = false;
-        state.lastVerified = null;
-
-        // Clear localStorage
+        Object.assign(state, defaultState(), { hydrated: true });
         localStorage.removeItem("authState");
       })
 
-      // ========== GET CURRENT USER ==========
+      // GET CURRENT USER
       .addCase(getCurrentUser.pending, (state) => {
         state.loading = true;
       })
@@ -300,21 +257,30 @@ const authSlice = createSlice({
         state.isAuthenticated = true;
         state.hydrated = true;
         state.lastVerified = Date.now();
-
-        // Update localStorage with fresh data
         saveAuthState(state.user, state.isAuthenticated);
       })
-      .addCase(getCurrentUser.rejected, (state) => {
-        // Session invalid - clear everything
+      .addCase(getCurrentUser.rejected, (state, action) => {
         state.loading = false;
-        state.user = null;
-        state.isAuthenticated = false;
         state.hydrated = true;
-        state.lastVerified = null;
-        localStorage.removeItem("authState");
+
+        // Only clear the session on a confirmed 401.
+        // If the request fails for any other reason (network, 500, etc.)
+        // we keep the existing session intact.
+        // Additionally, if the session was verified very recently (e.g. right
+        // after registration), we don't clear it — the cookie is valid even
+        // if this verification call failed due to a race condition.
+        const is401 = action.payload?.status === 401;
+        const isRecent = isRecentSession(state.lastVerified);
+
+        if (is401 && !isRecent) {
+          state.user = null;
+          state.isAuthenticated = false;
+          state.lastVerified = null;
+          localStorage.removeItem("authState");
+        }
       })
 
-      // ========== UPDATE USER ==========
+      // UPDATE USER
       .addCase(updateUser.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -323,8 +289,6 @@ const authSlice = createSlice({
         state.loading = false;
         if (state.user) {
           state.user = { ...state.user, ...action.payload.data };
-
-          // Update localStorage
           saveAuthState(state.user, state.isAuthenticated);
         }
       })

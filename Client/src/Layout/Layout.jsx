@@ -24,9 +24,7 @@ const Layout = ({ children }) => {
     useCompany();
 
   const isFullscreen = FULLSCREEN_ROUTES.includes(pathname);
-
   const hydrated = userHydrated && companyHydrated;
-
   const role = isCompanyAuth ? "company" : userRole;
   const RoleNav = ROLE_NAV[role] ?? Nav;
 
@@ -37,7 +35,8 @@ const Layout = ({ children }) => {
 
   return (
     <div className={bgClass}>
-      {/* Only render the navbar once we know who the user is */}
+      {/* Gate the navbar on hydrated so it always renders with the correct role.
+          Children are NOT gated here — App.jsx handles the top-level loading state. */}
       {!isFullscreen && hydrated && <RoleNav />}
 
       <motion.main

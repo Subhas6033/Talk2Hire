@@ -31,25 +31,20 @@ import {
   UserJobDetail,
   CompanyProfile,
 } from "./Pages/index.pages.js";
-
 import { InterviewSetup } from "./Components/index.js";
 import { useStreams } from "./Hooks/streamContext";
 
 const App = () => {
-  const [isLoading, setIsLoading] = useState(true);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const location = useLocation();
   const streamsRef = useStreams();
 
-  // Read from Redux store
-  const { hydrated } = useSelector((state) => state.auth);
-  const { hydrated: companyHydrated } = useSelector((state) => state.company);
-
-  useEffect(() => {
-    if (hydrated && companyHydrated) {
-      setIsLoading(false);
-    }
-  }, [hydrated, companyHydrated]);
+  // Both slices initialize hydrated: true from localStorage, so this is
+  // immediately true on first render. It only becomes false if a slice
+  // explicitly resets it (which we no longer do on pending).
+  const hydrated = useSelector(
+    (state) => state.auth.hydrated && state.company.hydrated,
+  );
 
   useEffect(() => {
     console.log("🔍 App mounted - StreamContext available:", {
@@ -58,10 +53,8 @@ const App = () => {
     });
   }, []);
 
-  // Check for onboarding flag whenever route changes
   useEffect(() => {
     const shouldShowOnboarding = sessionStorage.getItem("showOnboarding");
-
     if (shouldShowOnboarding === "true" && location.pathname === "/") {
       setShowOnboarding(true);
     } else {
@@ -69,177 +62,167 @@ const App = () => {
     }
   }, [location.pathname]);
 
-  // Handle onboarding completion
   const handleOnboardingComplete = () => {
     sessionStorage.removeItem("showOnboarding");
     sessionStorage.removeItem("registrationSessionId");
     setShowOnboarding(false);
   };
 
+  // Block the entire app until both auth slices have resolved.
+  // Since both start as hydrated: true from localStorage this is nearly
+  // instant on first paint — no black screen flash.
+  if (!hydrated) {
+    return <Loader label="Setting up your session" />;
+  }
+
   return (
     <Layout>
-      {isLoading ? (
-        <Loader label="Setting up your interview" />
+      {showOnboarding ? (
+        <OnboardingFlow
+          isOpen={showOnboarding}
+          onComplete={handleOnboardingComplete}
+        />
       ) : (
         <>
-          {/*  IMPROVED: Show onboarding as full-page overlay when active */}
-          {showOnboarding ? (
-            <OnboardingFlow
-              isOpen={showOnboarding}
-              onComplete={handleOnboardingComplete}
-            />
-          ) : (
-            <>
-              <ScrollToTop />
-              <AnimatePresence mode="wait" initial={true}>
-                <motion.main
-                  key={location.pathname}
-                  {...pageTransition}
-                  className="flex-1"
-                >
-                  <Routes>
-                    {/* PUBLIC ROUTES */}
-                    <Route path="/" element={<Home />} />
-                    <Route path="/about" element={<About />} />
-                    <Route path="/privacy" element={<Privacy />} />
-                    <Route path="/terms" element={<Terms />} />
-                    <Route path="/contact" element={<Contact />} />
-                    <Route path="/hire" element={<Hire />} />
-                    <Route
-                      path="/verify-password"
-                      element={<VerifyPassword />}
-                    />
+          <ScrollToTop />
+          <AnimatePresence mode="wait" initial={true}>
+            <motion.main
+              key={location.pathname}
+              {...pageTransition}
+              className="flex-1"
+            >
+              <Routes>
+                {/* PUBLIC ROUTES */}
+                <Route path="/" element={<Home />} />
+                <Route path="/about" element={<About />} />
+                <Route path="/privacy" element={<Privacy />} />
+                <Route path="/terms" element={<Terms />} />
+                <Route path="/contact" element={<Contact />} />
+                <Route path="/hire" element={<Hire />} />
+                <Route path="/verify-password" element={<VerifyPassword />} />
 
-                    {/* Redirect to home if already logged in */}
-                    <Route
-                      path="/login"
-                      element={
-                        <PublicRoute>
-                          <Login />
-                        </PublicRoute>
-                      }
-                    />
-                    <Route
-                      path="/signup"
-                      element={
-                        <PublicRoute>
-                          <RegistrationForm />
-                        </PublicRoute>
-                      }
-                    />
+                <Route
+                  path="/login"
+                  element={
+                    <PublicRoute>
+                      <Login />
+                    </PublicRoute>
+                  }
+                />
+                <Route
+                  path="/signup"
+                  element={
+                    <PublicRoute>
+                      <RegistrationForm />
+                    </PublicRoute>
+                  }
+                />
+                <Route
+                  path="/signup/company"
+                  element={
+                    <PublicRoute>
+                      <CompanyRegister />
+                    </PublicRoute>
+                  }
+                />
+                <Route
+                  path="/login/company"
+                  element={
+                    <PublicRoute>
+                      <Companylogin />
+                    </PublicRoute>
+                  }
+                />
 
-                    <Route
-                      path="/signup/company"
-                      element={
-                        <PublicRoute>
-                          <CompanyRegister />
-                        </PublicRoute>
-                      }
-                    />
+                {/* USER ONLY ROUTES */}
+                <Route
+                  path="/dashboard"
+                  element={
+                    <RoleBasedRoute allowedRole="user">
+                      <InterviewDashboard />
+                    </RoleBasedRoute>
+                  }
+                />
+                <Route
+                  path="/profile/:id"
+                  element={
+                    <RoleBasedRoute allowedRole="user">
+                      <Profile />
+                    </RoleBasedRoute>
+                  }
+                />
+                <Route
+                  path="/interview"
+                  element={
+                    <RoleBasedRoute allowedRole="user">
+                      <InterviewSetup />
+                    </RoleBasedRoute>
+                  }
+                />
+                <Route
+                  path="/interview/live"
+                  element={
+                    <RoleBasedRoute allowedRole="user">
+                      <InterviewLive />
+                    </RoleBasedRoute>
+                  }
+                />
+                <Route
+                  path="/jobs"
+                  element={
+                    <RoleBasedRoute allowedRole="user">
+                      <UserJob />
+                    </RoleBasedRoute>
+                  }
+                />
+                <Route
+                  path="/jobs/:id"
+                  element={
+                    <RoleBasedRoute allowedRole="user">
+                      <UserJobDetail />
+                    </RoleBasedRoute>
+                  }
+                />
 
-                    <Route
-                      path="/login/company"
-                      element={
-                        <PublicRoute>
-                          <Companylogin />
-                        </PublicRoute>
-                      }
-                    />
-                    {/* USER ONLY ROUTES */}
-                    <Route
-                      path="/dashboard"
-                      element={
-                        <RoleBasedRoute allowedRole="user">
-                          <InterviewDashboard />
-                        </RoleBasedRoute>
-                      }
-                    />
-                    <Route
-                      path="/profile/:id"
-                      element={
-                        <RoleBasedRoute allowedRole="user">
-                          <Profile />
-                        </RoleBasedRoute>
-                      }
-                    />
-                    <Route
-                      path="/interview"
-                      element={
-                        <RoleBasedRoute allowedRole="user">
-                          <InterviewSetup />
-                        </RoleBasedRoute>
-                      }
-                    />
-                    <Route
-                      path="/interview/live"
-                      element={
-                        <RoleBasedRoute allowedRole="user">
-                          <InterviewLive />
-                        </RoleBasedRoute>
-                      }
-                    />
-                    <Route
-                      path="/jobs"
-                      element={
-                        <RoleBasedRoute allowedRole="user">
-                          <UserJob />
-                        </RoleBasedRoute>
-                      }
-                    />
+                {/* COMPANY ONLY ROUTES */}
+                <Route
+                  path="/company/dashboard"
+                  element={
+                    <RoleBasedRoute allowedRole="company">
+                      <CompanyDashboard />
+                    </RoleBasedRoute>
+                  }
+                />
+                <Route
+                  path="/company/interviews"
+                  element={
+                    <RoleBasedRoute allowedRole="company">
+                      <CompanyInterviews />
+                    </RoleBasedRoute>
+                  }
+                />
+                <Route
+                  path="/company/jobs"
+                  element={
+                    <RoleBasedRoute allowedRole="company">
+                      <CompanyJob />
+                    </RoleBasedRoute>
+                  }
+                />
+                <Route
+                  path="/company/profile"
+                  element={
+                    <RoleBasedRoute allowedRole="company">
+                      <CompanyProfile />
+                    </RoleBasedRoute>
+                  }
+                />
 
-                    <Route
-                      path="/jobs/:id"
-                      element={
-                        <RoleBasedRoute allowedRole="user">
-                          <UserJobDetail />
-                        </RoleBasedRoute>
-                      }
-                    />
-
-                    {/* COMPANY ONLY ROUTES */}
-                    <Route
-                      path="/company/dashboard"
-                      element={
-                        <RoleBasedRoute allowedRole="company">
-                          <CompanyDashboard />
-                        </RoleBasedRoute>
-                      }
-                    />
-                    <Route
-                      path="/company/interviews"
-                      element={
-                        <RoleBasedRoute allowedRole="company">
-                          <CompanyInterviews />
-                        </RoleBasedRoute>
-                      }
-                    />
-                    <Route
-                      path="/company/jobs"
-                      element={
-                        <RoleBasedRoute allowedRole="company">
-                          <CompanyJob />
-                        </RoleBasedRoute>
-                      }
-                    />
-                    <Route
-                      path="/company/profile"
-                      element={
-                        <RoleBasedRoute allowedRole="company">
-                          <CompanyProfile />
-                        </RoleBasedRoute>
-                      }
-                    />
-                    {/* Mobile camera Route */}
-                    <Route
-                      path="/mobile-camera"
-                      element={<MobileCameraPage />}
-                    />
-                    <Route path="*" element={<NotFound />} />
-                  </Routes>
-                </motion.main>
-              </AnimatePresence>
-            </>
-          )}
+                <Route path="/mobile-camera" element={<MobileCameraPage />} />
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </motion.main>
+          </AnimatePresence>
         </>
       )}
     </Layout>
