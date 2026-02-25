@@ -2,7 +2,7 @@ const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
 
 const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY;
 const STT_SAMPLE_RATE = 48000;
-const IDLE_TIMEOUT_MS = 15000; // 15 s of real silence → idle
+const IDLE_TIMEOUT_MS = 15000;
 const UTTERANCE_END_MS = 1500;
 
 function createSTTSession() {
@@ -21,10 +21,17 @@ function createSTTSession() {
       wsReadyResolve = res;
     });
 
+    // ── Connection identity ──────────────────────────────────────────────────
+    // FIX: Each connection instance gets a unique ID. When onClose fires, we ONLY
+    // nullify if the closing connection matches the current one. This prevents
+    // old connection's onClose from killing a fresh connection.
+    const connectionId = Symbol("STT_CONN");
+
     // ── Idle state — STARTS PAUSED ────────────────────────────────────────
-    let idlePaused = true; // <<< paused until resumeIdleDetection() called
+    let idlePaused = true;
     let idleTimer = null;
     let hasTranscript = false;
+    let audioChunkCount = 0;
 
     const clearIdleTimer = () => {
       if (idleTimer) {
@@ -35,7 +42,7 @@ function createSTTSession() {
 
     const scheduleIdle = () => {
       clearIdleTimer();
-      if (idlePaused) return; // never start if paused
+      if (idlePaused) return;
       idleTimer = setTimeout(() => {
         if (!idlePaused && !hasTranscript) {
           console.log(`⏱️ STT idle after ${IDLE_TIMEOUT_MS}ms`);
@@ -58,10 +65,15 @@ function createSTTSession() {
       channels: 1,
     });
 
+    // FIX: Tag this connection with its unique ID
+    conn.__connectionId = connectionId;
+
     conn.on(LiveTranscriptionEvents.Open, () => {
       wsReady = true;
       wsReadyResolve?.();
-      console.log("🎙️ Deepgram STT open");
+      console.log(
+        `🎙️ Deepgram STT open (connectionId: ${connectionId.toString()})`,
+      );
     });
 
     conn.on(LiveTranscriptionEvents.Error, (err) => {
@@ -70,10 +82,13 @@ function createSTTSession() {
     });
 
     conn.on(LiveTranscriptionEvents.Close, () => {
-      console.warn("⚠️ Deepgram STT closed");
+      console.warn(
+        `⚠️ Deepgram STT closed (connectionId: ${connectionId.toString()})`,
+      );
       clearIdleTimer();
       wsReady = false;
-      onClose?.();
+      // FIX: Pass connectionId to onClose so handler can verify it's the right connection
+      onClose?.(connectionId);
     });
 
     conn.on(LiveTranscriptionEvents.Transcript, (data) => {
@@ -84,7 +99,6 @@ function createSTTSession() {
 
       if (!text) return;
 
-      // Any speech resets the idle timer
       scheduleIdle();
 
       if (!isFinal) {
@@ -100,24 +114,33 @@ function createSTTSession() {
     });
 
     conn.on(LiveTranscriptionEvents.UtteranceEnd, () => {
-      if (!hasTranscript) scheduleIdle(); // give extra grace time
+      if (!hasTranscript) scheduleIdle();
     });
 
     conn.on(LiveTranscriptionEvents.SpeechStarted, () => {
-      clearIdleTimer(); // voice → cancel idle countdown
+      clearIdleTimer();
     });
-    let audioChunkCount = 0;
+
     return {
+      connectionId,
+
       send(buf) {
-        if (!wsReady) return;
+        if (!wsReady) {
+          console.warn(
+            `⚠️ STT not ready (connectionId: ${connectionId.toString()}) - audio dropped`,
+          );
+          return;
+        }
         audioChunkCount++;
         if (audioChunkCount % 100 === 0) {
-          console.log(`🎙️ STT: ${audioChunkCount} chunks sent to Deepgram`);
+          console.log(
+            `🎙️ STT: ${audioChunkCount} chunks sent (connectionId: ${connectionId.toString().slice(0, 20)}...)`,
+          );
         }
         try {
           conn.send(buf);
         } catch (e) {
-          console.error("STT send:", e);
+          console.error("❌ STT send error:", e.message);
         }
       },
 
@@ -127,27 +150,41 @@ function createSTTSession() {
           conn.finish();
         } catch (_) {}
         wsReady = false;
+        console.log(
+          `✅ STT connection finished (connectionId: ${connectionId.toString().slice(0, 20)}...)`,
+        );
       },
 
-      /** Call BEFORE TTS starts. Stops idle timer from running during playback. */
       pauseIdleDetection() {
         idlePaused = true;
         clearIdleTimer();
+        console.log(
+          `⏸️ STT idle detection paused (connectionId: ${connectionId.toString().slice(0, 20)}...)`,
+        );
       },
 
-      /** Call AFTER TTS ends and listening_enabled is emitted to the client. */
       resumeIdleDetection() {
+        // FIX: ALWAYS reset hasTranscript when resuming
         hasTranscript = false;
         idlePaused = false;
         scheduleIdle();
+        console.log(
+          `▶️ STT idle detection resumed (connectionId: ${connectionId.toString().slice(0, 20)}...)`,
+        );
       },
 
       resetTranscriptState() {
         hasTranscript = false;
+        audioChunkCount = 0;
+        console.log(
+          `🔄 STT transcript state reset (connectionId: ${connectionId.toString().slice(0, 20)}...)`,
+        );
       },
+
       isConnected() {
         return wsReady;
       },
+
       waitForReady(ms = 8000) {
         return Promise.race([
           wsReadyPromise,

@@ -3,7 +3,7 @@ import { useRef, useCallback, useEffect } from "react";
 const TTS_SAMPLE_RATE = 48000;
 const NUM_CHANNELS = 1;
 const BITS_PER_SAMPLE = 16;
-const INITIAL_BUFFER_S = 0.05;
+const INITIAL_BUFFER_S = 0.002;
 
 function pcm16ToWav(
   pcmBuffer,
@@ -49,7 +49,7 @@ function pcm16ToWav(
  *   socket.on("tts_end",   ()          => flushTTS(() => socket.emit("playback_done")));
  *
  * flushTTS(onDone) — fires onDone() when Web Audio queue fully drains,
- * OR after a 30s safety timeout if Web Audio never fires onended
+ * OR after a 5s safety timeout if Web Audio never fires onended
  * (e.g. AudioContext suspended by browser autoplay policy).
  */
 export function useTTS({ onPlayStart, onPlayEnd }) {
@@ -90,10 +90,9 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
 
   // ── fireDone — called exactly once when playback is complete ───────────
   const fireDone = useCallback(() => {
-    if (doneCalledRef.current) return; // prevent double-fire
+    if (doneCalledRef.current) return;
     doneCalledRef.current = true;
 
-    // Cancel fallback timer since we fired naturally
     if (fallbackTimerRef.current) {
       clearTimeout(fallbackTimerRef.current);
       fallbackTimerRef.current = null;
@@ -106,12 +105,13 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
     const cb = onDoneRef.current;
     onDoneRef.current = null;
 
-    console.log("🔊 Playback fully done → firing playback_done");
+    console.log("🔊 TTS playback complete → firing onDone callback");
     try {
       cb?.();
     } catch (e) {
-      console.error("onDone error:", e);
+      console.error("❌ onDone callback error:", e);
     }
+
     onPlayEnd?.();
   }, [onPlayEnd]);
 
@@ -216,7 +216,7 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
   // ── flushTTS ────────────────────────────────────────────────────────────
   /**
    * Call on tts_end. onDone fires when audio fully plays.
-   * 30s fallback fires onDone if Web Audio never calls onended
+   * 5s fallback fires onDone if Web Audio never calls onended
    * (AudioContext blocked by browser autoplay, tab hidden, etc.)
    *
    * socket.on("tts_end", () => flushTTS(() => socket.emit("playback_done")));
@@ -224,9 +224,6 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
   const flushTTS = useCallback(
     (onDone) => {
       // Cancel previous fallback timer FIRST, then reset the double-fire guard.
-      // If we reset doneCalledRef before clearing the old timer, the old timer
-      // fires into the new cycle and emits a stale playback_done — causing the
-      // next question's TTS to never play because awaitingPlaybackDone is false.
       if (fallbackTimerRef.current) {
         clearTimeout(fallbackTimerRef.current);
         fallbackTimerRef.current = null;
@@ -235,15 +232,22 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
       onDoneRef.current = onDone ?? null;
       flushRequestedRef.current = true;
 
-      // Safety fallback: fires if Web Audio onended never triggers
+      // FIX: Reduced from 30s to 5s
+      // 30 seconds is WAY too long. The fallback should fire quickly if normal
+      // playback tracking fails. This was causing Q1's fallback to still be
+      // running when Q2 TTS started, causing timing confusion.
+      //
+      // 5 seconds gives the browser plenty of time to report playback completion
+      // via onended callbacks, while not hanging the interview if those callbacks
+      // fail due to browser autoplay policies, tab hiding, etc.
       fallbackTimerRef.current = setTimeout(() => {
         if (!doneCalledRef.current) {
           console.warn(
-            "⚠️ TTS playback fallback timer fired (30s) — forcing done",
+            "⚠️ TTS playback fallback timer fired (5s) — forcing done",
           );
           fireDone();
         }
-      }, 30_000);
+      }, 5_000); // Changed from 30_000 to 5_000
 
       const nothingPending =
         pendingDecodeRef.current.length === 0 && !isDecodingRef.current;
@@ -252,6 +256,7 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
 
       if (nothingPending && nothingQueued && nothingPlaying) {
         // No audio received at all — fire immediately
+        console.log("🔊 No audio in queue, firing playback_done immediately");
         fireDone();
       }
     },

@@ -259,7 +259,7 @@ const InterviewSetup = () => {
   const [isMicTesting, setIsMicTesting] = useState(false);
   const [micConfirmed, setMicConfirmed] = useState(false);
   const speakingStartRef = useRef(null);
-  const MIC_REQUIRED_MS = 4000;
+  const MIC_REQUIRED_MS = 1000;
 
   const [primaryCameraStream, setPrimaryCameraStream] = useState(null);
   const [primaryCameraError, setPrimaryCameraError] = useState(null);

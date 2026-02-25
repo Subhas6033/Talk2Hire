@@ -5,23 +5,24 @@ const run = async () => {
 
   try {
     connection = await pool.getConnection();
-    console.log("✅ Connected to database\n");
+    console.log("Connected to database\n");
 
+    // Drop existing category column if it exists
     await connection.query(`
-      ALTER TABLE company_details
-      ADD COLUMN logo VARCHAR(500) NULL AFTER companyName
+      ALTER TABLE interview_questions DROP COLUMN IF EXISTS category;
     `);
+    console.log("Dropped existing category column (if it existed)");
 
-    console.log(
-      "✅ Column 'logo' added after 'companyName' in company_details",
-    );
-    console.log("\n🎉 Migration completed successfully!");
+    // Recreate it in the correct position — after the question column
+    await connection.query(`
+      ALTER TABLE interview_questions 
+      ADD COLUMN category VARCHAR(50) NULL AFTER question;
+    `);
+    console.log("Added category column after question column");
+
+    console.log("\nMigration completed successfully!");
   } catch (err) {
-    if (err.code === "ER_DUP_FIELDNAME") {
-      console.log("⚠️  Column 'logo' already exists — skipping.");
-    } else {
-      console.error("❌ Error:", err.message);
-    }
+    console.error("Error:", err.message);
   } finally {
     if (connection) connection.release();
     process.exit(0);
