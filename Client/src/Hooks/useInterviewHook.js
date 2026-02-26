@@ -32,7 +32,21 @@ import useAudioRecording from "./useAudioRecording";
 import { useTTS } from "./useSpeechHook";
 
 const MIC_SAMPLE_RATE = 48000;
-const NOISE_GATE_RMS = 0.01;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADAPTIVE NOISE GATE CONFIGURATION
+//
+// Instead of a fixed threshold, we:
+// 1. Calibrate ambient noise for the first CALIBRATION_MS milliseconds
+// 2. Set the gate to ambientRMS * GATE_MULTIPLIER
+// 3. Log diagnostics every DIAGNOSTIC_INTERVAL_MS to understand what's happening
+// ─────────────────────────────────────────────────────────────────────────────
+const CALIBRATION_MS = 1500; // How long to sample ambient noise on start
+const GATE_MULTIPLIER = 5.0; // gate = ambientRMS × this. Higher = stricter.
+const MIN_NOISE_GATE = 0.005; // Never go below this (safety floor)
+const MAX_NOISE_GATE = 0.05; // Never go above this (safety ceiling)
+const SILENCE_TIMEOUT_MS = 600; // Stop sending after this many ms of silence
+const DIAGNOSTIC_INTERVAL_MS = 3000; // Print noise stats every 3s
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MODULE-LEVEL ROOM SINGLETON
@@ -50,9 +64,9 @@ const NOISE_GATE_RMS = 0.01;
 // share the same singleton. Only one Room is ever created per page load.
 // Reset only happens on explicit cleanup (page navigation away).
 // ─────────────────────────────────────────────────────────────────────────────
-let _room = null; // The single Room instance for this page
-let _joinPromise = null; // The in-flight room.connect() promise
-let _joinResolvers = []; // Callbacks waiting for room to be ready
+let _room = null;
+let _joinPromise = null;
+let _joinResolvers = [];
 
 function _onRoomReady(cb) {
   if (_room) {
@@ -75,6 +89,9 @@ function _resetSingleton() {
   _joinResolvers = [];
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AUDIO UTILITIES
+// ─────────────────────────────────────────────────────────────────────────────
 function getRMS(input) {
   let sum = 0;
   for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
@@ -90,6 +107,173 @@ function toPCM16(input) {
   return pcm16;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ADAPTIVE NOISE GATE FACTORY
+//
+// Creates a self-calibrating gate object that:
+// - Measures ambient RMS during the first CALIBRATION_MS ms
+// - Derives a dynamic threshold from the measured ambient noise floor
+// - Logs detailed diagnostics so you can see exactly why chunks are sent or dropped
+//
+// Usage:
+//   const gate = createAdaptiveNoiseGate("LK-MIC");
+//   const { send, reason } = gate.shouldSend(rms);
+// ─────────────────────────────────────────────────────────────────────────────
+function createAdaptiveNoiseGate(label = "MIC") {
+  const state = {
+    calibrating: true,
+    calibrationSamples: [],
+    calibrationStartTime: Date.now(),
+    ambientRMS: null,
+    threshold: MIN_NOISE_GATE, // start with floor until calibrated
+    lastSpeechTime: 0,
+    lastDiagnosticTime: 0,
+    chunksSent: 0,
+    chunksDropped: 0,
+    chunksTrailing: 0,
+    lastRMS: 0,
+    peakRMS: 0,
+  };
+
+  function calibrate(rms) {
+    state.calibrationSamples.push(rms);
+    const elapsed = Date.now() - state.calibrationStartTime;
+
+    if (elapsed >= CALIBRATION_MS) {
+      const avg =
+        state.calibrationSamples.reduce((a, b) => a + b, 0) /
+        state.calibrationSamples.length;
+
+      state.ambientRMS = avg;
+      state.threshold = Math.min(
+        MAX_NOISE_GATE,
+        Math.max(MIN_NOISE_GATE, avg * GATE_MULTIPLIER),
+      );
+      state.calibrating = false;
+
+      console.log(
+        `🎙️ [${label}] ✅ Noise calibration complete`,
+        `\n  Samples collected : ${state.calibrationSamples.length}`,
+        `\n  Ambient RMS (avg) : ${avg.toFixed(6)}`,
+        `\n  Gate threshold    : ${state.threshold.toFixed(6)}`,
+        `\n  Multiplier used   : ${GATE_MULTIPLIER}x`,
+        `\n  Min/Max bounds    : ${MIN_NOISE_GATE} / ${MAX_NOISE_GATE}`,
+      );
+    }
+  }
+
+  function printDiagnostics(rms, decision) {
+    const now = Date.now();
+    if (now - state.lastDiagnosticTime < DIAGNOSTIC_INTERVAL_MS) return;
+    state.lastDiagnosticTime = now;
+
+    const silenceSince = state.lastSpeechTime
+      ? `${((now - state.lastSpeechTime) / 1000).toFixed(1)}s ago`
+      : "never spoken";
+
+    console.log(
+      `📊 [${label}] Noise Gate Diagnostics`,
+      `\n  Calibrating       : ${state.calibrating}`,
+      `\n  Ambient RMS       : ${state.ambientRMS?.toFixed(6) ?? "pending"}`,
+      `\n  Threshold         : ${state.threshold.toFixed(6)}`,
+      `\n  Current RMS       : ${rms.toFixed(6)}`,
+      `\n  Peak RMS (session): ${state.peakRMS.toFixed(6)}`,
+      `\n  Decision          : ${decision}`,
+      `\n  Last speech       : ${silenceSince}`,
+      `\n  Chunks SENT       : ${state.chunksSent}`,
+      `\n  Chunks TRAILING   : ${state.chunksTrailing}`,
+      `\n  Chunks DROPPED    : ${state.chunksDropped}`,
+    );
+  }
+
+  /**
+   * shouldSend(rms) → { send: boolean, reason: string }
+   *
+   * Three-phase logic:
+   *   Phase 1 — calibrating : always send, collect baseline ambient noise
+   *   Phase 2 — speech      : rms >= threshold → send + update lastSpeechTime
+   *   Phase 3 — trailing    : rms < threshold but within SILENCE_TIMEOUT_MS → still send
+   *   Phase 4 — silence     : rms < threshold AND beyond SILENCE_TIMEOUT_MS → drop
+   */
+  function shouldSend(rms) {
+    state.lastRMS = rms;
+    if (rms > state.peakRMS) state.peakRMS = rms;
+
+    const now = Date.now();
+
+    // Phase 1: Still calibrating — always send, collect baseline
+    if (state.calibrating) {
+      calibrate(rms);
+      state.chunksSent++;
+      printDiagnostics(rms, "SEND (calibrating)");
+      return { send: true, reason: "calibrating" };
+    }
+
+    // Phase 2: Active speech
+    if (rms >= state.threshold) {
+      state.lastSpeechTime = now;
+      state.chunksSent++;
+      printDiagnostics(rms, "SEND (speech)");
+      return { send: true, reason: "speech" };
+    }
+
+    // Phase 3: Trailing silence — send for SILENCE_TIMEOUT_MS to avoid clipping
+    const silenceMs = now - state.lastSpeechTime;
+    const MAX_TRAILING_CHUNKS = 30; // ~600ms at 48kHz/1024 buffer ≈ ~21ms/chunk
+    if (
+      state.lastSpeechTime > 0 &&
+      silenceMs < SILENCE_TIMEOUT_MS &&
+      state.chunksTrailing < MAX_TRAILING_CHUNKS
+    ) {
+      state.chunksTrailing++;
+      printDiagnostics(rms, `SEND (trailing, ${silenceMs}ms into silence)`);
+      return { send: true, reason: "trailing" };
+    }
+
+    // Phase 4: True silence — drop
+    state.chunksDropped++;
+    printDiagnostics(
+      rms,
+      `DROP (silence for ${silenceMs}ms, threshold=${state.threshold.toFixed(6)}, rms=${rms.toFixed(6)})`,
+    );
+    return { send: false, reason: "silence" };
+  }
+
+  function reset() {
+    state.calibrating = true;
+    state.calibrationSamples = [];
+    state.calibrationStartTime = Date.now();
+    state.ambientRMS = null;
+    state.threshold = MIN_NOISE_GATE;
+    state.lastSpeechTime = 0;
+    state.lastDiagnosticTime = 0;
+    state.chunksSent = 0;
+    state.chunksDropped = 0;
+    state.chunksTrailing = 0;
+    state.lastRMS = 0;
+    state.peakRMS = 0;
+    console.log(`🎙️ [${label}] Noise gate reset — recalibrating...`);
+  }
+
+  function getStats() {
+    return {
+      calibrating: state.calibrating,
+      ambientRMS: state.ambientRMS,
+      threshold: state.threshold,
+      lastRMS: state.lastRMS,
+      peakRMS: state.peakRMS,
+      chunksSent: state.chunksSent,
+      chunksDropped: state.chunksDropped,
+      chunksTrailing: state.chunksTrailing,
+    };
+  }
+
+  return { shouldSend, reset, getStats };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN HOOK
+// ─────────────────────────────────────────────────────────────────────────────
 export const useInterview = (interviewId, userId, cameraStream) => {
   const dispatch = useDispatch();
   const interview = useSelector((s) => s.interview);
@@ -101,13 +285,8 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const audioRecording = useAudioRecording(socketRef, interviewId, userId);
 
-  // Each hook instance has its own ref that POINTS TO the module singleton.
-  // When _room is set, we sync it here so livekitRoomRef.current is always
-  // up to date for this instance. The polling effect in InterviewLive.jsx
-  // reads this ref to find the room.
   const livekitRoomRef = useRef(null);
 
-  // lkReady: resolves when the room is connected
   const lkReadyResolveRef = useRef(null);
   const lkReadyPromiseRef = useRef(
     new Promise((resolve) => {
@@ -119,6 +298,10 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const micProcessorRef = useRef(null);
   const micStreamRef = useRef(null);
 
+  // Shared adaptive noise gate instances (one per path: livekit / fallback)
+  const lkNoiseGateRef = useRef(createAdaptiveNoiseGate("LK-MIC"));
+  const fbNoiseGateRef = useRef(createAdaptiveNoiseGate("FB-MIC"));
+
   const isPlayingRef = useRef(false);
   const isListeningRef = useRef(false);
   const canListenRef = useRef(false);
@@ -127,8 +310,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const ttsStreamActiveRef = useRef(false);
   const micStreamingActiveRef = useRef(false);
 
-  // Sync module singleton → instance ref on mount (handles case where room
-  // was created by a previous instance of this hook, e.g. after StrictMode remount)
+  // Sync module singleton → instance ref on mount
   useEffect(() => {
     console.log(
       "[LK] Hook instance mounted, syncing singleton → livekitRoomRef",
@@ -141,7 +323,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       console.log("[LK] Synced existing room to new hook instance");
     }
 
-    // Subscribe to be notified when room becomes ready
     _onRoomReady((room) => {
       livekitRoomRef.current = room;
       lkReadyResolveRef.current?.();
@@ -204,20 +385,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     return () => document.removeEventListener("click", resume);
   }, []); // eslint-disable-line
 
-  useEffect(() => {
-    if (!interview.isInitializing && interview.status === "live") {
-      dispatch(startRecording());
-      recordingTimerRef.current = setInterval(
-        () => dispatch(updateRecordingDuration()),
-        1000,
-      );
-      return () => {
-        clearInterval(recordingTimerRef.current);
-        dispatch(stopRecording());
-      };
-    }
-  }, [interview.isInitializing, interview.status, dispatch]);
-
   // ── TTS ────────────────────────────────────────────────────────────────────
   const { enqueueTTSChunk, flushTTS, resetTTS } = useTTS({
     onPlayStart: () => {
@@ -252,12 +419,13 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch, flushTTS],
   );
 
+  // FIX: Only call resetTTS() if audio is actively playing.
   const handleQuestion = useCallback(
     (payload) => {
       const text =
         typeof payload === "string" ? payload : payload?.question || "";
       console.log("❓ handleQuestion:", text.slice(0, 80));
-      resetTTS();
+      if (isPlayingRef.current) resetTTS();
       dispatch(setCurrentQuestion(text));
       dispatch(setTtsStreamActive(true));
       dispatch(disableListening());
@@ -267,7 +435,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const handleNextQuestion = useCallback(
     (payload) => {
-      resetTTS();
+      if (isPlayingRef.current) resetTTS();
       dispatch(receiveNextQuestion(payload));
       dispatch(setTtsStreamActive(true));
       dispatch(disableListening());
@@ -312,7 +480,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     console.log("  _room (singleton):", _room ? "EXISTS" : "null");
     console.log("  _joinPromise:", _joinPromise ? "in-flight" : "null");
 
-    // Guard 1: Room already connected (module singleton)
     if (_room) {
       console.log("♻️ [LK] Reusing existing module-singleton room");
       livekitRoomRef.current = _room;
@@ -320,12 +487,8 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       return _room;
     }
 
-    // Guard 2: Join already in progress (module singleton promise)
-    // Both hook instances will await the SAME promise instead of each creating a Room
     if (_joinPromise) {
-      console.log(
-        "⏳ [LK] Join already in progress (module singleton) — awaiting shared promise",
-      );
+      console.log("⏳ [LK] Join already in progress — awaiting shared promise");
       return _joinPromise;
     }
 
@@ -355,7 +518,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
           "  remoteParticipants:",
           [...room.remoteParticipants.values()].map((p) => p.identity),
         );
-        // Set module singleton — all hook instances immediately see this
         _resolveRoom(room);
         livekitRoomRef.current = room;
         lkReadyResolveRef.current?.();
@@ -364,7 +526,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
       room.on(RoomEvent.Disconnected, (reason) => {
         console.warn("🏠 [LK] Disconnected, reason:", reason);
-        // Only clear singleton if this is the current singleton room
         if (_room === room) _room = null;
         livekitRoomRef.current = null;
       });
@@ -443,8 +604,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         },
       );
 
-      // FIX: Increased timeout from 30s to 45s to survive slow region failover
-      // and token delivery delays without prematurely failing the join.
       console.log("🔌 [LK] Calling room.connect()...");
       console.log("  url:", url);
       console.log("  token (first 30):", token?.slice(0, 30));
@@ -456,7 +615,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
             setTimeout(
               () =>
                 reject(new Error("LiveKit room.connect() timed out after 45s")),
-              45_000, // FIX: was 30s — increased to 45s
+              45_000,
             ),
           ),
         ]);
@@ -508,22 +667,62 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       const source = ctx.createMediaStreamSource(
         new MediaStream([track.mediaStreamTrack]),
       );
-      const processor = ctx.createScriptProcessor(2048, 1, 1);
+
+      // FIX: Reduced ScriptProcessor buffer from 2048 → 1024 samples.
+      const processor = ctx.createScriptProcessor(1024, 1, 1);
       micProcessorRef.current = processor;
       source.connect(processor);
       processor.connect(ctx.destination);
 
+      // Reset gate so it re-calibrates fresh for this session
+      lkNoiseGateRef.current.reset();
+      console.log("🎙️ [LK-MIC] Starting adaptive noise calibration...");
+
+      let chunkCount = 0;
+
       processor.onaudioprocess = (e) => {
-        if (
-          !micStreamingActiveRef.current ||
-          !isListeningRef.current ||
-          !canListenRef.current
-        )
+        // ── Guard: check all gate conditions and log why we're blocked ──
+        if (!micStreamingActiveRef.current) {
+          if (chunkCount % 500 === 0)
+            console.log("🔇 [LK-MIC] BLOCKED: micStreamingActive=false");
           return;
-        if (!socketRef.current?.connected) return;
+        }
+        if (!isListeningRef.current) {
+          if (chunkCount % 500 === 0)
+            console.log("🔇 [LK-MIC] BLOCKED: isListening=false");
+          return;
+        }
+        if (!canListenRef.current) {
+          if (chunkCount % 500 === 0)
+            console.log("🔇 [LK-MIC] BLOCKED: canListen=false");
+          return;
+        }
+        if (!socketRef.current?.connected) {
+          if (chunkCount % 500 === 0)
+            console.log("🔇 [LK-MIC] BLOCKED: socket disconnected");
+          return;
+        }
+
+        chunkCount++;
         const input = e.inputBuffer.getChannelData(0);
-        if (getRMS(input) < NOISE_GATE_RMS) return;
-        socketRef.current.emit("user_audio_chunk", toPCM16(input).buffer);
+        const rms = getRMS(input);
+        const { send, reason } = lkNoiseGateRef.current.shouldSend(rms);
+
+        // Log every 100th chunk so you can track live RMS in the console
+        if (chunkCount % 100 === 0) {
+          const stats = lkNoiseGateRef.current.getStats();
+          console.log(
+            `🎙️ [LK-MIC] chunk #${chunkCount}`,
+            `| rms=${rms.toFixed(6)}`,
+            `| threshold=${stats.threshold.toFixed(6)}`,
+            `| decision=${send ? "✅ SEND" : "❌ DROP"} (${reason})`,
+            `| sent=${stats.chunksSent} trailing=${stats.chunksTrailing} dropped=${stats.chunksDropped}`,
+          );
+        }
+
+        if (send) {
+          socketRef.current.emit("user_audio_chunk", toPCM16(input).buffer);
+        }
       };
 
       if (audioRecording.connectMicrophoneAudio)
@@ -556,7 +755,9 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
         const ctx = await ensureAudioContext();
         const source = ctx.createMediaStreamSource(stream);
-        const processor = ctx.createScriptProcessor(2048, 1, 1);
+
+        // FIX: Same 1024 buffer size for consistency
+        const processor = ctx.createScriptProcessor(1024, 1, 1);
         micProcessorRef.current = processor;
         source.connect(processor);
         processor.connect(ctx.destination);
@@ -566,17 +767,55 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
         dispatch(setMicStreamingActive(true));
 
+        // Reset fallback gate so it calibrates fresh
+        fbNoiseGateRef.current.reset();
+        console.log("🎙️ [FB-MIC] Starting adaptive noise calibration...");
+
+        let chunkCount = 0;
+
         processor.onaudioprocess = (e) => {
-          if (
-            !micStreamingActiveRef.current ||
-            !isListeningRef.current ||
-            !canListenRef.current
-          )
+          // ── Guard: check all gate conditions and log why we're blocked ──
+          if (!micStreamingActiveRef.current) {
+            if (chunkCount % 500 === 0)
+              console.log("🔇 [FB-MIC] BLOCKED: micStreamingActive=false");
             return;
-          if (!socketRef.current?.connected) return;
+          }
+          if (!isListeningRef.current) {
+            if (chunkCount % 500 === 0)
+              console.log("🔇 [FB-MIC] BLOCKED: isListening=false");
+            return;
+          }
+          if (!canListenRef.current) {
+            if (chunkCount % 500 === 0)
+              console.log("🔇 [FB-MIC] BLOCKED: canListen=false");
+            return;
+          }
+          if (!socketRef.current?.connected) {
+            if (chunkCount % 500 === 0)
+              console.log("🔇 [FB-MIC] BLOCKED: socket disconnected");
+            return;
+          }
+
+          chunkCount++;
           const input = e.inputBuffer.getChannelData(0);
-          if (getRMS(input) < NOISE_GATE_RMS) return;
-          socketRef.current.emit("user_audio_chunk", toPCM16(input).buffer);
+          const rms = getRMS(input);
+          const { send, reason } = fbNoiseGateRef.current.shouldSend(rms);
+
+          // Log every 100th chunk
+          if (chunkCount % 100 === 0) {
+            const stats = fbNoiseGateRef.current.getStats();
+            console.log(
+              `🎙️ [FB-MIC] chunk #${chunkCount}`,
+              `| rms=${rms.toFixed(6)}`,
+              `| threshold=${stats.threshold.toFixed(6)}`,
+              `| decision=${send ? "✅ SEND" : "❌ DROP"} (${reason})`,
+              `| sent=${stats.chunksSent} trailing=${stats.chunksTrailing} dropped=${stats.chunksDropped}`,
+            );
+          }
+
+          if (send) {
+            socketRef.current.emit("user_audio_chunk", toPCM16(input).buffer);
+          }
         };
 
         console.log(
@@ -615,16 +854,10 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         } catch (_) {}
       }
       try {
-        // FIX: Increased lkReady timeout from 12s to 35s.
-        // The LiveKit token can legitimately take 10-20s to arrive from the server
-        // (DB calls, room creation, token generation all happen before emit).
-        // 12s was too aggressive and forced unnecessary socket-PCM fallback,
-        // which degraded audio quality and caused double-mic-stream issues.
         await Promise.race([
           lkReadyPromiseRef.current,
-          new Promise(
-            (_, r) =>
-              setTimeout(() => r(new Error("lkReady timeout (35s)")), 35_000), // FIX: was 12s
+          new Promise((_, r) =>
+            setTimeout(() => r(new Error("lkReady timeout (35s)")), 35_000),
           ),
         ]);
         if (livekitRoomRef.current || _room) {
@@ -679,7 +912,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         return;
       }
 
-      // Already have a room or join in progress — do nothing
       if (_room) {
         console.log("ℹ️ [TOKEN] Room already exists — skipping join");
         livekitRoomRef.current = _room;
@@ -696,7 +928,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         return;
       }
 
-      // First caller wins — all subsequent calls blocked by _joinPromise guard above
       console.log("🔌 [TOKEN] Initiating joinLiveKitRoom...");
       joinLiveKitRoom(url, token).catch((err) =>
         console.error("❌ [TOKEN] joinLiveKitRoom failed:", err.message),
@@ -710,12 +941,14 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     isListeningRef.current = true;
     canListenRef.current = true;
     dispatch(enableListening());
+    console.log("👂 [LISTEN] Listening ENABLED — gate will now pass chunks");
   }, [dispatch]);
 
   const disableListeningImmediate = useCallback(() => {
     isListeningRef.current = false;
     canListenRef.current = false;
     dispatch(disableListening());
+    console.log("🔇 [LISTEN] Listening DISABLED — all chunks will be blocked");
   }, [dispatch]);
 
   // ── Cleanup ────────────────────────────────────────────────────────────────
@@ -723,8 +956,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     return () => {
       console.log("🧹 [CLEANUP] useInterview unmounting...");
       resetTTS();
-      // Do NOT disconnect the room on unmount — StrictMode unmounts then remounts.
-      // Room disconnection only happens when InterviewLive explicitly leaves.
     };
   }, [resetTTS]);
 
@@ -754,7 +985,13 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     disableListening: disableListeningImmediate,
     setMicStreamingActive: (v) => dispatch(setMicStreamingActive(v)),
     initializeInterview: (d) => dispatch(initializeInterview(d)),
-    // Expose reset for InterviewLive cleanup on actual navigation away
     resetLiveKitSingleton: _resetSingleton,
+    // Expose gate stats for debugging in DevTools:
+    // const { getNoiseGateStats } = useInterview(...)
+    // console.log(getNoiseGateStats()) → { livekit: {...}, fallback: {...} }
+    getNoiseGateStats: () => ({
+      livekit: lkNoiseGateRef.current.getStats(),
+      fallback: fbNoiseGateRef.current.getStats(),
+    }),
   };
 };

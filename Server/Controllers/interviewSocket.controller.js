@@ -13,6 +13,7 @@ const { evaluateInterview } = require("../Service/evaluation.service.js");
 const {
   mergeInterviewMedia,
 } = require("../Service/globalVideoMerger.service.js");
+const Job = require("../Admin/models/job.models.js");
 
 const LIVEKIT_URL = process.env.LIVEKIT_URL;
 const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY;
@@ -322,12 +323,19 @@ async function handleInterviewSocket(
   }
 
   let firstQuestion = null;
+  let jobDetails = null;
   try {
-    const [, q] = await Promise.all([
+    const [interviewSession, q] = await Promise.all([
       Interview.getSessionById(interviewId),
       Interview.getQuestionByOrder(interviewId, 1),
     ]);
+
     firstQuestion = q;
+
+    // Fetch job details once — passed to every AI call so questions stay relevant
+    if (interviewSession?.jobId) {
+      jobDetails = await Job.findById(interviewSession.jobId).catch(() => null);
+    }
   } catch (err) {
     console.error("❌ DB setup failed:", err.message);
     socket.emit("error", { message: "Failed to initialize" });
@@ -604,6 +612,7 @@ async function handleInterviewSocket(
         answer: "No response",
         questionOrder: nextOrder,
         previousQuestion: currentQText,
+        jobDetails,
       });
       await Interview.saveQuestion({
         interviewId,
@@ -694,6 +703,7 @@ async function handleInterviewSocket(
               answer: text,
               questionOrder: nextOrder,
               previousQuestion: q.question,
+              jobDetails,
             });
             console.log(
               `   ✅ AI generated Q${nextOrder}: "${gen.slice(0, 60)}..."`,
@@ -977,12 +987,22 @@ async function handleInterviewSocket(
     }
   });
 
+  let lastPlaybackDoneAt = 0;
+
   socket.on("playback_done", () => {
+    const now = Date.now();
+    // Debounce: ignore duplicate events within 1 second
+    if (now - lastPlaybackDoneAt < 1000) {
+      console.log(`⚠️ playback_done debounced (duplicate within 1s)`);
+      return;
+    }
+    lastPlaybackDoneAt = now;
+
     console.log(
       `🔊 [EVENT] playback_done received (Q${currentOrder}, awaitingPlaybackDone=${awaitingPlaybackDone})`,
     );
     enableListening().catch((err) => {
-      console.error(`   ❌ [EVENT] playback_done handler error:`, err.message);
+      console.error(`❌ playback_done handler error:`, err.message);
     });
   });
 
@@ -1098,25 +1118,40 @@ async function handleInterviewSocket(
   socket.on("mobile_camera_frame", relayMobile);
   socket.on("security_frame_request", relayMobile);
 
-  socket.on("user_audio_chunk", (buf) => {
+  socket.on("user_audio_chunk", async (buf) => {
     if (session.isSetupMode || !session.interviewStarted || !isListeningActive)
       return;
-    const conn = sttConnectionCache.get(interviewId)?.conn;
-    if (!conn) {
+
+    let cached = sttConnectionCache.get(interviewId);
+
+    // auto-reconnect if connection dropped while we're supposed to be listening
+    if (!cached || !cached.conn?.isConnected?.()) {
       const now = Date.now();
-      if (now - lastNoConnWarn > 5000) {
+      if (now - lastNoConnWarn > 3000) {
         console.warn(
-          "⚠️ No STT connection — audio dropped (will reconnect on next question)",
+          "⚠️ STT connection lost while listening — reconnecting...",
         );
         lastNoConnWarn = now;
       }
+
+      // Only one reconnect attempt at a time
+      if (!session._sttReconnecting) {
+        session._sttReconnecting = true;
+        ensureSTTConnection()
+          .then((conn) => {
+            conn.resumeIdleDetection?.();
+            session._sttReconnecting = false;
+            console.log("✅ STT auto-reconnected");
+          })
+          .catch((e) => {
+            session._sttReconnecting = false;
+            console.error("❌ STT auto-reconnect failed:", e.message);
+          });
+      }
       return;
     }
-    if (!conn.isConnected?.()) {
-      console.warn("⚠️ STT connection not ready — audio dropped");
-      return;
-    }
-    conn.send(buf);
+
+    cached.conn.send(buf);
   });
 
   socket.on("agent_transcript", async (data) => {

@@ -1,7 +1,6 @@
 const { ollama } = require("../Config/openai.config.js");
 const { APIERR } = require("../Utils/index.utils.js");
 
-// Used when Ollama fetch fails (network issue, model unavailable, timeout).
 const FALLBACK_QUESTIONS = {
   basic: [
     "Can you tell me more about your professional background and key achievements?",
@@ -43,7 +42,17 @@ function getFallbackQuestion(questionOrder, usedFallbacks = new Set()) {
   return available[idx];
 }
 
-// ─── Retry wrapper ────────────────────────────────────────────────────────────
+// Extracts the first valid JSON object from any string,
+// even if the model prepends thinking text like "Running cognitive scan..."
+function extractFirstJSON(text) {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error(`No JSON object found in: ${text.slice(0, 120)}`);
+  }
+  return JSON.parse(text.substring(start, end + 1));
+}
+
 async function withRetry(
   fn,
   { retries = 2, delayMs = 1000, timeoutMs = 15000 } = {},
@@ -51,7 +60,7 @@ async function withRetry(
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const result = await Promise.race([
+      return await Promise.race([
         fn(),
         new Promise((_, reject) =>
           setTimeout(
@@ -60,18 +69,16 @@ async function withRetry(
           ),
         ),
       ]);
-      return result;
     } catch (err) {
       lastErr = err;
-      const isNetworkErr =
+      const isNetwork =
         err.code === "UND_ERR_SOCKET" ||
         err.message?.includes("fetch failed") ||
         err.message?.includes("ECONNREFUSED") ||
         err.message?.includes("timeout");
-
-      if (isNetworkErr && attempt < retries) {
+      if (isNetwork && attempt < retries) {
         console.warn(
-          `⚠️ Ollama attempt ${attempt + 1} failed (${err.message}) — retrying in ${delayMs}ms`,
+          `⚠️ Ollama attempt ${attempt + 1} failed — retrying in ${delayMs * (attempt + 1)}ms`,
         );
         await new Promise((r) => setTimeout(r, delayMs * (attempt + 1)));
       } else {
@@ -82,22 +89,11 @@ async function withRetry(
   throw lastErr;
 }
 
-// ─── Main export ──────────────────────────────────────────────────────────────
-// usedFallbacks is optional — pass a persistent Set per-interview to avoid repeats.
+// jobDetails: { title, description, requirements, skills, department, experience }
 async function generateNextQuestionWithAI(
-  { answer, questionOrder, previousQuestion },
+  { answer, questionOrder, previousQuestion, jobDetails = {} },
   { usedFallbacks = new Set() } = {},
 ) {
-  console.log("🤖 AI Service: Starting question generation...");
-  console.log("📝 Answer:", answer?.substring(0, 100));
-  console.log("📊 Question order:", questionOrder);
-  console.log("❓ Previous question:", previousQuestion?.substring(0, 100));
-  console.log("🔑 API Key exists:", !!process.env.DEEPSEEK_API_KEY);
-  console.log(
-    "🌐 Ollama base URL:",
-    ollama?.config?.host ?? ollama?.baseURL ?? "(check openai.config.js)",
-  );
-
   if (!answer || typeof answer !== "string") {
     throw new APIERR(
       400,
@@ -111,74 +107,42 @@ async function generateNextQuestionWithAI(
       : questionOrder <= 4
         ? "intermediate"
         : "advanced";
-  console.log(`🎯 Difficulty level: ${depth}`);
 
-  const prompt = `
-You are a senior interviewer conducting an interview for ANY profession or domain.
+  const jobContext = jobDetails?.title
+    ? `
+JOB POSITION: ${jobDetails.title}
+DEPARTMENT: ${jobDetails.department ?? "N/A"}
+EXPERIENCE REQUIRED: ${jobDetails.experience ?? "N/A"}
+JOB DESCRIPTION: ${jobDetails.description ?? "N/A"}
+KEY REQUIREMENTS: ${jobDetails.requirements ?? "N/A"}
+REQUIRED SKILLS: ${Array.isArray(jobDetails.skills) ? jobDetails.skills.join(", ") : (jobDetails.skills ?? "N/A")}
+`.trim()
+    : "Job position: Not specified";
+
+  const prompt = `You are a senior interviewer conducting a structured interview.
+
+${jobContext}
 
 The candidate just answered:
 "${answer}"
 
-${previousQuestion ? `Previous question was:\n"${previousQuestion}"\n\n` : ""}
+${previousQuestion ? `Previous question was:\n"${previousQuestion}"\n` : ""}
 
-TASK:
-Generate exactly ONE ${depth}-level follow-up interview question.
+TASK: Generate exactly ONE ${depth}-level follow-up interview question SPECIFICALLY for the job position above.
 
-CRITICAL RULES:
-1. First identify the candidate's profession/domain from the resume or answer context
-   (Software, Healthcare, Marketing, Finance, Education, Sales, Construction, Hospitality, Design, Manufacturing, Retail, etc.)
-2. Base the question on their ACTUAL field - not software if they're not in software
-3. Use specific skills, tools, or concepts from THEIR domain mentioned in their answer or resume
-4. Do NOT use placeholders: [technology], [skill], [tool], [experience], etc.
-5. Do NOT repeat previous questions
-6. Do NOT include explanations or numbering
-7. Ask domain-appropriate questions
+RULES:
+1. The question MUST be relevant to the job role and its required skills
+2. Reference specific skills, tools, or technologies from the job requirements when possible
+3. Base the question on what the candidate said in their answer
+4. Do NOT use placeholders like [technology], [skill], [tool]
+5. Do NOT repeat the previous question
+6. Do NOT include explanations, numbering, or preamble text
+7. Return ONLY valid JSON — no thinking text, no prefixes
 
-EXAMPLES BY DOMAIN:
-
-SOFTWARE/IT:
-✅ "You mentioned optimizing database queries. What indexing strategies do you use for large datasets?"
-❌ "How do you optimize [database] performance?"
-
-HEALTHCARE:
-✅ "You talked about patient assessment. How do you prioritize vital signs when multiple patients need attention?"
-❌ "How do you handle [clinical situation]?"
-
-MARKETING:
-✅ "You discussed A/B testing. What sample size do you typically use to ensure statistical significance?"
-❌ "How do you measure [marketing metric]?"
-
-FINANCE:
-✅ "You mentioned portfolio diversification. What percentage do you typically allocate to high-risk assets?"
-❌ "How do you balance [investment strategy]?"
-
-EDUCATION:
-✅ "You explained differentiated instruction. How do you assess whether visual or auditory methods work better for a student?"
-❌ "How do you adapt [teaching method] for different learners?"
-
-SALES:
-✅ "You discussed cold calling. How many calls do you typically make before connecting with a decision-maker?"
-❌ "What's your process for [sales technique]?"
-
-CONSTRUCTION:
-✅ "You mentioned reading blueprints. How do you identify load-bearing walls versus partition walls?"
-❌ "How do you interpret [construction document]?"
-
-HOSPITALITY:
-✅ "You talked about handling guest complaints. What's your approach when a guest demands a refund for a valid complaint?"
-❌ "How do you manage [guest situation]?"
-
-RETAIL:
-✅ "You mentioned inventory management. How do you determine reorder points for seasonal versus year-round products?"
-❌ "How do you manage [inventory metric]?"
-
-OUTPUT FORMAT (JSON ONLY):
-{ "question": "Your question here?" }
-`;
+OUTPUT FORMAT (JSON only, nothing else before or after):
+{ "question": "Your question here?" }`;
 
   try {
-    console.log("🔄 Calling Ollama API...");
-
     const response = await withRetry(
       () =>
         ollama.chat({
@@ -188,7 +152,8 @@ OUTPUT FORMAT (JSON ONLY):
           messages: [
             {
               role: "system",
-              content: "You are a strict technical interviewer.",
+              content:
+                "You are a strict technical interviewer. Return ONLY a JSON object with a single 'question' key. No preamble. No thinking text. No markdown.",
             },
             { role: "user", content: prompt },
           ],
@@ -196,57 +161,42 @@ OUTPUT FORMAT (JSON ONLY):
       { retries: 2, delayMs: 1000, timeoutMs: 15000 },
     );
 
-    console.log("✅ Ollama response received");
-
     const raw = response?.message?.content;
-    if (!raw) {
-      console.error("❌ AI returned empty response");
-      throw new APIERR(500, "AI did not return a response");
-    }
+    if (!raw) throw new APIERR(500, "AI returned empty response");
 
-    console.log("📄 Raw AI response:", raw);
+    console.log("📄 Raw AI response:", raw.slice(0, 200));
 
-    let parsed;
-    try {
-      parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
-    } catch (err) {
-      console.error("❌ Failed to parse AI response:", raw);
-      throw new APIERR(500, "Failed to parse AI response");
-    }
+    // Use extractFirstJSON — handles model thinking-text prefixes safely
+    const parsed = extractFirstJSON(raw);
 
     if (
       !parsed.question ||
       typeof parsed.question !== "string" ||
       parsed.question.length < 10
     ) {
-      console.error("❌ AI returned invalid question:", parsed);
-      throw new APIERR(500, "AI returned an invalid question");
+      throw new APIERR(
+        500,
+        `AI returned invalid question: ${JSON.stringify(parsed)}`,
+      );
     }
 
-    console.log("✅ Question generated successfully:", parsed.question);
+    console.log("✅ Question generated:", parsed.question);
     return parsed.question.trim();
   } catch (error) {
-    // ── Graceful degradation: use a fallback question so the interview continues ──
-    const isNetworkErr =
+    const isNetwork =
       error.code === "UND_ERR_SOCKET" ||
       error.message?.includes("fetch failed") ||
       error.message?.includes("ECONNREFUSED") ||
       error.message?.includes("timeout") ||
       error.message?.includes("other side closed");
 
-    if (isNetworkErr) {
+    if (isNetwork) {
       const fallback = getFallbackQuestion(questionOrder, usedFallbacks);
-      console.warn(
-        `⚠️ Ollama unavailable — using fallback question: "${fallback}"`,
-      );
+      console.warn(`⚠️ Ollama unavailable — fallback: "${fallback}"`);
       return fallback;
     }
 
-    console.error("❌ Error in generateNextQuestionWithAI:", error);
-    console.error("Error details:", {
-      message: error.message,
-      stack: error.stack,
-    });
+    console.error("❌ generateNextQuestionWithAI error:", error.message);
     throw error;
   }
 }

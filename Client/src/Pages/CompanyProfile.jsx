@@ -311,7 +311,7 @@ export default function CompanyProfile() {
     ? company.values
     : ["Innovation", "Integrity", "Impact", "Inclusivity"];
 
-  if (!hydrated || loading || (!company && hydrated)) {
+  if (!hydrated || (!company && loading)) {
     return <PageSkeleton />;
   }
 

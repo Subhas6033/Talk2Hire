@@ -3,7 +3,7 @@ import { useRef, useCallback, useEffect } from "react";
 const TTS_SAMPLE_RATE = 48000;
 const NUM_CHANNELS = 1;
 const BITS_PER_SAMPLE = 16;
-const INITIAL_BUFFER_S = 0.002;
+const INITIAL_BUFFER_S = 0.05;
 
 function pcm16ToWav(
   pcmBuffer,
@@ -49,7 +49,7 @@ function pcm16ToWav(
  *   socket.on("tts_end",   ()          => flushTTS(() => socket.emit("playback_done")));
  *
  * flushTTS(onDone) — fires onDone() when Web Audio queue fully drains,
- * OR after a 5s safety timeout if Web Audio never fires onended
+ * OR after an 8s safety timeout if Web Audio never fires onended
  * (e.g. AudioContext suspended by browser autoplay policy).
  */
 export function useTTS({ onPlayStart, onPlayEnd }) {
@@ -216,38 +216,44 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
   // ── flushTTS ────────────────────────────────────────────────────────────
   /**
    * Call on tts_end. onDone fires when audio fully plays.
-   * 5s fallback fires onDone if Web Audio never calls onended
-   * (AudioContext blocked by browser autoplay, tab hidden, etc.)
    *
-   * socket.on("tts_end", () => flushTTS(() => socket.emit("playback_done")));
+   * FIX 1: Reset doneCalledRef BEFORE clearTimeout to eliminate the race
+   * condition where the previous fallback timer fires between clearTimeout
+   * and the guard reset, bypassing double-fire protection and emitting
+   * playback_done twice.
+   *
+   * FIX 2: Increased fallback from 5s to 8s. 150 TTS chunks at 48kHz can
+   * legitimately take 6-7 seconds to play through. 5s was too aggressive
+   * and would fire the fallback mid-playback, causing playback_done to emit
+   * before audio finished, which sent listening_enabled too early.
    */
   const flushTTS = useCallback(
     (onDone) => {
-      // Cancel previous fallback timer FIRST, then reset the double-fire guard.
+      // FIX 1: Reset the double-fire guard FIRST — before clearTimeout.
+      // If the old fallback timer fires between clearTimeout and this reset,
+      // doneCalledRef=true would have blocked it. Resetting first ensures
+      // the new flush cycle starts clean without a race window.
+      doneCalledRef.current = false;
+
       if (fallbackTimerRef.current) {
         clearTimeout(fallbackTimerRef.current);
         fallbackTimerRef.current = null;
       }
-      doneCalledRef.current = false;
+
       onDoneRef.current = onDone ?? null;
       flushRequestedRef.current = true;
 
-      // FIX: Reduced from 30s to 5s
-      // 30 seconds is WAY too long. The fallback should fire quickly if normal
-      // playback tracking fails. This was causing Q1's fallback to still be
-      // running when Q2 TTS started, causing timing confusion.
-      //
-      // 5 seconds gives the browser plenty of time to report playback completion
-      // via onended callbacks, while not hanging the interview if those callbacks
-      // fail due to browser autoplay policies, tab hiding, etc.
+      // FIX 2: 8s fallback — was 5s, too short for long TTS responses.
+      // 150 chunks × ~40ms/chunk = ~6s of audio. The fallback must be
+      // longer than the longest realistic TTS response to avoid false fires.
       fallbackTimerRef.current = setTimeout(() => {
         if (!doneCalledRef.current) {
           console.warn(
-            "⚠️ TTS playback fallback timer fired (5s) — forcing done",
+            "⚠️ TTS playback fallback timer fired (8s) — forcing done",
           );
           fireDone();
         }
-      }, 5_000); // Changed from 30_000 to 5_000
+      }, 8_000);
 
       const nothingPending =
         pendingDecodeRef.current.length === 0 && !isDecodingRef.current;

@@ -44,8 +44,6 @@ const InterviewLive = () => {
   const screenShareStreamRef = useRef(null);
 
   // ── Token buffer ───────────────────────────────────────────────────────────
-  // The server may emit livekit_token immediately on socket connection,
-  // before this component's main init effect has registered its permanent handler.
   const pendingLkTokenRef = useRef(null);
   const earlyHandlerRef = useRef(null);
 
@@ -123,8 +121,6 @@ const InterviewLive = () => {
     return () => {
       _globalSocketInitialized = false;
       _globalClientReadyEmitted = false;
-      // Only reset LiveKit singleton on real navigation away, not StrictMode remount.
-      // isLeavingRef distinguishes the two.
       if (isLeavingRef.current) {
         interview.resetLiveKitSingleton?.();
       }
@@ -180,7 +176,6 @@ const InterviewLive = () => {
     }
   }, []);
 
-  // Callback ref: flushes pending track the moment the <video> element mounts
   const mobileVideoCallbackRef = useCallback(
     (el) => {
       mobileVideoRef.current = el;
@@ -281,7 +276,6 @@ const InterviewLive = () => {
       room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
       room.on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
 
-      // Retroactive scan — catches tracks already subscribed before binding
       room.remoteParticipants.forEach((p) => {
         if (!p.identity?.startsWith("mobile_")) return;
         console.log("[POLL] Found existing mobile participant:", p.identity);
@@ -403,33 +397,6 @@ const InterviewLive = () => {
 
   // ═══════════════════════════════════════════════════════════════════════════
   // MAIN SOCKET INIT
-  //
-  // TOKEN HANDLING — why the token was taking 51 seconds:
-  // The server was sending livekit_token only AFTER receiving client_ready OR
-  // after a socket reconnect. Our code emitted request_livekit_token but the
-  // server's handler for it was blocked on some async operation (likely waiting
-  // for the interview session to be set up server-side). The socket disconnect
-  // at 51s forced a fresh server-side flow which finally sent the token.
-  //
-  // CLIENT FIX applied here:
-  //   1. Emit request_livekit_token BEFORE client_ready (don't wait for server)
-  //   2. The server must respond to request_livekit_token immediately without
-  //      waiting for other conditions — see SERVER FIX note below.
-  //
-  // SERVER FIX REQUIRED (in your socket.io handler):
-  //   The handler for "request_livekit_token" must call createToken() and emit
-  //   immediately, WITHOUT waiting for interview initialization or any other
-  //   server-side state. Example:
-  //
-  //   socket.on("request_livekit_token", async ({ interviewId, userId }) => {
-  //     // ✅ Do this immediately — no waiting for other server state
-  //     const token = await createLiveKitToken(interviewId, userId);
-  //     socket.emit("livekit_token", { token, url: LIVEKIT_URL });
-  //   });
-  //
-  //   If your server is currently doing this INSIDE an "interview_initialized"
-  //   callback or waiting for some promise to resolve before responding to
-  //   request_livekit_token, that is what causes the 51-second delay.
   // ═══════════════════════════════════════════════════════════════════════════
   useEffect(() => {
     if (_globalSocketInitialized || !sessionData || !preInitializedSocket)
@@ -461,15 +428,13 @@ const InterviewLive = () => {
         };
         socket.on("livekit_token", handleToken);
 
-        // STEP 2: Remove early buffer handler by reference (not all handlers)
+        // STEP 2: Remove early buffer handler
         if (earlyHandlerRef.current) {
           socket.off("livekit_token", earlyHandlerRef.current);
           earlyHandlerRef.current = null;
         }
 
         // STEP 3: Drain buffer or request token
-        // Emit request_livekit_token IMMEDIATELY — before client_ready.
-        // This minimizes the time waiting for the token.
         if (pendingLkTokenRef.current) {
           console.log("[SOCKET] Draining buffered token");
           handleToken(pendingLkTokenRef.current);
@@ -482,7 +447,6 @@ const InterviewLive = () => {
           });
         }
 
-        // All other listeners
         const silenced = new Set([
           "user_audio_chunk",
           "video_chunk",
@@ -505,9 +469,24 @@ const InterviewLive = () => {
         socket.on("tts_audio", (d) => {
           if (d) interview.handleTtsAudio(d);
         });
+
+        // FIX: Use socketRef.current instead of the closed-over `socket` variable.
+        // If the socket disconnects and reconnects while TTS is playing, the old
+        // `socket` reference becomes stale. Using socketRef.current always points
+        // to the live socket, preventing playback_done from emitting into the void.
         socket.on("tts_end", () =>
-          interview.handleTtsEnd(() => socket.emit("playback_done")),
+          interview.handleTtsEnd(() => {
+            const liveSocket = interview.socketRef.current;
+            if (liveSocket?.connected) {
+              liveSocket.emit("playback_done");
+            } else {
+              console.warn(
+                "⚠️ playback_done: socket not connected, skipping emit",
+              );
+            }
+          }),
         );
+
         socket.on("idle_prompt", (d) => interview.handleIdlePrompt(d));
         socket.on("interim_transcript", (d) => interview.setLiveTranscript(d));
         socket.on("transcript_received", (d) =>
@@ -550,7 +529,6 @@ const InterviewLive = () => {
         );
         socket.on("error", () => interview.setStatus("error"));
 
-        // Mark interview live
         interview.setStatus("live");
         interview.setServerReady(true);
         interview.setIsInitializing(false);
@@ -560,15 +538,12 @@ const InterviewLive = () => {
         });
         setSocketReady(true);
 
-        // Poll secondary camera status
         socket.emit("request_secondary_camera_status", {
           interviewId: sessionData.interviewId,
         });
 
-        // Start mic (runs in parallel with LiveKit token arrival)
         interview.autoStartInterview(micStream).catch(console.error);
 
-        // Signal server we are ready
         if (!_globalClientReadyEmitted) {
           _globalClientReadyEmitted = true;
           socket.emit("client_ready", {
@@ -680,6 +655,7 @@ const InterviewLive = () => {
       />
     );
   };
+
   const StatusBadge = ({ label, on, color = "gray" }) => {
     const bg = {
       gray: "bg-gray-800 text-gray-500",
@@ -901,11 +877,6 @@ const InterviewLive = () => {
                 </span>
               </div>
               <div className="relative aspect-video bg-black">
-                {/*
-                  mobileVideoCallbackRef (callback ref): when React mounts this element,
-                  any track stashed in pendingMobileTrackRef is immediately flushed.
-                  This handles the case where TrackSubscribed fired before the DOM was ready.
-                */}
                 <video
                   id="secondary-camera-video"
                   ref={mobileVideoCallbackRef}
