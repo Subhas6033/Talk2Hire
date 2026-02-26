@@ -102,14 +102,22 @@ export default function CompanyNavbar() {
                   className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl hover:bg-gray-100 transition-all"
                 >
                   {/* Avatar */}
-                  <div
-                    className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold shadow-sm"
-                    style={{
-                      background: "linear-gradient(135deg, #6366f1, #4f46e5)",
-                    }}
-                  >
-                    {company?.companyName?.[0]?.toUpperCase() ?? "C"}
-                  </div>
+                  {company?.logo ? (
+                    <img
+                      src={company.logo}
+                      alt={company.companyName ?? "Company"}
+                      className="w-8 h-8 rounded-lg object-cover shadow-sm"
+                    />
+                  ) : (
+                    <div
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold shadow-sm"
+                      style={{
+                        background: "linear-gradient(135deg, #6366f1, #4f46e5)",
+                      }}
+                    >
+                      {company?.companyName?.[0]?.toUpperCase() ?? "C"}
+                    </div>
+                  )}
                   <div className="hidden sm:flex flex-col items-start leading-none">
                     <span className="text-sm font-semibold text-gray-800 max-w-30 truncate">
                       {company?.companyName ?? "Company"}
