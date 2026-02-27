@@ -31,12 +31,12 @@ const Layout = ({ children }) => {
   const bgClass =
     role === "company"
       ? "min-h-screen bg-gray-50 text-gray-900 flex flex-col"
-      : "min-h-screen bg-linear-to-br from-bgDark via-sidebar-bg to-bgDark text-textLight flex flex-col";
+      : pathname === "/"
+        ? "min-h-screen bg-white flex flex-col" // ← white for landing page
+        : "min-h-screen bg-linear-to-br from-bgDark via-sidebar-bg to-bgDark text-textLight flex flex-col";
 
   return (
     <div className={bgClass}>
-      {/* Gate the navbar on hydrated so it always renders with the correct role.
-          Children are NOT gated here — App.jsx handles the top-level loading state. */}
       {!isFullscreen && hydrated && <RoleNav />}
 
       <motion.main
