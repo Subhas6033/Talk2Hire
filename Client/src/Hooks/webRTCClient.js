@@ -9,10 +9,7 @@ const ICE_SERVERS = [
 ];
 
 // ══════════════════════════════════════════════════════════════════════════════
-// WebRTCInterviewClient
-// Replaces InterviewClient (LiveKit) with raw WebRTC peer connections.
-// Desktop ↔ Server signaling via Socket.IO.
-// Secondary mobile camera uses a separate peer connection.
+// WebRTCInterviewClient — Desktop side
 // ══════════════════════════════════════════════════════════════════════════════
 export class WebRTCInterviewClient {
   constructor(opts) {
@@ -21,22 +18,16 @@ export class WebRTCInterviewClient {
     this.cb = opts.callbacks || {};
 
     this.socket = null;
-
-    // Primary peer connection (desktop → server)
     this.pc = null;
     this.localCameraTrack = null;
     this.localMicTrack = null;
     this.localScreenTrack = null;
-
-    // Secondary peer connection (mobile camera → server, received here)
     this.mobilePc = null;
 
-    // TTS
     this._audioContext = null;
     this._ttsQueue = [];
     this._ttsPlaying = false;
 
-    // Holistic
     this._holisticCanvas = null;
     this._holisticCtx = null;
     this._holisticTimer = null;
@@ -45,8 +36,6 @@ export class WebRTCInterviewClient {
 
     this.isListening = false;
   }
-
-  // ── Bootstrap ──────────────────────────────────────────────────────────────
 
   async connect() {
     await this._connectSocket();
@@ -90,13 +79,15 @@ export class WebRTCInterviewClient {
       }
     });
 
-    // Mobile secondary camera WebRTC
-    this.socket.on("mobile_webrtc_offer", async ({ offer, identity }) => {
+    // ── Mobile secondary camera WebRTC ──────────────────────────────────────
+    // Server relays mobile's offer to desktop as "mobile_webrtc_offer_relay"
+    this.socket.on("mobile_webrtc_offer_relay", async ({ offer, identity }) => {
       console.log("📱 Received mobile WebRTC offer from:", identity);
       await this._handleMobileOffer(offer, identity);
     });
 
-    this.socket.on("mobile_webrtc_ice_candidate", async ({ candidate }) => {
+    // Server relays mobile ICE candidates to desktop as "mobile_webrtc_ice_from_mobile"
+    this.socket.on("mobile_webrtc_ice_from_mobile", async ({ candidate }) => {
       if (!this.mobilePc || !candidate) return;
       try {
         await this.mobilePc.addIceCandidate(new RTCIceCandidate(candidate));
@@ -134,7 +125,6 @@ export class WebRTCInterviewClient {
       this._cb("onEvaluationComplete", d),
     );
     this.socket.on("evaluation_error", (d) => this._cb("onError", d));
-
     this.socket.on("secondary_camera_ready", (d) =>
       this._cb("onSecondaryCameraStatus", { connected: true, ...d }),
     );
@@ -144,7 +134,6 @@ export class WebRTCInterviewClient {
     this.socket.on("mobile_camera_frame", (d) =>
       this._cb("onMobileFrame", d.frame),
     );
-
     this.socket.on("tts_audio", (d) => this._enqueueTTSChunk(d.audio));
     this.socket.on("tts_end", () => this._flushTTSQueue());
   }
@@ -202,7 +191,6 @@ export class WebRTCInterviewClient {
 
       await this._ensurePeerConnection();
       this.pc.addTrack(this.localMicTrack, stream);
-      // Re-negotiate if pc already has an offer/answer
       if (this.pc.signalingState !== "stable") return;
       await this._negotiatePeerConnection();
 
@@ -227,10 +215,7 @@ export class WebRTCInterviewClient {
       this.pc.addTrack(this.localScreenTrack, stream);
       await this._negotiatePeerConnection();
 
-      this.localScreenTrack.onended = () => {
-        this.stopScreenShare();
-      };
-
+      this.localScreenTrack.onended = () => this.stopScreenShare();
       this.socket.emit("webrtc_track_published", {
         kind: "video",
         source: "screen_share",
@@ -262,7 +247,6 @@ export class WebRTCInterviewClient {
 
     this.localScreenTrack.stop();
     this.localScreenTrack = null;
-
     this.socket.emit("webrtc_track_unpublished", { source: "screen_share" });
     await this._negotiatePeerConnection();
     console.log("🖥️ Screen share stopped");
@@ -273,26 +257,23 @@ export class WebRTCInterviewClient {
       this.pc &&
       this.pc.connectionState !== "closed" &&
       this.pc.connectionState !== "failed"
-    ) {
+    )
       return;
-    }
 
     this.pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
 
     this.pc.onicecandidate = ({ candidate }) => {
-      if (candidate && this.socket?.connected) {
+      if (candidate && this.socket?.connected)
         this.socket.emit("webrtc_ice_candidate", { candidate });
-      }
     };
 
     this.pc.onconnectionstatechange = () => {
       console.log("🔗 WebRTC connection state:", this.pc.connectionState);
-      if (this.pc.connectionState === "connected") {
+      if (this.pc.connectionState === "connected")
         this.socket.emit("webrtc_connected", {
           interviewId: this.interviewId,
           userId: this.userId,
         });
-      }
     };
 
     this.pc.ontrack = (event) => {
@@ -310,7 +291,6 @@ export class WebRTCInterviewClient {
     try {
       const offer = await this.pc.createOffer();
       await this.pc.setLocalDescription(offer);
-
       this.socket.emit("webrtc_offer", {
         offer: this.pc.localDescription,
         interviewId: this.interviewId,
@@ -335,6 +315,8 @@ export class WebRTCInterviewClient {
 
       this.mobilePc.onicecandidate = ({ candidate }) => {
         if (candidate && this.socket?.connected) {
+          // Desktop → Server: "mobile_webrtc_ice_candidate_desktop"
+          // Server relays to mobile as: "mobile_webrtc_ice_from_desktop"
           this.socket.emit("mobile_webrtc_ice_candidate_desktop", {
             candidate,
             identity,
@@ -368,12 +350,11 @@ export class WebRTCInterviewClient {
 
       this.mobilePc.onconnectionstatechange = () => {
         if (
-          this.mobilePc.connectionState === "disconnected" ||
-          this.mobilePc.connectionState === "failed" ||
-          this.mobilePc.connectionState === "closed"
-        ) {
+          ["disconnected", "failed", "closed"].includes(
+            this.mobilePc.connectionState,
+          )
+        )
           this._cb("onSecondaryCameraStatus", { connected: false });
-        }
       };
 
       await this.mobilePc.setRemoteDescription(
@@ -382,6 +363,8 @@ export class WebRTCInterviewClient {
       const answer = await this.mobilePc.createAnswer();
       await this.mobilePc.setLocalDescription(answer);
 
+      // Desktop → Server: "mobile_webrtc_answer"
+      // Server relays to mobile as: "mobile_webrtc_answer_from_server"
       this.socket.emit("mobile_webrtc_answer", {
         answer: this.mobilePc.localDescription,
         identity,
@@ -392,7 +375,6 @@ export class WebRTCInterviewClient {
   }
 
   // ── Socket-based audio for STT ─────────────────────────────────────────────
-  // Server reads PCM from socket (same as before, unchanged path)
 
   startSocketAudioFallback(micStreamOrTrack) {
     if (!micStreamOrTrack) return;
@@ -422,11 +404,10 @@ export class WebRTCInterviewClient {
   // ── TTS ────────────────────────────────────────────────────────────────────
 
   _getAudioContext() {
-    if (!this._audioContext || this._audioContext.state === "closed") {
+    if (!this._audioContext || this._audioContext.state === "closed")
       this._audioContext = new (
         window.AudioContext || window.webkitAudioContext
       )();
-    }
     return this._audioContext;
   }
 
@@ -543,7 +524,6 @@ export class WebRTCInterviewClient {
   enterSetupMode() {
     this.socket.emit("setup_mode", {});
   }
-
   startInterview() {
     this.socket.emit("client_ready", {});
   }
@@ -592,7 +572,6 @@ export class WebRTCInterviewClient {
 
 // ══════════════════════════════════════════════════════════════════════════════
 // MobileWebRTCClient — secondary camera device
-// Replaces MobileInterviewClient (LiveKit)
 // ══════════════════════════════════════════════════════════════════════════════
 export class MobileWebRTCClient {
   constructor({ interviewId, userId, socketUrl = SOCKET_URL, callbacks = {} }) {
@@ -625,20 +604,17 @@ export class MobileWebRTCClient {
         angle: "side",
         angleQuality: "good",
       });
-      // Start WebRTC after socket is connected
       await this._startWebRTC();
     });
 
-    // Server relays ICE candidates from the desktop
-    this.socket.on(
-      "mobile_webrtc_ice_candidate_from_desktop",
-      async ({ candidate }) => {
-        if (!this.pc || !candidate) return;
-        try {
-          await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
-        } catch (_) {}
-      },
-    );
+    // ── FIX: Correct event name for ICE candidates from desktop → mobile ───
+    // Server emits "mobile_webrtc_ice_from_desktop" (fixed from "mobile_webrtc_ice_candidate_from_desktop")
+    this.socket.on("mobile_webrtc_ice_from_desktop", async ({ candidate }) => {
+      if (!this.pc || !candidate) return;
+      try {
+        await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (_) {}
+    });
   }
 
   async _startWebRTC() {
@@ -660,6 +636,8 @@ export class MobileWebRTCClient {
 
       this.pc.onicecandidate = ({ candidate }) => {
         if (candidate && this.socket?.connected) {
+          // Mobile → Server: "mobile_webrtc_ice_candidate"
+          // Server relays to desktop as: "mobile_webrtc_ice_from_mobile"
           this.socket.emit("mobile_webrtc_ice_candidate", { candidate });
         }
       };
@@ -671,13 +649,14 @@ export class MobileWebRTCClient {
       const offer = await this.pc.createOffer();
       await this.pc.setLocalDescription(offer);
 
-      // Send offer to server; server relays to desktop
+      // Mobile → Server: "mobile_webrtc_offer"
+      // Server relays to desktop as: "mobile_webrtc_offer_relay"
       this.socket.emit("mobile_webrtc_offer", {
         offer: this.pc.localDescription,
         identity: `mobile_${this.userId}`,
       });
 
-      // Server relays desktop answer back
+      // Server relays desktop answer back as "mobile_webrtc_answer_from_server"
       this.socket.once(
         "mobile_webrtc_answer_from_server",
         async ({ answer }) => {
@@ -692,9 +671,7 @@ export class MobileWebRTCClient {
         },
       );
 
-      // Low-res preview frames over socket (for setup UI only)
       this._startFrameRelay();
-
       console.log("📱 Mobile camera WebRTC offer sent");
     } catch (err) {
       console.error("❌ Mobile WebRTC start failed:", err.message);

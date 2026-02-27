@@ -70,55 +70,46 @@ async function withRetry(
 
 /* ── DB helpers ──────────────────────────────────────────────────────────── */
 
+// ── FIX: Replaced SELECT + INSERT with a single atomic INSERT ... ON DUPLICATE KEY ──
+//
+// Root cause of ER_DUP_ENTRY:
+//   The previous version did SELECT (no row found) → INSERT across three concurrent
+//   requests (primary_camera, secondary_camera, screen_recording all start at once).
+//   All three found no row and all three tried to INSERT → duplicate key error for
+//   the one that lost the race.
+//
+// Fix:
+//   INSERT ... ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
+//   This is atomic — only one INSERT wins; the others hit the ON DUPLICATE KEY
+//   branch which sets LAST_INSERT_ID to the existing row's id so insertId is
+//   always correct for both new and existing rows.
 async function ensureVideoRecord(interviewId, userId, videoType) {
-  const [existing] = await pool.execute(
-    `SELECT id FROM interview_videos
-     WHERE interview_id = ? AND user_id = ? AND video_type = ?`,
-    [interviewId, userId, videoType],
-  );
-  if (existing[0]) return existing[0].id;
-
   const [result] = await pool.execute(
     `INSERT INTO interview_videos
        (interview_id, user_id, video_type, original_filename, file_size,
         ftp_path, ftp_url, upload_status, upload_progress, total_chunks,
         uploaded_chunks, started_at)
-     VALUES (?, ?, ?, ?, 0, '', '', 'pending', 0, 0, 0, NOW())`,
+     VALUES (?, ?, ?, ?, 0, '', '', 'pending', 0, 0, 0, NOW())
+     ON DUPLICATE KEY UPDATE
+       id = LAST_INSERT_ID(id)`,
     [interviewId, userId, videoType, `${videoType}_${interviewId}.webm`],
   );
   return result.insertId;
 }
 
-// FIX: Removed the transaction approach entirely.
-//
-// Root cause of ER_LOCK_DEADLOCK:
-//   The previous version used BEGIN TRANSACTION + SELECT + INSERT + UPDATE.
-//   When 4 chunks for the same videoId arrive concurrently (which happens every
-//   time — the frontend sends primary_camera and screen_recording simultaneously,
-//   and the first chunk often sends 2 requests), all 4 transactions race to
-//   acquire a write lock on the same interview_videos row. MySQL detects the
-//   circular wait and kills one with DEADLOCK.
-//
-// Fix:
-//   1. INSERT ... ON DUPLICATE KEY — single atomic statement, no transaction needed.
-//   2. Use affectedRows to detect new vs re-upload without a prior SELECT.
-//      affectedRows = 1 → fresh insert (new chunk)
-//      affectedRows = 2 → ON DUPLICATE KEY UPDATE fired (re-upload)
-//      affectedRows = 0 → identical row, nothing changed
-//   3. Wrap everything in withRetry(baseDelayMs=200) so even a rare transient
-//      lock timeout on the UPDATE is retried quickly without failing the request.
+// FIX: No-transaction upsert to avoid deadlocks on concurrent chunk uploads.
 async function insertChunkRecord(videoId, chunkNumber, chunkSize, ftpPath) {
   await withRetry(
     async () => {
       const [upsertResult] = await pool.execute(
         `INSERT INTO interview_video_chunks
-         (video_id, chunk_number, chunk_size, temp_ftp_path, upload_status, uploaded_at)
-       VALUES (?, ?, ?, ?, 'uploaded', NOW())
-       ON DUPLICATE KEY UPDATE
-         chunk_size    = VALUES(chunk_size),
-         temp_ftp_path = VALUES(temp_ftp_path),
-         upload_status = 'uploaded',
-         uploaded_at   = NOW()`,
+           (video_id, chunk_number, chunk_size, temp_ftp_path, upload_status, uploaded_at)
+         VALUES (?, ?, ?, ?, 'uploaded', NOW())
+         ON DUPLICATE KEY UPDATE
+           chunk_size    = VALUES(chunk_size),
+           temp_ftp_path = VALUES(temp_ftp_path),
+           upload_status = 'uploaded',
+           uploaded_at   = NOW()`,
         [videoId, chunkNumber, chunkSize, ftpPath],
       );
 
@@ -127,18 +118,15 @@ async function insertChunkRecord(videoId, chunkNumber, chunkSize, ftpPath) {
       if (isNewChunk) {
         await pool.execute(
           `UPDATE interview_videos
-         SET uploaded_chunks = uploaded_chunks + 1,
-             total_chunks    = GREATEST(total_chunks, ?),
-             updated_at      = NOW()
-         WHERE id = ?`,
+           SET uploaded_chunks = uploaded_chunks + 1,
+               total_chunks    = GREATEST(total_chunks, ?),
+               updated_at      = NOW()
+           WHERE id = ?`,
           [chunkNumber + 1, videoId],
         );
       } else {
-        // Re-upload — keep total_chunks in sync but don't double-count
         await pool.execute(
-          `UPDATE interview_videos
-         SET total_chunks = GREATEST(total_chunks, ?), updated_at = NOW()
-         WHERE id = ?`,
+          `UPDATE interview_videos SET total_chunks = GREATEST(total_chunks, ?), updated_at = NOW() WHERE id = ?`,
           [chunkNumber + 1, videoId],
         );
         console.log(
@@ -197,16 +185,13 @@ const startRecording = asyncHandler(async (req, res) => {
 
   if (videoType === "primary_camera") {
     await pool.execute(
-      `UPDATE interviews SET recording_status = 'recording', updated_at = NOW()
-       WHERE id = ? AND user_id = ?`,
+      `UPDATE interviews SET recording_status = 'recording', updated_at = NOW() WHERE id = ? AND user_id = ?`,
       [interviewId, userId],
     );
   }
 
   await pool.execute(
-    `UPDATE interview_videos
-     SET upload_status = 'uploading', started_at = NOW(), updated_at = NOW()
-     WHERE id = ?`,
+    `UPDATE interview_videos SET upload_status = 'uploading', started_at = NOW(), updated_at = NOW() WHERE id = ?`,
     [videoId],
   );
 
@@ -254,29 +239,17 @@ const uploadChunk = asyncHandler(async (req, res) => {
 
   const meta = JSON.parse(cached);
 
-  // FIX: Accept chunks in "completed" state too.
-  //
-  // Old behaviour: after finalize() ran → redisDel(key) → next late chunk
-  //   found no Redis key → "Auto-creating session" → new DB record → orphaned
-  //   chunks that are NEVER merged into anything.
-  //
-  // New behaviour: finalize() sets status="completed" with a 30min TTL.
-  //   Late chunks are accepted, saved to FTP+DB under the SAME videoId,
-  //   and logged clearly. They won't be in the merged video but at least
-  //   they won't create a ghost session or pollute the DB with orphaned rows.
   if (
     meta.status !== "recording" &&
     meta.status !== "processing" &&
     meta.status !== "completed"
-  ) {
+  )
     throw new APIERR(400, "Recording not active");
-  }
 
-  if (meta.status === "completed") {
+  if (meta.status === "completed")
     console.warn(
       `⚠️ Late chunk ${chunkIndex} (${videoType}) arrived after merge — storing but will NOT be merged`,
     );
-  }
 
   const { videoId } = meta;
   const buffer = Buffer.from(req.file.buffer);
@@ -285,7 +258,6 @@ const uploadChunk = asyncHandler(async (req, res) => {
   const fileName = `${Date.now()}-chunk_${idx}.webm`;
   const remotePath = `/public/interview-videos/${userId}/${interviewId}/${videoType}/chunks`;
 
-  // Await FTP upload with retry — no more fire-and-forget
   const ftpResult = await withRetry(
     () => uploadFileToFTP(buffer, fileName, remotePath),
     {
@@ -296,12 +268,9 @@ const uploadChunk = asyncHandler(async (req, res) => {
   );
 
   const ftpPath = ftpResult.remotePath ?? `${remotePath}/${fileName}`;
-
-  // insertChunkRecord has its own internal retry for any residual lock contention
   await insertChunkRecord(videoId, chunkIndex, buffer.length, ftpPath);
 
   console.log(`📤 Chunk ${chunkIndex} (${videoType}) confirmed — FTP + DB ✓`);
-
   res
     .status(200)
     .json(new APIRES(200, { chunkIndex, videoType }, "Chunk saved"));
@@ -324,8 +293,7 @@ const endRecording = asyncHandler(async (req, res) => {
 
   if (!meta) {
     const [rows] = await pool.execute(
-      `SELECT id FROM interview_videos
-       WHERE interview_id = ? AND user_id = ? AND video_type = ?`,
+      `SELECT id FROM interview_videos WHERE interview_id = ? AND user_id = ? AND video_type = ?`,
       [interviewId, userId, videoType],
     );
     if (!rows[0]) throw new APIERR(404, "Recording session not found");
@@ -340,14 +308,12 @@ const endRecording = asyncHandler(async (req, res) => {
     throw new APIERR(400, "Recording not active");
   }
 
-  // Mark "processing" so uploadChunk still accepts late-arriving chunks
   await redisSet(
     key,
     JSON.stringify({ ...meta, status: "processing", stoppedAt: Date.now() }),
     "EX",
     RECORDING_TTL,
   );
-
   await pool.execute(
     `UPDATE interview_videos SET upload_status = 'merging', updated_at = NOW() WHERE id = ?`,
     [meta.videoId],
@@ -355,8 +321,7 @@ const endRecording = asyncHandler(async (req, res) => {
 
   if (videoType === "primary_camera") {
     await pool.execute(
-      `UPDATE interviews SET recording_status = 'processing', updated_at = NOW()
-       WHERE id = ? AND user_id = ?`,
+      `UPDATE interviews SET recording_status = 'processing', updated_at = NOW() WHERE id = ? AND user_id = ?`,
       [interviewId, userId],
     );
   }
@@ -400,7 +365,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
   try {
     console.log(`🎬 Finalizing ${videoType} for interview ${interviewId}`);
 
-    // ── Poll until all chunks have settled ────────────────────────────────
+    // ── Poll until all chunks settled ─────────────────────────────────────
     console.log(`⏳ Waiting for all chunks to settle (${videoType})…`);
     let allChunks = [];
     const pollDeadline = Date.now() + CHUNK_SETTLE_TIMEOUT_MS;
@@ -408,62 +373,49 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     while (Date.now() < pollDeadline) {
       const [rows] = await pool.execute(
         `SELECT chunk_number, temp_ftp_path, chunk_size, upload_status
-         FROM interview_video_chunks
-         WHERE video_id = ?
-         ORDER BY chunk_number ASC`,
+         FROM interview_video_chunks WHERE video_id = ? ORDER BY chunk_number ASC`,
         [videoId],
       );
-
       const inFlight = rows.filter(
         (r) =>
           r.upload_status !== "uploaded" &&
           r.upload_status !== "failed" &&
           r.upload_status !== "merged",
       );
-
       if (inFlight.length === 0) {
         allChunks = rows;
         break;
       }
-
       console.log(
         `⏳ ${inFlight.length} chunk(s) still in-flight for ${videoType} — polling in ${CHUNK_SETTLE_POLL_MS / 1000}s`,
       );
       await new Promise((r) => setTimeout(r, CHUNK_SETTLE_POLL_MS));
     }
 
-    // Timeout fallback — grab whatever is there
     if (allChunks.length === 0) {
       const [finalRows] = await pool.execute(
-        `SELECT chunk_number, temp_ftp_path, chunk_size, upload_status
-         FROM interview_video_chunks WHERE video_id = ?`,
+        `SELECT chunk_number, temp_ftp_path, chunk_size, upload_status FROM interview_video_chunks WHERE video_id = ?`,
         [videoId],
       );
       allChunks = finalRows;
     }
 
-    // ── Separate uploaded vs failed ───────────────────────────────────────
     const uploadedChunks = allChunks
       .filter((r) => r.upload_status === "uploaded")
       .sort((a, b) => a.chunk_number - b.chunk_number);
 
     const failedChunks = allChunks.filter((r) => r.upload_status === "failed");
-
-    if (failedChunks.length > 0) {
+    if (failedChunks.length > 0)
       console.warn(
-        `⚠️ ${failedChunks.length} chunk(s) failed for ${videoType}: ` +
-          failedChunks.map((c) => c.chunk_number).join(", "),
+        `⚠️ ${failedChunks.length} chunk(s) failed for ${videoType}: ${failedChunks.map((c) => c.chunk_number).join(", ")}`,
       );
-    }
 
     if (uploadedChunks.length === 0) {
       console.warn(
         `⚠️ No uploaded chunks for ${videoType} video ${videoId} — marking failed`,
       );
       await pool.execute(
-        `UPDATE interview_videos
-         SET upload_status = 'failed', error_message = ?, updated_at = NOW()
-         WHERE id = ?`,
+        `UPDATE interview_videos SET upload_status = 'failed', error_message = ?, updated_at = NOW() WHERE id = ?`,
         [
           failedChunks.length > 0
             ? `All ${failedChunks.length} chunk(s) failed to upload`
@@ -479,15 +431,12 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     const chunkNumbers = uploadedChunks.map((c) => c.chunk_number);
     const gaps = [];
     for (let i = 1; i < chunkNumbers.length; i++) {
-      if (chunkNumbers[i] !== chunkNumbers[i - 1] + 1) {
+      if (chunkNumbers[i] !== chunkNumbers[i - 1] + 1)
         gaps.push({ after: chunkNumbers[i - 1], before: chunkNumbers[i] });
-      }
     }
     if (gaps.length > 0) {
       console.warn(
-        `⚠️ Sequence gap(s) in ${videoType}: ` +
-          gaps.map((g) => `${g.after}→${g.before}`).join(", ") +
-          ` — merging ${uploadedChunks.length} available chunks anyway`,
+        `⚠️ Sequence gap(s) in ${videoType}: ${gaps.map((g) => `${g.after}→${g.before}`).join(", ")} — merging ${uploadedChunks.length} available chunks anyway`,
       );
     } else {
       console.log(
@@ -534,9 +483,8 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
       );
     }
 
-    if (chunkPaths.length === 0) {
+    if (chunkPaths.length === 0)
       throw new Error("All downloaded chunks were empty — cannot merge");
-    }
 
     // ── FFmpeg concat ─────────────────────────────────────────────────────
     const concatPath = path.join(tempDir, "concat.txt");
@@ -587,8 +535,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     });
 
     console.log(
-      `📊 ${videoType}: ${(fileSize / 1024 / 1024).toFixed(2)} MB, ${duration}s, ` +
-        `${chunkPaths.length}/${uploadedChunks.length} chunks merged`,
+      `📊 ${videoType}: ${(fileSize / 1024 / 1024).toFixed(2)} MB, ${duration}s, ${chunkPaths.length}/${uploadedChunks.length} chunks merged`,
     );
 
     // ── Upload merged file ────────────────────────────────────────────────
@@ -623,8 +570,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     );
 
     await pool.execute(
-      `UPDATE interview_video_chunks SET upload_status = 'merged'
-       WHERE video_id = ? AND upload_status = 'uploaded'`,
+      `UPDATE interview_video_chunks SET upload_status = 'merged' WHERE video_id = ? AND upload_status = 'uploaded'`,
       [videoId],
     );
 
@@ -643,24 +589,14 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     if (videoType === "primary_camera") {
       await pool
         .execute(
-          `UPDATE interviews SET recording_status = 'completed', updated_at = NOW()
-           WHERE id = ? AND user_id = ?`,
+          `UPDATE interviews SET recording_status = 'completed', updated_at = NOW() WHERE id = ? AND user_id = ?`,
           [interviewId, userId],
         )
         .catch(() => {});
     }
 
-    // FIX: Set Redis status to "completed" (NOT deleted) with a 30min TTL.
-    //
-    // Old code: redisDel(key) immediately after merge.
-    // Problem: frontend keeps sending buffered chunks for 10-30s after end-recording.
-    //   With no Redis key, each late chunk triggered "Auto-creating session",
-    //   creating a brand-new DB record for the same videoId that would NEVER be
-    //   merged — silent data loss + DB pollution.
-    //
-    // New code: keep the key alive with status="completed" for 30 minutes.
-    //   uploadChunk accepts "completed" status, stores the chunk under the same
-    //   videoId, and logs a warning. No ghost sessions, no orphaned rows.
+    // Keep Redis key alive as "completed" for 30 minutes so late chunks
+    // are attached to the same videoId instead of creating ghost sessions.
     const currentMeta = JSON.parse((await redisGet(key)) || "{}");
     await redisSet(
       key,
@@ -675,8 +611,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
 
     await fs.rm(tempDir, { recursive: true, force: true });
     console.log(
-      `🎉 ${videoType} finalization complete — ` +
-        `${chunkPaths.length} chunks merged, ${(fileSize / 1024 / 1024).toFixed(2)} MB`,
+      `🎉 ${videoType} finalization complete — ${chunkPaths.length} chunks merged, ${(fileSize / 1024 / 1024).toFixed(2)} MB`,
     );
   } catch (err) {
     console.error(`❌ Finalize error (${videoType}):`, err.message);
@@ -725,9 +660,7 @@ const getRecordingStatus = asyncHandler(async (req, res) => {
   }
 
   const [rows] = await pool.execute(
-    `SELECT upload_status, ftp_url, uploaded_chunks, total_chunks
-     FROM interview_videos
-     WHERE interview_id = ? AND user_id = ? AND video_type = ?`,
+    `SELECT upload_status, ftp_url, uploaded_chunks, total_chunks FROM interview_videos WHERE interview_id = ? AND user_id = ? AND video_type = ?`,
     [interviewId, userId, videoType],
   );
   if (!rows[0]) throw new APIERR(404, "Recording not found");
@@ -754,8 +687,7 @@ const getRecordingUrls = asyncHandler(async (req, res) => {
   const userId = req.user.id;
 
   const [rows] = await pool.execute(
-    `SELECT video_type, ftp_url, upload_status, duration, file_size
-     FROM interview_videos WHERE interview_id = ? AND user_id = ?`,
+    `SELECT video_type, ftp_url, upload_status, duration, file_size FROM interview_videos WHERE interview_id = ? AND user_id = ?`,
     [interviewId, userId],
   );
 

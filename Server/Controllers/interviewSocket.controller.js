@@ -12,7 +12,7 @@ const { pool } = require("../Config/database.config.js");
 
 const FACE_THROTTLE = 1000;
 const FACE_WINDOW = 3000;
-const MAX_FACE_WARN = 5; // warnings before logging a "repeated" alert (no termination)
+const MAX_FACE_WARN = 5;
 
 const ttsInstanceCache = new Map();
 function getTTSInstance(id) {
@@ -22,10 +22,7 @@ function getTTSInstance(id) {
 
 const sttConnectionCache = new Map();
 
-// ─── Ensure interview_violations has the correct schema on startup ────────────
-// The app's built-in auto-migration creates the table with the OLD `occurred_at`
-// schema. This function detects that and upgrades it in-place automatically so
-// you never get silent INSERT failures.
+// ─── Ensure interview_violations schema ───────────────────────────────────────
 async function ensureViolationsSchema() {
   try {
     const [cols] = await pool.execute(`
@@ -38,7 +35,6 @@ async function ensureViolationsSchema() {
     const colNames = cols.map((c) => c.COLUMN_NAME);
 
     if (colNames.length === 0) {
-      // Table doesn't exist at all — create fresh
       await pool.execute(`
         CREATE TABLE interview_violations (
           id               BIGINT UNSIGNED  AUTO_INCREMENT PRIMARY KEY,
@@ -68,15 +64,12 @@ async function ensureViolationsSchema() {
       return;
     }
 
-    // Table exists — check if it needs upgrading from the old schema
     if (colNames.includes("start_time")) {
       console.log("✅ interview_violations schema is up-to-date");
       return;
     }
 
-    console.log(
-      "⚙️  Upgrading interview_violations schema (occurred_at → start_time)...",
-    );
+    console.log("⚙️  Upgrading interview_violations schema...");
 
     const toAdd = [
       {
@@ -112,7 +105,6 @@ async function ensureViolationsSchema() {
       }
     }
 
-    // Back-fill start_time from occurred_at for any existing rows
     if (colNames.includes("occurred_at")) {
       await pool.execute(
         `UPDATE interview_violations SET start_time = occurred_at WHERE start_time IS NULL`,
@@ -120,7 +112,6 @@ async function ensureViolationsSchema() {
       console.log("  ✅ Back-filled start_time from occurred_at");
     }
 
-    // Make start_time NOT NULL now that all rows have a value
     await pool
       .execute(
         `ALTER TABLE interview_violations MODIFY COLUMN start_time DATETIME(3) NOT NULL`,
@@ -133,10 +124,9 @@ async function ensureViolationsSchema() {
   }
 }
 
-// Run immediately when this module is first loaded
 ensureViolationsSchema();
 
-// ─── Violation DB helpers — all errors are logged, never swallowed silently ──
+// ─── Violation DB helpers ──────────────────────────────────────────────────────
 
 async function dbOpenViolation({
   interviewId,
@@ -176,9 +166,7 @@ async function dbCloseViolation({ violationId, endTime }) {
   if (!violationId) return;
   try {
     await pool.execute(
-      `UPDATE interview_violations
-       SET end_time = ?, resolved = 1, updated_at = NOW()
-       WHERE id = ?`,
+      `UPDATE interview_violations SET end_time = ?, resolved = 1, updated_at = NOW() WHERE id = ?`,
       [new Date(endTime), violationId],
     );
     console.log(
@@ -196,9 +184,7 @@ async function dbIncrementWarning({ violationId, warningCount }) {
   if (!violationId) return;
   try {
     await pool.execute(
-      `UPDATE interview_violations
-       SET warning_count = ?, updated_at = NOW()
-       WHERE id = ?`,
+      `UPDATE interview_violations SET warning_count = ?, updated_at = NOW() WHERE id = ?`,
       [warningCount, violationId],
     );
     console.log(
@@ -317,11 +303,14 @@ function cleanupSession(id) {
   }
 }
 
+// ─── Settings socket (mobile / secondary camera) ──────────────────────────────
+
 async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
   const session = getOrCreate(sessions, interviewId);
   session.mobileSocketId = socket.id;
   socket.join(`interview_${interviewId}`);
 
+  // If secondary camera was already connected before this socket joined, notify it
   if (session.secondaryCameraConnected)
     socket.emit("secondary_camera_ready", {
       connected: true,
@@ -351,20 +340,32 @@ async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
     });
   });
 
+  // ── FIX: Relay mobile WebRTC offer → desktop ─────────────────────────────
+  // Mobile emits: "mobile_webrtc_offer"
+  // Desktop receives: "mobile_webrtc_offer_relay"
   socket.on("mobile_webrtc_offer", ({ offer, identity }) => {
     console.log(`📱 Relaying mobile WebRTC offer to desktop (${identity})`);
-    if (session.desktopSocketId)
+    if (session.desktopSocketId) {
       io.to(session.desktopSocketId).emit("mobile_webrtc_offer_relay", {
         offer,
         identity,
       });
+    } else {
+      console.warn(
+        `⚠️  Mobile offer received but desktop not yet connected (interviewId=${interviewId})`,
+      );
+    }
   });
 
+  // ── FIX: Relay ICE candidates mobile → desktop ───────────────────────────
+  // Mobile emits:    "mobile_webrtc_ice_candidate"
+  // Desktop receives:"mobile_webrtc_ice_from_mobile"
   socket.on("mobile_webrtc_ice_candidate", ({ candidate }) => {
-    if (session.desktopSocketId)
+    if (session.desktopSocketId) {
       io.to(session.desktopSocketId).emit("mobile_webrtc_ice_from_mobile", {
         candidate,
       });
+    }
   });
 
   socket.on("mobile_camera_frame", (data, ack) => {
@@ -388,6 +389,8 @@ async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
   });
 }
 
+// ─── Interview socket (desktop) ───────────────────────────────────────────────
+
 async function handleInterviewSocket(
   socket,
   interviewId,
@@ -400,6 +403,7 @@ async function handleInterviewSocket(
   socket.join(`interview_${interviewId}`);
   console.log(`🖥️ Desktop socket: ${socket.id}`);
 
+  // If mobile already connected before desktop arrived, notify immediately
   if (session.secondaryCameraConnected) {
     socket.emit("secondary_camera_ready", {
       connected: true,
@@ -411,19 +415,31 @@ async function handleInterviewSocket(
     });
   }
 
+  // ── FIX: Relay desktop WebRTC answer → mobile ────────────────────────────
+  // Desktop emits:   "mobile_webrtc_answer"
+  // Mobile receives: "mobile_webrtc_answer_from_server"
   socket.on("mobile_webrtc_answer", ({ answer, identity }) => {
-    if (session.mobileSocketId)
+    if (session.mobileSocketId) {
       io.to(session.mobileSocketId).emit("mobile_webrtc_answer_from_server", {
         answer,
         identity,
       });
+    } else {
+      console.warn(
+        `⚠️  Desktop sent WebRTC answer but no mobile socket found (interviewId=${interviewId})`,
+      );
+    }
   });
 
+  // ── FIX: Relay ICE candidates desktop → mobile ───────────────────────────
+  // Desktop emits:   "mobile_webrtc_ice_candidate_desktop"  ← FIXED (was "mobile_webrtc_ice_from_desktop")
+  // Mobile receives: "mobile_webrtc_ice_from_desktop"
   socket.on("mobile_webrtc_ice_candidate_desktop", ({ candidate }) => {
-    if (session.mobileSocketId)
+    if (session.mobileSocketId) {
       io.to(session.mobileSocketId).emit("mobile_webrtc_ice_from_desktop", {
         candidate,
       });
+    }
   });
 
   // ── Load interview ────────────────────────────────────────────────────────
@@ -467,12 +483,11 @@ async function handleInterviewSocket(
   let awaitingRepeat = false;
   let currentQText = session.currentQText ?? "";
 
-  // ── Face-detection state ──────────────────────────────────────────────────
   let lastHolisticTime = 0;
   let faceWarnCount = 0;
-  let faceFirstMissing = null; // timestamp when the face first disappeared
+  let faceFirstMissing = null;
   let faceViolTimeout = null;
-  let openFaceViolId = null; // DB id of the currently open NO_FACE record
+  let openFaceViolId = null;
 
   let awaitingPlaybackDone = false;
   let clientReadyHandled = false;
@@ -792,7 +807,6 @@ async function handleInterviewSocket(
       faceViolTimeout = null;
     }
 
-    // Close any still-open NO_FACE violation record
     if (openFaceViolId) {
       await dbCloseViolation({
         violationId: openFaceViolId,
@@ -957,40 +971,30 @@ async function handleInterviewSocket(
   });
 
   // ── Face / holistic detection ─────────────────────────────────────────────
-  // WARN ONLY — never terminates the interview.
-  // All events are written to interview_violations with start_time / end_time.
   socket.on("holistic_detection_result", async ({ faceCount, timestamp }) => {
     if (session.isSetupMode || !session.interviewStarted) return;
-
     const now = Date.now();
     if (now - lastHolisticTime < FACE_THROTTLE) return;
     lastHolisticTime = now;
 
     try {
       if (faceCount === 0) {
-        // ── No face ────────────────────────────────────────────────────────
         if (!faceFirstMissing) {
           faceFirstMissing = now;
           console.log(
-            `👁️  [FACE] No face detected — tracking absence start ` +
-              `interviewId=${interviewId} at=${new Date(now).toISOString()}`,
+            `👁️  [FACE] No face detected — tracking absence interviewId=${interviewId}`,
           );
           return;
         }
-
         const absenceMs = now - faceFirstMissing;
-        if (absenceMs < FACE_WINDOW) return; // not past the threshold yet
+        if (absenceMs < FACE_WINDOW) return;
 
         faceWarnCount++;
         console.log(
-          `⚠️  [FACE VIOLATION] NO_FACE warning #${faceWarnCount} ` +
-            `interviewId=${interviewId} userId=${userId} ` +
-            `absentFor=${Math.round(absenceMs / 1000)}s ` +
-            `since=${new Date(faceFirstMissing).toISOString()}`,
+          `⚠️  [FACE VIOLATION] NO_FACE warning #${faceWarnCount} interviewId=${interviewId}`,
         );
 
         if (!openFaceViolId) {
-          // First warning — open the DB record with the exact start time
           openFaceViolId = await dbOpenViolation({
             interviewId,
             userId,
@@ -999,7 +1003,6 @@ async function handleInterviewSocket(
             startTime: faceFirstMissing,
           });
         } else {
-          // Subsequent warnings — increment counter on the existing record
           await dbIncrementWarning({
             violationId: openFaceViolId,
             warningCount: faceWarnCount,
@@ -1013,34 +1016,20 @@ async function handleInterviewSocket(
           message: `No face detected — warning ${faceWarnCount} of ${MAX_FACE_WARN}`,
         });
 
-        // After hitting MAX_FACE_WARN, emit a strong alert then reset the batch counter
         if (faceWarnCount >= MAX_FACE_WARN) {
-          console.warn(
-            `🚨 [FACE ALERT] ${faceWarnCount} NO_FACE warnings logged ` +
-              `interviewId=${interviewId} — continuing interview`,
-          );
           socket.emit("face_violation_alert", {
             type: "NO_FACE",
             message:
               "Repeated face absence has been logged and will be reviewed.",
           });
-          faceWarnCount = 0; // reset so we track the next batch
+          faceWarnCount = 0;
         }
       } else if (faceCount > 1) {
-        // ── Multiple faces ─────────────────────────────────────────────────
-        console.warn(
-          `🚨 [FACE VIOLATION] MULTIPLE_FACES faceCount=${faceCount} ` +
-            `interviewId=${interviewId} userId=${userId} ` +
-            `at=${new Date(timestamp).toISOString()}`,
-        );
-
         socket.emit("face_violation", {
           type: "MULTIPLE_FACES",
           faceCount,
           message: `${faceCount} faces detected — this has been logged.`,
         });
-
-        // Point-in-time record (opens and closes immediately)
         await dbSavePointViolation({
           interviewId,
           userId,
@@ -1049,22 +1038,16 @@ async function handleInterviewSocket(
           timestamp,
         });
       } else {
-        // ── Exactly one face — all clear ───────────────────────────────────
         if (faceFirstMissing) {
           console.log(
-            `✅ [FACE] Face returned after ${Math.round((now - faceFirstMissing) / 1000)}s ` +
-              `interviewId=${interviewId}`,
+            `✅ [FACE] Face returned after ${Math.round((now - faceFirstMissing) / 1000)}s interviewId=${interviewId}`,
           );
         }
         faceFirstMissing = null;
-
-        // Close any open NO_FACE violation
         if (openFaceViolId) {
           await dbCloseViolation({ violationId: openFaceViolId, endTime: now });
           openFaceViolId = null;
         }
-
-        // Clear warning indicator after a short grace period
         if (faceWarnCount > 0) {
           if (faceViolTimeout) clearTimeout(faceViolTimeout);
           faceViolTimeout = setTimeout(() => {

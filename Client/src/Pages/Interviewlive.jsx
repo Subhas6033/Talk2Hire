@@ -67,12 +67,10 @@ const InterviewLive = () => {
     preWarmSessionIds.screenRecordingId,
   );
 
-  // ── Server-side recording via HTTP chunk upload ───────────────────────────
   const serverRecording = useServerRecording(
     sessionData?.interviewId,
     primaryCameraStream,
     micStream,
-    // pass the screen stream so it records from the start
     streamStore.screenShareStream ??
       streamsRef.current?.screenShareStream ??
       null,
@@ -87,6 +85,11 @@ const InterviewLive = () => {
   const screenVideoActiveRef = useRef(false);
 
   const mobilePcRef = useRef(null);
+
+  // ── FIX: Buffer mobile stream that arrives before serverRecording.start() ──
+  // ontrack fires when WebRTC connects, which can be before recordings start.
+  // We store the stream here and attach it inside the recordings useEffect.
+  const pendingMobileStreamRef = useRef(null);
 
   const [evaluationStatus, setEvaluationStatus] = useState(null);
   const [evaluationResults, setEvaluationResults] = useState(null);
@@ -122,13 +125,11 @@ const InterviewLive = () => {
     }
   }, []); // eslint-disable-line
 
-  // Stop server recording exactly once, wait for all chunks to upload,
-  // then POST end-recording so the server knows to merge.
   const stopServerRecordingOnce = useCallback(async () => {
     if (serverRecordingStoppedRef.current || !sessionData?.interviewId) return;
     serverRecordingStoppedRef.current = true;
     try {
-      await serverRecording.stop(); // handles chunks flush + end-recording for all types
+      await serverRecording.stop();
     } catch (err) {
       console.error("❌ stopServerRecordingOnce:", err.message);
     }
@@ -166,35 +167,49 @@ const InterviewLive = () => {
   // ── Mobile WebRTC ─────────────────────────────────────────────────────────
   const setupMobilePeerConnection = useCallback(() => {
     if (mobilePcRef.current) return mobilePcRef.current;
+
     const ICE_SERVERS = [
       { urls: "stun:stun.l.google.com:19302" },
       { urls: "stun:stun1.l.google.com:19302" },
     ];
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     mobilePcRef.current = pc;
+
     pc.onicecandidate = ({ candidate }) => {
       if (candidate && interview.socketRef.current?.connected) {
+        // Desktop → Server: "mobile_webrtc_ice_candidate_desktop"
+        // Server relays to mobile as: "mobile_webrtc_ice_from_desktop"
         interview.socketRef.current.emit(
           "mobile_webrtc_ice_candidate_desktop",
           { candidate },
         );
       }
     };
+
     pc.ontrack = (event) => {
       if (event.track.kind !== "video") return;
       const el = mobileVideoRef.current;
-      if (!el) return;
-      el.srcObject = new MediaStream([event.track]);
-      el.muted = true;
-      el.play().catch(() => {});
+      if (el) {
+        // ── FIX: use the actual MediaStream, not an undefined variable ──────
+        const remoteStream = new MediaStream([event.track]);
+        el.srcObject = remoteStream;
+        el.muted = true;
+        el.play().catch(() => {});
+
+        // Buffer for serverRecording — it may not have started yet.
+        // The recordings useEffect will pick this up and call startSecondary().
+        pendingMobileStreamRef.current = remoteStream;
+      }
       setMobileTrackAttached(true);
       setMobileCameraConnected(true);
-      serverRecording.startSecondary(mobileStream);
     };
+
     pc.onconnectionstatechange = () => {
-      if (["disconnected", "failed", "closed"].includes(pc.connectionState))
+      if (["disconnected", "failed", "closed"].includes(pc.connectionState)) {
         setMobileTrackAttached(false);
+      }
     };
+
     return pc;
   }, [interview.socketRef]);
 
@@ -272,13 +287,16 @@ const InterviewLive = () => {
 
         interview.socketRef.current = socket;
 
-        // Mobile camera WebRTC (no server-recording WebRTC anymore)
+        // ── Mobile WebRTC signaling ─────────────────────────────────────────
+        // Server relays mobile's offer to desktop as "mobile_webrtc_offer_relay"
         socket.on("mobile_webrtc_offer_relay", async ({ offer, identity }) => {
           const pc = setupMobilePeerConnection();
           try {
             await pc.setRemoteDescription(new RTCSessionDescription(offer));
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
+            // Desktop → Server: "mobile_webrtc_answer"
+            // Server relays to mobile as: "mobile_webrtc_answer_from_server"
             socket.emit("mobile_webrtc_answer", {
               answer: pc.localDescription,
               identity,
@@ -289,6 +307,7 @@ const InterviewLive = () => {
           }
         });
 
+        // Server relays mobile ICE candidates to desktop as "mobile_webrtc_ice_from_mobile"
         socket.on("mobile_webrtc_ice_from_mobile", async ({ candidate }) => {
           const pc = mobilePcRef.current;
           if (!pc || !candidate) return;
@@ -440,6 +459,18 @@ const InterviewLive = () => {
 
         // HTTP chunk recording — starts regardless of network conditions
         await serverRecording.start();
+
+        // ── FIX: attach any mobile stream that arrived before start() ran ──
+        // If the mobile WebRTC ontrack fired before serverRecording.start(),
+        // the stream was buffered in pendingMobileStreamRef. Attach it now.
+        if (pendingMobileStreamRef.current) {
+          serverRecording
+            .startSecondary(pendingMobileStreamRef.current)
+            .catch((e) =>
+              console.error("❌ startSecondary (deferred):", e.message),
+            );
+          pendingMobileStreamRef.current = null;
+        }
       } catch (err) {
         console.error("[REC] Startup failed:", err.message);
         recordingsStartedRef.current = false;
@@ -463,7 +494,7 @@ const InterviewLive = () => {
     if (!confirm("Are you sure you want to end the interview?")) return;
     isLeavingRef.current = true;
 
-    await cleanupAllRecordings(); // stops recorder + flushes all chunks + calls end-recording
+    await cleanupAllRecordings();
 
     const socket = interview.socketRef.current;
     if (socket) {
