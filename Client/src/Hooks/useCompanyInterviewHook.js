@@ -1,12 +1,9 @@
-// hooks/useCompanyInterviews.js
-// Custom hook for the company interview dashboard.
-// Wraps Redux dispatch + selector logic so the page stays clean.
-
 import { useEffect, useCallback } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import {
   fetchInterviews,
   fetchInterviewById,
+  fetchViolations,
   hireCandidate,
   rejectCandidate,
   setFilterStatus,
@@ -23,12 +20,14 @@ import {
   selectDetailStatus,
   selectDecisionStatus,
   selectDecisionError,
+  selectViolations,
+  selectViolationsStatus,
+  selectViolationsError,
 } from "../API/companyInterviewApi";
 
 export const useCompanyInterviews = () => {
   const dispatch = useDispatch();
 
-  /* ── Selectors ─────────────────────────────────────────────────────────── */
   const interviews = useSelector(selectFilteredInterviews);
   const counts = useSelector(selectCounts);
   const jobs = useSelector(selectJobs);
@@ -38,13 +37,18 @@ export const useCompanyInterviews = () => {
   const detailStatus = useSelector(selectDetailStatus);
   const decisionStatus = useSelector(selectDecisionStatus);
   const decisionError = useSelector(selectDecisionError);
+  const violationsStatus = useSelector(selectViolationsStatus);
+  const violationsError = useSelector(selectViolationsError);
 
-  /* ── Initial fetch ─────────────────────────────────────────────────────── */
+  // Violations for the currently open interview (null = not yet fetched)
+  const violations = useSelector(
+    selectViolations(selectedInterview?.id ?? null),
+  );
+
   useEffect(() => {
     dispatch(fetchInterviews());
   }, [dispatch]);
 
-  /* ── Actions ───────────────────────────────────────────────────────────── */
   const loadInterviews = useCallback(
     (params = {}) => dispatch(fetchInterviews(params)),
     [dispatch],
@@ -54,6 +58,12 @@ export const useCompanyInterviews = () => {
     async (id) => {
       await dispatch(fetchInterviewById(id));
     },
+    [dispatch],
+  );
+
+  // Fetch violations for the open interview (called when user opens Violations tab)
+  const loadViolations = useCallback(
+    (interviewId) => dispatch(fetchViolations(interviewId)),
     [dispatch],
   );
 
@@ -78,62 +88,50 @@ export const useCompanyInterviews = () => {
   );
 
   const changeStatus = useCallback(
-    (status) => {
-      dispatch(setFilterStatus(status));
-    },
+    (status) => dispatch(setFilterStatus(status)),
     [dispatch],
   );
 
   const changeJob = useCallback(
-    (jobId) => {
-      dispatch(setFilterJobId(jobId));
-    },
+    (jobId) => dispatch(setFilterJobId(jobId)),
     [dispatch],
   );
 
   const changeSearch = useCallback(
-    (term) => {
-      dispatch(setSearch(term));
-    },
+    (term) => dispatch(setSearch(term)),
     [dispatch],
   );
 
-  const clearFilters = useCallback(() => {
-    dispatch(resetFilters());
-  }, [dispatch]);
-
-  /* ── Derived booleans ──────────────────────────────────────────────────── */
-  const isLoadingList = listStatus === "loading";
-  const isLoadingDetail = detailStatus === "loading";
-  const isDeciding = decisionStatus === "loading";
-  const listFailed = listStatus === "failed";
+  const clearFilters = useCallback(() => dispatch(resetFilters()), [dispatch]);
 
   return {
-    // data
     interviews,
     counts,
     jobs,
     selectedInterview,
 
-    // filters
     ...filters,
     changeStatus,
     changeJob,
     changeSearch,
     clearFilters,
 
-    // actions
     loadInterviews,
     openInterview,
     closeInterview,
     hire,
     reject,
 
-    // status
-    isLoadingList,
-    isLoadingDetail,
-    isDeciding,
-    listFailed,
+    // violations
+    violations,
+    loadViolations,
+    isLoadingViolations: violationsStatus === "loading",
+    violationsError,
+
+    isLoadingList: listStatus === "loading",
+    isLoadingDetail: detailStatus === "loading",
+    isDeciding: decisionStatus === "loading",
+    listFailed: listStatus === "failed",
     decisionError,
   };
 };

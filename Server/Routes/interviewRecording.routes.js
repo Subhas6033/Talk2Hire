@@ -3,8 +3,9 @@ const multer = require("multer");
 const {
   startRecording,
   uploadChunk,
-  endInterview,
+  endRecording,
   getRecordingStatus,
+  getRecordingUrls,
 } = require("../Controllers/interviewRecording.controllers.js");
 const { authMiddleware } = require("../Middlewares/auth.middlewares.js");
 
@@ -18,7 +19,8 @@ const chunkUpload = multer({
 
 router.post("/start-recording", startRecording);
 router.post("/:interviewId/chunk", chunkUpload.single("chunk"), uploadChunk);
-router.post("/:interviewId/end-recording", endInterview);
+router.post("/:interviewId/end-recording", endRecording);
 router.get("/:interviewId/recording-status", getRecordingStatus);
+router.get("/:interviewId/urls", getRecordingUrls);
 
 module.exports = router;

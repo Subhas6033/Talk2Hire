@@ -1,73 +1,129 @@
 const { pool } = require("./Config/database.config.js");
 
-const run = async () => {
+const inspect = async () => {
   let connection;
-
   try {
     connection = await pool.getConnection();
-    console.log("Connected to database\n");
+    console.log("✅ Connected to database\n");
 
-    // Check existing columns in interviews table
-    const [existingCols] = await connection.query(`
-      SELECT COLUMN_NAME
-      FROM information_schema.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE()
-        AND TABLE_NAME = 'interviews'
-      ORDER BY ORDINAL_POSITION;
-    `);
+    const videoTables = [
+      "interview_videos",
+      "interview_video_chunks",
+      "interview_screen_recordings",
+    ];
 
-    const existing = existingCols.map((r) => r.COLUMN_NAME);
-    console.log("Existing interviews columns:", existing.join(", "), "\n");
-
-    // Drop s3_key first (if exists)
-    if (existing.includes("s3_key")) {
-      console.log("Dropping: s3_key...");
-      await connection.query(`
-        ALTER TABLE interviews
-        DROP COLUMN \`s3_key\`;
+    for (const tableName of videoTables) {
+      // Check if table exists
+      const [exists] = await connection.query(`
+        SELECT TABLE_NAME
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME   = '${tableName}';
       `);
-      console.log("  Dropped: s3_key");
-    } else {
-      console.log("  Skipped: s3_key does not exist");
+
+      if (exists.length === 0) {
+        console.log(`❌  '${tableName}' table does NOT exist\n`);
+        continue;
+      }
+
+      // Column details
+      const [cols] = await connection.query(`
+        SELECT
+          ORDINAL_POSITION AS \`#\`,
+          COLUMN_NAME      AS \`Column\`,
+          COLUMN_TYPE      AS \`Type\`,
+          IS_NULLABLE      AS \`Nullable\`,
+          COLUMN_DEFAULT   AS \`Default\`,
+          COLUMN_KEY       AS \`Key\`,
+          EXTRA            AS \`Extra\`
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME   = '${tableName}'
+        ORDER BY ORDINAL_POSITION;
+      `);
+
+      console.log(`\n📋  '${tableName}' — ${cols.length} columns:\n`);
+      console.table(cols);
+
+      // Foreign keys
+      const [fks] = await connection.query(`
+        SELECT
+          COLUMN_NAME        AS \`Column\`,
+          REFERENCED_TABLE_NAME  AS \`References Table\`,
+          REFERENCED_COLUMN_NAME AS \`References Column\`
+        FROM information_schema.KEY_COLUMN_USAGE
+        WHERE TABLE_SCHEMA       = DATABASE()
+          AND TABLE_NAME         = '${tableName}'
+          AND REFERENCED_TABLE_NAME IS NOT NULL;
+      `);
+
+      if (fks.length > 0) {
+        console.log(`🔗  Foreign keys for '${tableName}':\n`);
+        console.table(fks);
+      }
+
+      // Indexes
+      const [indexes] = await connection.query(`
+        SHOW INDEX FROM \`${tableName}\`;
+      `);
+
+      if (indexes.length > 0) {
+        console.log(`🗂️   Indexes for '${tableName}':\n`);
+        console.table(
+          indexes.map((i) => ({
+            Key: i.Key_name,
+            Column: i.Column_name,
+            Unique: i.Non_unique === 0 ? "YES" : "NO",
+            Type: i.Index_type,
+          })),
+        );
+      }
+
+      // Row count + sample rows
+      const [[{ total }]] = await connection.query(
+        `SELECT COUNT(*) AS total FROM \`${tableName}\``,
+      );
+      console.log(`📊  Total rows: ${total}`);
+
+      if (total > 0) {
+        const [sample] = await connection.query(
+          `SELECT * FROM \`${tableName}\` ORDER BY id DESC LIMIT 3`,
+        );
+        console.log(`\n🔍  Last 3 rows:\n`);
+        console.table(sample);
+      }
+
+      console.log("─".repeat(70) + "\n");
     }
 
-    // Drop egress_id (if exists)
-    if (existing.includes("egress_id")) {
-      console.log("Dropping: egress_id...");
-      await connection.query(`
-        ALTER TABLE interviews
-        DROP COLUMN \`egress_id\`;
-      `);
-      console.log("  Dropped: egress_id");
-    } else {
-      console.log("  Skipped: egress_id does not exist");
-    }
-
-    // Verify final column structure
-    const [finalCols] = await connection.query(`
+    // Cross-table chunk tracking summary (if both tables exist)
+    const [chunkSummary] = await connection
+      .query(
+        `
       SELECT
-        ORDINAL_POSITION AS \`#\`,
-        COLUMN_NAME      AS \`Column\`,
-        COLUMN_TYPE      AS \`Type\`,
-        IS_NULLABLE      AS \`Nullable\`,
-        COLUMN_DEFAULT   AS \`Default\`
-      FROM information_schema.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE()
-        AND TABLE_NAME = 'interviews'
-      ORDER BY ORDINAL_POSITION;
-    `);
+        interview_id,
+        video_type,
+        COUNT(*)        AS total_chunks,
+        MIN(chunk_index) AS first_chunk,
+        MAX(chunk_index) AS last_chunk,
+        SUM(file_size)   AS total_bytes_stored
+      FROM interview_video_chunks
+      GROUP BY interview_id, video_type
+      ORDER BY interview_id, video_type;
+    `,
+      )
+      .catch(() => [[]]);
 
-    console.log("\nFinal interviews column order:\n");
-    console.table(finalCols);
-
-    console.log("Migration completed successfully!");
+    if (chunkSummary.length > 0) {
+      console.log("📦  Chunk tracking summary (interview_video_chunks):\n");
+      console.table(chunkSummary);
+    }
   } catch (err) {
-    console.error("Migration failed:", err.message);
-    process.exit(1);
+    console.error("❌ Inspection failed:", err.message);
   } finally {
     if (connection) connection.release();
     process.exit(0);
   }
 };
 
-run();
+inspect();

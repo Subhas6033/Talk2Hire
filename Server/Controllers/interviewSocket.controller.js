@@ -8,10 +8,11 @@ const {
   mergeInterviewMedia,
 } = require("../Service/globalVideoMerger.service.js");
 const Job = require("../Admin/models/job.models.js");
+const { pool } = require("../Config/database.config.js");
 
 const FACE_THROTTLE = 1000;
 const FACE_WINDOW = 3000;
-const MAX_FACE_VIOL = 3;
+const MAX_FACE_WARN = 5; // warnings before logging a "repeated" alert (no termination)
 
 const ttsInstanceCache = new Map();
 function getTTSInstance(id) {
@@ -20,6 +21,235 @@ function getTTSInstance(id) {
 }
 
 const sttConnectionCache = new Map();
+
+// ─── Ensure interview_violations has the correct schema on startup ────────────
+// The app's built-in auto-migration creates the table with the OLD `occurred_at`
+// schema. This function detects that and upgrades it in-place automatically so
+// you never get silent INSERT failures.
+async function ensureViolationsSchema() {
+  try {
+    const [cols] = await pool.execute(`
+      SELECT COLUMN_NAME
+      FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME   = 'interview_violations'
+      ORDER BY ORDINAL_POSITION
+    `);
+    const colNames = cols.map((c) => c.COLUMN_NAME);
+
+    if (colNames.length === 0) {
+      // Table doesn't exist at all — create fresh
+      await pool.execute(`
+        CREATE TABLE interview_violations (
+          id               BIGINT UNSIGNED  AUTO_INCREMENT PRIMARY KEY,
+          interview_id     BIGINT UNSIGNED  NOT NULL,
+          user_id          BIGINT UNSIGNED  NULL,
+          violation_type   VARCHAR(50)      NOT NULL,
+          start_time       DATETIME(3)      NOT NULL,
+          end_time         DATETIME(3)      NULL,
+          duration_seconds DECIMAL(10,3)
+            GENERATED ALWAYS AS (
+              CASE WHEN end_time IS NOT NULL
+                   THEN TIMESTAMPDIFF(MICROSECOND, start_time, end_time) / 1000000.0
+                   ELSE NULL END
+            ) STORED,
+          warning_count    TINYINT UNSIGNED NOT NULL DEFAULT 1,
+          resolved         TINYINT(1)       NOT NULL DEFAULT 0,
+          details          JSON             NULL,
+          created_at       DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at       DATETIME         NULL ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_interview  (interview_id),
+          INDEX idx_user       (user_id),
+          INDEX idx_type       (violation_type),
+          INDEX idx_start_time (start_time)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `);
+      console.log("✅ interview_violations table created (fresh)");
+      return;
+    }
+
+    // Table exists — check if it needs upgrading from the old schema
+    if (colNames.includes("start_time")) {
+      console.log("✅ interview_violations schema is up-to-date");
+      return;
+    }
+
+    console.log(
+      "⚙️  Upgrading interview_violations schema (occurred_at → start_time)...",
+    );
+
+    const toAdd = [
+      {
+        col: "user_id",
+        sql: "ADD COLUMN user_id BIGINT UNSIGNED NULL AFTER interview_id",
+      },
+      {
+        col: "start_time",
+        sql: "ADD COLUMN start_time DATETIME(3) NULL AFTER violation_type",
+      },
+      {
+        col: "end_time",
+        sql: "ADD COLUMN end_time DATETIME(3) NULL AFTER start_time",
+      },
+      {
+        col: "warning_count",
+        sql: "ADD COLUMN warning_count TINYINT UNSIGNED NOT NULL DEFAULT 1 AFTER end_time",
+      },
+      {
+        col: "resolved",
+        sql: "ADD COLUMN resolved TINYINT(1) NOT NULL DEFAULT 0 AFTER warning_count",
+      },
+      {
+        col: "updated_at",
+        sql: "ADD COLUMN updated_at DATETIME NULL ON UPDATE CURRENT_TIMESTAMP",
+      },
+    ];
+
+    for (const { col, sql } of toAdd) {
+      if (!colNames.includes(col)) {
+        await pool.execute(`ALTER TABLE interview_violations ${sql}`);
+        console.log(`  ✅ Added column: ${col}`);
+      }
+    }
+
+    // Back-fill start_time from occurred_at for any existing rows
+    if (colNames.includes("occurred_at")) {
+      await pool.execute(
+        `UPDATE interview_violations SET start_time = occurred_at WHERE start_time IS NULL`,
+      );
+      console.log("  ✅ Back-filled start_time from occurred_at");
+    }
+
+    // Make start_time NOT NULL now that all rows have a value
+    await pool
+      .execute(
+        `ALTER TABLE interview_violations MODIFY COLUMN start_time DATETIME(3) NOT NULL`,
+      )
+      .catch(() => {});
+
+    console.log("✅ interview_violations schema upgrade complete");
+  } catch (err) {
+    console.error("❌ ensureViolationsSchema FAILED:", err.message);
+  }
+}
+
+// Run immediately when this module is first loaded
+ensureViolationsSchema();
+
+// ─── Violation DB helpers — all errors are logged, never swallowed silently ──
+
+async function dbOpenViolation({
+  interviewId,
+  userId,
+  violationType,
+  details = {},
+  startTime,
+}) {
+  try {
+    const [result] = await pool.execute(
+      `INSERT INTO interview_violations
+         (interview_id, user_id, violation_type, details, start_time, warning_count, resolved)
+       VALUES (?, ?, ?, ?, ?, 1, 0)`,
+      [
+        interviewId,
+        userId,
+        violationType,
+        JSON.stringify(details),
+        new Date(startTime),
+      ],
+    );
+    console.log(
+      `🚨 [VIOLATION OPENED] type=${violationType} interviewId=${interviewId} ` +
+        `userId=${userId} startTime=${new Date(startTime).toISOString()} dbId=${result.insertId}`,
+    );
+    return result.insertId;
+  } catch (err) {
+    console.error(
+      `❌ [VIOLATION DB] openViolation FAILED (${violationType} / interview ${interviewId}):`,
+      err.message,
+    );
+    return null;
+  }
+}
+
+async function dbCloseViolation({ violationId, endTime }) {
+  if (!violationId) return;
+  try {
+    await pool.execute(
+      `UPDATE interview_violations
+       SET end_time = ?, resolved = 1, updated_at = NOW()
+       WHERE id = ?`,
+      [new Date(endTime), violationId],
+    );
+    console.log(
+      `✅ [VIOLATION CLOSED] dbId=${violationId} endTime=${new Date(endTime).toISOString()}`,
+    );
+  } catch (err) {
+    console.error(
+      `❌ [VIOLATION DB] closeViolation FAILED (dbId=${violationId}):`,
+      err.message,
+    );
+  }
+}
+
+async function dbIncrementWarning({ violationId, warningCount }) {
+  if (!violationId) return;
+  try {
+    await pool.execute(
+      `UPDATE interview_violations
+       SET warning_count = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [warningCount, violationId],
+    );
+    console.log(
+      `⚠️  [VIOLATION DB] dbId=${violationId} warning_count → ${warningCount}`,
+    );
+  } catch (err) {
+    console.error(
+      `❌ [VIOLATION DB] incrementWarning FAILED (dbId=${violationId}):`,
+      err.message,
+    );
+  }
+}
+
+async function dbSavePointViolation({
+  interviewId,
+  userId,
+  violationType,
+  details = {},
+  timestamp,
+}) {
+  try {
+    const ts = new Date(timestamp);
+    const closeTs = new Date(timestamp + 100);
+    const [result] = await pool.execute(
+      `INSERT INTO interview_violations
+         (interview_id, user_id, violation_type, details, start_time, end_time, warning_count, resolved)
+       VALUES (?, ?, ?, ?, ?, ?, 1, 1)`,
+      [
+        interviewId,
+        userId,
+        violationType,
+        JSON.stringify(details),
+        ts,
+        closeTs,
+      ],
+    );
+    console.log(
+      `🚨 [VIOLATION SAVED] type=${violationType} interviewId=${interviewId} ` +
+        `at=${ts.toISOString()} dbId=${result.insertId}`,
+    );
+    return result.insertId;
+  } catch (err) {
+    console.error(
+      `❌ [VIOLATION DB] savePointViolation FAILED (${violationType} / interview ${interviewId}):`,
+      err.message,
+    );
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 async function streamTTSToClient(socket, text, interviewId) {
   return new Promise((resolve, reject) => {
@@ -33,9 +263,10 @@ async function streamTTSToClient(socket, text, interviewId) {
       err ? reject(err) : resolve();
     };
 
-    const hardTimeout = setTimeout(() => {
-      settle(new Error(`TTS timed out (${chunkCount} chunks so far)`));
-    }, 60_000);
+    const hardTimeout = setTimeout(
+      () => settle(new Error(`TTS timed out (${chunkCount} chunks so far)`)),
+      60_000,
+    );
 
     tts
       .speakStream(text, (chunk) => {
@@ -91,12 +322,11 @@ async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
   session.mobileSocketId = socket.id;
   socket.join(`interview_${interviewId}`);
 
-  if (session.secondaryCameraConnected) {
+  if (session.secondaryCameraConnected)
     socket.emit("secondary_camera_ready", {
       connected: true,
       timestamp: Date.now(),
     });
-  }
 
   socket.on("request_secondary_camera_status", () =>
     io.to(`interview_${interviewId}`).emit("secondary_camera_status", {
@@ -121,33 +351,29 @@ async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
     });
   });
 
-  // ── Mobile camera WebRTC relay ──────────────────────────────────────────
   socket.on("mobile_webrtc_offer", ({ offer, identity }) => {
     console.log(`📱 Relaying mobile WebRTC offer to desktop (${identity})`);
-    if (session.desktopSocketId) {
+    if (session.desktopSocketId)
       io.to(session.desktopSocketId).emit("mobile_webrtc_offer_relay", {
         offer,
         identity,
       });
-    }
   });
 
   socket.on("mobile_webrtc_ice_candidate", ({ candidate }) => {
-    if (session.desktopSocketId) {
+    if (session.desktopSocketId)
       io.to(session.desktopSocketId).emit("mobile_webrtc_ice_from_mobile", {
         candidate,
       });
-    }
   });
 
   socket.on("mobile_camera_frame", (data, ack) => {
     session.lastMobileFrame = data.frame;
-    if (session.desktopSocketId) {
+    if (session.desktopSocketId)
       socket.to(`interview_${interviewId}`).emit("mobile_camera_frame", {
         frame: data.frame,
         timestamp: data.timestamp ?? Date.now(),
       });
-    }
     if (typeof ack === "function") ack();
   });
 
@@ -185,25 +411,22 @@ async function handleInterviewSocket(
     });
   }
 
-  // ── Mobile camera WebRTC (desktop answer side) ────────────────────────────
   socket.on("mobile_webrtc_answer", ({ answer, identity }) => {
-    if (session.mobileSocketId) {
+    if (session.mobileSocketId)
       io.to(session.mobileSocketId).emit("mobile_webrtc_answer_from_server", {
         answer,
         identity,
       });
-    }
   });
 
   socket.on("mobile_webrtc_ice_candidate_desktop", ({ candidate }) => {
-    if (session.mobileSocketId) {
+    if (session.mobileSocketId)
       io.to(session.mobileSocketId).emit("mobile_webrtc_ice_from_desktop", {
         candidate,
       });
-    }
   });
 
-  // ── Load interview data ───────────────────────────────────────────────────
+  // ── Load interview ────────────────────────────────────────────────────────
   let firstQuestion = null;
   let jobDetails = null;
   try {
@@ -212,9 +435,8 @@ async function handleInterviewSocket(
       Interview.getQuestionByOrder(interviewId, 1),
     ]);
     firstQuestion = q;
-    if (interviewSession?.jobId) {
-      jobDetails = await Job.findById(interviewSession.jobId).catch(() => null);
-    }
+    const jobId = interviewSession?.job_id ?? interviewSession?.jobId ?? null;
+    if (jobId) jobDetails = await Job.findById(jobId).catch(() => null);
   } catch (err) {
     console.error("❌ DB setup failed:", err.message);
     socket.emit("error", { message: "Failed to initialize" });
@@ -245,10 +467,12 @@ async function handleInterviewSocket(
   let awaitingRepeat = false;
   let currentQText = session.currentQText ?? "";
 
+  // ── Face-detection state ──────────────────────────────────────────────────
   let lastHolisticTime = 0;
-  let faceViolCount = 0;
-  let faceFirstMissing = null;
+  let faceWarnCount = 0;
+  let faceFirstMissing = null; // timestamp when the face first disappeared
   let faceViolTimeout = null;
+  let openFaceViolId = null; // DB id of the currently open NO_FACE record
 
   let awaitingPlaybackDone = false;
   let clientReadyHandled = false;
@@ -256,15 +480,15 @@ async function handleInterviewSocket(
   let lastNoConnWarn = 0;
 
   getTTSInstance(interviewId);
-
   socket.emit("server_ready", {
     setupMode: session.isSetupMode,
     message: "Server ready",
   });
 
+  // ── STT ───────────────────────────────────────────────────────────────────
   function ensureSTTConnection() {
     const cached = sttConnectionCache.get(interviewId);
-    if (cached && cached.conn && cached.conn.isConnected?.()) {
+    if (cached?.conn?.isConnected?.()) {
       cached.conn.resetTranscriptState?.();
       return Promise.resolve(cached.conn);
     }
@@ -337,9 +561,13 @@ async function handleInterviewSocket(
       clearTimeout(playbackDoneTimer);
       playbackDoneTimer = null;
     }
-    if (isInterviewEnded || !session.interviewStarted) return;
-    if (!awaitingPlaybackDone) return;
-    if (isListeningActive) return;
+    if (
+      isInterviewEnded ||
+      !session.interviewStarted ||
+      !awaitingPlaybackDone ||
+      isListeningActive
+    )
+      return;
     awaitingPlaybackDone = false;
     try {
       const conn = await ensureSTTConnection();
@@ -360,14 +588,13 @@ async function handleInterviewSocket(
 
   async function transitionToNextQuestion(text) {
     try {
-      const conn = sttConnectionCache.get(interviewId)?.conn;
-      if (conn) conn.pauseIdleDetection?.();
+      sttConnectionCache.get(interviewId)?.conn?.pauseIdleDetection?.();
       isListeningActive = false;
       awaitingPlaybackDone = true;
       await streamTTSToClient(socket, text, interviewId);
       if (playbackDoneTimer) clearTimeout(playbackDoneTimer);
       playbackDoneTimer = setTimeout(() => {
-        console.warn(`⚠️ playback_done timeout (15s) — enabling STT anyway`);
+        console.warn("⚠️ playback_done timeout (15s) — enabling STT anyway");
         enableListening().catch(console.error);
       }, 15_000);
     } catch (err) {
@@ -384,8 +611,7 @@ async function handleInterviewSocket(
   }
 
   async function handleIdle() {
-    const conn = sttConnectionCache.get(interviewId)?.conn;
-    conn?.pauseIdleDetection?.();
+    sttConnectionCache.get(interviewId)?.conn?.pauseIdleDetection?.();
     isListeningActive = false;
     socket.emit("listening_disabled");
     if (awaitingRepeat) {
@@ -440,7 +666,6 @@ async function handleInterviewSocket(
     isProcessing = true;
     isListeningActive = false;
     socket.emit("listening_disabled");
-
     try {
       const q = await Interview.getQuestionByOrder(interviewId, currentOrder);
       if (!q) {
@@ -497,16 +722,16 @@ async function handleInterviewSocket(
       awaitingRepeat = false;
       socket.emit("next_question", { question: nextQ.question });
 
-      let ttsAttempts = 0,
-        ttsSuccess = false;
-      while (ttsAttempts < 3 && !ttsSuccess) {
-        ttsAttempts++;
+      let attempts = 0,
+        ok = false;
+      while (attempts < 3 && !ok) {
+        attempts++;
         try {
           await transitionToNextQuestion(nextQ.question);
-          ttsSuccess = true;
-        } catch (ttsErr) {
-          if (ttsAttempts < 3) await new Promise((r) => setTimeout(r, 1000));
-          else throw ttsErr;
+          ok = true;
+        } catch (e) {
+          if (attempts < 3) await new Promise((r) => setTimeout(r, 1000));
+          else throw e;
         }
       }
     } catch (err) {
@@ -548,6 +773,7 @@ async function handleInterviewSocket(
       clearTimeout(playbackDoneTimer);
       playbackDoneTimer = null;
     }
+
     socket.emit("listening_disabled");
     socket.emit("interview_complete", {
       message: "Interview complete!",
@@ -564,6 +790,15 @@ async function handleInterviewSocket(
     if (faceViolTimeout) {
       clearTimeout(faceViolTimeout);
       faceViolTimeout = null;
+    }
+
+    // Close any still-open NO_FACE violation record
+    if (openFaceViolId) {
+      await dbCloseViolation({
+        violationId: openFaceViolId,
+        endTime: Date.now(),
+      });
+      openFaceViolId = null;
     }
 
     session.interviewStarted = false;
@@ -597,18 +832,6 @@ async function handleInterviewSocket(
       );
 
     isProcessing = false;
-  }
-
-  async function safeViolation(type, details, timestamp) {
-    try {
-      if (typeof Interview.saveViolation === "function")
-        await Interview.saveViolation({
-          interviewId,
-          violationType: type,
-          details,
-          timestamp: new Date(timestamp),
-        });
-    } catch (_) {}
   }
 
   // ── Socket event handlers ─────────────────────────────────────────────────
@@ -709,8 +932,8 @@ async function handleInterviewSocket(
   socket.on("user_audio_chunk", async (buf) => {
     if (session.isSetupMode || !session.interviewStarted || !isListeningActive)
       return;
-    let cached = sttConnectionCache.get(interviewId);
-    if (!cached || !cached.conn?.isConnected?.()) {
+    const cached = sttConnectionCache.get(interviewId);
+    if (!cached?.conn?.isConnected?.()) {
       const now = Date.now();
       if (now - lastNoConnWarn > 3000) {
         console.warn("⚠️ STT connection lost — reconnecting...");
@@ -733,53 +956,125 @@ async function handleInterviewSocket(
     cached.conn.send(buf);
   });
 
+  // ── Face / holistic detection ─────────────────────────────────────────────
+  // WARN ONLY — never terminates the interview.
+  // All events are written to interview_violations with start_time / end_time.
   socket.on("holistic_detection_result", async ({ faceCount, timestamp }) => {
     if (session.isSetupMode || !session.interviewStarted) return;
+
     const now = Date.now();
     if (now - lastHolisticTime < FACE_THROTTLE) return;
     lastHolisticTime = now;
+
     try {
       if (faceCount === 0) {
+        // ── No face ────────────────────────────────────────────────────────
         if (!faceFirstMissing) {
           faceFirstMissing = now;
+          console.log(
+            `👁️  [FACE] No face detected — tracking absence start ` +
+              `interviewId=${interviewId} at=${new Date(now).toISOString()}`,
+          );
           return;
         }
-        if (now - faceFirstMissing < FACE_WINDOW) return;
-        faceViolCount++;
+
+        const absenceMs = now - faceFirstMissing;
+        if (absenceMs < FACE_WINDOW) return; // not past the threshold yet
+
+        faceWarnCount++;
+        console.log(
+          `⚠️  [FACE VIOLATION] NO_FACE warning #${faceWarnCount} ` +
+            `interviewId=${interviewId} userId=${userId} ` +
+            `absentFor=${Math.round(absenceMs / 1000)}s ` +
+            `since=${new Date(faceFirstMissing).toISOString()}`,
+        );
+
+        if (!openFaceViolId) {
+          // First warning — open the DB record with the exact start time
+          openFaceViolId = await dbOpenViolation({
+            interviewId,
+            userId,
+            violationType: "NO_FACE",
+            details: { warningCount: 1 },
+            startTime: faceFirstMissing,
+          });
+        } else {
+          // Subsequent warnings — increment counter on the existing record
+          await dbIncrementWarning({
+            violationId: openFaceViolId,
+            warningCount: faceWarnCount,
+          });
+        }
+
         socket.emit("face_violation", {
           type: "NO_FACE",
-          count: faceViolCount,
-          max: MAX_FACE_VIOL,
-          message: `No face (${MAX_FACE_VIOL - faceViolCount} left)`,
+          count: faceWarnCount,
+          max: MAX_FACE_WARN,
+          message: `No face detected — warning ${faceWarnCount} of ${MAX_FACE_WARN}`,
         });
-        if (faceViolCount >= MAX_FACE_VIOL) {
-          socket.emit("interview_terminated", { reason: "NO_FACE_DETECTED" });
-          await safeViolation(
-            "NO_FACE",
-            `${Math.round((now - faceFirstMissing) / 1000)}s absent`,
-            timestamp,
+
+        // After hitting MAX_FACE_WARN, emit a strong alert then reset the batch counter
+        if (faceWarnCount >= MAX_FACE_WARN) {
+          console.warn(
+            `🚨 [FACE ALERT] ${faceWarnCount} NO_FACE warnings logged ` +
+              `interviewId=${interviewId} — continuing interview`,
           );
-          await endInterview();
+          socket.emit("face_violation_alert", {
+            type: "NO_FACE",
+            message:
+              "Repeated face absence has been logged and will be reviewed.",
+          });
+          faceWarnCount = 0; // reset so we track the next batch
         }
       } else if (faceCount > 1) {
-        socket.emit("interview_terminated", {
-          reason: "MULTIPLE_FACES",
+        // ── Multiple faces ─────────────────────────────────────────────────
+        console.warn(
+          `🚨 [FACE VIOLATION] MULTIPLE_FACES faceCount=${faceCount} ` +
+            `interviewId=${interviewId} userId=${userId} ` +
+            `at=${new Date(timestamp).toISOString()}`,
+        );
+
+        socket.emit("face_violation", {
+          type: "MULTIPLE_FACES",
           faceCount,
+          message: `${faceCount} faces detected — this has been logged.`,
         });
-        await safeViolation("MULTIPLE_FACES", `${faceCount} faces`, timestamp);
-        await endInterview();
+
+        // Point-in-time record (opens and closes immediately)
+        await dbSavePointViolation({
+          interviewId,
+          userId,
+          violationType: "MULTIPLE_FACES",
+          details: { faceCount },
+          timestamp,
+        });
       } else {
+        // ── Exactly one face — all clear ───────────────────────────────────
+        if (faceFirstMissing) {
+          console.log(
+            `✅ [FACE] Face returned after ${Math.round((now - faceFirstMissing) / 1000)}s ` +
+              `interviewId=${interviewId}`,
+          );
+        }
         faceFirstMissing = null;
-        if (faceViolCount > 0) {
+
+        // Close any open NO_FACE violation
+        if (openFaceViolId) {
+          await dbCloseViolation({ violationId: openFaceViolId, endTime: now });
+          openFaceViolId = null;
+        }
+
+        // Clear warning indicator after a short grace period
+        if (faceWarnCount > 0) {
           if (faceViolTimeout) clearTimeout(faceViolTimeout);
           faceViolTimeout = setTimeout(() => {
-            faceViolCount = 0;
+            faceWarnCount = 0;
             socket.emit("face_violation_cleared");
           }, 2000);
         }
       }
     } catch (e) {
-      console.error("❌ holistic:", e.message);
+      console.error("❌ holistic handler error:", e.message);
     }
   });
 
@@ -803,12 +1098,10 @@ async function handleInterviewSocket(
   socket.on("mobile_camera_frame", (data, ack) => {
     session.lastMobileFrame = data.frame;
     if (session.desktopSocketId)
-      socket
-        .to(`interview_${interviewId}`)
-        .emit("mobile_camera_frame", {
-          frame: data.frame,
-          timestamp: data.timestamp ?? Date.now(),
-        });
+      socket.to(`interview_${interviewId}`).emit("mobile_camera_frame", {
+        frame: data.frame,
+        timestamp: data.timestamp ?? Date.now(),
+      });
     if (typeof ack === "function") ack();
   });
 

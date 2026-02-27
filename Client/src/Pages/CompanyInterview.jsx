@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Video,
   Search,
@@ -13,12 +13,14 @@ import {
   Briefcase,
   MapPin,
   Mail,
-  Phone,
   Monitor,
   Camera,
   Smartphone,
   Play,
   Pause,
+  Volume2,
+  VolumeX,
+  Maximize2,
   Users,
   TrendingUp,
   Award,
@@ -29,8 +31,50 @@ import {
   BarChart2,
   RefreshCw,
   Loader2,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldOff,
 } from "lucide-react";
 import { useCompanyInterviews } from "../Hooks/useCompanyInterviewHook";
+
+/* ── Violation type display config ───────────────────────────────────────── */
+const VTYPE = {
+  NO_FACE: {
+    label: "No Face",
+    icon: ShieldOff,
+    cls: "bg-red-50 text-red-600 border-red-200",
+  },
+  MULTIPLE_FACES: {
+    label: "Multiple Faces",
+    icon: Users,
+    cls: "bg-amber-50 text-amber-600 border-amber-200",
+  },
+  TAB_SWITCH: {
+    label: "Tab Switch",
+    icon: ShieldAlert,
+    cls: "bg-orange-50 text-orange-600 border-orange-200",
+  },
+};
+
+const vtypeConfig = (type) =>
+  VTYPE[type] ?? {
+    label: type,
+    icon: ShieldAlert,
+    cls: "bg-gray-50 text-gray-600 border-gray-200",
+  };
+
+const fmtDuration = (secs) => {
+  if (!secs) return null;
+  const s = Math.round(secs);
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+};
+
+const fmtTime = (ts) =>
+  new Date(ts).toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 
 /* ── Score helpers ───────────────────────────────────────────────────────── */
 const scoreColor = (s) =>
@@ -60,7 +104,7 @@ const STATUS = {
   },
 };
 
-/* ── Skeleton loader ─────────────────────────────────────────────────────── */
+/* ── Skeleton ────────────────────────────────────────────────────────────── */
 const Skeleton = ({ className }) => (
   <div className={`animate-pulse bg-gray-100 rounded-xl ${className}`} />
 );
@@ -79,82 +123,355 @@ const CardSkeleton = () => (
   </div>
 );
 
-/* ── Video Card ──────────────────────────────────────────────────────────── */
-const VideoCard = ({ icon: Icon, label, subtitle, video, color }) => {
-  const [playing, setPlaying] = useState(false);
+/* ── Violations Tab Content (driven by hook data) ────────────────────────── */
+const ViolationsPanel = ({ violations, isLoading, error }) => {
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 py-10 justify-center text-gray-400 text-sm">
+        <Loader2 size={16} className="animate-spin" /> Loading proctoring log…
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center gap-2 py-4 px-4 bg-red-50 border border-red-100 rounded-2xl text-sm text-red-500">
+        <AlertCircle size={15} /> {error}
+      </div>
+    );
+  }
+
+  if (!violations) return null;
+
+  if (violations.length === 0) {
+    return (
+      <div className="flex items-center gap-3 py-5 px-5 bg-emerald-50 border border-emerald-100 rounded-2xl">
+        <ShieldCheck size={20} className="text-emerald-500 shrink-0" />
+        <div>
+          <p className="text-sm font-semibold text-emerald-700">
+            Clean Session
+          </p>
+          <p className="text-xs text-emerald-500 mt-0.5">
+            No proctoring violations were recorded.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const summary = violations.reduce((acc, v) => {
+    acc[v.violation_type] = (acc[v.violation_type] ?? 0) + 1;
+    return acc;
+  }, {});
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
-      <div className="relative bg-gray-900 aspect-video flex items-center justify-center">
-        {video.available ? (
-          <>
+    <div className="space-y-5">
+      {/* Summary chips */}
+      <div className="flex flex-wrap gap-2">
+        {Object.entries(summary).map(([type, count]) => {
+          const cfg = vtypeConfig(type);
+          const Icon = cfg.icon;
+          return (
             <div
-              className="absolute inset-0 flex items-center justify-center"
-              style={{
-                background: `linear-gradient(135deg, ${color}22, ${color}08)`,
-              }}
+              key={type}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold ${cfg.cls}`}
             >
-              <div className="text-center">
-                <Icon
-                  size={36}
-                  style={{ color }}
-                  className="mx-auto mb-2 opacity-50"
-                />
-                <p className="text-xs text-gray-400">Recording available</p>
-              </div>
+              <Icon size={12} />
+              {cfg.label}: {count} event{count !== 1 ? "s" : ""}
             </div>
-            <button
-              onClick={() => setPlaying((p) => !p)}
-              className="absolute inset-0 flex items-center justify-center hover:bg-black/20 transition-all group"
-            >
-              <div className="w-14 h-14 rounded-full bg-white/90 backdrop-blur-sm flex items-center justify-center shadow-xl group-hover:scale-110 transition-transform">
-                {playing ? (
-                  <Pause size={20} className="text-gray-800" />
-                ) : (
-                  <Play size={20} className="text-gray-800 ml-1" />
-                )}
-              </div>
-            </button>
-          </>
-        ) : (
-          <div className="text-center px-4">
-            <AlertCircle size={28} className="text-gray-600 mx-auto mb-2" />
-            <p className="text-xs text-gray-500">Not available</p>
-          </div>
-        )}
+          );
+        })}
       </div>
-      <div className="p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
+
+      {/* Timeline */}
+      <div className="space-y-2">
+        {violations.map((v, i) => {
+          const cfg = vtypeConfig(v.violation_type);
+          const Icon = cfg.icon;
+          const dur = fmtDuration(v.duration_seconds);
+          return (
             <div
-              className="w-7 h-7 rounded-lg flex items-center justify-center"
-              style={{ background: `${color}18` }}
+              key={v.id ?? i}
+              className="flex items-start gap-3 bg-white border border-gray-100 rounded-2xl p-3.5 shadow-sm"
             >
-              <Icon size={14} style={{ color }} />
+              <div
+                className={`w-8 h-8 rounded-xl border flex items-center justify-center shrink-0 ${cfg.cls}`}
+              >
+                <Icon size={14} />
+              </div>
+
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span
+                    className={`text-xs font-bold px-2 py-0.5 rounded-lg border ${cfg.cls}`}
+                  >
+                    {cfg.label}
+                  </span>
+                  {v.warning_count > 1 && (
+                    <span className="text-[11px] text-amber-600 font-semibold bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-lg">
+                      {v.warning_count} warnings
+                    </span>
+                  )}
+                  <span
+                    className={`text-[11px] font-semibold px-2 py-0.5 rounded-lg border ${
+                      v.resolved
+                        ? "bg-emerald-50 text-emerald-600 border-emerald-100"
+                        : "bg-red-50 text-red-500 border-red-100"
+                    }`}
+                  >
+                    {v.resolved ? "Resolved" : "Unresolved"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+                  <span className="flex items-center gap-1 text-xs text-gray-400">
+                    <Clock size={10} /> Start: {fmtTime(v.start_time)}
+                  </span>
+                  {v.end_time && (
+                    <span className="flex items-center gap-1 text-xs text-gray-400">
+                      <Clock size={10} /> End: {fmtTime(v.end_time)}
+                    </span>
+                  )}
+                  {dur && (
+                    <span className="text-xs font-semibold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-lg">
+                      {dur}
+                    </span>
+                  )}
+                  {v.violation_type === "MULTIPLE_FACES" &&
+                    v.details?.faceCount && (
+                      <span className="text-xs text-gray-400">
+                        {v.details.faceCount} faces detected
+                      </span>
+                    )}
+                </div>
+              </div>
+
+              <span className="text-[11px] text-gray-300 font-mono shrink-0 mt-0.5">
+                #{i + 1}
+              </span>
             </div>
-            <div>
-              <p className="text-sm font-semibold text-gray-800">{label}</p>
-              <p className="text-[11px] text-gray-400">{subtitle}</p>
-            </div>
-          </div>
-          {video.available && video.url && (
-            <a
-              href={video.url}
-              download
-              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors"
-              title="Download"
-            >
-              <Download
-                size={13}
-                className="text-gray-400 hover:text-indigo-500"
-              />
-            </a>
-          )}
-        </div>
+          );
+        })}
       </div>
     </div>
   );
 };
+
+/* ── Video Card ──────────────────────────────────────────────────────────── */
+const VideoCard = ({ icon: Icon, label, subtitle, video, color }) => {
+  const videoRef = useRef(null);
+  const [playing, setPlaying] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (
+        e.detail !== video.url &&
+        videoRef.current &&
+        !videoRef.current.paused
+      ) {
+        videoRef.current.pause();
+        setPlaying(false);
+      }
+    };
+    window.addEventListener("vc:play", handler);
+    return () => window.removeEventListener("vc:play", handler);
+  }, [video.url]);
+
+  const togglePlay = () => {
+    const el = videoRef.current;
+    if (!el) return;
+    if (el.paused) {
+      window.dispatchEvent(new CustomEvent("vc:play", { detail: video.url }));
+      el.play();
+      setPlaying(true);
+    } else {
+      el.pause();
+      setPlaying(false);
+    }
+  };
+
+  const onTimeUpdate = () => {
+    const el = videoRef.current;
+    if (!el || !el.duration) return;
+    setCurrentTime(el.currentTime);
+    setProgress((el.currentTime / el.duration) * 100);
+  };
+
+  const onLoadedMetadata = () => setDuration(videoRef.current?.duration ?? 0);
+  const onEnded = () => setPlaying(false);
+
+  const seek = (e) => {
+    e.stopPropagation();
+    const el = videoRef.current;
+    if (!el) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    el.currentTime = ((e.clientX - rect.left) / rect.width) * el.duration;
+  };
+
+  const fmt = (s) => {
+    if (!s || isNaN(s)) return "0:00";
+    return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+  };
+
+  if (!video.available) {
+    return (
+      <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
+        <div className="relative bg-gray-900 aspect-video flex items-center justify-center">
+          <div className="text-center px-4">
+            <AlertCircle size={28} className="text-gray-600 mx-auto mb-2" />
+            <p className="text-xs text-gray-500">Not available</p>
+          </div>
+        </div>
+        <div className="p-4 flex items-center gap-2">
+          <div
+            className="w-7 h-7 rounded-lg flex items-center justify-center"
+            style={{ background: `${color}18` }}
+          >
+            <Icon size={14} style={{ color }} />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-gray-800">{label}</p>
+            <p className="text-[11px] text-gray-400">{subtitle}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm group">
+      <div
+        className="relative bg-black aspect-video cursor-pointer"
+        onClick={togglePlay}
+      >
+        {/* Real video — preload="metadata" renders first frame as thumbnail */}
+        <video
+          ref={videoRef}
+          src={video.url}
+          preload="metadata"
+          playsInline
+          muted={muted}
+          onTimeUpdate={onTimeUpdate}
+          onLoadedMetadata={onLoadedMetadata}
+          onEnded={onEnded}
+          className="w-full h-full object-cover"
+        />
+
+        {/* Colour tint only while paused */}
+        {!playing && (
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              background: `linear-gradient(135deg, ${color}33 0%, transparent 60%)`,
+            }}
+          />
+        )}
+
+        {/* Play/Pause button */}
+        <div
+          className={`absolute inset-0 flex items-center justify-center transition-opacity duration-150 ${playing ? "opacity-0 hover:opacity-100" : "opacity-100"}`}
+        >
+          <div className="w-12 h-12 rounded-full bg-white/90 backdrop-blur-sm flex items-center justify-center shadow-xl group-hover:scale-110 transition-transform">
+            {playing ? (
+              <Pause size={18} className="text-gray-800" />
+            ) : (
+              <Play size={18} className="text-gray-800 ml-0.5" />
+            )}
+          </div>
+        </div>
+
+        {/* Mute + fullscreen — top right on hover */}
+        <div className="absolute top-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setMuted((m) => {
+                if (videoRef.current) videoRef.current.muted = !m;
+                return !m;
+              });
+            }}
+            className="w-7 h-7 rounded-lg bg-black/50 backdrop-blur-sm flex items-center justify-center hover:bg-black/70 transition-colors"
+          >
+            {muted ? (
+              <VolumeX size={12} className="text-white" />
+            ) : (
+              <Volume2 size={12} className="text-white" />
+            )}
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              videoRef.current?.requestFullscreen?.();
+            }}
+            className="w-7 h-7 rounded-lg bg-black/50 backdrop-blur-sm flex items-center justify-center hover:bg-black/70 transition-colors"
+          >
+            <Maximize2 size={12} className="text-white" />
+          </button>
+        </div>
+
+        {/* Progress bar + timestamps — bottom on hover */}
+        <div className="absolute bottom-0 left-0 right-0 px-2 pb-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[10px] text-white/80 font-mono">
+              {fmt(currentTime)}
+            </span>
+            <div
+              className="flex-1 h-1 bg-white/30 rounded-full cursor-pointer"
+              onClick={seek}
+            >
+              <div
+                className="h-full rounded-full transition-all"
+                style={{ width: `${progress}%`, background: color }}
+              />
+            </div>
+            <span className="text-[10px] text-white/80 font-mono">
+              {fmt(duration)}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="p-4 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div
+            className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+            style={{ background: `${color}18` }}
+          >
+            <Icon size={14} style={{ color }} />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-gray-800">{label}</p>
+            <p className="text-[11px] text-gray-400">
+              {duration > 0 ? fmt(duration) : subtitle}
+            </p>
+          </div>
+        </div>
+        {/* <a download> never triggers video play */}
+        <a
+          href={video.url}
+          download
+          onClick={(e) => e.stopPropagation()}
+          className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors"
+          title="Download"
+        >
+          <Download size={13} className="text-gray-400 hover:text-indigo-500" />
+        </a>
+      </div>
+    </div>
+  );
+};
+
+/* ── Tab definitions ─────────────────────────────────────────────────────── */
+const TABS = [
+  { id: "overview", label: "📋 Overview" },
+  { id: "answers", label: "💬 Q&A Scores" },
+  { id: "recordings", label: "🎥 Recordings" },
+  { id: "violations", label: "🛡️ Violations" },
+];
 
 /* ── Candidate Detail Modal ──────────────────────────────────────────────── */
 const CandidateModal = ({
@@ -163,11 +480,23 @@ const CandidateModal = ({
   onHire,
   onReject,
   isDeciding,
+  violations,
+  isLoadingViolations,
+  violationsError,
+  onLoadViolations,
 }) => {
   const [activeTab, setActiveTab] = useState("overview");
-  const [confirming, setConfirming] = useState(null); // "hire" | "reject" | null
+  const [confirming, setConfirming] = useState(null);
 
   const { candidate, job, answers = [], videos = {} } = interview;
+
+  // Fetch violations the first time user opens the Violations tab
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+    if (tab === "violations" && violations === null) {
+      onLoadViolations(interview.id);
+    }
+  };
 
   const handleDecision = async (action) => {
     if (confirming !== action) {
@@ -215,20 +544,17 @@ const CandidateModal = ({
               <div className="flex items-center gap-3 mt-1 flex-wrap">
                 {candidate.email && (
                   <span className="flex items-center gap-1 text-xs text-gray-400">
-                    <Mail size={11} />
-                    {candidate.email}
+                    <Mail size={11} /> {candidate.email}
                   </span>
                 )}
                 {candidate.location && (
                   <span className="flex items-center gap-1 text-xs text-gray-400">
-                    <MapPin size={11} />
-                    {candidate.location}
+                    <MapPin size={11} /> {candidate.location}
                   </span>
                 )}
                 {interview.duration && (
                   <span className="flex items-center gap-1 text-xs text-gray-400">
-                    <Clock size={11} />
-                    {interview.duration}
+                    <Clock size={11} /> {interview.duration}
                   </span>
                 )}
               </div>
@@ -258,26 +584,22 @@ const CandidateModal = ({
 
         {/* Tabs */}
         <div className="flex items-center gap-1 px-7 pt-4 border-b border-gray-100">
-          {["overview", "answers", "recordings"].map((tab) => (
+          {TABS.map(({ id, label }) => (
             <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2.5 text-sm font-medium capitalize rounded-t-xl border-b-2 transition-all ${
-                activeTab === tab
+              key={id}
+              onClick={() => handleTabChange(id)}
+              className={`px-4 py-2.5 text-sm font-medium rounded-t-xl border-b-2 transition-all ${
+                activeTab === id
                   ? "text-indigo-600 border-indigo-500 bg-indigo-50/50"
                   : "text-gray-500 border-transparent hover:text-gray-700"
               }`}
             >
-              {tab === "recordings"
-                ? "🎥 Recordings"
-                : tab === "answers"
-                  ? "💬 Q&A Scores"
-                  : "📋 Overview"}
+              {label}
             </button>
           ))}
         </div>
 
-        {/* Body */}
+        {/* Body — no overflow-y-auto on the container; each tab manages its own layout */}
         <div className="flex-1 overflow-y-auto px-7 py-6">
           {/* OVERVIEW */}
           {activeTab === "overview" && (
@@ -294,7 +616,11 @@ const CandidateModal = ({
                     label: "Interview Date",
                     value: new Date(interview.created_at).toLocaleDateString(
                       "en-IN",
-                      { day: "numeric", month: "short", year: "numeric" },
+                      {
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
+                      },
                     ),
                     icon: Clock,
                     color: "#8b5cf6",
@@ -442,7 +768,7 @@ const CandidateModal = ({
             </div>
           )}
 
-          {/* Q&A */}
+          {/* Q&A SCORES */}
           {activeTab === "answers" && (
             <div className="space-y-4">
               {answers.length === 0 ? (
@@ -493,16 +819,18 @@ const CandidateModal = ({
             </div>
           )}
 
-          {/* Recordings */}
+          {/* RECORDINGS — full grid, no scroll */}
           {activeTab === "recordings" && (
-            <div className="space-y-4">
+            <div className="space-y-5">
               <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 flex items-start gap-3">
                 <Video size={16} className="text-indigo-500 mt-0.5 shrink-0" />
                 <p className="text-sm text-indigo-700">
-                  Three recordings are available — screen share, primary webcam,
-                  and mobile camera.
+                  Three recordings are captured per session — screen share,
+                  primary webcam, and mobile camera.
                 </p>
               </div>
+
+              {/* All three recordings in a fixed 3-col grid, no scroll */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <VideoCard
                   icon={Monitor}
@@ -528,9 +856,26 @@ const CandidateModal = ({
               </div>
             </div>
           )}
+
+          {/* VIOLATIONS — dedicated tab */}
+          {activeTab === "violations" && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 mb-1">
+                <ShieldAlert size={15} className="text-gray-500" />
+                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+                  Proctoring Log
+                </h3>
+              </div>
+              <ViolationsPanel
+                violations={violations}
+                isLoading={isLoadingViolations}
+                error={violationsError}
+              />
+            </div>
+          )}
         </div>
 
-        {/* Footer — decision buttons (pending only) */}
+        {/* Footer — hire / reject for pending interviews */}
         {interview.status === "pending" && (
           <div className="flex items-center justify-between px-7 py-4 border-t border-gray-100 bg-gray-50">
             <p className="text-xs text-gray-400">
@@ -686,9 +1031,13 @@ const CompanyInterviews = () => {
     isDeciding,
     listFailed,
     loadInterviews,
+    violations,
+    loadViolations,
+    isLoadingViolations,
+    violationsError,
   } = useCompanyInterviews();
 
-  // Group by job
+  // Group interviews by job for the "All Jobs" view
   const byJob = {};
   interviews.forEach((c) => {
     const key = c.job?.id ?? "unknown";
@@ -698,7 +1047,7 @@ const CompanyInterviews = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* ── Header ── */}
+      {/* Header */}
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-6 py-6">
           <div className="flex items-center justify-between flex-wrap gap-4 mb-5">
@@ -792,7 +1141,7 @@ const CompanyInterviews = () => {
             })}
           </div>
 
-          {/* Status tabs */}
+          {/* Status filter tabs */}
           <div className="flex items-center gap-1">
             {["all", "pending", "hired", "rejected"].map((s) => (
               <button
@@ -806,7 +1155,11 @@ const CompanyInterviews = () => {
               >
                 {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
                 <span
-                  className={`text-[11px] px-1.5 py-0.5 rounded-full font-semibold ${filterStatus === s ? "bg-indigo-100 text-indigo-600" : "bg-gray-100 text-gray-500"}`}
+                  className={`text-[11px] px-1.5 py-0.5 rounded-full font-semibold ${
+                    filterStatus === s
+                      ? "bg-indigo-100 text-indigo-600"
+                      : "bg-gray-100 text-gray-500"
+                  }`}
                 >
                   {counts[s] ?? 0}
                 </span>
@@ -816,9 +1169,8 @@ const CompanyInterviews = () => {
         </div>
       </div>
 
-      {/* ── Content ── */}
+      {/* Content */}
       <div className="max-w-7xl mx-auto px-6 py-6">
-        {/* Search + job filter */}
         <div className="flex items-center gap-3 mb-6 flex-wrap">
           <div className="relative flex-1 min-w-50">
             <Search
@@ -856,7 +1208,6 @@ const CompanyInterviews = () => {
           </div>
         </div>
 
-        {/* Error state */}
         {listFailed && (
           <div className="bg-red-50 border border-red-200 rounded-2xl p-6 text-center mb-6">
             <AlertCircle size={28} className="text-red-400 mx-auto mb-2" />
@@ -872,7 +1223,6 @@ const CompanyInterviews = () => {
           </div>
         )}
 
-        {/* Skeleton */}
         {isLoadingList && (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {Array.from({ length: 6 }).map((_, i) => (
@@ -881,7 +1231,6 @@ const CompanyInterviews = () => {
           </div>
         )}
 
-        {/* Candidate list */}
         {!isLoadingList &&
           !listFailed &&
           (filterJobId === "all" ? (
@@ -925,7 +1274,6 @@ const CompanyInterviews = () => {
             </div>
           ))}
 
-        {/* Empty state */}
         {!isLoadingList && !listFailed && interviews.length === 0 && (
           <div className="bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col items-center justify-center py-20 text-center">
             <div className="w-16 h-16 rounded-2xl bg-indigo-50 flex items-center justify-center mb-4">
@@ -941,7 +1289,7 @@ const CompanyInterviews = () => {
         )}
       </div>
 
-      {/* ── Detail modal ── */}
+      {/* Detail loading overlay */}
       {isLoadingDetail && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm">
           <div className="bg-white rounded-2xl p-8 flex items-center gap-4 shadow-xl">
@@ -953,6 +1301,7 @@ const CompanyInterviews = () => {
         </div>
       )}
 
+      {/* Candidate detail modal */}
       {selectedInterview && !isLoadingDetail && (
         <CandidateModal
           interview={selectedInterview}
@@ -960,6 +1309,10 @@ const CompanyInterviews = () => {
           onHire={hire}
           onReject={reject}
           isDeciding={isDeciding}
+          violations={violations}
+          isLoadingViolations={isLoadingViolations}
+          violationsError={violationsError}
+          onLoadViolations={loadViolations}
         />
       )}
     </div>

@@ -49,34 +49,14 @@
 /* ===== Scrollbar ===== */
 
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #000000; /* bgDark */
+  background: #11162a;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: linear-gradient(
-    180deg,
-    var(--color-purpleSecondary),
-    var(--color-purpleMain)
-  );
-  border-radius: 8px;
-  border: 2px solid #000000;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(
-    180deg,
-    var(--color-purpleGlow),
-    var(--color-purpleSecondary)
-  );
-}
-
-/* Firefox Support */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-purpleSecondary) #000000;
+  background: var(--color-purpleSecondary);
+  border-radius: 10px;
 }

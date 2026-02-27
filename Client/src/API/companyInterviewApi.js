@@ -2,7 +2,8 @@ import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import axios from "axios";
 
 const BASE = import.meta.env.VITE_BACKEND_URL;
-const API = `${BASE}/api/v1/company/interview`;
+const INTERVIEW_API = `${BASE}/api/v1/company/interview`;
+const VIOLATION_API = `${BASE}/api/v1/company/violation`;
 
 /* ── Thunks ──────────────────────────────────────────────────────────────── */
 
@@ -15,13 +16,11 @@ export const fetchInterviews = createAsyncThunk(
       if (job_id && job_id !== "all") params.job_id = job_id;
       if (search) params.search = search;
 
-      const { data } = await axios.get(API, {
+      const { data } = await axios.get(INTERVIEW_API, {
         params,
         withCredentials: true,
       });
-
-      // data.data = { interviews, counts, jobs }
-      return data.data;
+      return data.data; // { interviews, counts, jobs }
     } catch (err) {
       return rejectWithValue(
         err.response?.data?.message ?? "Failed to fetch interviews",
@@ -34,7 +33,7 @@ export const fetchInterviewById = createAsyncThunk(
   "companyInterviews/fetchById",
   async (id, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(`${API}/${id}`, {
+      const { data } = await axios.get(`${INTERVIEW_API}/${id}`, {
         withCredentials: true,
       });
       return data.data;
@@ -46,16 +45,32 @@ export const fetchInterviewById = createAsyncThunk(
   },
 );
 
+export const fetchViolations = createAsyncThunk(
+  "companyInterviews/fetchViolations",
+  async (interviewId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(`${VIOLATION_API}/${interviewId}`, {
+        withCredentials: true,
+      });
+      return { interviewId, violations: data.data?.violations ?? [] };
+    } catch (err) {
+      return rejectWithValue(
+        err.response?.data?.message ?? "Failed to load proctoring data",
+      );
+    }
+  },
+);
+
 export const hireCandidate = createAsyncThunk(
   "companyInterviews/hire",
   async (id, { rejectWithValue }) => {
     try {
       const { data } = await axios.patch(
-        `${API}/${id}/hire`,
+        `${INTERVIEW_API}/${id}/hire`,
         {},
         { withCredentials: true },
       );
-      return data.data; // updated interview
+      return data.data;
     } catch (err) {
       return rejectWithValue(
         err.response?.data?.message ?? "Failed to hire candidate",
@@ -69,11 +84,11 @@ export const rejectCandidate = createAsyncThunk(
   async (id, { rejectWithValue }) => {
     try {
       const { data } = await axios.patch(
-        `${API}/${id}/reject`,
+        `${INTERVIEW_API}/${id}/reject`,
         {},
         { withCredentials: true },
       );
-      return data.data; // updated interview
+      return data.data;
     } catch (err) {
       return rejectWithValue(
         err.response?.data?.message ?? "Failed to reject candidate",
@@ -85,21 +100,22 @@ export const rejectCandidate = createAsyncThunk(
 /* ── Initial State ───────────────────────────────────────────────────────── */
 
 const initialState = {
-  // list view
   interviews: [],
   jobs: [],
   counts: { all: 0, pending: 0, hired: 0, rejected: 0, avg_score: 0 },
 
-  // filters
   filterStatus: "all",
   filterJobId: "all",
   search: "",
 
-  // detail modal
-  selectedInterview: null, // full interview with answers + videos
+  selectedInterview: null,
 
-  // async status
-  listStatus: "idle", // idle | loading | succeeded | failed
+  // violations keyed by interviewId for caching
+  violationsByInterview: {},
+  violationsStatus: "idle", // idle | loading | succeeded | failed
+  violationsError: null,
+
+  listStatus: "idle",
   detailStatus: "idle",
   decisionStatus: "idle",
 
@@ -128,6 +144,8 @@ const companyInterviewSlice = createSlice({
       state.selectedInterview = null;
       state.detailStatus = "idle";
       state.detailError = null;
+      state.violationsStatus = "idle";
+      state.violationsError = null;
     },
     clearDecisionError(state) {
       state.decisionError = null;
@@ -140,7 +158,6 @@ const companyInterviewSlice = createSlice({
   },
 
   extraReducers: (builder) => {
-    /* fetchInterviews */
     builder
       .addCase(fetchInterviews.pending, (state) => {
         state.listStatus = "loading";
@@ -157,7 +174,6 @@ const companyInterviewSlice = createSlice({
         state.error = payload;
       });
 
-    /* fetchInterviewById */
     builder
       .addCase(fetchInterviewById.pending, (state) => {
         state.detailStatus = "loading";
@@ -172,7 +188,20 @@ const companyInterviewSlice = createSlice({
         state.detailError = payload;
       });
 
-    /* hireCandidate */
+    builder
+      .addCase(fetchViolations.pending, (state) => {
+        state.violationsStatus = "loading";
+        state.violationsError = null;
+      })
+      .addCase(fetchViolations.fulfilled, (state, { payload }) => {
+        state.violationsStatus = "succeeded";
+        state.violationsByInterview[payload.interviewId] = payload.violations;
+      })
+      .addCase(fetchViolations.rejected, (state, { payload }) => {
+        state.violationsStatus = "failed";
+        state.violationsError = payload;
+      });
+
     builder
       .addCase(hireCandidate.pending, (state) => {
         state.decisionStatus = "loading";
@@ -180,9 +209,7 @@ const companyInterviewSlice = createSlice({
       })
       .addCase(hireCandidate.fulfilled, (state, { payload }) => {
         state.decisionStatus = "succeeded";
-        // Update the item in the list
         _patchInterview(state, payload);
-        // Update modal if open
         if (state.selectedInterview?.id === payload.id) {
           state.selectedInterview = {
             ...state.selectedInterview,
@@ -195,7 +222,6 @@ const companyInterviewSlice = createSlice({
         state.decisionError = payload;
       });
 
-    /* rejectCandidate */
     builder
       .addCase(rejectCandidate.pending, (state) => {
         state.decisionStatus = "loading";
@@ -222,10 +248,9 @@ const companyInterviewSlice = createSlice({
 
 function _patchInterview(state, updated) {
   const idx = state.interviews.findIndex((i) => i.id === updated.id);
-  if (idx !== -1) {
+  if (idx !== -1)
     state.interviews[idx] = { ...state.interviews[idx], ...updated };
-  }
-  // Recompute counts
+
   const counts = {
     all: 0,
     pending: 0,
@@ -242,44 +267,39 @@ function _patchInterview(state, updated) {
 
 /* ── Selectors ───────────────────────────────────────────────────────────── */
 
-export const selectAllInterviews = (state) =>
-  state.companyInterviews.interviews;
-
 export const selectFilteredInterviews = (state) => {
   const { interviews, filterStatus, filterJobId, search } =
     state.companyInterviews;
-
   return interviews.filter((c) => {
     const matchSearch =
       !search ||
       c.candidate?.name?.toLowerCase().includes(search.toLowerCase()) ||
       c.job?.title?.toLowerCase().includes(search.toLowerCase());
-
     const matchStatus = filterStatus === "all" || c.status === filterStatus;
-
     const matchJob =
       filterJobId === "all" || String(c.job?.id) === String(filterJobId);
-
     return matchSearch && matchStatus && matchJob;
   });
 };
 
-export const selectCounts = (state) => state.companyInterviews.counts;
-export const selectJobs = (state) => state.companyInterviews.jobs;
-export const selectFilters = (state) => ({
-  filterStatus: state.companyInterviews.filterStatus,
-  filterJobId: state.companyInterviews.filterJobId,
-  search: state.companyInterviews.search,
+export const selectCounts = (s) => s.companyInterviews.counts;
+export const selectJobs = (s) => s.companyInterviews.jobs;
+export const selectFilters = (s) => ({
+  filterStatus: s.companyInterviews.filterStatus,
+  filterJobId: s.companyInterviews.filterJobId,
+  search: s.companyInterviews.search,
 });
-export const selectSelectedInterview = (state) =>
-  state.companyInterviews.selectedInterview;
-export const selectListStatus = (state) => state.companyInterviews.listStatus;
-export const selectDetailStatus = (state) =>
-  state.companyInterviews.detailStatus;
-export const selectDecisionStatus = (state) =>
-  state.companyInterviews.decisionStatus;
-export const selectDecisionError = (state) =>
-  state.companyInterviews.decisionError;
+export const selectSelectedInterview = (s) =>
+  s.companyInterviews.selectedInterview;
+export const selectListStatus = (s) => s.companyInterviews.listStatus;
+export const selectDetailStatus = (s) => s.companyInterviews.detailStatus;
+export const selectDecisionStatus = (s) => s.companyInterviews.decisionStatus;
+export const selectDecisionError = (s) => s.companyInterviews.decisionError;
+export const selectViolations = (interviewId) => (s) =>
+  s.companyInterviews.violationsByInterview[interviewId] ?? null;
+export const selectViolationsStatus = (s) =>
+  s.companyInterviews.violationsStatus;
+export const selectViolationsError = (s) => s.companyInterviews.violationsError;
 
 /* ── Exports ─────────────────────────────────────────────────────────────── */
 

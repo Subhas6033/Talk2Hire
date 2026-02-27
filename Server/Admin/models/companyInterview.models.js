@@ -3,9 +3,6 @@ const { APIERR } = require("../../Utils/index.utils.js");
 
 const CompanyInterview = {
   async findAll({ company_id, status, job_id, search } = {}) {
-    const db = await pool;
-
-    // Filter by company through the jobs table
     const conditions = ["j.company_id = ?"];
     const params = [company_id];
 
@@ -29,7 +26,7 @@ const CompanyInterview = {
 
     const where = conditions.join(" AND ");
 
-    const [rows] = await db.execute(
+    const [rows] = await pool.execute(
       `SELECT
          i.id,
          i.user_id,
@@ -40,9 +37,9 @@ const CompanyInterview = {
          i.strengths,
          i.improvements,
          i.color,
-         i.screen_recording_url,
-         i.primary_recording_url,
-         i.mobile_recording_url,
+         i.scr_recording_url,
+         i.pri_recording_url,
+         i.mob_recording_url,
          i.created_at,
 
          u.fullName    AS candidate_name,
@@ -66,9 +63,7 @@ const CompanyInterview = {
   },
 
   async findById(interviewId) {
-    const db = await pool;
-
-    const [[row]] = await db.execute(
+    const [[row]] = await pool.execute(
       `SELECT
          i.id,
          i.user_id,
@@ -79,9 +74,9 @@ const CompanyInterview = {
          i.strengths,
          i.improvements,
          i.color,
-         i.screen_recording_url,
-         i.primary_recording_url,
-         i.mobile_recording_url,
+         i.scr_recording_url,
+         i.pri_recording_url,
+         i.mob_recording_url,
          i.created_at,
 
          u.fullName    AS candidate_name,
@@ -104,7 +99,7 @@ const CompanyInterview = {
 
     if (!row) return null;
 
-    const [answers] = await db.execute(
+    const [answers] = await pool.execute(
       `SELECT id, question, score, time_taken, order_index
        FROM interview_questions
        WHERE interview_id = ?
@@ -118,9 +113,7 @@ const CompanyInterview = {
   },
 
   async getCounts(company_id) {
-    const db = await pool;
-
-    const [rows] = await db.execute(
+    const [rows] = await pool.execute(
       `SELECT i.status, COUNT(*) AS cnt
        FROM interviews i
        INNER JOIN jobs j ON j.id = i.job_id
@@ -135,7 +128,7 @@ const CompanyInterview = {
       counts.all += Number(cnt);
     });
 
-    const [[scoreRow]] = await db.execute(
+    const [[scoreRow]] = await pool.execute(
       `SELECT ROUND(AVG(i.score), 0) AS avg_score
        FROM interviews i
        INNER JOIN jobs j ON j.id = i.job_id
@@ -148,9 +141,7 @@ const CompanyInterview = {
   },
 
   async getJobsWithInterviews(company_id) {
-    const db = await pool;
-
-    const [rows] = await db.execute(
+    const [rows] = await pool.execute(
       `SELECT j.id, j.title, COUNT(i.id) AS applicants
        FROM jobs j
        INNER JOIN interviews i ON i.job_id = j.id
@@ -164,9 +155,7 @@ const CompanyInterview = {
   },
 
   async updateStatus(interviewId, newStatus) {
-    const db = await pool;
-
-    const [result] = await db.execute(
+    const [result] = await pool.execute(
       "UPDATE interviews SET status = ?, updated_at = NOW() WHERE id = ?",
       [newStatus, interviewId],
     );
@@ -199,7 +188,6 @@ function _shape(row) {
     : [];
 
   const name = row.candidate_name ?? "Unknown";
-
   const avatar =
     name
       .split(" ")
@@ -217,8 +205,6 @@ function _shape(row) {
     improvements: _parse(row.improvements) ?? [],
     color: row.color ?? "#6366f1",
     created_at: row.created_at,
-    // company_id is on the jobs row — expose it so the controller
-    // can do the ownership check without a second query
     company_id: row.company_id ?? null,
 
     candidate: {
@@ -239,19 +225,20 @@ function _shape(row) {
   };
 }
 
+// Maps the new column names → a consistent { screen, primary, mobile } shape
 function _buildVideos(row) {
   return {
     screen: {
-      url: row.screen_recording_url ?? null,
-      available: !!row.screen_recording_url,
+      url: row.scr_recording_url ?? null,
+      available: !!row.scr_recording_url,
     },
     primary: {
-      url: row.primary_recording_url ?? null,
-      available: !!row.primary_recording_url,
+      url: row.pri_recording_url ?? null,
+      available: !!row.pri_recording_url,
     },
     mobile: {
-      url: row.mobile_recording_url ?? null,
-      available: !!row.mobile_recording_url,
+      url: row.mob_recording_url ?? null,
+      available: !!row.mob_recording_url,
     },
   };
 }
