@@ -166,7 +166,21 @@ const InterviewLive = () => {
 
   // ── Mobile WebRTC ─────────────────────────────────────────────────────────
   const setupMobilePeerConnection = useCallback(() => {
-    if (mobilePcRef.current) return mobilePcRef.current;
+    if (mobilePcRef.current) {
+      const state = mobilePcRef.current.connectionState;
+      if (
+        state === "failed" ||
+        state === "closed" ||
+        state === "disconnected"
+      ) {
+        try {
+          mobilePcRef.current.close();
+        } catch (_) {}
+        mobilePcRef.current = null;
+      } else {
+        return mobilePcRef.current;
+      }
+    }
 
     const ICE_SERVERS = [
       { urls: "stun:stun.l.google.com:19302" },
@@ -375,6 +389,8 @@ const InterviewLive = () => {
         });
         socket.on("evaluation_error", () => setEvaluationStatus("error"));
         socket.on("disconnect", (reason) => {
+          _globalSocketInitialized = false;
+          _globalClientReadyEmitted = false;
           if (reason === "io server disconnect" && !isLeavingRef.current) {
             alert("Server disconnected.");
             navigate("/interview");

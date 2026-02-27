@@ -22,7 +22,6 @@ function getTTSInstance(id) {
 
 const sttConnectionCache = new Map();
 
-// ─── Ensure interview_violations schema ───────────────────────────────────────
 async function ensureViolationsSchema() {
   try {
     const [cols] = await pool.execute(`
@@ -125,8 +124,6 @@ async function ensureViolationsSchema() {
 }
 
 ensureViolationsSchema();
-
-// ─── Violation DB helpers ──────────────────────────────────────────────────────
 
 async function dbOpenViolation({
   interviewId,
@@ -235,8 +232,6 @@ async function dbSavePointViolation({
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-
 async function streamTTSToClient(socket, text, interviewId) {
   return new Promise((resolve, reject) => {
     const tts = getTTSInstance(interviewId);
@@ -303,14 +298,11 @@ function cleanupSession(id) {
   }
 }
 
-// ─── Settings socket (mobile / secondary camera) ──────────────────────────────
-
 async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
   const session = getOrCreate(sessions, interviewId);
   session.mobileSocketId = socket.id;
   socket.join(`interview_${interviewId}`);
 
-  // If secondary camera was already connected before this socket joined, notify it
   if (session.secondaryCameraConnected)
     socket.emit("secondary_camera_ready", {
       connected: true,
@@ -340,9 +332,6 @@ async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
     });
   });
 
-  // ── FIX: Relay mobile WebRTC offer → desktop ─────────────────────────────
-  // Mobile emits: "mobile_webrtc_offer"
-  // Desktop receives: "mobile_webrtc_offer_relay"
   socket.on("mobile_webrtc_offer", ({ offer, identity }) => {
     console.log(`📱 Relaying mobile WebRTC offer to desktop (${identity})`);
     if (session.desktopSocketId) {
@@ -351,20 +340,20 @@ async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
         identity,
       });
     } else {
+      session.pendingMobileOffer = { offer, identity };
       console.warn(
-        `⚠️  Mobile offer received but desktop not yet connected (interviewId=${interviewId})`,
+        `⚠️  Mobile offer buffered — desktop not yet connected (interviewId=${interviewId})`,
       );
     }
   });
 
-  // ── FIX: Relay ICE candidates mobile → desktop ───────────────────────────
-  // Mobile emits:    "mobile_webrtc_ice_candidate"
-  // Desktop receives:"mobile_webrtc_ice_from_mobile"
   socket.on("mobile_webrtc_ice_candidate", ({ candidate }) => {
     if (session.desktopSocketId) {
       io.to(session.desktopSocketId).emit("mobile_webrtc_ice_from_mobile", {
         candidate,
       });
+    } else {
+      session.pendingMobileIceCandidates.push(candidate);
     }
   });
 
@@ -389,8 +378,6 @@ async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
   });
 }
 
-// ─── Interview socket (desktop) ───────────────────────────────────────────────
-
 async function handleInterviewSocket(
   socket,
   interviewId,
@@ -403,7 +390,22 @@ async function handleInterviewSocket(
   socket.join(`interview_${interviewId}`);
   console.log(`🖥️ Desktop socket: ${socket.id}`);
 
-  // If mobile already connected before desktop arrived, notify immediately
+  if (session.pendingMobileOffer) {
+    console.log(`📱 Flushing buffered mobile offer to desktop`);
+    socket.emit("mobile_webrtc_offer_relay", session.pendingMobileOffer);
+    session.pendingMobileOffer = null;
+  }
+
+  if (session.pendingMobileIceCandidates?.length) {
+    console.log(
+      `📱 Flushing ${session.pendingMobileIceCandidates.length} buffered ICE candidates`,
+    );
+    for (const candidate of session.pendingMobileIceCandidates) {
+      socket.emit("mobile_webrtc_ice_from_mobile", { candidate });
+    }
+    session.pendingMobileIceCandidates = [];
+  }
+
   if (session.secondaryCameraConnected) {
     socket.emit("secondary_camera_ready", {
       connected: true,
@@ -415,9 +417,6 @@ async function handleInterviewSocket(
     });
   }
 
-  // ── FIX: Relay desktop WebRTC answer → mobile ────────────────────────────
-  // Desktop emits:   "mobile_webrtc_answer"
-  // Mobile receives: "mobile_webrtc_answer_from_server"
   socket.on("mobile_webrtc_answer", ({ answer, identity }) => {
     if (session.mobileSocketId) {
       io.to(session.mobileSocketId).emit("mobile_webrtc_answer_from_server", {
@@ -431,9 +430,6 @@ async function handleInterviewSocket(
     }
   });
 
-  // ── FIX: Relay ICE candidates desktop → mobile ───────────────────────────
-  // Desktop emits:   "mobile_webrtc_ice_candidate_desktop"  ← FIXED (was "mobile_webrtc_ice_from_desktop")
-  // Mobile receives: "mobile_webrtc_ice_from_desktop"
   socket.on("mobile_webrtc_ice_candidate_desktop", ({ candidate }) => {
     if (session.mobileSocketId) {
       io.to(session.mobileSocketId).emit("mobile_webrtc_ice_from_desktop", {
@@ -442,7 +438,6 @@ async function handleInterviewSocket(
     }
   });
 
-  // ── Load interview ────────────────────────────────────────────────────────
   let firstQuestion = null;
   let jobDetails = null;
   try {
@@ -500,7 +495,6 @@ async function handleInterviewSocket(
     message: "Server ready",
   });
 
-  // ── STT ───────────────────────────────────────────────────────────────────
   function ensureSTTConnection() {
     const cached = sttConnectionCache.get(interviewId);
     if (cached?.conn?.isConnected?.()) {
@@ -848,8 +842,6 @@ async function handleInterviewSocket(
     isProcessing = false;
   }
 
-  // ── Socket event handlers ─────────────────────────────────────────────────
-
   socket.on("setup_mode", () => {
     session.isSetupMode = true;
     session.interviewStarted = false;
@@ -970,7 +962,6 @@ async function handleInterviewSocket(
     cached.conn.send(buf);
   });
 
-  // ── Face / holistic detection ─────────────────────────────────────────────
   socket.on("holistic_detection_result", async ({ faceCount, timestamp }) => {
     if (session.isSetupMode || !session.interviewStarted) return;
     const now = Date.now();
@@ -1110,6 +1101,8 @@ function getOrCreate(sessions, interviewId) {
     sessions.set(interviewId, {
       desktopSocketId: null,
       mobileSocketId: null,
+      pendingMobileOffer: null,
+      pendingMobileIceCandidates: [],
       secondaryCameraConnected: false,
       secondaryCameraMetadata: null,
       lastMobileFrame: null,

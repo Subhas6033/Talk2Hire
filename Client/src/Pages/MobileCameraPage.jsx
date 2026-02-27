@@ -129,7 +129,6 @@ const MobileCameraPage = () => {
     }
   }, []);
 
-  // Start low-res frame relay for setup preview
   const startFrameRelay = useCallback((stream) => {
     const canvas = document.createElement("canvas");
     canvas.width = 320;
@@ -184,7 +183,6 @@ const MobileCameraPage = () => {
         setCameraReady(true);
         setPhase("publishing");
 
-        // Build peer connection
         const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
         pcRef.current = pc;
 
@@ -213,7 +211,6 @@ const MobileCameraPage = () => {
           }
         };
 
-        // Create offer and send to server (server relays to desktop)
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
 
@@ -222,8 +219,8 @@ const MobileCameraPage = () => {
           identity: `mobile_${userId}`,
         });
 
-        // Server relays desktop's answer back here
-        socket.once("mobile_webrtc_answer_from_server", async ({ answer }) => {
+        const handleAnswer = async ({ answer }) => {
+          socket.off("mobile_webrtc_answer_from_server", handleAnswer);
           if (!mountedRef.current) return;
           try {
             await pc.setRemoteDescription(new RTCSessionDescription(answer));
@@ -231,9 +228,9 @@ const MobileCameraPage = () => {
           } catch (err) {
             console.error("❌ setRemoteDescription:", err.message);
           }
-        });
+        };
+        socket.on("mobile_webrtc_answer_from_server", handleAnswer);
 
-        // Server relays ICE candidates from desktop
         socket.on("mobile_webrtc_ice_from_desktop", async ({ candidate }) => {
           if (!pc || !candidate) return;
           try {
@@ -241,7 +238,6 @@ const MobileCameraPage = () => {
           } catch (_) {}
         });
 
-        // Frame relay for setup UI preview
         startFrameRelay(rawStream);
       } catch (err) {
         if (!mountedRef.current) return;
