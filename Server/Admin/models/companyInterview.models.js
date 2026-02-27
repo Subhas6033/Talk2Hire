@@ -106,7 +106,7 @@ const CompanyInterview = {
 
     const [answers] = await db.execute(
       `SELECT id, question, score, time_taken, order_index
-       FROM interview_answers
+       FROM interview_questions
        WHERE interview_id = ?
        ORDER BY order_index ASC`,
       [interviewId],

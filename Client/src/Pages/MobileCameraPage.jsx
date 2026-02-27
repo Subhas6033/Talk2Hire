@@ -1,11 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { io } from "socket.io-client";
-import { Room, RoomEvent, Track, LocalVideoTrack } from "livekit-client";
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
-// ─── Status Dot ───────────────────────────────────────────────────────────────
+const ICE_SERVERS = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+];
+
 const Dot = ({ active, color = "green" }) => {
   const colors = {
     green: active ? "bg-emerald-400" : "bg-slate-600",
@@ -20,7 +23,6 @@ const Dot = ({ active, color = "green" }) => {
   );
 };
 
-// ─── Status Row ───────────────────────────────────────────────────────────────
 const StatusRow = ({ label, value, active, color }) => (
   <div className="flex items-center justify-between py-2 border-b border-slate-800/60 last:border-0">
     <span className="text-slate-500 text-xs">{label}</span>
@@ -31,7 +33,6 @@ const StatusRow = ({ label, value, active, color }) => (
   </div>
 );
 
-// ─── Spinner ──────────────────────────────────────────────────────────────────
 const Spinner = ({ className = "" }) => (
   <svg
     className={`animate-spin ${className}`}
@@ -55,57 +56,42 @@ const Spinner = ({ className = "" }) => (
   </svg>
 );
 
-// ══════════════════════════════════════════════════════════════════════════════
-// MobileCameraPage — LiveKit secondary camera with hardware zoom-out
-// ══════════════════════════════════════════════════════════════════════════════
 const MobileCameraPage = () => {
   const [searchParams] = useSearchParams();
   const sessionId = searchParams.get("interviewId");
   const userId = searchParams.get("userId");
 
-  // ── State ──────────────────────────────────────────────────────────────────
   const [phase, setPhase] = useState("connecting");
   const [error, setError] = useState(null);
   const [socketConnected, setSocketConnected] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
-  const [roomConnected, setRoomConnected] = useState(false);
+  const [peerConnected, setPeerConnected] = useState(false);
   const [trackPublished, setTrackPublished] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [zoomApplied, setZoomApplied] = useState(false);
 
-  // ── Refs ───────────────────────────────────────────────────────────────────
   const socketRef = useRef(null);
-  const roomRef = useRef(null);
-  const localVideoTrackRef = useRef(null);
-  const rawStreamRef = useRef(null); // keep ref to stop raw tracks on cleanup
+  const pcRef = useRef(null);
+  const rawStreamRef = useRef(null);
   const videoElRef = useRef(null);
   const mountedRef = useRef(true);
+  const frameTimerRef = useRef(null);
 
-  // ── Cleanup ────────────────────────────────────────────────────────────────
   const teardown = useCallback(async () => {
-    // Stop LiveKit track
-    if (localVideoTrackRef.current) {
-      try {
-        localVideoTrackRef.current.stop();
-      } catch (_) {}
-      localVideoTrackRef.current = null;
+    if (frameTimerRef.current) {
+      clearInterval(frameTimerRef.current);
+      frameTimerRef.current = null;
     }
-
-    // Stop raw camera tracks
+    if (pcRef.current) {
+      try {
+        pcRef.current.close();
+      } catch (_) {}
+      pcRef.current = null;
+    }
     if (rawStreamRef.current) {
       rawStreamRef.current.getTracks().forEach((t) => t.stop());
       rawStreamRef.current = null;
     }
-
-    // Disconnect LiveKit room
-    if (roomRef.current) {
-      try {
-        await roomRef.current.disconnect();
-      } catch (_) {}
-      roomRef.current = null;
-    }
-
-    // Disconnect socket
     if (socketRef.current) {
       socketRef.current.disconnect();
       socketRef.current = null;
@@ -120,7 +106,6 @@ const MobileCameraPage = () => {
     };
   }, [teardown]);
 
-  // ── Guard: invalid URL params ──────────────────────────────────────────────
   useEffect(() => {
     if (!sessionId || !userId) {
       setPhase("error");
@@ -128,46 +113,51 @@ const MobileCameraPage = () => {
     }
   }, [sessionId, userId]);
 
-  // ── Apply hardware zoom-out to minimum (widest FOV) ───────────────────────
-  // Works on Android Chrome. On iOS/desktop it's a no-op — stream still works.
   const applyHardwareZoomOut = useCallback(async (mediaStream) => {
     try {
       const track = mediaStream.getVideoTracks()[0];
       if (!track) return false;
-
       const capabilities = track.getCapabilities?.();
-      if (!capabilities?.zoom) {
-        console.log("ℹ️ Hardware zoom not supported — using raw stream as-is");
-        return false;
-      }
-
+      if (!capabilities?.zoom) return false;
       const minZoom = capabilities.zoom.min;
-      console.log(
-        `🔍 Zoom supported: range ${capabilities.zoom.min}–${capabilities.zoom.max}, applying min: ${minZoom}`,
-      );
-
-      await track.applyConstraints({
-        advanced: [{ zoom: minZoom }],
-      });
-
-      console.log("✅ Hardware zoom set to minimum (widest view)");
+      await track.applyConstraints({ advanced: [{ zoom: minZoom }] });
+      console.log(`✅ Zoom set to minimum (${minZoom})`);
       return true;
     } catch (err) {
-      // Non-fatal — stream continues without zoom adjustment
-      console.warn("⚠️ applyConstraints zoom failed:", err.message);
+      console.warn("⚠️ Hardware zoom failed:", err.message);
       return false;
     }
   }, []);
 
-  // ── Step 3: Acquire camera, apply zoom, publish to LiveKit ────────────────
-  const publishCamera = useCallback(
-    async (room) => {
+  // Start low-res frame relay for setup preview
+  const startFrameRelay = useCallback((stream) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 320;
+    canvas.height = 240;
+    const ctx = canvas.getContext("2d");
+    const vid = document.createElement("video");
+    vid.autoplay = true;
+    vid.playsInline = true;
+    vid.muted = true;
+    vid.srcObject = stream;
+
+    frameTimerRef.current = setInterval(() => {
+      if (vid.readyState < 2) return;
+      ctx.drawImage(vid, 0, 0, 320, 240);
+      const frame = canvas.toDataURL("image/jpeg", 0.5).split(",")[1];
+      socketRef.current?.emit("mobile_camera_frame", {
+        frame,
+        timestamp: Date.now(),
+      });
+    }, 500);
+  }, []);
+
+  const startWebRTC = useCallback(
+    async (socket) => {
       if (!mountedRef.current) return;
       try {
-        // 1. Get raw camera stream via getUserMedia.
-        //    We do this manually (instead of createLocalVideoTrack) so we can
-        //    call applyConstraints on the underlying MediaStreamTrack before
-        //    handing it to LiveKit.
+        setPhase("camera");
+
         const rawStream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: "user",
@@ -183,35 +173,79 @@ const MobileCameraPage = () => {
           return;
         }
 
-        // 2. Apply hardware zoom to minimum = widest possible FOV.
-        //    On unsupported devices this returns false and the stream is unchanged.
         const applied = await applyHardwareZoomOut(rawStream);
         setZoomApplied(applied);
 
-        if (!mountedRef.current) return;
-
-        // 3. Attach the stream to the preview <video> element on this page
         if (videoElRef.current) {
           videoElRef.current.srcObject = rawStream;
           videoElRef.current.play().catch(() => {});
         }
 
         setCameraReady(true);
+        setPhase("publishing");
 
-        // 4. Wrap the raw MediaStreamTrack in a LiveKit LocalVideoTrack.
-        //    This preserves the applyConstraints zoom that was already applied —
-        //    using createLocalVideoTrack would open a fresh track and lose it.
-        const rawVideoTrack = rawStream.getVideoTracks()[0];
-        const livekitTrack = new LocalVideoTrack(rawVideoTrack);
-        localVideoTrackRef.current = livekitTrack;
+        // Build peer connection
+        const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+        pcRef.current = pc;
 
-        await room.localParticipant.publishTrack(livekitTrack);
-        console.log(
-          `📷 Mobile camera published to LiveKit (zoom: ${applied ? "hardware min" : "default"})`,
-        );
+        rawStream.getVideoTracks().forEach((track) => {
+          pc.addTrack(track, rawStream);
+        });
+
+        pc.onicecandidate = ({ candidate }) => {
+          if (candidate && socket?.connected) {
+            socket.emit("mobile_webrtc_ice_candidate", { candidate });
+          }
+        };
+
+        pc.onconnectionstatechange = () => {
+          if (!mountedRef.current) return;
+          const state = pc.connectionState;
+          console.log("📱 WebRTC state:", state);
+          if (state === "connected") {
+            setPeerConnected(true);
+            setTrackPublished(true);
+            setPhase("live");
+          }
+          if (state === "failed" || state === "disconnected") {
+            setPeerConnected(false);
+            setTrackPublished(false);
+          }
+        };
+
+        // Create offer and send to server (server relays to desktop)
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        socket.emit("mobile_webrtc_offer", {
+          offer: pc.localDescription,
+          identity: `mobile_${userId}`,
+        });
+
+        // Server relays desktop's answer back here
+        socket.once("mobile_webrtc_answer_from_server", async ({ answer }) => {
+          if (!mountedRef.current) return;
+          try {
+            await pc.setRemoteDescription(new RTCSessionDescription(answer));
+            console.log("📱 Remote description set — WebRTC handshake done");
+          } catch (err) {
+            console.error("❌ setRemoteDescription:", err.message);
+          }
+        });
+
+        // Server relays ICE candidates from desktop
+        socket.on("mobile_webrtc_ice_from_desktop", async ({ candidate }) => {
+          if (!pc || !candidate) return;
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(candidate));
+          } catch (_) {}
+        });
+
+        // Frame relay for setup UI preview
+        startFrameRelay(rawStream);
       } catch (err) {
         if (!mountedRef.current) return;
-        console.error("❌ Camera publish failed:", err);
+        console.error("❌ Mobile WebRTC start failed:", err);
         let msg = "Unable to access front camera. ";
         if (err.name === "NotAllowedError")
           msg += "Please grant camera permission and refresh.";
@@ -224,65 +258,9 @@ const MobileCameraPage = () => {
         setError(msg);
       }
     },
-    [applyHardwareZoomOut],
+    [applyHardwareZoomOut, startFrameRelay, userId],
   );
 
-  // ── Step 2: Join LiveKit room ──────────────────────────────────────────────
-  const joinLiveKitRoom = useCallback(
-    async (url, token) => {
-      if (!mountedRef.current) return;
-      try {
-        setPhase("publishing");
-
-        const room = new Room({
-          adaptiveStream: true,
-          dynacast: true,
-          autoSubscribe: true,
-          reconnectPolicy: {
-            nextRetryDelayInMs: (ctx) => {
-              if (ctx.retryCount < 3) return 300;
-              if (ctx.retryCount < 8) return 1000;
-              return null;
-            },
-          },
-        });
-        roomRef.current = room;
-
-        room.on(RoomEvent.Connected, () => {
-          if (mountedRef.current) setRoomConnected(true);
-        });
-        room.on(RoomEvent.Disconnected, () => {
-          if (mountedRef.current) {
-            setRoomConnected(false);
-            setTrackPublished(false);
-          }
-        });
-        room.on(RoomEvent.Reconnecting, () => {
-          if (mountedRef.current) setPhase("publishing");
-        });
-        room.on(RoomEvent.Reconnected, () => {
-          if (mountedRef.current) setPhase("live");
-        });
-        room.on(RoomEvent.LocalTrackPublished, (pub) => {
-          if (pub.kind === Track.Kind.Video && mountedRef.current) {
-            setTrackPublished(true);
-            setPhase("live");
-          }
-        });
-
-        await room.connect(url, token);
-        await publishCamera(room);
-      } catch (err) {
-        if (!mountedRef.current) return;
-        console.error("❌ LiveKit room join failed:", err);
-        setPhase("error");
-        setError("Failed to join the video room: " + err.message);
-      }
-    },
-    [publishCamera],
-  );
-
-  // ── Step 1: Connect Socket ─────────────────────────────────────────────────
   const connectSocket = useCallback(() => {
     if (!sessionId || !userId) return;
     setPhase("connecting");
@@ -298,18 +276,16 @@ const MobileCameraPage = () => {
     });
     socketRef.current = socket;
 
-    socket.on("connect", () => {
+    socket.on("connect", async () => {
       if (!mountedRef.current) return;
       setSocketConnected(true);
-
       socket.emit("secondary_camera_connected", {
         interviewId: sessionId,
         userId,
         timestamp: Date.now(),
-        streamType: "livekit",
+        streamType: "webrtc",
       });
-
-      setPhase("camera");
+      await startWebRTC(socket);
     });
 
     socket.on("disconnect", (reason) => {
@@ -327,26 +303,18 @@ const MobileCameraPage = () => {
       setPhase("error");
       setError("Could not reach the server. Check your connection and retry.");
     });
+  }, [sessionId, userId, startWebRTC]);
 
-    socket.on("livekit_token", async ({ token, url }) => {
-      console.log("📱 Mobile LiveKit URL:", url);
-      if (!mountedRef.current) return;
-      await joinLiveKitRoom(url, token);
-    });
-  }, [sessionId, userId, joinLiveKitRoom]);
-
-  // ── Kick off on mount ──────────────────────────────────────────────────────
   useEffect(() => {
     if (sessionId && userId) connectSocket();
   }, []); // eslint-disable-line
 
-  // ── Retry ──────────────────────────────────────────────────────────────────
   const handleRetry = useCallback(async () => {
     setRetrying(true);
     await teardown();
     setSocketConnected(false);
     setCameraReady(false);
-    setRoomConnected(false);
+    setPeerConnected(false);
     setTrackPublished(false);
     setZoomApplied(false);
     setError(null);
@@ -358,7 +326,6 @@ const MobileCameraPage = () => {
     }, 600);
   }, [teardown, connectSocket]);
 
-  // ── Invalid link screen ────────────────────────────────────────────────────
   if (!sessionId || !userId) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
@@ -382,8 +349,7 @@ const MobileCameraPage = () => {
             Invalid Link
           </h2>
           <p className="text-slate-500 text-sm">
-            Scan the QR code from your desktop interview page to get a valid
-            link.
+            Scan the QR code from your desktop interview page.
           </p>
         </div>
       </div>
@@ -402,7 +368,7 @@ const MobileCameraPage = () => {
       bar: "bg-violet-500",
     },
     publishing: {
-      label: "Joining session…",
+      label: "Establishing peer connection…",
       accent: "text-violet-400",
       bar: "bg-violet-500",
     },
@@ -432,7 +398,6 @@ const MobileCameraPage = () => {
       }}
     >
       <div className="w-full max-w-sm flex flex-col gap-4">
-        {/* Header */}
         <div className="text-center mb-2">
           <div
             className={`w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4 transition-all duration-500 ${
@@ -481,7 +446,6 @@ const MobileCameraPage = () => {
           </p>
         </div>
 
-        {/* Video preview card */}
         <div className="relative bg-slate-900 rounded-2xl overflow-hidden border border-slate-800/80 shadow-2xl">
           <div className="h-0.5 w-full bg-slate-800">
             <div
@@ -525,7 +489,6 @@ const MobileCameraPage = () => {
               </div>
             )}
 
-            {/* LIVE badge + optional Wide badge */}
             {isLive && (
               <div className="absolute top-3 left-3 flex items-center gap-1.5">
                 <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/90 backdrop-blur-sm rounded-md">
@@ -549,7 +512,7 @@ const MobileCameraPage = () => {
                 <div className="flex items-center gap-1.5 px-2.5 py-1 bg-violet-600/90 backdrop-blur-sm rounded-md">
                   <Spinner className="w-2.5 h-2.5 text-white" />
                   <span className="text-white text-[10px] font-bold tracking-widest">
-                    JOINING
+                    P2P…
                   </span>
                 </div>
               </div>
@@ -557,7 +520,6 @@ const MobileCameraPage = () => {
           </div>
         </div>
 
-        {/* Error panel */}
         {isError && error && (
           <div className="px-4 py-3 bg-red-500/8 border border-red-500/20 rounded-xl">
             <p className="text-red-300 text-sm mb-3">{error}</p>
@@ -578,7 +540,6 @@ const MobileCameraPage = () => {
           </div>
         )}
 
-        {/* Status panel */}
         <div className="bg-slate-900/60 border border-slate-800/60 rounded-2xl px-4 py-1 backdrop-blur-sm">
           <StatusRow
             label="Server"
@@ -593,14 +554,14 @@ const MobileCameraPage = () => {
             color="orange"
           />
           <StatusRow
-            label="Session"
-            value={roomConnected ? "Joined" : "Pending…"}
-            active={roomConnected}
+            label="Peer Connection"
+            value={peerConnected ? "Established" : "Pending…"}
+            active={peerConnected}
             color="yellow"
           />
           <StatusRow
             label="Stream"
-            value={trackPublished ? "Publishing via LiveKit" : "Not publishing"}
+            value={trackPublished ? "Publishing via WebRTC" : "Not publishing"}
             active={trackPublished}
             color="green"
           />

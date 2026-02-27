@@ -9,7 +9,7 @@ import {
 import { FormField } from "../Components/Common/Input";
 
 const ProfilePage = () => {
-  const { user, updateUser } = useAuth();
+  const { user, updateUser, getCurrentUser } = useAuth();
 
   const [isModalOpen, setModalOpen] = useState(false);
   const [isResumeModalOpen, setResumeModalOpen] = useState(false);
@@ -19,19 +19,24 @@ const ProfilePage = () => {
   const [error, setError] = useState("");
   const [resumeError, setResumeError] = useState("");
   const [uploading, setUploading] = useState(false);
-
   const [selectedImage, setSelectedImage] = useState(null);
-  const [previewUrl, setPreviewUrl] = useState(
-    user?.profile_image_path || null,
-  );
-  const fileInputRef = useRef();
-
+  const [previewUrl, setPreviewUrl] = useState(null);
   const [selectedResume, setSelectedResume] = useState(null);
+
+  const fileInputRef = useRef();
   const resumeInputRef = useRef();
 
+  // Sync preview with Redux user (handles page refresh + post-upload update)
+  useEffect(() => {
+    if (user?.profile_image_path) {
+      setPreviewUrl(user.profile_image_path);
+    }
+  }, [user?.profile_image_path]);
+
+  // Guard AFTER all hooks
   if (!user) return null;
 
-  const firstLetter = user?.fullName.split(" ")[0];
+  const firstLetter = user.fullName.split(" ")[0];
 
   const handleDragOver = (e) => e.preventDefault();
 
@@ -54,16 +59,14 @@ const ProfilePage = () => {
 
   const handleUploadImage = async () => {
     if (!selectedImage) return;
-
     setUploading(true);
     try {
       const formData = new FormData();
       formData.append("profileImage", selectedImage);
-
       await updateUser(formData).unwrap();
-
+      // Fetch fresh user so Redux gets the real server URL
+      await getCurrentUser();
       setSelectedImage(null);
-      console.log("Profile image uploaded successfully");
     } catch (err) {
       console.error("Failed to upload image:", err);
       setError("Failed to upload profile image");
@@ -74,20 +77,17 @@ const ProfilePage = () => {
 
   const handleResumeChange = (e) => {
     const file = e.target.files[0];
-    if (file) {
-      if (file.type !== "application/pdf") {
-        setResumeError("Please upload a PDF file");
-        return;
-      }
-
-      if (file.size > 5 * 1024 * 1024) {
-        setResumeError("File size must be less than 5MB");
-        return;
-      }
-
-      setResumeError("");
-      setSelectedResume(file);
+    if (!file) return;
+    if (file.type !== "application/pdf") {
+      setResumeError("Please upload a PDF file");
+      return;
     }
+    if (file.size > 5 * 1024 * 1024) {
+      setResumeError("File size must be less than 5MB");
+      return;
+    }
+    setResumeError("");
+    setSelectedResume(file);
   };
 
   const handleUploadResume = async () => {
@@ -95,21 +95,15 @@ const ProfilePage = () => {
       setResumeError("Please select a resume file");
       return;
     }
-
     setUploading(true);
     setResumeError("");
-
     try {
       const formData = new FormData();
       formData.append("resume", selectedResume);
-
       await updateUser(formData).unwrap();
-
-      console.log("Resume uploaded successfully");
       setSelectedResume(null);
       setResumeModalOpen(false);
     } catch (err) {
-      console.error("Failed to upload resume:", err);
       setResumeError(err.message || "Failed to upload resume");
     } finally {
       setUploading(false);
@@ -126,7 +120,6 @@ const ProfilePage = () => {
       setError("New passwords do not match");
       return;
     }
-    console.log("Update password:", { currentPassword, newPassword });
     setCurrentPassword("");
     setNewPassword("");
     setConfirmPassword("");
@@ -164,7 +157,6 @@ const ProfilePage = () => {
                   {firstLetter}
                 </span>
               )}
-
               <div className="absolute inset-x-0 bottom-0 h-16 bg-black/40 flex items-center justify-center text-xs text-white font-medium z-50 pointer-events-none text-center">
                 Drag & Drop or Click to Upload
               </div>
@@ -210,32 +202,24 @@ const ProfilePage = () => {
           {/* Right Column */}
           <div className="p-6 rounded-2xl shadow-lg border border-white/10 space-y-4 w-full">
             <h2 className="text-lg font-semibold mb-4">Bio & other details</h2>
-
             <div className="grid grid-cols-2 gap-y-3 gap-x-6 text-sm">
               <p className="text-white/50">Full Name</p>
               <p className="font-semibold">{user.fullName}</p>
-
               <p className="text-white/50">Email</p>
               <p className="font-semibold">{user.email}</p>
-
               <p className="text-white/50">Total Interview Given</p>
               <p className="font-semibold">{user.totalInterview || "0"}</p>
-
               <p className="text-white/50">Previous Interview Score</p>
               <p className="font-semibold">{user.interviewScore || "N/A"}</p>
-
               <p className="text-white/50">Average Time Taken</p>
               <p className="font-semibold">{user.averageTime || "N/A"}</p>
-
               <p className="text-white/50">Overall Performance</p>
               <p className="font-semibold">{user.performance || "N/A"}</p>
             </div>
-
             <div className="mt-6 flex justify-center gap-4">
               <Button variant="primary" onClick={() => setModalOpen(true)}>
                 Update Password
               </Button>
-
               <Button
                 variant="primary"
                 onClick={() => setResumeModalOpen(true)}
@@ -265,14 +249,12 @@ const ProfilePage = () => {
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
             />
-
             <FormField
               label="New Password"
               type="password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
             />
-
             <FormField
               label="Confirm New Password"
               type="password"
@@ -280,12 +262,11 @@ const ProfilePage = () => {
               onChange={(e) => setConfirmPassword(e.target.value)}
               error={error && confirmPassword !== newPassword ? error : ""}
             />
-
             {error && <p className="text-red-400 text-sm">{error}</p>}
           </div>
         </Modal>
 
-        {/* Resume Upload Modal */}
+        {/* Resume Modal */}
         <Modal
           isOpen={isResumeModalOpen}
           onClose={() => {
@@ -323,7 +304,6 @@ const ProfilePage = () => {
               <label className="block text-sm font-medium text-white/70 mb-2">
                 Select Resume (PDF only, max 5MB)
               </label>
-
               <input
                 type="file"
                 accept="application/pdf"
@@ -331,7 +311,6 @@ const ProfilePage = () => {
                 className="hidden"
                 onChange={handleResumeChange}
               />
-
               <div
                 onClick={() => resumeInputRef.current.click()}
                 className="border-2 border-dashed border-white/20 rounded-lg p-8 text-center cursor-pointer hover:border-purpleGlow transition"
@@ -383,11 +362,9 @@ const ProfilePage = () => {
                 )}
               </div>
             </div>
-
             {resumeError && (
               <p className="text-red-400 text-sm">{resumeError}</p>
             )}
-
             {user?.resume &&
               user?.resume_upload_status === "completed" &&
               !selectedResume && (
@@ -401,12 +378,9 @@ const ProfilePage = () => {
           </div>
         </Modal>
 
-        {/* Social Media Section */}
         <div className="w-full overflow-x-auto">
           <SocialMediaSection />
         </div>
-
-        {/* Previous Interviews */}
         <div className="w-full overflow-x-auto">
           <PreviousInterview />
         </div>

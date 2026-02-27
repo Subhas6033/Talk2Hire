@@ -560,12 +560,12 @@ const logoutUser = asyncHandler(async (req, res) => {
   res.status(200).json(new APIRES(200, null, "User Logged out successfully"));
 });
 
-// ─── FIX 3: SELECT role in getCurrentUser so it's never lost after session verify ──
 const getCurrentUser = asyncHandler(async (req, res) => {
   const userId = req.user.id;
 
   const [rows] = await pool.execute(
-    `SELECT id, fullName, email, role, resume, resume_upload_status, skills, interview_selected_skills 
+    `SELECT id, fullName, email, role, resume, resume_upload_status,
+            skills, interview_selected_skills, profile_image_path
      FROM users WHERE id = ?`,
     [userId],
   );
@@ -578,6 +578,7 @@ const getCurrentUser = asyncHandler(async (req, res) => {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+
   const interviewSkills = user.interview_selected_skills
     ? JSON.parse(user.interview_selected_skills)
     : [];
@@ -589,9 +590,10 @@ const getCurrentUser = asyncHandler(async (req, res) => {
         id: user.id,
         fullName: user.fullName,
         email: user.email,
-        role: user.role, // always included now
+        role: user.role,
         resume: user.resume,
-        resumeStatus: user.resume_upload_status,
+        resume_upload_status: user.resume_upload_status,
+        profile_image_path: user.profile_image_path,
         cvSkills,
         interviewSkills,
       },

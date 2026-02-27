@@ -4,14 +4,12 @@ import { useInterview } from "../Hooks/useInterviewHook";
 import useVideoRecording from "../Hooks/useVideoRecordingHook";
 import useHolisticDetection from "../Hooks/useHolisticDetectionHook";
 import useScreenRecording from "../Hooks/useScreenRecording";
+import useServerRecording from "../Hooks/useServerRecording";
 import { Button } from "../Components/index";
 import { Card } from "../Components/Common/Card";
 import { useStreams } from "../Hooks/streamContext";
 import streamStore from "../Hooks/streamSingleton";
-import { RoomEvent, Track } from "livekit-client";
 
-// Prevents double socket-init across renders (NOT used to prevent room creation —
-// that is now handled by the module-level room singleton in useInterviewHook.js)
 let _globalSocketInitialized = false;
 let _globalClientReadyEmitted = false;
 
@@ -43,26 +41,6 @@ const InterviewLive = () => {
 
   const screenShareStreamRef = useRef(null);
 
-  // ── Token buffer ───────────────────────────────────────────────────────────
-  const pendingLkTokenRef = useRef(null);
-  const earlyHandlerRef = useRef(null);
-
-  useEffect(() => {
-    const socket = preInitializedSocket;
-    if (!socket) return;
-    const earlyHandler = (data) => {
-      console.log("[BUFFER] livekit_token buffered early");
-      pendingLkTokenRef.current = data;
-    };
-    earlyHandlerRef.current = earlyHandler;
-    socket.once("livekit_token", earlyHandler);
-    return () => {
-      socket.off("livekit_token", earlyHandler);
-      earlyHandlerRef.current = null;
-    };
-  }, []); // eslint-disable-line
-
-  // ── Core hooks ─────────────────────────────────────────────────────────────
   const interview = useInterview(
     sessionData?.interviewId,
     sessionData?.userId,
@@ -89,16 +67,27 @@ const InterviewLive = () => {
     preWarmSessionIds.screenRecordingId,
   );
 
-  // ── Refs ───────────────────────────────────────────────────────────────────
+  // ── Server-side recording via HTTP chunk upload ───────────────────────────
+  const serverRecording = useServerRecording(
+    sessionData?.interviewId,
+    primaryCameraStream,
+    micStream,
+    // pass the screen stream so it records from the start
+    streamStore.screenShareStream ??
+      streamsRef.current?.screenShareStream ??
+      null,
+  );
+  const serverRecordingStoppedRef = useRef(false);
+
   const videoRef = useRef(null);
   const mobileVideoRef = useRef(null);
   const screenVideoRef = useRef(null);
   const recordingsStartedRef = useRef(false);
   const isLeavingRef = useRef(false);
   const screenVideoActiveRef = useRef(false);
-  const pendingMobileTrackRef = useRef(null);
 
-  // ── State ──────────────────────────────────────────────────────────────────
+  const mobilePcRef = useRef(null);
+
   const [evaluationStatus, setEvaluationStatus] = useState(null);
   const [evaluationResults, setEvaluationResults] = useState(null);
   const [faceViolationWarning, setFaceViolationWarning] = useState(null);
@@ -116,18 +105,13 @@ const InterviewLive = () => {
     interview.status === "live" && !interview.isInitializing,
   );
 
-  // ── Reset globals on unmount ───────────────────────────────────────────────
   useEffect(() => {
     return () => {
       _globalSocketInitialized = false;
       _globalClientReadyEmitted = false;
-      if (isLeavingRef.current) {
-        interview.resetLiveKitSingleton?.();
-      }
     };
   }, []); // eslint-disable-line
 
-  // ── Redirect if no session ─────────────────────────────────────────────────
   useEffect(() => {
     if (!sessionData) {
       const t = setTimeout(() => {
@@ -137,6 +121,18 @@ const InterviewLive = () => {
       return () => clearTimeout(t);
     }
   }, []); // eslint-disable-line
+
+  // Stop server recording exactly once, wait for all chunks to upload,
+  // then POST end-recording so the server knows to merge.
+  const stopServerRecordingOnce = useCallback(async () => {
+    if (serverRecordingStoppedRef.current || !sessionData?.interviewId) return;
+    serverRecordingStoppedRef.current = true;
+    try {
+      await serverRecording.stop(); // handles chunks flush + end-recording for all types
+    } catch (err) {
+      console.error("❌ stopServerRecordingOnce:", err.message);
+    }
+  }, [serverRecording, sessionData]);
 
   const cleanupAllRecordings = useCallback(async () => {
     const jobs = [];
@@ -148,10 +144,16 @@ const InterviewLive = () => {
     }
     if (screenRecording.isRecording)
       jobs.push(screenRecording.stopRecording().catch(console.error));
+    jobs.push(stopServerRecordingOnce());
     await Promise.allSettled(jobs);
-  }, [isVideoRecording, audioRecording, screenRecording]); // eslint-disable-line
+  }, [
+    isVideoRecording,
+    audioRecording,
+    screenRecording,
+    stopServerRecordingOnce,
+  ]); // eslint-disable-line
 
-  // ── Primary camera ─────────────────────────────────────────────────────────
+  // Attach primary camera to video element
   useEffect(() => {
     if (!videoRef.current || !primaryCameraStream) return;
     videoRef.current.srcObject = primaryCameraStream;
@@ -161,188 +163,42 @@ const InterviewLive = () => {
     });
   }, []); // eslint-disable-line
 
-  // ── Mobile track attachment ────────────────────────────────────────────────
-  const doAttachMobileTrack = useCallback((track, el) => {
-    try {
-      try {
-        track.detach(el);
-      } catch (_) {}
-      track.attach(el);
+  // ── Mobile WebRTC ─────────────────────────────────────────────────────────
+  const setupMobilePeerConnection = useCallback(() => {
+    if (mobilePcRef.current) return mobilePcRef.current;
+    const ICE_SERVERS = [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+    ];
+    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    mobilePcRef.current = pc;
+    pc.onicecandidate = ({ candidate }) => {
+      if (candidate && interview.socketRef.current?.connected) {
+        interview.socketRef.current.emit(
+          "mobile_webrtc_ice_candidate_desktop",
+          { candidate },
+        );
+      }
+    };
+    pc.ontrack = (event) => {
+      if (event.track.kind !== "video") return;
+      const el = mobileVideoRef.current;
+      if (!el) return;
+      el.srcObject = new MediaStream([event.track]);
+      el.muted = true;
+      el.play().catch(() => {});
       setMobileTrackAttached(true);
       setMobileCameraConnected(true);
-      console.log("[MOBILE] Track attached ✅");
-    } catch (e) {
-      console.error("[MOBILE] track.attach failed:", e.message);
-    }
-  }, []);
-
-  const mobileVideoCallbackRef = useCallback(
-    (el) => {
-      mobileVideoRef.current = el;
-      if (!el) return;
-      if (pendingMobileTrackRef.current) {
-        console.log("[MOBILE] Flushing pending track to newly mounted <video>");
-        doAttachMobileTrack(pendingMobileTrackRef.current, el);
-        pendingMobileTrackRef.current = null;
-      }
-    },
-    [doAttachMobileTrack],
-  );
-
-  const attachMobileTrack = useCallback(
-    (track) => {
-      const el = mobileVideoRef.current;
-      if (!el) {
-        console.warn(
-          "[MOBILE] <video> not in DOM yet — stashing in pendingMobileTrackRef",
-        );
-        pendingMobileTrackRef.current = track;
-        setMobileCameraConnected(true);
-        return;
-      }
-      doAttachMobileTrack(track, el);
-    },
-    [doAttachMobileTrack],
-  );
-
-  // ── Mobile camera polling + room binding ───────────────────────────────────
-  useEffect(() => {
-    let stopped = false;
-    let pollTimer = null;
-    let roomCleanup = null;
-    let pollCount = 0;
-
-    const bindRoom = (room) => {
-      console.log("[POLL] Binding LiveKit room events");
-      console.log(
-        "  participants:",
-        [...room.remoteParticipants.values()].map((p) => p.identity),
-      );
-
-      const onTrackSubscribed = (track, _pub, p) => {
-        if (
-          track.kind !== Track.Kind.Video ||
-          !p.identity?.startsWith("mobile_")
-        )
-          return;
-        console.log("[MOBILE] TrackSubscribed from:", p.identity);
-        attachMobileTrack(track);
-      };
-      const onTrackUnsubscribed = (track, _pub, p) => {
-        if (
-          track.kind !== Track.Kind.Video ||
-          !p.identity?.startsWith("mobile_")
-        )
-          return;
-        try {
-          track.detach();
-        } catch (_) {}
+      serverRecording.startSecondary(mobileStream);
+    };
+    pc.onconnectionstatechange = () => {
+      if (["disconnected", "failed", "closed"].includes(pc.connectionState))
         setMobileTrackAttached(false);
-        pendingMobileTrackRef.current = null;
-      };
-      const onTrackPublished = (pub, p) => {
-        if (pub.kind !== Track.Kind.Video || !p.identity?.startsWith("mobile_"))
-          return;
-        setMobileCameraConnected(true);
-        if (!pub.isSubscribed) {
-          try {
-            pub.setSubscribed(true);
-          } catch (_) {}
-        }
-      };
-      const onParticipantConnected = (p) => {
-        if (!p.identity?.startsWith("mobile_")) return;
-        setMobileCameraConnected(true);
-        p.trackPublications.forEach((pub) => {
-          if (pub.kind !== Track.Kind.Video) return;
-          if (pub.isSubscribed && pub.track) attachMobileTrack(pub.track);
-          else {
-            try {
-              pub.setSubscribed(true);
-            } catch (_) {}
-          }
-        });
-      };
-      const onParticipantDisconnected = (p) => {
-        if (!p.identity?.startsWith("mobile_")) return;
-        setMobileCameraConnected(false);
-        setMobileTrackAttached(false);
-        pendingMobileTrackRef.current = null;
-      };
-
-      room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
-      room.on(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
-      room.on(RoomEvent.TrackPublished, onTrackPublished);
-      room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
-      room.on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
-
-      room.remoteParticipants.forEach((p) => {
-        if (!p.identity?.startsWith("mobile_")) return;
-        console.log("[POLL] Found existing mobile participant:", p.identity);
-        setMobileCameraConnected(true);
-        p.trackPublications.forEach((pub) => {
-          if (pub.kind !== Track.Kind.Video) return;
-          console.log(
-            "  pub subscribed:",
-            pub.isSubscribed,
-            "hasTrack:",
-            !!pub.track,
-          );
-          if (pub.isSubscribed && pub.track) attachMobileTrack(pub.track);
-          else {
-            try {
-              pub.setSubscribed(true);
-            } catch (_) {}
-          }
-        });
-      });
-
-      return () => {
-        room.off(RoomEvent.TrackSubscribed, onTrackSubscribed);
-        room.off(RoomEvent.TrackUnsubscribed, onTrackUnsubscribed);
-        room.off(RoomEvent.TrackPublished, onTrackPublished);
-        room.off(RoomEvent.ParticipantConnected, onParticipantConnected);
-        room.off(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
-      };
     };
+    return pc;
+  }, [interview.socketRef]);
 
-    const tryBind = () => {
-      const room = interview.livekitRoomRef?.current;
-      if (!room) {
-        pollCount++;
-        if (pollCount % 10 === 0)
-          console.log(`[POLL] Waiting for room... (${pollCount * 300}ms)`);
-        return false;
-      }
-      clearInterval(pollTimer);
-      roomCleanup = bindRoom(room);
-      return true;
-    };
-
-    if (!tryBind()) {
-      let elapsed = 0;
-      pollTimer = setInterval(() => {
-        if (stopped) {
-          clearInterval(pollTimer);
-          return;
-        }
-        elapsed += 300;
-        if (elapsed >= 90_000) {
-          clearInterval(pollTimer);
-          return;
-        }
-        if (tryBind()) clearInterval(pollTimer);
-      }, 300);
-    }
-
-    return () => {
-      stopped = true;
-      if (pollTimer) clearInterval(pollTimer);
-      if (roomCleanup) roomCleanup();
-    };
-  }, []); // eslint-disable-line
-
-  // ── Screen share ───────────────────────────────────────────────────────────
+  // Attach screen share video
   const attachScreenVideo = useCallback(() => {
     const vid = screenVideoRef.current;
     if (!vid) return false;
@@ -374,9 +230,7 @@ const InterviewLive = () => {
       setScreenVideoActive(false);
     };
     track.addEventListener("ended", onEnded);
-    return () => {
-      track.removeEventListener("ended", onEnded);
-    };
+    return () => track.removeEventListener("ended", onEnded);
   }, []); // eslint-disable-line
 
   useEffect(() => {
@@ -395,9 +249,7 @@ const InterviewLive = () => {
     };
   }, []); // eslint-disable-line
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // MAIN SOCKET INIT
-  // ═══════════════════════════════════════════════════════════════════════════
+  // ── Main socket init ───────────────────────────────────────────────────────
   useEffect(() => {
     if (_globalSocketInitialized || !sessionData || !preInitializedSocket)
       return;
@@ -413,39 +265,37 @@ const InterviewLive = () => {
           retries++;
         }
         if (!socket.connected) {
-          console.error("[SOCKET] Never connected");
           _globalSocketInitialized = false;
           navigate("/interview");
           return;
         }
-        console.log("[SOCKET] Connected:", socket.id);
+
         interview.socketRef.current = socket;
 
-        // STEP 1: Register permanent livekit_token handler FIRST
-        const handleToken = (data) => {
-          console.log("[SOCKET] livekit_token received ✅");
-          interview.handleLiveKitToken(data).catch(console.error);
-        };
-        socket.on("livekit_token", handleToken);
+        // Mobile camera WebRTC (no server-recording WebRTC anymore)
+        socket.on("mobile_webrtc_offer_relay", async ({ offer, identity }) => {
+          const pc = setupMobilePeerConnection();
+          try {
+            await pc.setRemoteDescription(new RTCSessionDescription(offer));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            socket.emit("mobile_webrtc_answer", {
+              answer: pc.localDescription,
+              identity,
+            });
+            setMobileCameraConnected(true);
+          } catch (err) {
+            console.error("[MOBILE-PC] offer handling failed:", err.message);
+          }
+        });
 
-        // STEP 2: Remove early buffer handler
-        if (earlyHandlerRef.current) {
-          socket.off("livekit_token", earlyHandlerRef.current);
-          earlyHandlerRef.current = null;
-        }
-
-        // STEP 3: Drain buffer or request token
-        if (pendingLkTokenRef.current) {
-          console.log("[SOCKET] Draining buffered token");
-          handleToken(pendingLkTokenRef.current);
-          pendingLkTokenRef.current = null;
-        } else {
-          console.log("[SOCKET] Requesting livekit_token...");
-          socket.emit("request_livekit_token", {
-            interviewId: sessionData.interviewId,
-            userId: sessionData.userId,
-          });
-        }
+        socket.on("mobile_webrtc_ice_from_mobile", async ({ candidate }) => {
+          const pc = mobilePcRef.current;
+          if (!pc || !candidate) return;
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(candidate));
+          } catch (_) {}
+        });
 
         const silenced = new Set([
           "user_audio_chunk",
@@ -469,24 +319,12 @@ const InterviewLive = () => {
         socket.on("tts_audio", (d) => {
           if (d) interview.handleTtsAudio(d);
         });
-
-        // FIX: Use socketRef.current instead of the closed-over `socket` variable.
-        // If the socket disconnects and reconnects while TTS is playing, the old
-        // `socket` reference becomes stale. Using socketRef.current always points
-        // to the live socket, preventing playback_done from emitting into the void.
         socket.on("tts_end", () =>
           interview.handleTtsEnd(() => {
             const liveSocket = interview.socketRef.current;
-            if (liveSocket?.connected) {
-              liveSocket.emit("playback_done");
-            } else {
-              console.warn(
-                "⚠️ playback_done: socket not connected, skipping emit",
-              );
-            }
+            if (liveSocket?.connected) liveSocket.emit("playback_done");
           }),
         );
-
         socket.on("idle_prompt", (d) => interview.handleIdlePrompt(d));
         socket.on("interim_transcript", (d) => interview.setLiveTranscript(d));
         socket.on("transcript_received", (d) =>
@@ -518,7 +356,6 @@ const InterviewLive = () => {
         });
         socket.on("evaluation_error", () => setEvaluationStatus("error"));
         socket.on("disconnect", (reason) => {
-          console.warn("[SOCKET] Disconnected:", reason);
           if (reason === "io server disconnect" && !isLeavingRef.current) {
             alert("Server disconnected.");
             navigate("/interview");
@@ -541,7 +378,6 @@ const InterviewLive = () => {
         socket.emit("request_secondary_camera_status", {
           interviewId: sessionData.interviewId,
         });
-
         interview.autoStartInterview(micStream).catch(console.error);
 
         if (!_globalClientReadyEmitted) {
@@ -552,8 +388,6 @@ const InterviewLive = () => {
             timestamp: Date.now(),
           });
         }
-
-        console.log("[SOCKET] Init complete");
       } catch (err) {
         console.error("[SOCKET] init() FAILED:", err.message);
         _globalSocketInitialized = false;
@@ -569,11 +403,16 @@ const InterviewLive = () => {
         socket?.offAny();
         socket?.removeAllListeners();
         socket?.disconnect();
+        interview.cleanupWebRTC();
+        if (mobilePcRef.current) {
+          mobilePcRef.current.close();
+          mobilePcRef.current = null;
+        }
       }
     };
   }, []); // eslint-disable-line
 
-  // ── Start recordings ───────────────────────────────────────────────────────
+  // ── Start all recordings once interview is live ───────────────────────────
   useEffect(() => {
     if (
       recordingsStartedRef.current ||
@@ -586,7 +425,9 @@ const InterviewLive = () => {
       isVideoRecording
     )
       return;
+
     recordingsStartedRef.current = true;
+
     (async () => {
       try {
         await audioRecording.startRecording(preWarmSessionIds.audioId);
@@ -596,6 +437,9 @@ const InterviewLive = () => {
           streamsRef.current?.screenShareStream;
         if (activeScreen?.active)
           await screenRecording.startRecording(activeScreen);
+
+        // HTTP chunk recording — starts regardless of network conditions
+        await serverRecording.start();
       } catch (err) {
         console.error("[REC] Startup failed:", err.message);
         recordingsStartedRef.current = false;
@@ -618,13 +462,22 @@ const InterviewLive = () => {
   const handleEndInterview = async () => {
     if (!confirm("Are you sure you want to end the interview?")) return;
     isLeavingRef.current = true;
-    await cleanupAllRecordings();
+
+    await cleanupAllRecordings(); // stops recorder + flushes all chunks + calls end-recording
+
     const socket = interview.socketRef.current;
     if (socket) {
       socket.offAny();
       socket.removeAllListeners();
       socket.disconnect();
     }
+
+    interview.cleanupWebRTC();
+    if (mobilePcRef.current) {
+      mobilePcRef.current.close();
+      mobilePcRef.current = null;
+    }
+
     navigate("/dashboard");
   };
 
@@ -679,7 +532,6 @@ const InterviewLive = () => {
     <section className="min-h-screen bg-[#0d1117] p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
-          {/* Main panel */}
           <div className="lg:col-span-2">
             <Card className="flex flex-col border border-gray-700/60 bg-gray-800/80 shadow-2xl min-h-150">
               <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700/60 flex-wrap gap-3">
@@ -730,6 +582,11 @@ const InterviewLive = () => {
                     on={screenRecording.isRecording}
                     color="purple"
                   />
+                  <StatusBadge
+                    label="Recording"
+                    on={serverRecording.isRecording}
+                    color="green"
+                  />
                 </div>
               </div>
 
@@ -743,6 +600,7 @@ const InterviewLive = () => {
                   </p>
                 </div>
               )}
+
               {evaluationStatus === "started" && (
                 <div className="px-5 py-3 bg-blue-900/20 border-b border-blue-800/60 flex items-center gap-3">
                   <div className="animate-spin w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full shrink-0" />
@@ -834,9 +692,7 @@ const InterviewLive = () => {
             </Card>
           </div>
 
-          {/* Right column */}
           <div className="lg:col-span-1 space-y-3">
-            {/* Primary camera */}
             <Card className="overflow-hidden border border-gray-700/60 bg-gray-800/80">
               <div className="px-3 py-2 border-b border-gray-700/60 flex items-center justify-between">
                 <span className="text-xs font-bold text-gray-300">
@@ -860,7 +716,6 @@ const InterviewLive = () => {
               </div>
             </Card>
 
-            {/* Mobile camera */}
             <Card className="overflow-hidden border border-gray-700/60 bg-gray-800/80">
               <div className="px-3 py-2 border-b border-gray-700/60 flex items-center justify-between">
                 <span className="text-xs font-bold text-gray-300">
@@ -879,7 +734,7 @@ const InterviewLive = () => {
               <div className="relative aspect-video bg-black">
                 <video
                   id="secondary-camera-video"
-                  ref={mobileVideoCallbackRef}
+                  ref={mobileVideoRef}
                   autoPlay
                   playsInline
                   className="w-full h-full object-cover"
@@ -902,14 +757,13 @@ const InterviewLive = () => {
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-950/80 gap-2">
                     <div className="animate-spin w-8 h-8 border-2 border-green-500/30 border-t-green-400 rounded-full" />
                     <p className="text-white/70 text-xs">
-                      Subscribing to video track…
+                      Connecting video track…
                     </p>
                   </div>
                 )}
               </div>
             </Card>
 
-            {/* Screen share */}
             <Card className="overflow-hidden border border-gray-700/60 bg-gray-800/80">
               <div className="px-3 py-2 border-b border-gray-700/60 flex items-center justify-between">
                 <span className="text-xs font-bold text-gray-300">Screen</span>

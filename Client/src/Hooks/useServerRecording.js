@@ -1,0 +1,273 @@
+import { useRef, useState, useCallback, useEffect } from "react";
+
+const CHUNK_INTERVAL_MS = 20_000;
+
+function pickMimeType() {
+  const candidates = [
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
+    "video/webm;codecs=vp9",
+    "video/webm;codecs=vp8",
+    "video/webm",
+  ];
+  for (const t of candidates) {
+    if (MediaRecorder.isTypeSupported(t)) return t;
+  }
+  return "";
+}
+
+function createRecorderSession(interviewId, videoType) {
+  const uploadQueue = { current: Promise.resolve() };
+  let chunkIndex = 0;
+  let sessionStarted = false;
+  let sessionReadyPromise = null;
+  let stopped = false;
+  let recorder = null;
+
+  async function startSession() {
+    if (sessionStarted) return true;
+    if (sessionReadyPromise) return sessionReadyPromise;
+
+    sessionReadyPromise = (async () => {
+      try {
+        const res = await fetch("/api/v1/video/start-recording", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ interviewId, videoType }),
+        });
+        if (!res.ok) {
+          console.error(`❌ start-recording (${videoType}):`, await res.text());
+          sessionReadyPromise = null;
+          return false;
+        }
+        sessionStarted = true;
+        return true;
+      } catch (err) {
+        console.error(`❌ start-recording error (${videoType}):`, err.message);
+        sessionReadyPromise = null;
+        return false;
+      }
+    })();
+
+    return sessionReadyPromise;
+  }
+
+  async function uploadChunk(buffer, index) {
+    const form = new FormData();
+    form.append(
+      "chunk",
+      new Blob([buffer], { type: "video/webm" }),
+      `chunk_${index}.webm`,
+    );
+    form.append("chunkIndex", String(index));
+    form.append("videoType", videoType);
+    try {
+      const res = await fetch(`/api/v1/video/${interviewId}/chunk`, {
+        method: "POST",
+        credentials: "include",
+        body: form,
+      });
+      if (!res.ok)
+        console.error(
+          `❌ Chunk ${index} (${videoType}) failed:`,
+          await res.text(),
+        );
+    } catch (err) {
+      console.error(
+        `❌ Chunk ${index} (${videoType}) network error:`,
+        err.message,
+      );
+    }
+  }
+
+  function enqueueChunk(buffer, index) {
+    uploadQueue.current = uploadQueue.current.then(() =>
+      uploadChunk(buffer, index),
+    );
+  }
+
+  async function start(stream) {
+    if (stopped) return false;
+
+    const ok = await startSession();
+    if (!ok) return false;
+
+    const tracks = stream.getTracks().filter((t) => t.readyState === "live");
+    if (tracks.length === 0) {
+      console.warn(`⚠️ No live tracks for ${videoType}`);
+      return false;
+    }
+
+    const combinedStream = new MediaStream(tracks);
+    const mimeType = pickMimeType();
+    const options = { videoBitsPerSecond: 800_000 };
+    if (mimeType) options.mimeType = mimeType;
+
+    try {
+      recorder = new MediaRecorder(combinedStream, options);
+    } catch (_) {
+      recorder = new MediaRecorder(combinedStream);
+    }
+
+    recorder.ondataavailable = (e) => {
+      if (!e.data || e.data.size === 0) return;
+      const idx = chunkIndex++;
+      e.data.arrayBuffer().then((buf) => enqueueChunk(buf, idx));
+    };
+
+    recorder.start(CHUNK_INTERVAL_MS);
+    console.log(`▶️  Server recording started (${videoType})`);
+    return true;
+  }
+
+  async function stop() {
+    stopped = true;
+    if (!recorder || recorder.state === "inactive") return;
+
+    await new Promise((resolve) => {
+      const prev = recorder.onstop;
+      recorder.onstop = () => {
+        if (prev) prev();
+        resolve();
+      };
+      try {
+        recorder.stop();
+      } catch (_) {
+        resolve();
+      }
+    });
+
+    await uploadQueue.current;
+    console.log(`⏹  All chunks uploaded (${videoType})`);
+  }
+
+  function getState() {
+    return recorder?.state ?? "inactive";
+  }
+
+  return { start, stop, getState };
+}
+
+const useServerRecording = (
+  interviewId,
+  cameraStream,
+  micStream,
+  screenStream,
+) => {
+  const [isRecording, setIsRecording] = useState(false);
+
+  const primaryRef = useRef(null);
+  const secondaryRef = useRef(null);
+  const screenRef = useRef(null);
+  const stoppedRef = useRef(false);
+
+  const start = useCallback(async () => {
+    if (stoppedRef.current || !interviewId) return;
+
+    const sessions = [];
+
+    if (cameraStream?.active || micStream?.active) {
+      const tracks = [];
+      if (cameraStream) {
+        const vt = cameraStream.getVideoTracks()[0];
+        if (vt?.readyState === "live") tracks.push(vt);
+      }
+      if (micStream) {
+        const at = micStream.getAudioTracks()[0];
+        if (at?.readyState === "live") tracks.push(at);
+      }
+      if (tracks.length > 0) {
+        primaryRef.current = createRecorderSession(
+          interviewId,
+          "primary_camera",
+        );
+        sessions.push(primaryRef.current.start(new MediaStream(tracks)));
+      }
+    }
+
+    if (screenStream?.active) {
+      const vt = screenStream.getVideoTracks()[0];
+      if (vt?.readyState === "live") {
+        screenRef.current = createRecorderSession(
+          interviewId,
+          "screen_recording",
+        );
+        sessions.push(screenRef.current.start(new MediaStream([vt])));
+      }
+    }
+
+    const results = await Promise.allSettled(sessions);
+    const anyStarted = results.some(
+      (r) => r.status === "fulfilled" && r.value === true,
+    );
+    if (anyStarted) setIsRecording(true);
+  }, [interviewId, cameraStream, micStream, screenStream]);
+
+  const startSecondary = useCallback(
+    async (secondaryCamStream) => {
+      if (stoppedRef.current || !interviewId || !secondaryCamStream?.active)
+        return;
+      const vt = secondaryCamStream.getVideoTracks()[0];
+      if (!vt || vt.readyState !== "live") return;
+      secondaryRef.current = createRecorderSession(
+        interviewId,
+        "secondary_camera",
+      );
+      await secondaryRef.current.start(new MediaStream([vt]));
+      console.log("▶️  Secondary camera server recording started");
+    },
+    [interviewId],
+  );
+
+  const stop = useCallback(async () => {
+    stoppedRef.current = true;
+
+    const jobs = [];
+    if (primaryRef.current)
+      jobs.push(primaryRef.current.stop().catch(console.error));
+    if (secondaryRef.current)
+      jobs.push(secondaryRef.current.stop().catch(console.error));
+    if (screenRef.current)
+      jobs.push(screenRef.current.stop().catch(console.error));
+
+    await Promise.allSettled(jobs);
+
+    const videoTypes = [];
+    if (primaryRef.current) videoTypes.push("primary_camera");
+    if (secondaryRef.current) videoTypes.push("secondary_camera");
+    if (screenRef.current) videoTypes.push("screen_recording");
+
+    await Promise.allSettled(
+      videoTypes.map((videoType) =>
+        fetch(`/api/v1/video/${interviewId}/end-recording`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ videoType }),
+        }).catch((err) =>
+          console.error(`❌ end-recording (${videoType}):`, err.message),
+        ),
+      ),
+    );
+
+    setIsRecording(false);
+    console.log("✅ All server recordings finalized");
+  }, [interviewId]);
+
+  useEffect(() => {
+    return () => {
+      [primaryRef, secondaryRef, screenRef].forEach((ref) => {
+        if (ref.current?.getState() !== "inactive") {
+          try {
+            ref.current.stop();
+          } catch (_) {}
+        }
+      });
+    };
+  }, []);
+
+  return { isRecording, start, startSecondary, stop };
+};
+
+export default useServerRecording;

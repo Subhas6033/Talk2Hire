@@ -1,12 +1,5 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import { useDispatch, useSelector } from "react-redux";
-import {
-  Room,
-  RoomEvent,
-  Track,
-  createLocalAudioTrack,
-  AudioPresets,
-} from "livekit-client";
 import {
   setStatus,
   setServerReady,
@@ -32,66 +25,13 @@ import useAudioRecording from "./useAudioRecording";
 import { useTTS } from "./useSpeechHook";
 
 const MIC_SAMPLE_RATE = 48000;
+const CALIBRATION_MS = 1500;
+const GATE_MULTIPLIER = 5.0;
+const MIN_NOISE_GATE = 0.005;
+const MAX_NOISE_GATE = 0.05;
+const SILENCE_TIMEOUT_MS = 600;
+const DIAGNOSTIC_INTERVAL_MS = 3000;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ADAPTIVE NOISE GATE CONFIGURATION
-//
-// Instead of a fixed threshold, we:
-// 1. Calibrate ambient noise for the first CALIBRATION_MS milliseconds
-// 2. Set the gate to ambientRMS * GATE_MULTIPLIER
-// 3. Log diagnostics every DIAGNOSTIC_INTERVAL_MS to understand what's happening
-// ─────────────────────────────────────────────────────────────────────────────
-const CALIBRATION_MS = 1500; // How long to sample ambient noise on start
-const GATE_MULTIPLIER = 5.0; // gate = ambientRMS × this. Higher = stricter.
-const MIN_NOISE_GATE = 0.005; // Never go below this (safety floor)
-const MAX_NOISE_GATE = 0.05; // Never go above this (safety ceiling)
-const SILENCE_TIMEOUT_MS = 600; // Stop sending after this many ms of silence
-const DIAGNOSTIC_INTERVAL_MS = 3000; // Print noise stats every 3s
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MODULE-LEVEL ROOM SINGLETON
-//
-// THE CORE PROBLEM THIS SOLVES:
-// React (even without StrictMode) can instantiate useInterview multiple times
-// before one unmounts. Each instance has its own `livekitRoomRef`. When the
-// livekit_token fires and is received by both instances simultaneously, both
-// see livekitRoomRef.current === null and both call joinLiveKitRoom, creating
-// two Room objects connecting with the same identity. LiveKit's server boots
-// the first connection when the second arrives (duplicate identity eviction),
-// destroying the working room and detaching the mobile video track.
-//
-// SOLUTION: Store the Room and join promise at MODULE level. All hook instances
-// share the same singleton. Only one Room is ever created per page load.
-// Reset only happens on explicit cleanup (page navigation away).
-// ─────────────────────────────────────────────────────────────────────────────
-let _room = null;
-let _joinPromise = null;
-let _joinResolvers = [];
-
-function _onRoomReady(cb) {
-  if (_room) {
-    cb(_room);
-    return;
-  }
-  _joinResolvers.push(cb);
-}
-
-function _resolveRoom(room) {
-  _room = room;
-  const cbs = _joinResolvers.splice(0);
-  cbs.forEach((cb) => cb(room));
-}
-
-function _resetSingleton() {
-  console.log("[LK-SINGLETON] Reset");
-  _room = null;
-  _joinPromise = null;
-  _joinResolvers = [];
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// AUDIO UTILITIES
-// ─────────────────────────────────────────────────────────────────────────────
 function getRMS(input) {
   let sum = 0;
   for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
@@ -107,25 +47,13 @@ function toPCM16(input) {
   return pcm16;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ADAPTIVE NOISE GATE FACTORY
-//
-// Creates a self-calibrating gate object that:
-// - Measures ambient RMS during the first CALIBRATION_MS ms
-// - Derives a dynamic threshold from the measured ambient noise floor
-// - Logs detailed diagnostics so you can see exactly why chunks are sent or dropped
-//
-// Usage:
-//   const gate = createAdaptiveNoiseGate("LK-MIC");
-//   const { send, reason } = gate.shouldSend(rms);
-// ─────────────────────────────────────────────────────────────────────────────
 function createAdaptiveNoiseGate(label = "MIC") {
   const state = {
     calibrating: true,
     calibrationSamples: [],
     calibrationStartTime: Date.now(),
     ambientRMS: null,
-    threshold: MIN_NOISE_GATE, // start with floor until calibrated
+    threshold: MIN_NOISE_GATE,
     lastSpeechTime: 0,
     lastDiagnosticTime: 0,
     chunksSent: 0,
@@ -138,26 +66,18 @@ function createAdaptiveNoiseGate(label = "MIC") {
   function calibrate(rms) {
     state.calibrationSamples.push(rms);
     const elapsed = Date.now() - state.calibrationStartTime;
-
     if (elapsed >= CALIBRATION_MS) {
       const avg =
         state.calibrationSamples.reduce((a, b) => a + b, 0) /
         state.calibrationSamples.length;
-
       state.ambientRMS = avg;
       state.threshold = Math.min(
         MAX_NOISE_GATE,
         Math.max(MIN_NOISE_GATE, avg * GATE_MULTIPLIER),
       );
       state.calibrating = false;
-
       console.log(
-        `🎙️ [${label}] ✅ Noise calibration complete`,
-        `\n  Samples collected : ${state.calibrationSamples.length}`,
-        `\n  Ambient RMS (avg) : ${avg.toFixed(6)}`,
-        `\n  Gate threshold    : ${state.threshold.toFixed(6)}`,
-        `\n  Multiplier used   : ${GATE_MULTIPLIER}x`,
-        `\n  Min/Max bounds    : ${MIN_NOISE_GATE} / ${MAX_NOISE_GATE}`,
+        `[${label}] Noise calibration complete — threshold: ${state.threshold.toFixed(6)}`,
       );
     }
   }
@@ -166,42 +86,19 @@ function createAdaptiveNoiseGate(label = "MIC") {
     const now = Date.now();
     if (now - state.lastDiagnosticTime < DIAGNOSTIC_INTERVAL_MS) return;
     state.lastDiagnosticTime = now;
-
     const silenceSince = state.lastSpeechTime
       ? `${((now - state.lastSpeechTime) / 1000).toFixed(1)}s ago`
       : "never spoken";
-
     console.log(
-      `📊 [${label}] Noise Gate Diagnostics`,
-      `\n  Calibrating       : ${state.calibrating}`,
-      `\n  Ambient RMS       : ${state.ambientRMS?.toFixed(6) ?? "pending"}`,
-      `\n  Threshold         : ${state.threshold.toFixed(6)}`,
-      `\n  Current RMS       : ${rms.toFixed(6)}`,
-      `\n  Peak RMS (session): ${state.peakRMS.toFixed(6)}`,
-      `\n  Decision          : ${decision}`,
-      `\n  Last speech       : ${silenceSince}`,
-      `\n  Chunks SENT       : ${state.chunksSent}`,
-      `\n  Chunks TRAILING   : ${state.chunksTrailing}`,
-      `\n  Chunks DROPPED    : ${state.chunksDropped}`,
+      `[${label}] threshold=${state.threshold.toFixed(6)} rms=${rms.toFixed(6)} decision=${decision} lastSpeech=${silenceSince} sent=${state.chunksSent} dropped=${state.chunksDropped}`,
     );
   }
 
-  /**
-   * shouldSend(rms) → { send: boolean, reason: string }
-   *
-   * Three-phase logic:
-   *   Phase 1 — calibrating : always send, collect baseline ambient noise
-   *   Phase 2 — speech      : rms >= threshold → send + update lastSpeechTime
-   *   Phase 3 — trailing    : rms < threshold but within SILENCE_TIMEOUT_MS → still send
-   *   Phase 4 — silence     : rms < threshold AND beyond SILENCE_TIMEOUT_MS → drop
-   */
   function shouldSend(rms) {
     state.lastRMS = rms;
     if (rms > state.peakRMS) state.peakRMS = rms;
-
     const now = Date.now();
 
-    // Phase 1: Still calibrating — always send, collect baseline
     if (state.calibrating) {
       calibrate(rms);
       state.chunksSent++;
@@ -209,33 +106,29 @@ function createAdaptiveNoiseGate(label = "MIC") {
       return { send: true, reason: "calibrating" };
     }
 
-    // Phase 2: Active speech
     if (rms >= state.threshold) {
+      state.chunksTrailing = 0;
       state.lastSpeechTime = now;
       state.chunksSent++;
       printDiagnostics(rms, "SEND (speech)");
       return { send: true, reason: "speech" };
     }
 
-    // Phase 3: Trailing silence — send for SILENCE_TIMEOUT_MS to avoid clipping
     const silenceMs = now - state.lastSpeechTime;
-    const MAX_TRAILING_CHUNKS = 30; // ~600ms at 48kHz/1024 buffer ≈ ~21ms/chunk
+    const MAX_TRAILING_CHUNKS = 30;
     if (
       state.lastSpeechTime > 0 &&
       silenceMs < SILENCE_TIMEOUT_MS &&
       state.chunksTrailing < MAX_TRAILING_CHUNKS
     ) {
       state.chunksTrailing++;
-      printDiagnostics(rms, `SEND (trailing, ${silenceMs}ms into silence)`);
+      state.chunksSent++;
+      printDiagnostics(rms, `SEND (trailing, ${silenceMs}ms)`);
       return { send: true, reason: "trailing" };
     }
 
-    // Phase 4: True silence — drop
     state.chunksDropped++;
-    printDiagnostics(
-      rms,
-      `DROP (silence for ${silenceMs}ms, threshold=${state.threshold.toFixed(6)}, rms=${rms.toFixed(6)})`,
-    );
+    printDiagnostics(rms, `DROP silence`);
     return { send: false, reason: "silence" };
   }
 
@@ -252,7 +145,7 @@ function createAdaptiveNoiseGate(label = "MIC") {
     state.chunksTrailing = 0;
     state.lastRMS = 0;
     state.peakRMS = 0;
-    console.log(`🎙️ [${label}] Noise gate reset — recalibrating...`);
+    console.log(`[${label}] Noise gate reset — recalibrating`);
   }
 
   function getStats() {
@@ -271,9 +164,6 @@ function createAdaptiveNoiseGate(label = "MIC") {
   return { shouldSend, reset, getStats };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MAIN HOOK
-// ─────────────────────────────────────────────────────────────────────────────
 export const useInterview = (interviewId, userId, cameraStream) => {
   const dispatch = useDispatch();
   const interview = useSelector((s) => s.interview);
@@ -285,22 +175,16 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const audioRecording = useAudioRecording(socketRef, interviewId, userId);
 
-  const livekitRoomRef = useRef(null);
-
-  const lkReadyResolveRef = useRef(null);
-  const lkReadyPromiseRef = useRef(
-    new Promise((resolve) => {
-      lkReadyResolveRef.current = resolve;
-    }),
-  );
-
-  const localAudioTrackRef = useRef(null);
+  const pcRef = useRef(null);
+  const localMicTrackRef = useRef(null);
+  const localCameraTrackRef = useRef(null);
   const micProcessorRef = useRef(null);
   const micStreamRef = useRef(null);
 
-  // Shared adaptive noise gate instances (one per path: livekit / fallback)
-  const lkNoiseGateRef = useRef(createAdaptiveNoiseGate("LK-MIC"));
-  const fbNoiseGateRef = useRef(createAdaptiveNoiseGate("FB-MIC"));
+  // Guard against duplicate webrtc_answer events (direct emit + Redis poll race)
+  const remoteDescriptionSetRef = useRef(false);
+
+  const noiseGateRef = useRef(createAdaptiveNoiseGate("MIC"));
 
   const isPlayingRef = useRef(false);
   const isListeningRef = useRef(false);
@@ -309,26 +193,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const serverReadyRef = useRef(false);
   const ttsStreamActiveRef = useRef(false);
   const micStreamingActiveRef = useRef(false);
-
-  // Sync module singleton → instance ref on mount
-  useEffect(() => {
-    console.log(
-      "[LK] Hook instance mounted, syncing singleton → livekitRoomRef",
-    );
-    console.log("[LK] _room at mount:", _room ? "EXISTS ✅" : "null");
-
-    if (_room) {
-      livekitRoomRef.current = _room;
-      lkReadyResolveRef.current?.();
-      console.log("[LK] Synced existing room to new hook instance");
-    }
-
-    _onRoomReady((room) => {
-      livekitRoomRef.current = room;
-      lkReadyResolveRef.current?.();
-      console.log("[LK] Room ready callback fired — synced to livekitRoomRef");
-    });
-  }, []); // eslint-disable-line
 
   useEffect(() => {
     isPlayingRef.current = interview.isPlaying;
@@ -353,7 +217,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }
   }, [interview.isInitializing, interview.status, dispatch]);
 
-  // ── Audio Context ──────────────────────────────────────────────────────────
   const ensureAudioContext = useCallback(async () => {
     try {
       if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
@@ -368,10 +231,10 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       audioCtxRef.current = ctx;
       if (ctx.state === "suspended") await ctx.resume();
       await audioRecording.setAudioContext(ctx);
-      console.log("✅ AudioContext ready:", ctx.state, ctx.sampleRate + "Hz");
+      console.log("AudioContext ready:", ctx.state, ctx.sampleRate + "Hz");
       return ctx;
     } catch (err) {
-      console.error("❌ ensureAudioContext FAILED:", err.message);
+      console.error("ensureAudioContext FAILED:", err.message);
       throw err;
     }
   }, [audioRecording]);
@@ -385,7 +248,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     return () => document.removeEventListener("click", resume);
   }, []); // eslint-disable-line
 
-  // ── TTS ────────────────────────────────────────────────────────────────────
   const { enqueueTTSChunk, flushTTS, resetTTS } = useTTS({
     onPlayStart: () => {
       isPlayingRef.current = true;
@@ -419,12 +281,10 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch, flushTTS],
   );
 
-  // FIX: Only call resetTTS() if audio is actively playing.
   const handleQuestion = useCallback(
     (payload) => {
       const text =
         typeof payload === "string" ? payload : payload?.question || "";
-      console.log("❓ handleQuestion:", text.slice(0, 80));
       if (isPlayingRef.current) resetTTS();
       dispatch(setCurrentQuestion(text));
       dispatch(setTtsStreamActive(true));
@@ -474,408 +334,227 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch],
   );
 
-  // ── LiveKit Room Join ──────────────────────────────────────────────────────
-  const joinLiveKitRoom = useCallback(async (url, token) => {
-    console.log("🏠 [LK] joinLiveKitRoom called");
-    console.log("  _room (singleton):", _room ? "EXISTS" : "null");
-    console.log("  _joinPromise:", _joinPromise ? "in-flight" : "null");
+  // ── WebRTC peer connection setup ───────────────────────────────────────────
 
-    if (_room) {
-      console.log("♻️ [LK] Reusing existing module-singleton room");
-      livekitRoomRef.current = _room;
-      lkReadyResolveRef.current?.();
-      return _room;
+  const setupWebRTCPeerConnection = useCallback(() => {
+    const existingPc = pcRef.current;
+    if (
+      existingPc &&
+      existingPc.connectionState !== "closed" &&
+      existingPc.connectionState !== "failed" &&
+      existingPc.signalingState !== "closed"
+    ) {
+      return existingPc;
     }
-
-    if (_joinPromise) {
-      console.log("⏳ [LK] Join already in progress — awaiting shared promise");
-      return _joinPromise;
-    }
-
-    const doJoin = async () => {
-      console.log("🔧 [LK] Creating Room object...");
-      const room = new Room({
-        dynacast: true,
-        autoSubscribe: true,
-        audioCaptureDefaults: {
-          autoGainControl: true,
-          echoCancellation: true,
-          noiseSuppression: true,
-        },
-        reconnectPolicy: {
-          nextRetryDelayInMs: (ctx) => {
-            if (ctx.retryCount < 3) return 300;
-            if (ctx.retryCount < 6) return 1000;
-            return null;
-          },
-        },
-      });
-
-      room.on(RoomEvent.Connected, () => {
-        console.log("🏠 ✅ [LK] Room connected!");
-        console.log("  room.name:", room.name);
-        console.log(
-          "  remoteParticipants:",
-          [...room.remoteParticipants.values()].map((p) => p.identity),
-        );
-        _resolveRoom(room);
-        livekitRoomRef.current = room;
-        lkReadyResolveRef.current?.();
-        _joinPromise = null;
-      });
-
-      room.on(RoomEvent.Disconnected, (reason) => {
-        console.warn("🏠 [LK] Disconnected, reason:", reason);
-        if (_room === room) _room = null;
-        livekitRoomRef.current = null;
-      });
-
-      room.on(RoomEvent.Reconnected, () => {
-        console.log("✅ [LK] Reconnected");
-        _room = room;
-        livekitRoomRef.current = room;
-      });
-
-      room.on(RoomEvent.LocalTrackPublished, (pub) => {
-        console.log("📡 [LK] LocalTrackPublished:", pub.kind);
-        socketRef.current?.emit("livekit_track_published", {
-          kind: pub.kind,
-          source: pub.source,
-          trackSid: pub.trackSid,
-        });
-      });
-
-      room.on(RoomEvent.ParticipantConnected, (participant) => {
-        console.log("👤 [LK] ParticipantConnected:", participant.identity);
-        socketRef.current?.emit("livekit_participant_joined", {
-          identity: participant.identity,
-        });
-      });
-
-      room.on(RoomEvent.TrackPublished, (pub, participant) => {
-        console.log(
-          "📢 [LK] TrackPublished:",
-          participant.identity,
-          "kind:",
-          pub.kind,
-          "subscribed:",
-          pub.isSubscribed,
-        );
-      });
-
-      // AUDIO ONLY — Video track attachment is owned by InterviewLive.jsx
-      room.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
-        console.log(
-          "📡 [LK] TrackSubscribed:",
-          participant.identity,
-          "kind:",
-          track.kind,
-        );
-        if (track.kind === Track.Kind.Audio) {
-          try {
-            const el = track.attach();
-            el.style.display = "none";
-            document.body.appendChild(el);
-            console.log(
-              "🔊 [LK] Remote audio attached for:",
-              participant.identity,
-            );
-          } catch (err) {
-            console.error("❌ [LK] Audio attach failed:", err.message);
-          }
-        }
-        if (track.kind === Track.Kind.Video) {
-          console.log(
-            "🎥 [LK] Video track from:",
-            participant.identity,
-            "— deferring to InterviewLive polling effect",
-          );
-        }
-      });
-
-      room.on(
-        RoomEvent.TrackSubscriptionFailed,
-        (trackSid, participant, reason) => {
-          console.error(
-            "❌ [LK] TrackSubscriptionFailed:",
-            participant?.identity,
-            reason,
-          );
-        },
-      );
-
-      console.log("🔌 [LK] Calling room.connect()...");
-      console.log("  url:", url);
-      console.log("  token (first 30):", token?.slice(0, 30));
-
+    if (existingPc) {
       try {
-        await Promise.race([
-          room.connect(url, token),
-          new Promise((_, reject) =>
-            setTimeout(
-              () =>
-                reject(new Error("LiveKit room.connect() timed out after 45s")),
-              45_000,
-            ),
-          ),
-        ]);
-        console.log("✅ [LK] room.connect() resolved");
+        existingPc.close();
+      } catch (_) {}
+      pcRef.current = null;
+    }
+
+    const ICE_SERVERS = [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+    ];
+
+    if (import.meta.env?.VITE_TURN_URL) {
+      ICE_SERVERS.push({
+        urls: import.meta.env.VITE_TURN_URL,
+        username: import.meta.env.VITE_TURN_USERNAME || "",
+        credential: import.meta.env.VITE_TURN_CREDENTIAL || "",
+      });
+      console.log(
+        "[WebRTC] TURN server configured:",
+        import.meta.env.VITE_TURN_URL,
+      );
+    }
+
+    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    pcRef.current = pc;
+    // Reset answer guard whenever a new PC is created
+    remoteDescriptionSetRef.current = false;
+
+    pc.onicecandidate = ({ candidate }) => {
+      if (candidate) {
         console.log(
-          "  remoteParticipants:",
-          [...room.remoteParticipants.values()].map((p) => p.identity),
+          "[WebRTC] Local ICE candidate:",
+          candidate.type,
+          candidate.protocol,
+          candidate.address,
         );
-        return room;
-      } catch (err) {
-        console.error("❌ [LK] room.connect() FAILED:", err.message);
-        if (_room === room) _room = null;
-        _joinPromise = null;
-        try {
-          room.disconnect();
-        } catch (_) {}
-        throw err;
+        if (socketRef.current?.connected) {
+          socketRef.current.emit("webrtc_ice_candidate", { candidate });
+        }
+      } else {
+        console.log("[WebRTC] ICE gathering complete");
       }
     };
 
-    _joinPromise = doJoin();
-    return _joinPromise;
-  }, []); // eslint-disable-line
+    pc.onicegatheringstatechange = () => {
+      console.log("[WebRTC] ICE gathering state:", pc.iceGatheringState);
+    };
 
-  // ── Mic publishing ─────────────────────────────────────────────────────────
-  const publishLiveKitMic = useCallback(async () => {
-    const room = livekitRoomRef.current || _room;
-    if (!room) {
-      console.error("❌ [MIC] No room to publish mic to");
-      return;
-    }
-    if (localAudioTrackRef.current) {
-      console.log("♻️ [MIC] Already published");
-      return;
-    }
+    pc.oniceconnectionstatechange = () => {
+      console.log("[WebRTC] ICE connection state:", pc.iceConnectionState);
+      if (pc.iceConnectionState === "failed") {
+        console.error(
+          "[WebRTC] ICE failed — likely no TURN server. Check VITE_TURN_URL in .env",
+        );
+        pc.restartIce?.();
+      }
+    };
 
-    try {
-      const track = await createLocalAudioTrack({
-        ...AudioPresets.music,
-        autoGainControl: true,
-        echoCancellation: true,
-        noiseSuppression: true,
-      });
-      localAudioTrackRef.current = track;
-      await room.localParticipant.publishTrack(track);
-      console.log("✅ [MIC] LiveKit mic published");
+    pc.onconnectionstatechange = () => {
+      console.log("[WebRTC] Connection state:", pc.connectionState);
+    };
 
-      const ctx = await ensureAudioContext();
-      const source = ctx.createMediaStreamSource(
-        new MediaStream([track.mediaStreamTrack]),
-      );
-
-      // FIX: Reduced ScriptProcessor buffer from 2048 → 1024 samples.
-      const processor = ctx.createScriptProcessor(1024, 1, 1);
-      micProcessorRef.current = processor;
-      source.connect(processor);
-      processor.connect(ctx.destination);
-
-      // Reset gate so it re-calibrates fresh for this session
-      lkNoiseGateRef.current.reset();
-      console.log("🎙️ [LK-MIC] Starting adaptive noise calibration...");
-
-      let chunkCount = 0;
-
-      processor.onaudioprocess = (e) => {
-        // ── Guard: check all gate conditions and log why we're blocked ──
-        if (!micStreamingActiveRef.current) {
-          if (chunkCount % 500 === 0)
-            console.log("🔇 [LK-MIC] BLOCKED: micStreamingActive=false");
-          return;
-        }
-        if (!isListeningRef.current) {
-          if (chunkCount % 500 === 0)
-            console.log("🔇 [LK-MIC] BLOCKED: isListening=false");
-          return;
-        }
-        if (!canListenRef.current) {
-          if (chunkCount % 500 === 0)
-            console.log("🔇 [LK-MIC] BLOCKED: canListen=false");
-          return;
-        }
-        if (!socketRef.current?.connected) {
-          if (chunkCount % 500 === 0)
-            console.log("🔇 [LK-MIC] BLOCKED: socket disconnected");
-          return;
-        }
-
-        chunkCount++;
-        const input = e.inputBuffer.getChannelData(0);
-        const rms = getRMS(input);
-        const { send, reason } = lkNoiseGateRef.current.shouldSend(rms);
-
-        // Log every 100th chunk so you can track live RMS in the console
-        if (chunkCount % 100 === 0) {
-          const stats = lkNoiseGateRef.current.getStats();
-          console.log(
-            `🎙️ [LK-MIC] chunk #${chunkCount}`,
-            `| rms=${rms.toFixed(6)}`,
-            `| threshold=${stats.threshold.toFixed(6)}`,
-            `| decision=${send ? "✅ SEND" : "❌ DROP"} (${reason})`,
-            `| sent=${stats.chunksSent} trailing=${stats.chunksTrailing} dropped=${stats.chunksDropped}`,
-          );
-        }
-
-        if (send) {
-          socketRef.current.emit("user_audio_chunk", toPCM16(input).buffer);
-        }
-      };
-
-      if (audioRecording.connectMicrophoneAudio)
-        await audioRecording.connectMicrophoneAudio(track.mediaStreamTrack);
-
-      dispatch(setMicPermissionGranted(true));
-      dispatch(setMicStreamingActive(true));
-    } catch (err) {
-      console.error("❌ [MIC] publishLiveKitMic failed:", err.message);
-      localAudioTrackRef.current = null;
-    }
-  }, [audioRecording, dispatch, ensureAudioContext]);
-
-  const startSocketMicFallback = useCallback(
-    async (existingStream = null) => {
-      if (micStreamRef.current) return;
-      if (!socketRef.current?.connected) return;
+    pc.onnegotiationneeded = async () => {
       try {
-        const stream =
-          existingStream ||
-          (await navigator.mediaDevices.getUserMedia({
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        console.log(
+          "[WebRTC] Sending offer, tracks:",
+          pc
+            .getSenders()
+            .map((s) => s.track?.kind)
+            .join(", "),
+        );
+        socketRef.current?.emit("webrtc_offer", {
+          offer: pc.localDescription,
+          interviewId,
+          userId,
+        });
+      } catch (err) {
+        console.error("[WebRTC] onnegotiationneeded error:", err.message);
+      }
+    };
+
+    pc.ontrack = (event) => {
+      if (event.track.kind === "audio") {
+        const el = document.createElement("audio");
+        el.autoplay = true;
+        el.style.display = "none";
+        el.srcObject = new MediaStream([event.track]);
+        document.body.appendChild(el);
+      }
+    };
+
+    return pc;
+  }, [interviewId, userId]);
+
+  const publishCameraToWebRTC = useCallback(
+    (camStream) => {
+      if (!camStream) return;
+      const videoTrack = camStream.getVideoTracks()[0];
+      if (!videoTrack) {
+        console.error("[CAM] No video track found in cameraStream");
+        return;
+      }
+      if (localCameraTrackRef.current) {
+        console.log("[CAM] Camera track already published");
+        return;
+      }
+      const pc = setupWebRTCPeerConnection();
+      localCameraTrackRef.current = videoTrack;
+      pc.addTrack(videoTrack, camStream);
+      console.log("[WebRTC] Camera track added to peer connection");
+    },
+    [setupWebRTCPeerConnection],
+  );
+
+  const publishMicToWebRTC = useCallback(
+    async (micStreamOrTrack) => {
+      const pc = setupWebRTCPeerConnection();
+      const track =
+        micStreamOrTrack instanceof MediaStreamTrack
+          ? micStreamOrTrack
+          : micStreamOrTrack?.getAudioTracks()[0];
+      if (!track) {
+        console.error("[MIC] No audio track to publish");
+        return;
+      }
+      localMicTrackRef.current = track;
+      const stream =
+        micStreamOrTrack instanceof MediaStreamTrack
+          ? new MediaStream([track])
+          : micStreamOrTrack;
+      pc.addTrack(track, stream);
+      console.log("[WebRTC] Mic track added to peer connection");
+    },
+    [setupWebRTCPeerConnection],
+  );
+
+  const startMicStreaming = useCallback(
+    async (existingStream = null) => {
+      if (localMicTrackRef.current) {
+        console.log("[MIC] Already streaming");
+        return;
+      }
+      try {
+        let stream = existingStream;
+        if (!stream) {
+          stream = await navigator.mediaDevices.getUserMedia({
             audio: {
               echoCancellation: true,
               noiseSuppression: true,
-              channelCount: 1,
+              autoGainControl: true,
+              sampleRate: MIC_SAMPLE_RATE,
             },
-          }));
+          });
+        }
         micStreamRef.current = stream;
+
         dispatch(setMicPermissionGranted(true));
+
+        if (cameraStream) publishCameraToWebRTC(cameraStream);
+
+        await publishMicToWebRTC(stream);
 
         const ctx = await ensureAudioContext();
         const source = ctx.createMediaStreamSource(stream);
-
-        // FIX: Same 1024 buffer size for consistency
         const processor = ctx.createScriptProcessor(1024, 1, 1);
         micProcessorRef.current = processor;
         source.connect(processor);
         processor.connect(ctx.destination);
 
-        if (audioRecording.connectMicrophoneAudio)
-          await audioRecording.connectMicrophoneAudio(stream);
-
-        dispatch(setMicStreamingActive(true));
-
-        // Reset fallback gate so it calibrates fresh
-        fbNoiseGateRef.current.reset();
-        console.log("🎙️ [FB-MIC] Starting adaptive noise calibration...");
-
-        let chunkCount = 0;
+        noiseGateRef.current.reset();
 
         processor.onaudioprocess = (e) => {
-          // ── Guard: check all gate conditions and log why we're blocked ──
-          if (!micStreamingActiveRef.current) {
-            if (chunkCount % 500 === 0)
-              console.log("🔇 [FB-MIC] BLOCKED: micStreamingActive=false");
-            return;
-          }
-          if (!isListeningRef.current) {
-            if (chunkCount % 500 === 0)
-              console.log("🔇 [FB-MIC] BLOCKED: isListening=false");
-            return;
-          }
-          if (!canListenRef.current) {
-            if (chunkCount % 500 === 0)
-              console.log("🔇 [FB-MIC] BLOCKED: canListen=false");
-            return;
-          }
-          if (!socketRef.current?.connected) {
-            if (chunkCount % 500 === 0)
-              console.log("🔇 [FB-MIC] BLOCKED: socket disconnected");
-            return;
-          }
+          if (!micStreamingActiveRef.current) return;
+          if (!isListeningRef.current) return;
+          if (!canListenRef.current) return;
+          if (!socketRef.current?.connected) return;
 
-          chunkCount++;
           const input = e.inputBuffer.getChannelData(0);
           const rms = getRMS(input);
-          const { send, reason } = fbNoiseGateRef.current.shouldSend(rms);
-
-          // Log every 100th chunk
-          if (chunkCount % 100 === 0) {
-            const stats = fbNoiseGateRef.current.getStats();
-            console.log(
-              `🎙️ [FB-MIC] chunk #${chunkCount}`,
-              `| rms=${rms.toFixed(6)}`,
-              `| threshold=${stats.threshold.toFixed(6)}`,
-              `| decision=${send ? "✅ SEND" : "❌ DROP"} (${reason})`,
-              `| sent=${stats.chunksSent} trailing=${stats.chunksTrailing} dropped=${stats.chunksDropped}`,
-            );
-          }
+          const { send } = noiseGateRef.current.shouldSend(rms);
 
           if (send) {
             socketRef.current.emit("user_audio_chunk", toPCM16(input).buffer);
           }
         };
 
-        console.log(
-          "✅ [FALLBACK] Socket mic PCM active at",
-          ctx.sampleRate + "Hz",
-        );
-      } catch (err) {
-        console.error(
-          "❌ [FALLBACK] startSocketMicFallback failed:",
-          err.message,
-        );
-      }
-    },
-    [dispatch, audioRecording, ensureAudioContext],
-  );
-
-  const startMicStreaming = useCallback(
-    async (existingStream = null) => {
-      const currentRoom = livekitRoomRef.current || _room;
-      if (currentRoom) {
-        await publishLiveKitMic();
-        return;
-      }
-      if (_joinPromise) {
-        try {
-          await Promise.race([
-            _joinPromise,
-            new Promise((_, r) =>
-              setTimeout(() => r(new Error("timeout")), 8_000),
-            ),
-          ]);
-          if (livekitRoomRef.current || _room) {
-            await publishLiveKitMic();
-            return;
-          }
-        } catch (_) {}
-      }
-      try {
-        await Promise.race([
-          lkReadyPromiseRef.current,
-          new Promise((_, r) =>
-            setTimeout(() => r(new Error("lkReady timeout (35s)")), 35_000),
-          ),
-        ]);
-        if (livekitRoomRef.current || _room) {
-          await publishLiveKitMic();
-          return;
+        if (audioRecording.connectMicrophoneAudio) {
+          await audioRecording.connectMicrophoneAudio(stream);
         }
+
+        dispatch(setMicStreamingActive(true));
+        console.log("[MIC] Streaming active at", ctx.sampleRate + "Hz");
       } catch (err) {
-        console.warn(
-          "⚠️ [MIC] lkReady timed out — falling back to socket PCM:",
-          err.message,
-        );
+        console.error("[MIC] startMicStreaming failed:", err.message);
       }
-      await startSocketMicFallback(existingStream);
     },
-    [publishLiveKitMic, startSocketMicFallback],
+    [
+      audioRecording,
+      cameraStream,
+      dispatch,
+      ensureAudioContext,
+      publishCameraToWebRTC,
+      publishMicToWebRTC,
+    ],
   );
 
-  // ── autoStartInterview ─────────────────────────────────────────────────────
   const autoStartInterview = useCallback(
     async (existingMicStream = null) => {
       if (hasStartedRef.current) return;
@@ -888,9 +567,9 @@ export const useInterview = (interviewId, userId, cameraStream) => {
           return;
         }
         dispatch(setHasStarted(true));
-        console.log("✅ [START] Interview started");
+        console.log("[START] Interview started");
       } catch (err) {
-        console.error("❌ [START] autoStartInterview failed:", err.message);
+        console.error("[START] autoStartInterview failed:", err.message);
         hasStartedRef.current = false;
         dispatch(setHasStarted(false));
       }
@@ -898,74 +577,89 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch, ensureAudioContext, startMicStreaming],
   );
 
-  // ── handleLiveKitToken ─────────────────────────────────────────────────────
-  const handleLiveKitToken = useCallback(
-    async ({ token, url }) => {
-      console.log("🔑 [TOKEN] handleLiveKitToken called");
-      console.log("  url:", url);
-      console.log("  token (first 30):", token?.slice?.(0, 30));
-      console.log("  _room (singleton):", _room ? "EXISTS" : "null");
-      console.log("  _joinPromise:", _joinPromise ? "in-flight" : "null");
+  const handleWebRTCAnswer = useCallback(async ({ answer }) => {
+    if (!pcRef.current) return;
 
-      if (typeof token !== "string" || !token.startsWith("ey")) {
-        console.error("❌ [TOKEN] Invalid token received");
-        return;
-      }
-
-      if (_room) {
-        console.log("ℹ️ [TOKEN] Room already exists — skipping join");
-        livekitRoomRef.current = _room;
-        lkReadyResolveRef.current?.();
-        return;
-      }
-      if (_joinPromise) {
-        console.log(
-          "ℹ️ [TOKEN] Join already in progress — awaiting shared promise",
-        );
-        try {
-          await _joinPromise;
-        } catch (_) {}
-        return;
-      }
-
-      console.log("🔌 [TOKEN] Initiating joinLiveKitRoom...");
-      joinLiveKitRoom(url, token).catch((err) =>
-        console.error("❌ [TOKEN] joinLiveKitRoom failed:", err.message),
+    // Ignore duplicate answers — server may emit via both direct socket and Redis poll
+    if (remoteDescriptionSetRef.current) {
+      console.warn(
+        "[WebRTC] Duplicate webrtc_answer received — ignoring (already set)",
       );
-    },
-    [joinLiveKitRoom],
-  );
+      return;
+    }
 
-  // ── Listening ──────────────────────────────────────────────────────────────
+    // Only accept answer when PC is in the correct state
+    if (pcRef.current.signalingState !== "have-local-offer") {
+      console.warn(
+        `[WebRTC] Ignoring answer — wrong signalingState: ${pcRef.current.signalingState}`,
+      );
+      return;
+    }
+
+    try {
+      remoteDescriptionSetRef.current = true;
+      await pcRef.current.setRemoteDescription(
+        new RTCSessionDescription(answer),
+      );
+      console.log("[WebRTC] Remote description set");
+    } catch (err) {
+      remoteDescriptionSetRef.current = false;
+      console.error("[WebRTC] setRemoteDescription failed:", err.message);
+    }
+  }, []);
+
+  const handleWebRTCIceCandidate = useCallback(async ({ candidate }) => {
+    if (!pcRef.current || !candidate) return;
+    try {
+      await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (err) {
+      console.warn("[WebRTC] addIceCandidate:", err.message);
+    }
+  }, []);
+
   const enableListeningImmediate = useCallback(() => {
     isListeningRef.current = true;
     canListenRef.current = true;
     dispatch(enableListening());
-    console.log("👂 [LISTEN] Listening ENABLED — gate will now pass chunks");
   }, [dispatch]);
 
   const disableListeningImmediate = useCallback(() => {
     isListeningRef.current = false;
     canListenRef.current = false;
     dispatch(disableListening());
-    console.log("🔇 [LISTEN] Listening DISABLED — all chunks will be blocked");
   }, [dispatch]);
 
-  // ── Cleanup ────────────────────────────────────────────────────────────────
+  const cleanupWebRTC = useCallback(() => {
+    if (pcRef.current) {
+      pcRef.current.close();
+      pcRef.current = null;
+    }
+    if (micProcessorRef.current) {
+      try {
+        micProcessorRef.current.disconnect();
+      } catch (_) {}
+      micProcessorRef.current = null;
+    }
+    localMicTrackRef.current = null;
+    localCameraTrackRef.current = null;
+    remoteDescriptionSetRef.current = false;
+  }, []);
+
   useEffect(() => {
     return () => {
-      console.log("🧹 [CLEANUP] useInterview unmounting...");
       resetTTS();
+      cleanupWebRTC();
     };
-  }, [resetTTS]);
+  }, [resetTTS, cleanupWebRTC]);
 
   return {
     ...interview,
     socketRef,
     audioCtxRef,
     micStreamRef,
-    livekitRoomRef,
-    handleLiveKitToken,
+    pcRef,
+    handleWebRTCAnswer,
+    handleWebRTCIceCandidate,
     handleQuestion,
     handleNextQuestion,
     handleIdlePrompt,
@@ -985,13 +679,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     disableListening: disableListeningImmediate,
     setMicStreamingActive: (v) => dispatch(setMicStreamingActive(v)),
     initializeInterview: (d) => dispatch(initializeInterview(d)),
-    resetLiveKitSingleton: _resetSingleton,
-    // Expose gate stats for debugging in DevTools:
-    // const { getNoiseGateStats } = useInterview(...)
-    // console.log(getNoiseGateStats()) → { livekit: {...}, fallback: {...} }
-    getNoiseGateStats: () => ({
-      livekit: lkNoiseGateRef.current.getStats(),
-      fallback: fbNoiseGateRef.current.getStats(),
-    }),
+    cleanupWebRTC,
+    getNoiseGateStats: () => noiseGateRef.current.getStats(),
   };
 };

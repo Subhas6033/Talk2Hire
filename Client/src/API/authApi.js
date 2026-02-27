@@ -141,9 +141,6 @@ const defaultState = () => ({
   lastVerified: null,
 });
 
-// Sessions verified within the last 5 minutes are considered fresh.
-// This prevents a race where getCurrentUser rejects and wipes a user
-// who just registered/logged in moments ago.
 const SESSION_GRACE_MS = 5 * 60 * 1000;
 
 const isRecentSession = (lastVerified) =>
@@ -178,7 +175,6 @@ const authSlice = createSlice({
 
   extraReducers: (builder) => {
     builder
-      // REGISTER
       .addCase(registerUser.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -197,7 +193,6 @@ const authSlice = createSlice({
         state.hydrated = true;
       })
 
-      // GET CV SKILLS
       .addCase(getCVSkills.pending, (state) => {
         state.loading = true;
       })
@@ -215,7 +210,6 @@ const authSlice = createSlice({
         state.loading = false;
       })
 
-      // LOGIN
       .addCase(loginUser.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -234,7 +228,6 @@ const authSlice = createSlice({
         state.hydrated = true;
       })
 
-      // LOGOUT
       .addCase(logoutUser.pending, (state) => {
         state.loading = true;
       })
@@ -247,13 +240,13 @@ const authSlice = createSlice({
         localStorage.removeItem("authState");
       })
 
-      // GET CURRENT USER
       .addCase(getCurrentUser.pending, (state) => {
         state.loading = true;
       })
       .addCase(getCurrentUser.fulfilled, (state, action) => {
         state.loading = false;
-        state.user = action.payload.data;
+        // Merge instead of replace — preserves fields not returned by this endpoint
+        state.user = { ...state.user, ...action.payload.data };
         state.isAuthenticated = true;
         state.hydrated = true;
         state.lastVerified = Date.now();
@@ -263,12 +256,6 @@ const authSlice = createSlice({
         state.loading = false;
         state.hydrated = true;
 
-        // Only clear the session on a confirmed 401.
-        // If the request fails for any other reason (network, 500, etc.)
-        // we keep the existing session intact.
-        // Additionally, if the session was verified very recently (e.g. right
-        // after registration), we don't clear it — the cookie is valid even
-        // if this verification call failed due to a race condition.
         const is401 = action.payload?.status === 401;
         const isRecent = isRecentSession(state.lastVerified);
 
@@ -280,7 +267,6 @@ const authSlice = createSlice({
         }
       })
 
-      // UPDATE USER
       .addCase(updateUser.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -288,6 +274,7 @@ const authSlice = createSlice({
       .addCase(updateUser.fulfilled, (state, action) => {
         state.loading = false;
         if (state.user) {
+          // Merge so no existing fields are lost
           state.user = { ...state.user, ...action.payload.data };
           saveAuthState(state.user, state.isAuthenticated);
         }

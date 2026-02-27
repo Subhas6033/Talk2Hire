@@ -29,7 +29,7 @@ function createTTSStream() {
         onChunk?.(chunk);
       }
     } catch (err) {
-      console.error("❌ TTS speakStream error:", err.message);
+      console.error("TTS speakStream error:", err.message);
     } finally {
       onChunk?.(null);
       resolveDone();
@@ -60,7 +60,7 @@ function createTTSStream() {
       try {
         body = await res.text();
       } catch (_) {}
-      console.error(`❌ Deepgram TTS HTTP ${res.status}:`, body.slice(0, 200));
+      console.error(`Deepgram TTS HTTP ${res.status}:`, body.slice(0, 200));
       return chunks;
     }
 
@@ -71,7 +71,7 @@ function createTTSStream() {
         body = await res.text();
       } catch (_) {}
       console.error(
-        "❌ Deepgram TTS returned JSON (not audio):",
+        "Deepgram TTS returned JSON instead of audio:",
         body.slice(0, 200),
       );
       return chunks;
@@ -83,22 +83,18 @@ function createTTSStream() {
       try {
         ({ done, value } = await reader.read());
       } catch (e) {
-        console.error("❌ TTS read error:", e);
+        console.error("TTS read error:", e);
         break;
       }
       if (done) break;
       if (!value?.length) continue;
       const chunk = Buffer.from(value);
       if (chunks.length === 0)
-        console.log(
-          `🔊 TTS first chunk: ${Date.now() - t0}ms  ${chunk.length}b`,
-        );
+        console.log(`TTS first chunk: ${Date.now() - t0}ms  ${chunk.length}b`);
       chunks.push(chunk);
     }
 
-    console.log(
-      `🔊 TTS fetched: ${chunks.length} chunks  ${Date.now() - t0}ms`,
-    );
+    console.log(`TTS fetched: ${chunks.length} chunks  ${Date.now() - t0}ms`);
     return chunks;
   }
 

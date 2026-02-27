@@ -19,7 +19,6 @@ export const useAuth = () => {
   );
 
   return {
-    // State
     user,
     isAuthenticated,
     loading,
@@ -27,7 +26,6 @@ export const useAuth = () => {
     hydrated,
     role: user?.role ?? "guest",
 
-    // Async actions
     registerUser: (data) => dispatch(registerUser(data)),
     login: (data) => dispatch(loginUser(data)),
     logout: () => dispatch(logoutUser()),
@@ -35,7 +33,6 @@ export const useAuth = () => {
     getCurrentUser: () => dispatch(getCurrentUser()),
     getCVSkills: () => dispatch(getCVSkills()),
 
-    // Sync actions
     clearError: () => dispatch(clearError()),
     updateUserLocal: (data) => dispatch(updateUserLocal(data)),
     clearSession: () => dispatch(clearSession()),
