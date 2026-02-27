@@ -1,18 +1,3 @@
-// Config/redis.config.js
-// ─────────────────────────────────────────────────────────────────────────────
-// ECONNREFUSED means Redis is not running on the configured host:port.
-//
-// To start Redis on your machine:
-//   sudo systemctl start redis-server        (if installed via apt)
-//   redis-server --port 6380 --requirepass "Subhas@6866" --daemonize yes
-//
-// To make it start automatically on boot:
-//   sudo systemctl enable redis-server
-//
-// To verify it's running:
-//   redis-cli -p 6380 -a "Subhas@6866" ping   → should return PONG
-// ─────────────────────────────────────────────────────────────────────────────
-
 const Redis = require("ioredis");
 require("dotenv").config();
 const REDIS_HOST = process.env.REDIS_HOST || "127.0.0.1";
@@ -23,14 +8,12 @@ const REDIS_DB = parseInt(process.env.REDIS_DB || "0");
 const redis = new Redis({
   host: REDIS_HOST,
   port: REDIS_PORT,
-  // Only set password if provided — passing an empty string causes AUTH
-  // errors on password-less Redis instances
+
   ...(REDIS_PASSWORD ? { password: REDIS_PASSWORD } : {}),
   db: REDIS_DB,
 
   // ── Reconnection strategy ─────────────────────────────────────────────────
-  // Exponential backoff: 200ms → 400ms → ... → 10s, max 20 attempts.
-  // Returns null to stop retrying (avoids infinite log spam when Redis is down).
+
   retryStrategy(times) {
     if (times > 20) {
       console.error(
@@ -43,7 +26,6 @@ const redis = new Redis({
     return delay;
   },
 
-  // Queue commands sent while offline and replay once reconnected
   enableOfflineQueue: true,
 
   // Don't give up on individual commands while disconnected
