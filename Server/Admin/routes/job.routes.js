@@ -18,6 +18,7 @@ const {
 } = require("../../Middlewares/auth.middlewares.js");
 
 router.get("/public-jobs", getPublicJobs).get("/public/:id", getPublicJobById);
+
 router
   .get("/counts", authMiddleware, companyAuthMiddleware, getJobCounts)
 
