@@ -18,7 +18,6 @@ import {
   InterviewDashboard,
   Profile,
   VerifyPassword,
-  Hire,
   MobileCameraPage,
   RegistrationForm,
   InterviewLive,
@@ -30,6 +29,8 @@ import {
   UserJob,
   UserJobDetail,
   CompanyProfile,
+  AppliedJobs,
+  SavedJobs,
 } from "./Pages/index.pages.js";
 import { InterviewSetup } from "./Components/index.js";
 import { useStreams } from "./Hooks/streamContext";
@@ -98,7 +99,6 @@ const App = () => {
                 <Route path="/privacy" element={<Privacy />} />
                 <Route path="/terms" element={<Terms />} />
                 <Route path="/contact" element={<Contact />} />
-                <Route path="/hire" element={<Hire />} />
                 <Route path="/verify-password" element={<VerifyPassword />} />
 
                 <Route
@@ -183,7 +183,22 @@ const App = () => {
                     </RoleBasedRoute>
                   }
                 />
-
+                <Route
+                  path="/applications"
+                  element={
+                    <RoleBasedRoute allowedRole="user">
+                      <AppliedJobs />
+                    </RoleBasedRoute>
+                  }
+                />
+                <Route
+                  path="/saved"
+                  element={
+                    <RoleBasedRoute allowedRole="user">
+                      <SavedJobs />
+                    </RoleBasedRoute>
+                  }
+                />
                 {/* COMPANY ONLY ROUTES */}
                 <Route
                   path="/company/dashboard"

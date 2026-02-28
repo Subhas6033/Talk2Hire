@@ -19,6 +19,9 @@ const IS_MOBILE =
 const SCREEN_SHARE_SUPPORTED =
   !IS_MOBILE && !!navigator.mediaDevices?.getDisplayMedia;
 
+const MIC_REQUIRED_MS = 1000;
+const MIC_SILENCE_TIMEOUT_MS = 3000; // show warning after 3s of silence
+
 const quotes = [
   "Success usually comes to those who are too busy improving themselves to be distracted by doubt or fear.",
   "Discipline is choosing between what you want now and what you want most in the long run.",
@@ -34,12 +37,14 @@ const quotes = [
 
 const getQuote = () => quotes[Math.floor(Math.random() * quotes.length)];
 
+// ─── Sub-components (white theme) ────────────────────────────
+
 const StatusIcon = ({ status }) => {
   if (status === true)
     return (
-      <div className="w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">
+      <div className="w-6 h-6 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center shrink-0">
         <svg
-          className="w-3.5 h-3.5 text-emerald-400"
+          className="w-3.5 h-3.5 text-emerald-600"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -55,15 +60,15 @@ const StatusIcon = ({ status }) => {
     );
   if (["connecting", "waiting", "starting"].includes(status))
     return (
-      <div className="w-6 h-6 rounded-full bg-violet-500/20 border border-violet-500/40 flex items-center justify-center shrink-0">
-        <div className="animate-spin w-3 h-3 border-2 border-violet-400/30 border-t-violet-400 rounded-full" />
+      <div className="w-6 h-6 rounded-full bg-indigo-100 border border-indigo-200 flex items-center justify-center shrink-0">
+        <div className="animate-spin w-3 h-3 border-2 border-indigo-200 border-t-indigo-500 rounded-full" />
       </div>
     );
   if (["skipped", "optional", "na"].includes(status))
     return (
-      <div className="w-6 h-6 rounded-full bg-slate-700/60 border border-slate-600/40 flex items-center justify-center shrink-0">
+      <div className="w-6 h-6 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
         <svg
-          className="w-3 h-3 text-slate-500"
+          className="w-3 h-3 text-gray-400"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -78,19 +83,19 @@ const StatusIcon = ({ status }) => {
       </div>
     );
   return (
-    <div className="w-6 h-6 rounded-full bg-slate-800 border border-slate-700/60 shrink-0" />
+    <div className="w-6 h-6 rounded-full bg-gray-100 border border-gray-200 shrink-0" />
   );
 };
 
 const LiveBadge = ({ color = "green", label }) => {
   const colorMap = {
-    green: "bg-emerald-500/90",
-    orange: "bg-orange-500/90",
-    violet: "bg-violet-500/90",
+    green: "bg-emerald-500",
+    orange: "bg-orange-500",
+    violet: "bg-indigo-500",
   };
   return (
     <div
-      className={`flex items-center gap-1.5 px-2.5 py-1 ${colorMap[color]} backdrop-blur-sm rounded-md`}
+      className={`flex items-center gap-1.5 px-2.5 py-1 ${colorMap[color]} rounded-md`}
     >
       <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
       <span className="text-white text-[10px] font-bold tracking-widest">
@@ -100,16 +105,16 @@ const LiveBadge = ({ color = "green", label }) => {
   );
 };
 
-const Spinner = ({ size = "md", color = "violet" }) => {
+const Spinner = ({ size = "md", color = "indigo" }) => {
   const sizeMap = {
     sm: "w-3.5 h-3.5 border-2",
     md: "w-5 h-5 border-2",
     lg: "w-8 h-8 border-[3px]",
   };
   const colorMap = {
-    violet: "border-violet-400/30 border-t-violet-400",
-    blue: "border-blue-400/30 border-t-blue-400",
-    orange: "border-orange-500/30 border-t-orange-500",
+    indigo: "border-indigo-200 border-t-indigo-500",
+    blue: "border-blue-200 border-t-blue-500",
+    orange: "border-orange-200 border-t-orange-500",
   };
   return (
     <div
@@ -139,9 +144,9 @@ const StepHeaderIcon = ({ num }) => {
     7: "M13 10V3L4 14h7v7l9-11h-7z",
   };
   return (
-    <div className="w-11 h-11 rounded-xl bg-violet-500/15 border border-violet-500/25 flex items-center justify-center shrink-0">
+    <div className="w-11 h-11 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-center shrink-0">
       <svg
-        className="w-5 h-5 text-violet-400"
+        className="w-5 h-5 text-indigo-500"
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
@@ -158,14 +163,14 @@ const StepHeaderIcon = ({ num }) => {
 };
 
 const ContinueBtn = ({ onClick, disabled = false, children, hint }) => (
-  <div className="flex items-center gap-4 mt-7">
+  <div className="flex flex-wrap items-center gap-4 mt-7">
     <button
       onClick={onClick}
       disabled={disabled}
       className={`flex items-center gap-2.5 px-7 h-11 rounded-xl font-semibold text-sm transition-all duration-200 ${
         disabled
-          ? "bg-slate-800 text-slate-600 cursor-not-allowed border border-slate-700/50"
-          : "bg-violet-600 hover:bg-violet-500 text-white shadow-lg shadow-violet-500/25 cursor-pointer"
+          ? "bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200"
+          : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-200 cursor-pointer"
       }`}
     >
       {children}
@@ -186,9 +191,9 @@ const ContinueBtn = ({ onClick, disabled = false, children, hint }) => (
       )}
     </button>
     {hint && !disabled && (
-      <span className="text-slate-500 text-sm">
+      <span className="text-gray-400 text-sm">
         or press{" "}
-        <kbd className="px-2 py-0.5 bg-slate-800 border border-slate-700 rounded-md text-slate-400 text-xs font-mono">
+        <kbd className="px-2 py-0.5 bg-gray-100 border border-gray-200 rounded-md text-gray-500 text-xs font-mono">
           {hint}
         </kbd>
       </span>
@@ -197,10 +202,10 @@ const ContinueBtn = ({ onClick, disabled = false, children, hint }) => (
 );
 
 const CheckRow = ({ children }) => (
-  <div className="flex items-center gap-4 px-5 py-3.5 bg-slate-900/70 border border-slate-800/80 rounded-xl">
-    <div className="w-5 h-5 rounded-full border-2 border-violet-500 bg-violet-500/20 flex items-center justify-center shrink-0">
+  <div className="flex items-center gap-4 px-5 py-3.5 bg-gray-50 border border-gray-200 rounded-xl">
+    <div className="w-5 h-5 rounded-full border-2 border-indigo-500 bg-indigo-50 flex items-center justify-center shrink-0">
       <svg
-        className="w-3 h-3 text-violet-400"
+        className="w-3 h-3 text-indigo-600"
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
@@ -213,7 +218,7 @@ const CheckRow = ({ children }) => (
         />
       </svg>
     </div>
-    <span className="text-slate-300 text-sm">{children}</span>
+    <span className="text-gray-700 text-sm">{children}</span>
   </div>
 );
 
@@ -233,6 +238,7 @@ const slideVariants = {
   },
 };
 
+// ─── Main Component ───────────────────────────────────────────
 const InterviewSetup = () => {
   const navigate = useNavigate();
   const dispatch = useDispatch();
@@ -258,8 +264,10 @@ const InterviewSetup = () => {
   const [micLevel, setMicLevel] = useState(0);
   const [isMicTesting, setIsMicTesting] = useState(false);
   const [micConfirmed, setMicConfirmed] = useState(false);
+  const [micSilenceWarning, setMicSilenceWarning] = useState(false); // ← new
   const speakingStartRef = useRef(null);
-  const MIC_REQUIRED_MS = 1000;
+  const lastSoundTimeRef = useRef(null); // ← new: tracks last time sound was detected
+  const silenceTimerRef = useRef(null); // ← new: debounce timer for silence warning
 
   const [primaryCameraStream, setPrimaryCameraStream] = useState(null);
   const [primaryCameraError, setPrimaryCameraError] = useState(null);
@@ -267,8 +275,6 @@ const InterviewSetup = () => {
   const [screenShareStream, setScreenShareStream] = useState(null);
   const [screenShareError, setScreenShareError] = useState(null);
   const screenShareStreamRef = useRef(null);
-
-  // tracks step-6 socket connection failure to block the Continue button
   const [socketConnectionFailed, setSocketConnectionFailed] = useState(false);
 
   const [initProgress, setInitProgress] = useState({
@@ -308,7 +314,6 @@ const InterviewSetup = () => {
     ((currentStep - 1) / (STEPS.length - 1)) * 100,
   );
 
-  // Enter key shortcut — blocked entirely when an error is visible
   useEffect(() => {
     const handler = (e) => {
       if (e.key !== "Enter") return;
@@ -358,14 +363,12 @@ const InterviewSetup = () => {
             "Failed to generate questions. Please go back and try again.",
           );
           questionStartedRef.current = false;
-          // send user back to step 1 so they can retry
           setCurrentStep(1);
         })
         .finally(() => setIsGeneratingQuestions(false));
     }
   };
 
-  // blocked if question generation failed (error present) or is still in-flight
   const handleAcceptGuidelines = () => {
     if (error || (!questionsReady && !isGeneratingQuestions)) {
       setError(
@@ -381,6 +384,10 @@ const InterviewSetup = () => {
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
+    }
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
     }
     micTestCleanupRef.current = true;
     analyserRef.current = null;
@@ -424,7 +431,10 @@ const InterviewSetup = () => {
       setIsMicTesting(true);
       setCurrentQuote(getQuote());
       setError(null);
+      setMicSilenceWarning(false);
       micTestCleanupRef.current = false;
+      lastSoundTimeRef.current = Date.now(); // initialise so the timer starts fresh
+
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -433,29 +443,57 @@ const InterviewSetup = () => {
         },
       });
       setMicStream(stream);
+
       if (!audioContextRef.current)
         audioContextRef.current = new (
           window.AudioContext || window.webkitAudioContext
         )();
       const audioContext = audioContextRef.current;
       if (audioContext.state === "suspended") await audioContext.resume();
+
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 256;
       analyserRef.current = analyser;
       const source = audioContext.createMediaStreamSource(stream);
       source.connect(analyser);
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
       const updateLevel = () => {
         if (!analyserRef.current || micTestCleanupRef.current) return;
         analyser.getByteFrequencyData(dataArray);
         const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
         const next = Math.min(100, (avg / 128) * 100);
         setMicLevel(next);
+
         if (next > 10) {
+          // Sound detected — reset silence tracking
+          lastSoundTimeRef.current = Date.now();
+          setMicSilenceWarning(false);
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current);
+            silenceTimerRef.current = null;
+          }
+
           if (!speakingStartRef.current) speakingStartRef.current = Date.now();
           else if (Date.now() - speakingStartRef.current >= MIC_REQUIRED_MS)
             setMicConfirmed(true);
-        } else speakingStartRef.current = null;
+        } else {
+          // Silence — start/check silence timer
+          speakingStartRef.current = null;
+          const silentFor =
+            Date.now() - (lastSoundTimeRef.current || Date.now());
+          if (
+            silentFor >= MIC_SILENCE_TIMEOUT_MS &&
+            !micTestCleanupRef.current
+          ) {
+            setMicSilenceWarning(true);
+          } else if (!silenceTimerRef.current && !micTestCleanupRef.current) {
+            silenceTimerRef.current = setTimeout(() => {
+              if (!micTestCleanupRef.current) setMicSilenceWarning(true);
+            }, MIC_SILENCE_TIMEOUT_MS);
+          }
+        }
+
         animationFrameRef.current = requestAnimationFrame(updateLevel);
       };
       updateLevel();
@@ -522,7 +560,6 @@ const InterviewSetup = () => {
 
   useEffect(() => {
     if (currentStep !== 6) return;
-    // reset socket error state each time step 6 is entered
     setSocketConnectionFailed(false);
     setError(null);
     let socket = null;
@@ -750,6 +787,7 @@ const InterviewSetup = () => {
       }
       if (animationFrameRef.current)
         cancelAnimationFrame(animationFrameRef.current);
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       if (micStream) micStream.getTracks().forEach((t) => t.stop());
       if (primaryCameraStream)
         primaryCameraStream.getTracks().forEach((t) => t.stop());
@@ -760,31 +798,52 @@ const InterviewSetup = () => {
     };
   }, []); // eslint-disable-line
 
+  // ─── Render ────────────────────────────────────────────────
   return (
-    <div
-      className="fixed inset-0 flex overflow-hidden"
-      style={{
-        background:
-          "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(124,58,237,0.10) 0%, transparent 65%), #020617",
-      }}
-    >
-      <aside className="hidden lg:flex flex-col w-60 shrink-0 border-r border-slate-800/80 bg-[#0a0d16]/80">
-        <div className="flex-1 flex flex-col justify-center px-4 py-8 gap-0.5">
+    <div className="fixed inset-0 flex overflow-hidden bg-gray-50">
+      {/* ── Sidebar ── */}
+      <aside className="hidden lg:flex flex-col w-64 shrink-0 border-r border-gray-200 bg-white">
+        <div className="px-5 py-6 border-b border-gray-100">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center">
+              <svg
+                className="w-4 h-4 text-white"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M13 10V3L4 14h7v7l9-11h-7z"
+                />
+              </svg>
+            </div>
+            <span className="font-bold text-gray-900 text-sm">
+              Interview Setup
+            </span>
+          </div>
+        </div>
+
+        <div className="flex-1 flex flex-col justify-center px-4 py-6 gap-0.5">
           {STEPS.map((step) => {
             const done = currentStep > step.num;
             const active = currentStep === step.num;
             return (
               <div
                 key={step.num}
-                className={`flex items-center gap-3 px-3.5 py-3 rounded-2xl transition-all duration-200 ${active ? "bg-slate-800/90 border border-slate-700/50" : ""}`}
+                className={`flex items-center gap-3 px-3.5 py-3 rounded-xl transition-all duration-200 ${
+                  active ? "bg-indigo-50 border border-indigo-100" : ""
+                }`}
               >
                 <div
                   className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-all duration-300 ${
                     done
-                      ? "bg-emerald-500 text-white shadow-sm shadow-emerald-500/40"
+                      ? "bg-emerald-500 text-white"
                       : active
-                        ? "bg-violet-600 text-white ring-2 ring-violet-500/30 ring-offset-2 ring-offset-[#0a0d16]"
-                        : "bg-slate-800/80 text-slate-600 border border-slate-700/50"
+                        ? "bg-indigo-600 text-white ring-2 ring-indigo-200 ring-offset-2"
+                        : "bg-gray-100 text-gray-400 border border-gray-200"
                   }`}
                 >
                   {done ? (
@@ -807,12 +866,20 @@ const InterviewSetup = () => {
                 </div>
                 <div className="flex flex-col min-w-0">
                   <span
-                    className={`text-sm font-semibold leading-tight transition-colors ${active ? "text-white" : done ? "text-emerald-400" : "text-slate-500"}`}
+                    className={`text-sm font-semibold leading-tight transition-colors ${
+                      active
+                        ? "text-indigo-700"
+                        : done
+                          ? "text-emerald-600"
+                          : "text-gray-400"
+                    }`}
                   >
                     {step.label}
                   </span>
                   <span
-                    className={`text-[11px] leading-tight mt-0.5 transition-colors ${active ? "text-slate-400" : "text-slate-600"}`}
+                    className={`text-[11px] leading-tight mt-0.5 transition-colors ${
+                      active ? "text-indigo-400" : "text-gray-400"
+                    }`}
                   >
                     {step.sub}
                   </span>
@@ -822,41 +889,66 @@ const InterviewSetup = () => {
           })}
         </div>
 
-        <div className="px-4 py-5 border-t border-slate-800/70">
+        <div className="px-4 py-5 border-t border-gray-100">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-slate-500 text-xs font-medium">
+            <span className="text-gray-400 text-xs font-medium">
               Setup Progress
             </span>
-            <span className="text-violet-400 text-xs font-bold">
+            <span className="text-indigo-600 text-xs font-bold">
               {progressPct}%
             </span>
           </div>
-          <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden">
+          <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
             <div
-              className="h-full rounded-full bg-linear-to-r from-violet-600 to-violet-400 transition-all duration-500 ease-out"
+              className="h-full rounded-full bg-indigo-500 transition-all duration-500 ease-out"
               style={{ width: `${progressPct}%` }}
             />
           </div>
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <div className="lg:hidden flex items-center justify-between px-5 py-4 border-b border-slate-800/70 shrink-0">
-          <span className="text-white text-sm font-semibold">
-            Interview Setup
-          </span>
-          <div className="flex items-center gap-1.5">
+      {/* ── Main ── */}
+      <main className="flex-1 flex flex-col overflow-hidden bg-gray-50">
+        {/* Mobile top bar */}
+        <div className="lg:hidden flex items-center justify-between px-4 py-3.5 border-b border-gray-200 bg-white shrink-0">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center">
+              <svg
+                className="w-3.5 h-3.5 text-white"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M13 10V3L4 14h7v7l9-11h-7z"
+                />
+              </svg>
+            </div>
+            <span className="text-gray-800 text-sm font-semibold">
+              Interview Setup
+            </span>
+          </div>
+          <div className="flex items-center gap-1">
             {STEPS.map((s) => (
               <div
                 key={s.num}
-                className={`h-1.5 rounded-full transition-all duration-300 ${currentStep === s.num ? "w-5 bg-violet-500" : currentStep > s.num ? "w-2 bg-emerald-500" : "w-2 bg-slate-700"}`}
+                className={`h-1.5 rounded-full transition-all duration-300 ${
+                  currentStep === s.num
+                    ? "w-5 bg-indigo-500"
+                    : currentStep > s.num
+                      ? "w-2 bg-emerald-500"
+                      : "w-2 bg-gray-200"
+                }`}
               />
             ))}
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          <div className="min-h-full flex items-center px-8 lg:px-14 xl:px-20 py-8">
+          <div className="min-h-full flex items-start sm:items-center px-5 sm:px-8 lg:px-14 xl:px-20 py-8">
             <div className="w-full max-w-4xl mx-auto">
               <AnimatePresence mode="wait" initial={false}>
                 <motion.div
@@ -866,24 +958,26 @@ const InterviewSetup = () => {
                   animate="animate"
                   exit="exit"
                 >
-                  <div className="flex items-center gap-3.5 mb-5">
+                  {/* Step header */}
+                  <div className="flex items-center gap-3.5 mb-6">
                     <StepHeaderIcon num={currentStep} />
                     <div>
-                      <p className="text-slate-500 text-xs font-semibold tracking-[0.15em] uppercase mb-0.5">
+                      <p className="text-gray-400 text-xs font-semibold tracking-[0.15em] uppercase mb-0.5">
                         Step {currentStep} of {STEPS.length}
                       </p>
-                      <h1 className="text-3xl font-bold text-white leading-tight tracking-tight">
+                      <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 leading-tight tracking-tight">
                         {STEPS[currentStep - 1].label}
                       </h1>
                     </div>
                   </div>
 
+                  {/* Generating banner */}
                   {currentStep > 1 &&
                     currentStep < 7 &&
                     isGeneratingQuestions && (
-                      <div className="mb-4 flex items-center gap-2.5 px-4 py-2.5 bg-blue-500/8 border border-blue-500/20 rounded-xl">
+                      <div className="mb-4 flex items-center gap-2.5 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl">
                         <Spinner size="sm" color="blue" />
-                        <p className="text-blue-300 text-xs font-medium">
+                        <p className="text-blue-600 text-xs font-medium">
                           Generating questions in background — continue freely
                         </p>
                       </div>
@@ -892,9 +986,9 @@ const InterviewSetup = () => {
                     currentStep < 7 &&
                     questionsReady &&
                     !isGeneratingQuestions && (
-                      <div className="mb-4 flex items-center gap-2 px-4 py-2.5 bg-emerald-500/8 border border-emerald-500/20 rounded-xl">
+                      <div className="mb-4 flex items-center gap-2 px-4 py-2.5 bg-emerald-50 border border-emerald-200 rounded-xl">
                         <svg
-                          className="w-3.5 h-3.5 text-emerald-400 shrink-0"
+                          className="w-3.5 h-3.5 text-emerald-600 shrink-0"
                           fill="none"
                           viewBox="0 0 24 24"
                           stroke="currentColor"
@@ -906,16 +1000,17 @@ const InterviewSetup = () => {
                             d="M5 13l4 4L19 7"
                           />
                         </svg>
-                        <p className="text-emerald-400 text-xs font-medium">
+                        <p className="text-emerald-700 text-xs font-medium">
                           Questions ready
                         </p>
                       </div>
                     )}
 
+                  {/* Global error */}
                   {error && (
-                    <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-red-500/8 border border-red-500/20 rounded-xl">
+                    <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
                       <svg
-                        className="w-4 h-4 text-red-400 mt-0.5 shrink-0"
+                        className="w-4 h-4 text-red-500 mt-0.5 shrink-0"
                         fill="none"
                         viewBox="0 0 24 24"
                         stroke="currentColor"
@@ -927,13 +1022,14 @@ const InterviewSetup = () => {
                           d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                         />
                       </svg>
-                      <p className="text-red-400 text-sm">{error}</p>
+                      <p className="text-red-600 text-sm">{error}</p>
                     </div>
                   )}
 
+                  {/* ── Step 1: Skills ── */}
                   {currentStep === 1 && (
                     <div>
-                      <p className="text-slate-400 text-base leading-relaxed mb-5">
+                      <p className="text-gray-500 text-base leading-relaxed mb-5">
                         {hasExistingSkills
                           ? "Your interview will be tailored to your configured skills shown below."
                           : "Choose the areas you'd like to be interviewed on. These will shape your questions."}
@@ -952,7 +1048,7 @@ const InterviewSetup = () => {
                           {user.skill.split(",").map((skill, idx) => (
                             <span
                               key={idx}
-                              className="px-3 py-1.5 bg-violet-500/15 border border-violet-500/30 rounded-lg text-violet-300 text-xs font-medium"
+                              className="px-3 py-1.5 bg-indigo-50 border border-indigo-200 rounded-lg text-indigo-700 text-xs font-medium"
                             >
                               {skill.trim()}
                             </span>
@@ -975,13 +1071,14 @@ const InterviewSetup = () => {
                     </div>
                   )}
 
+                  {/* ── Step 2: Guidelines ── */}
                   {currentStep === 2 && (
                     <div>
-                      <p className="text-slate-400 text-base leading-relaxed mb-5">
+                      <p className="text-gray-500 text-base leading-relaxed mb-5">
                         Please read and acknowledge the following before your
                         session begins.
                       </p>
-                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                         {[
                           "Ensure you're in a quiet, well-lit environment",
                           "Keep your face fully visible in the camera at all times",
@@ -992,7 +1089,6 @@ const InterviewSetup = () => {
                           <CheckRow key={idx}>{text}</CheckRow>
                         ))}
                       </div>
-                      {/* disabled when question generation failed or is still pending */}
                       <ContinueBtn
                         onClick={handleAcceptGuidelines}
                         disabled={
@@ -1005,23 +1101,25 @@ const InterviewSetup = () => {
                     </div>
                   )}
 
+                  {/* ── Step 3: Microphone ── */}
                   {currentStep === 3 && (
-                    <div className="max-w-2xl space-y-6">
+                    <div className="max-w-2xl space-y-5">
                       <div>
-                        <h2 className="text-xl font-semibold text-white">
+                        <h2 className="text-xl font-semibold text-gray-900">
                           Microphone Check
                         </h2>
-                        <p className="text-slate-400 text-sm mt-1">
+                        <p className="text-gray-500 text-sm mt-1">
                           Speak clearly for at least {MIC_REQUIRED_MS / 1000}{" "}
-                          second to confirm your microphone is working properly.
+                          second to confirm your microphone is working.
                         </p>
                       </div>
+
                       {!isMicTesting ? (
-                        <div className="space-y-6">
-                          <div className="flex items-start gap-4 p-6 bg-slate-900/70 border border-slate-800 rounded-2xl">
-                            <div className="w-12 h-12 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center shrink-0">
+                        <div className="space-y-5">
+                          <div className="flex items-start gap-4 p-5 bg-white border border-gray-200 rounded-2xl shadow-sm">
+                            <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center shrink-0">
                               <svg
-                                className="w-5 h-5 text-violet-400"
+                                className="w-5 h-5 text-indigo-500"
                                 fill="none"
                                 viewBox="0 0 24 24"
                                 stroke="currentColor"
@@ -1035,43 +1133,57 @@ const InterviewSetup = () => {
                               </svg>
                             </div>
                             <div>
-                              <p className="text-slate-200 font-medium">
+                              <p className="text-gray-800 font-medium">
                                 Microphone not tested
                               </p>
-                              <p className="text-slate-500 text-sm mt-1">
+                              <p className="text-gray-500 text-sm mt-1">
                                 Click below and read the sample text aloud.
                               </p>
                             </div>
                           </div>
                           <button
                             onClick={startMicTest}
-                            className="w-full flex items-center justify-center gap-2 px-6 h-12 rounded-2xl font-semibold text-sm bg-linear-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-lg shadow-violet-500/30 transition-all duration-200"
+                            className="w-full flex items-center justify-center gap-2 px-6 h-12 rounded-2xl font-semibold text-sm bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-200 transition-all duration-200"
                           >
                             Start Microphone Test
                           </button>
                         </div>
                       ) : (
-                        <div className="space-y-6">
-                          <div className="p-6 bg-slate-900/70 border border-slate-800 rounded-2xl">
-                            <p className="text-xs uppercase tracking-wider text-slate-500 mb-3">
+                        <div className="space-y-5">
+                          {/* Quote card */}
+                          <div className="p-5 bg-white border border-gray-200 rounded-2xl shadow-sm">
+                            <p className="text-xs uppercase tracking-wider text-gray-400 mb-3">
                               Read this aloud
                             </p>
-                            <p className="text-slate-200 text-base leading-relaxed">
+                            <p className="text-gray-700 text-base leading-relaxed">
                               {currentQuote}
                             </p>
                           </div>
-                          <div className="p-6 bg-slate-900/70 border border-slate-800 rounded-2xl space-y-4">
+
+                          {/* Level meter */}
+                          <div className="p-5 bg-white border border-gray-200 rounded-2xl shadow-sm space-y-4">
                             <div className="flex items-center justify-between">
-                              <span className="text-xs text-slate-400">
+                              <span className="text-xs text-gray-500 font-medium">
                                 Microphone Level
                               </span>
                               <span
-                                className={`text-xs font-semibold px-3 py-1 rounded-full ${micConfirmed ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" : "bg-violet-500/10 text-violet-400 border border-violet-500/30"}`}
+                                className={`text-xs font-semibold px-3 py-1 rounded-full border ${
+                                  micConfirmed
+                                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                    : micSilenceWarning
+                                      ? "bg-red-50 text-red-600 border-red-200"
+                                      : "bg-indigo-50 text-indigo-600 border-indigo-200"
+                                }`}
                               >
-                                {micConfirmed ? "Confirmed" : "Listening..."}
+                                {micConfirmed
+                                  ? "Confirmed ✓"
+                                  : micSilenceWarning
+                                    ? "No sound detected"
+                                    : "Listening…"}
                               </span>
                             </div>
-                            <div className="w-full h-4 bg-slate-800 rounded-full overflow-hidden">
+
+                            <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden">
                               <div
                                 className="h-full transition-all duration-75 rounded-full"
                                 style={{
@@ -1080,19 +1192,52 @@ const InterviewSetup = () => {
                                     micLevel > 60
                                       ? "linear-gradient(90deg,#10b981,#34d399)"
                                       : micLevel > 25
-                                        ? "linear-gradient(90deg,#6366f1,#8b5cf6)"
-                                        : "linear-gradient(90deg,#334155,#475569)",
+                                        ? "linear-gradient(90deg,#6366f1,#818cf8)"
+                                        : "linear-gradient(90deg,#e5e7eb,#d1d5db)",
                                 }}
                               />
                             </div>
-                            <div className="flex justify-between text-[11px] text-slate-500 font-mono">
+
+                            <div className="flex justify-between text-[11px] text-gray-400 font-mono">
                               <span>Low</span>
                               <span>{Math.round(micLevel)}%</span>
                               <span>High</span>
                             </div>
                           </div>
+
+                          {/* Silence warning */}
+                          {micSilenceWarning && !micConfirmed && (
+                            <div className="flex items-start gap-3 px-4 py-3.5 bg-red-50 border border-red-200 rounded-xl">
+                              <svg
+                                className="w-4 h-4 text-red-500 mt-0.5 shrink-0"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                                />
+                              </svg>
+                              <div>
+                                <p className="text-red-600 text-sm font-medium">
+                                  Your microphone doesn't seem to be working
+                                </p>
+                                <p className="text-red-500 text-xs mt-0.5">
+                                  No sound detected for{" "}
+                                  {MIC_SILENCE_TIMEOUT_MS / 1000} seconds.
+                                  Please check your microphone settings and try
+                                  again.
+                                </p>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Confirmed */}
                           {micConfirmed && (
-                            <div className="flex items-center gap-2 text-emerald-400 text-sm font-medium animate-pulse">
+                            <div className="flex items-center gap-2 text-emerald-600 text-sm font-medium">
                               <svg
                                 className="w-4 h-4"
                                 fill="none"
@@ -1109,6 +1254,7 @@ const InterviewSetup = () => {
                               Microphone confirmed — you're ready to continue
                             </div>
                           )}
+
                           <ContinueBtn
                             onClick={
                               micConfirmed ? handleMicSuccess : undefined
@@ -1123,17 +1269,18 @@ const InterviewSetup = () => {
                     </div>
                   )}
 
+                  {/* ── Step 4: Camera ── */}
                   {currentStep === 4 && (
                     <div>
-                      <p className="text-slate-400 text-base leading-relaxed mb-5">
+                      <p className="text-gray-500 text-base leading-relaxed mb-5">
                         Position yourself so your face is centred and well-lit
                         in the preview below.
                       </p>
                       {primaryCameraError ? (
                         <div>
-                          <div className="flex items-center gap-3 px-4 py-3.5 bg-red-500/8 border border-red-500/20 rounded-xl mb-5">
+                          <div className="flex items-center gap-3 px-4 py-3.5 bg-red-50 border border-red-200 rounded-xl mb-5">
                             <svg
-                              className="w-4 h-4 text-red-400 shrink-0"
+                              className="w-4 h-4 text-red-500 shrink-0"
                               fill="none"
                               viewBox="0 0 24 24"
                               stroke="currentColor"
@@ -1145,27 +1292,27 @@ const InterviewSetup = () => {
                                 d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                               />
                             </svg>
-                            <p className="text-red-400 text-sm">
+                            <p className="text-red-600 text-sm">
                               {primaryCameraError}
                             </p>
                           </div>
                           <button
                             onClick={startPrimaryCameraTest}
-                            className="flex items-center gap-2.5 px-7 h-11 rounded-xl font-semibold text-sm bg-violet-600 hover:bg-violet-500 text-white shadow-lg shadow-violet-500/25 transition-all"
+                            className="flex items-center gap-2.5 px-7 h-11 rounded-xl font-semibold text-sm bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-200 transition-all cursor-pointer"
                           >
                             Try Again
                           </button>
                         </div>
                       ) : !primaryCameraStream ? (
-                        <div className="flex items-center gap-3 px-5 py-5 bg-slate-900/70 border border-slate-800/80 rounded-xl max-w-2xl">
-                          <Spinner size="md" color="violet" />
-                          <p className="text-slate-400 text-sm">
+                        <div className="flex items-center gap-3 px-5 py-5 bg-white border border-gray-200 rounded-xl max-w-2xl shadow-sm">
+                          <Spinner size="md" color="indigo" />
+                          <p className="text-gray-500 text-sm">
                             Requesting camera access…
                           </p>
                         </div>
                       ) : (
                         <div className="max-w-2xl">
-                          <div className="relative w-full aspect-video bg-black rounded-xl overflow-hidden ring-1 ring-slate-700/50 mb-5">
+                          <div className="relative w-full aspect-video bg-black rounded-2xl overflow-hidden ring-1 ring-gray-200 mb-5 shadow-md">
                             <video
                               ref={primaryVideoRef}
                               autoPlay
@@ -1189,19 +1336,20 @@ const InterviewSetup = () => {
                     </div>
                   )}
 
+                  {/* ── Step 5: Screen ── */}
                   {currentStep === 5 && (
                     <div>
-                      <p className="text-slate-400 text-base leading-relaxed mb-5">
+                      <p className="text-gray-500 text-base leading-relaxed mb-5">
                         Share your entire screen so the session can be recorded
                         properly.
                       </p>
                       {!SCREEN_SHARE_SUPPORTED ? (
                         <div>
-                          <div className="px-5 py-4 bg-amber-500/8 border border-amber-500/20 rounded-xl mb-5 max-w-2xl">
-                            <p className="text-amber-300 text-sm font-medium mb-1">
+                          <div className="px-5 py-4 bg-amber-50 border border-amber-200 rounded-xl mb-5 max-w-2xl">
+                            <p className="text-amber-700 text-sm font-medium mb-1">
                               📱 Screen sharing unavailable on mobile
                             </p>
-                            <p className="text-slate-500 text-xs">
+                            <p className="text-amber-600 text-xs">
                               Use a desktop browser to enable screen recording.
                             </p>
                           </div>
@@ -1211,9 +1359,9 @@ const InterviewSetup = () => {
                         </div>
                       ) : screenShareError ? (
                         <div>
-                          <div className="flex items-start gap-3 px-4 py-3.5 bg-red-500/8 border border-red-500/20 rounded-xl mb-5 max-w-2xl">
+                          <div className="flex items-start gap-3 px-4 py-3.5 bg-red-50 border border-red-200 rounded-xl mb-5 max-w-2xl">
                             <svg
-                              className="w-4 h-4 text-red-400 mt-0.5 shrink-0"
+                              className="w-4 h-4 text-red-500 mt-0.5 shrink-0"
                               fill="none"
                               viewBox="0 0 24 24"
                               stroke="currentColor"
@@ -1225,40 +1373,40 @@ const InterviewSetup = () => {
                                 d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                               />
                             </svg>
-                            <p className="text-red-400 text-sm">
+                            <p className="text-red-600 text-sm">
                               {screenShareError}
                             </p>
                           </div>
                           <button
                             onClick={startScreenShareTest}
-                            className="flex items-center gap-2.5 px-7 h-11 rounded-xl font-semibold text-sm bg-violet-600 hover:bg-violet-500 text-white shadow-lg shadow-violet-500/25 transition-all"
+                            className="flex items-center gap-2.5 px-7 h-11 rounded-xl font-semibold text-sm bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-200 transition-all cursor-pointer"
                           >
                             Try Again
                           </button>
                         </div>
                       ) : !screenShareStream ? (
                         <div className="max-w-2xl">
-                          <div className="flex items-center gap-4 px-5 py-5 bg-slate-900/70 border border-slate-800/80 rounded-xl mb-4">
-                            <Spinner size="md" color="violet" />
+                          <div className="flex items-center gap-4 px-5 py-5 bg-white border border-gray-200 rounded-xl mb-4 shadow-sm">
+                            <Spinner size="md" color="indigo" />
                             <div>
-                              <p className="text-slate-300 text-sm font-medium">
+                              <p className="text-gray-700 text-sm font-medium">
                                 Waiting for screen share
                               </p>
-                              <p className="text-slate-500 text-xs mt-0.5">
+                              <p className="text-gray-400 text-xs mt-0.5">
                                 Select your entire screen in the browser dialog
                               </p>
                             </div>
                           </div>
                           <button
                             onClick={startScreenShareTest}
-                            className="text-xs text-slate-600 hover:text-slate-400 underline underline-offset-2 transition-colors"
+                            className="text-xs text-gray-400 hover:text-gray-600 underline underline-offset-2 transition-colors cursor-pointer"
                           >
                             Reopen dialog
                           </button>
                         </div>
                       ) : (
                         <div className="max-w-3xl">
-                          <div className="relative w-full h-56 bg-black rounded-xl overflow-hidden ring-1 ring-slate-700/50 mb-4">
+                          <div className="relative w-full h-48 sm:h-56 bg-black rounded-2xl overflow-hidden ring-1 ring-gray-200 mb-4 shadow-md">
                             <video
                               ref={screenVideoRef}
                               autoPlay
@@ -1270,7 +1418,7 @@ const InterviewSetup = () => {
                               <LiveBadge color="violet" label="SHARING" />
                             </div>
                           </div>
-                          <div className="flex items-center gap-2 text-emerald-400 text-sm font-medium mb-1">
+                          <div className="flex items-center gap-2 text-emerald-600 text-sm font-medium mb-1">
                             <svg
                               className="w-4 h-4"
                               fill="none"
@@ -1297,36 +1445,33 @@ const InterviewSetup = () => {
                     </div>
                   )}
 
+                  {/* ── Step 6: Mobile ── */}
                   {currentStep === 6 && (
-                    <div className="max-w-5xl mx-auto">
-                      <div className="mb-6">
-                        <p className="text-slate-400 text-sm leading-relaxed max-w-2xl">
-                          Optionally connect your phone as a secondary camera
-                          for enhanced proctoring and monitoring. Scan the QR
-                          code below.
-                        </p>
-                      </div>
-                      <div className="grid md:grid-cols-2 gap-8 items-start">
-                        <div className="flex flex-col gap-5">
-                          <div className="relative p-5 rounded-2xl bg-slate-900/60 border border-slate-800 backdrop-blur-xl shadow-xl shadow-black/40">
-                            <div className="absolute inset-0 rounded-2xl pointer-events-none ring-1 ring-violet-500/10" />
+                    <div className="max-w-5xl">
+                      <p className="text-gray-500 text-sm leading-relaxed mb-6 max-w-2xl">
+                        Optionally connect your phone as a secondary camera for
+                        enhanced proctoring. Scan the QR code below.
+                      </p>
+                      <div className="grid sm:grid-cols-2 gap-6 items-start">
+                        <div className="flex flex-col gap-4">
+                          <div className="p-5 rounded-2xl bg-white border border-gray-200 shadow-sm">
                             <div className="flex justify-center">
-                              <div className="p-4 bg-white rounded-xl shadow-lg shadow-violet-500/10">
+                              <div className="p-4 bg-white border border-gray-100 rounded-xl shadow-sm">
                                 {sessionData ? (
                                   <QRCodeCanvas
                                     value={`${window.location.origin}/mobile-camera?interviewId=${sessionData.interviewId}&userId=${user?.id}`}
-                                    size={170}
+                                    size={160}
                                   />
                                 ) : (
-                                  <div className="w-42.5 h-42.5 flex items-center justify-center">
-                                    <Spinner size="lg" color="violet" />
+                                  <div className="w-40 h-40 flex items-center justify-center">
+                                    <Spinner size="lg" color="indigo" />
                                   </div>
                                 )}
                               </div>
                             </div>
                           </div>
-                          <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 backdrop-blur-xl">
-                            <p className="text-slate-500 text-[11px] font-semibold uppercase tracking-widest mb-3">
+                          <div className="p-5 rounded-2xl bg-white border border-gray-200 shadow-sm">
+                            <p className="text-gray-400 text-[11px] font-semibold uppercase tracking-widest mb-3">
                               How to connect
                             </p>
                             <ol className="space-y-3">
@@ -1339,9 +1484,9 @@ const InterviewSetup = () => {
                               ].map((t, i) => (
                                 <li
                                   key={i}
-                                  className="flex items-start gap-3 text-slate-400 text-sm"
+                                  className="flex items-start gap-3 text-gray-600 text-sm"
                                 >
-                                  <div className="w-6 h-6 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-400 text-xs flex items-center justify-center font-semibold shrink-0">
+                                  <div className="w-6 h-6 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-600 text-xs flex items-center justify-center font-semibold shrink-0">
                                     {i + 1}
                                   </div>
                                   {t}
@@ -1350,8 +1495,9 @@ const InterviewSetup = () => {
                             </ol>
                           </div>
                         </div>
-                        <div className="flex flex-col gap-5">
-                          <div className="relative rounded-2xl overflow-hidden bg-black ring-1 ring-slate-700/50 shadow-xl shadow-black/50">
+
+                        <div className="flex flex-col gap-4">
+                          <div className="relative rounded-2xl overflow-hidden bg-gray-900 ring-1 ring-gray-200 shadow-md">
                             <canvas
                               ref={mobileCanvasRef}
                               width="640"
@@ -1360,9 +1506,9 @@ const InterviewSetup = () => {
                               style={{ transform: "scaleX(-1)" }}
                             />
                             {!mobileCameraConnected && (
-                              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 backdrop-blur-md gap-3">
+                              <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/90 gap-3">
                                 <Spinner size="md" color="orange" />
-                                <p className="text-slate-400 text-sm">
+                                <p className="text-gray-400 text-sm">
                                   Waiting for phone connection…
                                 </p>
                               </div>
@@ -1376,9 +1522,10 @@ const InterviewSetup = () => {
                               </div>
                             )}
                           </div>
+
                           {mobileCameraConnected ? (
                             <div>
-                              <p className="text-emerald-400 text-sm font-medium flex items-center gap-2 mb-4">
+                              <p className="text-emerald-600 text-sm font-medium flex items-center gap-2 mb-4">
                                 <svg
                                   className="w-4 h-4"
                                   fill="none"
@@ -1392,7 +1539,7 @@ const InterviewSetup = () => {
                                     d="M5 13l4 4L19 7"
                                   />
                                 </svg>
-                                Phone successfully connected via WEBRTC
+                                Phone successfully connected via WebRTC
                               </p>
                               <ContinueBtn onClick={handleMobileCameraSuccess}>
                                 Continue
@@ -1400,10 +1547,9 @@ const InterviewSetup = () => {
                             </div>
                           ) : (
                             <div className="flex flex-col gap-2">
-                              <p className="text-slate-500 text-sm">
+                              <p className="text-gray-400 text-sm">
                                 Waiting for your phone…
                               </p>
-                              {/* disabled when socket connection failed and phone isn't connected */}
                               <button
                                 onClick={
                                   socketConnectionFailed
@@ -1411,7 +1557,11 @@ const InterviewSetup = () => {
                                     : handleMobileCameraSuccess
                                 }
                                 disabled={socketConnectionFailed}
-                                className={`text-sm underline underline-offset-4 transition-colors self-start ${socketConnectionFailed ? "text-slate-700 cursor-not-allowed" : "text-slate-500 hover:text-slate-300"}`}
+                                className={`text-sm underline underline-offset-4 transition-colors self-start ${
+                                  socketConnectionFailed
+                                    ? "text-gray-300 cursor-not-allowed"
+                                    : "text-gray-400 hover:text-gray-700 cursor-pointer"
+                                }`}
                               >
                                 Skip mobile camera
                               </button>
@@ -1422,17 +1572,18 @@ const InterviewSetup = () => {
                     </div>
                   )}
 
+                  {/* ── Step 7: Launch ── */}
                   {currentStep === 7 && (
                     <div className="max-w-2xl">
-                      <p className="text-slate-400 text-base leading-relaxed mb-6">
+                      <p className="text-gray-500 text-base leading-relaxed mb-6">
                         Finalising all connections and preparing your session.
                         This only takes a moment.
                       </p>
                       {initError ? (
                         <div>
-                          <div className="flex items-start gap-3 px-4 py-3.5 bg-red-500/8 border border-red-500/20 rounded-xl mb-5">
+                          <div className="flex items-start gap-3 px-4 py-3.5 bg-red-50 border border-red-200 rounded-xl mb-5">
                             <svg
-                              className="w-4 h-4 text-red-400 mt-0.5 shrink-0"
+                              className="w-4 h-4 text-red-500 mt-0.5 shrink-0"
                               fill="none"
                               viewBox="0 0 24 24"
                               stroke="currentColor"
@@ -1444,14 +1595,14 @@ const InterviewSetup = () => {
                                 d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                               />
                             </svg>
-                            <p className="text-red-400 text-sm">{initError}</p>
+                            <p className="text-red-600 text-sm">{initError}</p>
                           </div>
                           <button
                             onClick={() => {
                               setInitError(null);
                               setCurrentStep(6);
                             }}
-                            className="flex items-center gap-2 px-7 h-11 rounded-xl font-semibold text-sm bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all"
+                            className="flex items-center gap-2 px-7 h-11 rounded-xl font-semibold text-sm bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 shadow-sm transition-all cursor-pointer"
                           >
                             ← Go Back
                           </button>
@@ -1497,22 +1648,30 @@ const InterviewSetup = () => {
                                 key={key}
                                 className={`flex items-center gap-3.5 px-5 py-3.5 rounded-xl border transition-all duration-300 ${
                                   status === true
-                                    ? "bg-emerald-500/5 border-emerald-500/20"
+                                    ? "bg-emerald-50 border-emerald-200"
                                     : isActive
-                                      ? "bg-violet-500/8 border-violet-500/20"
+                                      ? "bg-indigo-50 border-indigo-200"
                                       : isSkipped
-                                        ? "bg-slate-800/30 border-slate-700/20"
-                                        : "bg-slate-900/50 border-slate-800/60"
+                                        ? "bg-gray-50 border-gray-100"
+                                        : "bg-white border-gray-200"
                                 }`}
                               >
                                 <StatusIcon status={status} />
                                 <span
-                                  className={`text-sm font-medium flex-1 ${status === true ? "text-emerald-300" : isActive ? "text-violet-300" : isSkipped ? "text-slate-600" : "text-slate-500"}`}
+                                  className={`text-sm font-medium flex-1 ${
+                                    status === true
+                                      ? "text-emerald-700"
+                                      : isActive
+                                        ? "text-indigo-600"
+                                        : isSkipped
+                                          ? "text-gray-400"
+                                          : "text-gray-500"
+                                  }`}
                                 >
                                   {label}
                                 </span>
                                 {isActive && (
-                                  <span className="text-[10px] text-violet-500 font-medium animate-pulse">
+                                  <span className="text-[10px] text-indigo-500 font-medium animate-pulse">
                                     {status}…
                                   </span>
                                 )}
@@ -1522,15 +1681,15 @@ const InterviewSetup = () => {
                                   </span>
                                 )}
                                 {isSkipped && (
-                                  <span className="text-[10px] text-slate-600 font-medium">
+                                  <span className="text-[10px] text-gray-400 font-medium">
                                     auto
                                   </span>
                                 )}
                               </div>
                             );
                           })}
-                          <div className="pt-2 flex items-center gap-2.5 text-slate-500 text-xs">
-                            <Spinner size="sm" color="violet" />
+                          <div className="pt-2 flex items-center gap-2.5 text-gray-400 text-xs">
+                            <Spinner size="sm" color="indigo" />
                             Almost ready — please wait…
                           </div>
                         </div>

@@ -28,15 +28,11 @@ const Layout = ({ children }) => {
   const role = isCompanyAuth ? "company" : userRole;
   const RoleNav = ROLE_NAV[role] ?? Nav;
 
-  const bgClass =
-    role === "company"
-      ? "min-h-screen bg-gray-50 text-gray-900 flex flex-col"
-      : pathname === "/"
-        ? "min-h-screen bg-white flex flex-col" // ← white for landing page
-        : "min-h-screen bg-linear-to-br from-bgDark via-sidebar-bg to-bgDark text-textLight flex flex-col";
+  const bgClass = role === "company";
+  ("min-h-screen bg-white text-gray-900 flex flex-col");
 
   return (
-    <div className={bgClass}>
+    <div className={bgClass} style={{ isolation: "isolate" }}>
       {!isFullscreen && hydrated && <RoleNav />}
 
       <motion.main

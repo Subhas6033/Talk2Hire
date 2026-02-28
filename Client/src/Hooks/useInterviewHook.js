@@ -26,11 +26,19 @@ import { useTTS } from "./useSpeechHook";
 
 const MIC_SAMPLE_RATE = 48000;
 const CALIBRATION_MS = 1500;
-const GATE_MULTIPLIER = 5.0;
+const GATE_MULTIPLIER = 3.0;
 const MIN_NOISE_GATE = 0.005;
-const MAX_NOISE_GATE = 0.05;
-const SILENCE_TIMEOUT_MS = 600;
+const MAX_NOISE_GATE = 0.03;
+const SILENCE_TIMEOUT_MS = 1200;
 const DIAGNOSTIC_INTERVAL_MS = 3000;
+
+// FIX 1: Must match STT_GATE_DELAY_MS in the server controller (1250ms).
+// The client must not send audio to the server until the Deepgram gate is
+// open, otherwise real speech gets ignored. We skip chunks for this duration
+// after each listening_enabled event using sttWarmupUntilRef.
+// FIX 1: Must match STT_GATE_DELAY_MS in the server controller (1850ms).
+// Total = 300ms flush drip + 1500ms settle + 50ms buffer.
+const STT_GATE_WARMUP_MS = 1850;
 
 function getRMS(input) {
   let sum = 0;
@@ -64,9 +72,9 @@ function createAdaptiveNoiseGate(label = "MIC") {
   };
 
   function calibrate(rms) {
-    state.calibrationSamples.push(rms);
+    if (rms < 0.03) state.calibrationSamples.push(rms);
     const elapsed = Date.now() - state.calibrationStartTime;
-    if (elapsed >= CALIBRATION_MS) {
+    if (elapsed >= CALIBRATION_MS && state.calibrationSamples.length > 5) {
       const avg =
         state.calibrationSamples.reduce((a, b) => a + b, 0) /
         state.calibrationSamples.length;
@@ -181,10 +189,15 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const micProcessorRef = useRef(null);
   const micStreamRef = useRef(null);
 
-  // Guard against duplicate webrtc_answer events (direct emit + Redis poll race)
   const remoteDescriptionSetRef = useRef(false);
 
   const noiseGateRef = useRef(createAdaptiveNoiseGate("MIC"));
+
+  // FIX 2: Replace chunk-count warmup with a timestamp-based warmup.
+  // sttWarmupUntilRef stores the absolute time until which audio should be
+  // dropped. Set to Date.now() + STT_GATE_WARMUP_MS on each listening_enabled.
+  // This is immune to variable chunk rates and AudioContext scheduling jitter.
+  const sttWarmupUntilRef = useRef(0);
 
   const isPlayingRef = useRef(false);
   const isListeningRef = useRef(false);
@@ -254,6 +267,10 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       dispatch(setIsPlaying(true));
       dispatch(disableListening());
     },
+    // FIX 3: Do NOT reset noise gate on TTS end. The gate calibrated once at
+    // mic startup in silence — that calibration is still valid. Resetting here
+    // triggers a 1500ms recalibration window that floods Deepgram with
+    // near-silence chunks before the user can speak.
     onPlayEnd: () => {
       isPlayingRef.current = false;
       dispatch(setIsPlaying(false));
@@ -334,8 +351,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch],
   );
 
-  // ── WebRTC peer connection setup ───────────────────────────────────────────
-
   const setupWebRTCPeerConnection = useCallback(() => {
     const existingPc = pcRef.current;
     if (
@@ -372,7 +387,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     pcRef.current = pc;
-    // Reset answer guard whenever a new PC is created
     remoteDescriptionSetRef.current = false;
 
     pc.onicecandidate = ({ candidate }) => {
@@ -518,6 +532,11 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         source.connect(processor);
         processor.connect(ctx.destination);
 
+        // FIX 4: Calibrate the noise gate ONCE at startup in silence.
+        // Never reset it again during the session — the threshold measured here
+        // remains valid for the entire interview. Resetting during TTS caused a
+        // 1500ms window where TTS speaker bleed was treated as ambient noise,
+        // inflating the threshold and causing real speech to be gated out.
         noiseGateRef.current.reset();
 
         processor.onaudioprocess = (e) => {
@@ -528,7 +547,28 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
           const input = e.inputBuffer.getChannelData(0);
           const rms = getRMS(input);
-          const { send } = noiseGateRef.current.shouldSend(rms);
+          const { send, reason } = noiseGateRef.current.shouldSend(rms);
+
+          // Never send during calibration window
+          const stats = noiseGateRef.current.getStats();
+          if (stats.calibrating) return;
+
+          // FIX 5: Use timestamp-based warmup instead of chunk count.
+          // After each listening_enabled the client blocks audio for
+          // STT_GATE_WARMUP_MS so the Deepgram VAD has fully settled before
+          // real speech arrives. Chunk counting was unreliable because
+          // AudioContext chunk delivery timing is not perfectly constant.
+          if (Date.now() < sttWarmupUntilRef.current) {
+            console.log(`[MIC DROP] warmup — rms=${rms.toFixed(6)}`);
+            return;
+          }
+
+          if (!send) {
+            console.log(
+              `[MIC DROP] rms=${rms.toFixed(6)} reason=${reason}`,
+              stats,
+            );
+          }
 
           if (send) {
             socketRef.current.emit("user_audio_chunk", toPCM16(input).buffer);
@@ -580,7 +620,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const handleWebRTCAnswer = useCallback(async ({ answer }) => {
     if (!pcRef.current) return;
 
-    // Ignore duplicate answers — server may emit via both direct socket and Redis poll
     if (remoteDescriptionSetRef.current) {
       console.warn(
         "[WebRTC] Duplicate webrtc_answer received — ignoring (already set)",
@@ -588,7 +627,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       return;
     }
 
-    // Only accept answer when PC is in the correct state
     if (pcRef.current.signalingState !== "have-local-offer") {
       console.warn(
         `[WebRTC] Ignoring answer — wrong signalingState: ${pcRef.current.signalingState}`,
@@ -620,12 +658,22 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const enableListeningImmediate = useCallback(() => {
     isListeningRef.current = true;
     canListenRef.current = true;
+    // FIX 6: Set the warmup deadline as an absolute timestamp.
+    // Audio chunks produced before this time will be dropped in onaudioprocess.
+    // This replaces the old chunk-count approach which could drift.
+    sttWarmupUntilRef.current = Date.now() + STT_GATE_WARMUP_MS;
+    console.log(
+      `[MIC] Warmup window set — dropping audio for ${STT_GATE_WARMUP_MS}ms`,
+    );
     dispatch(enableListening());
   }, [dispatch]);
 
   const disableListeningImmediate = useCallback(() => {
     isListeningRef.current = false;
     canListenRef.current = false;
+    // FIX 7: Clear the warmup timestamp when listening stops so stale warmup
+    // doesn't carry over to the next question window.
+    sttWarmupUntilRef.current = 0;
     dispatch(disableListening());
   }, [dispatch]);
 

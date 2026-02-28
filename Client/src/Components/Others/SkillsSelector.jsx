@@ -98,49 +98,35 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
   const [inputValue, setInputValue] = useState("");
   const [skillsRefreshKey, setSkillsRefreshKey] = useState(0);
   const [hasAutoSelected, setHasAutoSelected] = useState(false);
-  // Pagination state for CV skills
   const [cvPage, setCvPage] = useState(1);
   const dispatch = useDispatch();
   const { user, loading: authLoading } = useAuth();
 
-  // Reset CV pagination whenever CV skills change (refresh / new user)
   useEffect(() => {
     setCvPage(1);
   }, [user?.id, skillsRefreshKey]);
 
-  // Fetch CV skills from API on component mount and when user updates
   useEffect(() => {
-    if (user) {
-      dispatch(getCVSkills());
-    }
+    if (user) dispatch(getCVSkills());
   }, [dispatch, user?.id, skillsRefreshKey]);
 
-  // Get CV skills from user object
-  const cvSkills = useMemo(() => {
-    return user?.cvSkills || [];
-  }, [user]);
+  const cvSkills = useMemo(() => user?.cvSkills || [], [user]);
 
-  // Generate related skills based on CV skills
   const suggestedSkills = useMemo(() => {
     const suggested = new Set();
     cvSkills.forEach((cvSkill) => {
       const category = Object.keys(SKILL_CATEGORIES).find(
         (cat) => cat.toLowerCase() === cvSkill.toLowerCase(),
       );
-      if (category) {
+      if (category)
         SKILL_CATEGORIES[category].forEach((skill) => suggested.add(skill));
-      }
     });
     return Array.from(suggested);
   }, [cvSkills]);
 
-  // ── AUTO-SELECT CV + SUGGESTED SKILLS ON INITIAL LOAD ────────────────────
   useEffect(() => {
-    // Only auto-select once when CV skills are loaded and we haven't done it yet
     if (cvSkills.length > 0 && !hasAutoSelected && !authLoading) {
       const allDefaultSkills = [...cvSkills, ...suggestedSkills];
-
-      // Remove duplicates (case-insensitive)
       const uniqueSkills = [];
       const seen = new Set();
       allDefaultSkills.forEach((skill) => {
@@ -150,8 +136,6 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
           uniqueSkills.push(skill);
         }
       });
-
-      // Only set if different from current selection
       if (uniqueSkills.length > 0) {
         onSkillsChange(uniqueSkills);
         setHasAutoSelected(true);
@@ -159,21 +143,17 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
     }
   }, [cvSkills, suggestedSkills, hasAutoSelected, authLoading, onSkillsChange]);
 
-  // Reset auto-selection flag when user changes or skills refresh
   useEffect(() => {
     setHasAutoSelected(false);
   }, [user?.id, skillsRefreshKey]);
-  // ──────────────────────────────────────────────────────────────────────────
 
-  // Handle manual refresh of CV skills
   const handleRefreshSkills = () => {
     if (user) {
       setSkillsRefreshKey((prev) => prev + 1);
-      setHasAutoSelected(false); // Allow auto-selection again after refresh
+      setHasAutoSelected(false);
     }
   };
 
-  // Combine all available skills (excluding popular predefined skills)
   const allAvailableSkills = useMemo(() => {
     const combined = [...cvSkills, ...suggestedSkills];
     const unique = [];
@@ -188,7 +168,6 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
     return unique;
   }, [cvSkills, suggestedSkills]);
 
-  // Check if input matches any available skill
   const findMatchingSkill = () => {
     const trimmedInput = inputValue.trim();
     if (!trimmedInput) return null;
@@ -199,14 +178,12 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
     );
   };
 
-  // Filter skills based on input
   const filteredSkills = allAvailableSkills.filter(
     (skill) =>
       skill.toLowerCase().includes(inputValue.toLowerCase().trim()) &&
       !selectedSkills.includes(skill),
   );
 
-  // Separate CV skills from other skills in search results
   const cvSkillsInSearch = useMemo(() => {
     if (!inputValue.trim()) return [];
     return cvSkills.filter(
@@ -247,12 +224,8 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
   };
 
   const handlePrimaryAction = () => {
-    if (isExactMatch) {
-      addSkill(matchingSkill);
-    } else if (canAddCustom) {
-      const customSkill = inputValue.trim().toUpperCase();
-      addSkill(customSkill);
-    }
+    if (isExactMatch) addSkill(matchingSkill);
+    else if (canAddCustom) addSkill(inputValue.trim().toUpperCase());
   };
 
   const handleKeyPress = (e) => {
@@ -263,36 +236,32 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
   };
 
   const getButtonConfig = () => {
-    if (isExactMatch) {
+    if (isExactMatch)
       return {
         icon: <Check size={16} />,
         text: "Select",
         disabled: false,
         className:
-          "bg-linear-to-r from-emerald-500/20 to-green-500/20 border-emerald-400/50 text-emerald-300 hover:from-emerald-500/30 hover:to-green-500/30 hover:border-emerald-400 hover:shadow-lg hover:shadow-emerald-500/20",
+          "bg-emerald-50 border-emerald-300 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-400",
       };
-    } else if (canAddCustom) {
+    if (canAddCustom)
       return {
         icon: <Plus size={16} />,
         text: "Add Custom",
         disabled: false,
         className:
-          "bg-linear-to-r from-purple-500/20 to-pink-500/20 border-purple-400/50 text-purple-300 hover:from-purple-500/30 hover:to-pink-500/30 hover:border-purple-400 hover:shadow-lg hover:shadow-purple-500/20",
+          "bg-indigo-50 border-indigo-300 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-400",
       };
-    } else {
-      return {
-        icon: <Plus size={16} />,
-        text: inputValue.trim() ? "Already Added" : "Add",
-        disabled: true,
-        className: "bg-white/5 border-white/20 text-white/40",
-      };
-    }
+    return {
+      icon: <Plus size={16} />,
+      text: inputValue.trim() ? "Already Added" : "Add",
+      disabled: true,
+      className: "bg-gray-50 border-gray-200 text-gray-400",
+    };
   };
 
   const buttonConfig = getButtonConfig();
 
-  // ── CV skills pagination ──────────────────────────────────────────────────
-  // All unselected CV skills (no slice — pagination handles the limiting)
   const unselectedCvSkills = cvSkills.filter(
     (skill) => !selectedSkills.includes(skill),
   );
@@ -316,33 +285,32 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
     ).length - PAGE_SIZE,
   );
 
-  // Count CV skills in selected skills
   const cvSkillsCount = selectedSkills.filter((skill) =>
     cvSkills.some((cvSkill) => cvSkill.toLowerCase() === skill.toLowerCase()),
   ).length;
 
   return (
-    <Card variant="default" padding="lg" className="w-full mb-5">
-      <CardHeader headerClass="text-center">
-        <div className="flex flex-col gap-2">
-          <h3 className="text-lg font-semibold text-white">
-            Select Your Skills for Interview
-          </h3>
-          <p className="text-xs text-white/60">
-            All skills selected by default • Remove unwanted skills • Add custom
-            skills
-          </p>
-        </div>
-      </CardHeader>
+    <div className="w-full mb-5 bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+      {/* Header */}
+      <div className="px-5 py-4 border-b border-gray-100 text-center">
+        <h3 className="text-base font-semibold text-gray-900">
+          Select Your Skills for Interview
+        </h3>
+        <p className="text-xs text-gray-400 mt-0.5">
+          All skills selected by default · Remove unwanted skills · Add custom
+          skills
+        </p>
+      </div>
 
-      <CardBody>
-        {/* Loading indicator for CV skills */}
+      {/* Body */}
+      <div className="p-5">
+        {/* Loading */}
         {authLoading && cvSkills.length === 0 && (
-          <div className="mb-4 p-3 bg-linear-to-r from-slate-500/10 to-slate-600/10 border border-slate-400/30 rounded-xl shadow-sm">
+          <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-xl">
             <div className="flex items-center justify-center gap-2">
-              <Loader2 className="w-4 h-4 text-slate-400 animate-spin" />
-              <p className="text-xs text-slate-300 font-medium">
-                Loading your CV skills...
+              <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />
+              <p className="text-xs text-gray-500 font-medium">
+                Loading your CV skills…
               </p>
             </div>
           </div>
@@ -350,69 +318,67 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
 
         {/* Auto-selection notification */}
         {hasAutoSelected && selectedSkills.length > 0 && (
-          <div className="mb-4 p-3 bg-linear-to-r from-emerald-500/10 to-green-500/10 border border-emerald-400/30 rounded-xl shadow-sm">
-            <div className="flex items-center gap-2">
-              <p className="text-xs text-emerald-300 font-medium">
-                ✓ Auto-selected {cvSkillsCount} skill
-                {cvSkillsCount !== 1 ? "s" : ""} from your CV. Add or remove any
-                skills you want.
-              </p>
-            </div>
+          <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
+            <p className="text-xs text-emerald-700 font-medium">
+              ✓ Auto-selected {cvSkillsCount} skill
+              {cvSkillsCount !== 1 ? "s" : ""} from your CV. Add or remove any
+              skills you want.
+            </p>
           </div>
         )}
 
-        {/* Unified Search/Add Input */}
+        {/* Search / Add Input */}
         <div className="mb-4 flex gap-2">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
               type="text"
-              placeholder="Search or type to add custom skill..."
+              placeholder="Search or type to add custom skill…"
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyPress={handleKeyPress}
-              className="w-full pl-10 pr-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/40 focus:outline-none focus:border-purple-400/50 focus:bg-white/10 focus:shadow-lg focus:shadow-purple-500/10 transition-all duration-200"
+              className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition-all duration-200"
             />
           </div>
           <button
             type="button"
             onClick={handlePrimaryAction}
             disabled={buttonConfig.disabled}
-            className={`px-4 py-2.5 border rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 whitespace-nowrap font-semibold ${buttonConfig.className}`}
+            className={`px-4 py-2.5 border rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 whitespace-nowrap text-sm font-semibold ${buttonConfig.className}`}
           >
             {buttonConfig.icon}
-            {buttonConfig.text}
+            <span className="hidden sm:inline">{buttonConfig.text}</span>
           </button>
         </div>
 
-        {/* Helper text below input */}
+        {/* Helper text */}
         {inputValue.trim() && (
-          <div className="mb-4 px-3 py-2 bg-linear-to-r from-white/5 to-white/10 rounded-xl border border-white/10 shadow-sm">
-            <p className="text-xs text-white/70">
+          <div className="mb-4 px-3 py-2 bg-gray-50 rounded-xl border border-gray-200">
+            <p className="text-xs text-gray-600">
               {isExactMatch ? (
                 <>
-                  ✓ Found:{" "}
-                  <span className="text-emerald-300 font-semibold">
+                  Found:{" "}
+                  <span className="text-emerald-600 font-semibold">
                     {matchingSkill}
                   </span>{" "}
-                  - Click "Select" to add
+                  — Click "Select" to add
                 </>
               ) : canAddCustom ? (
                 <>
                   Custom skill:{" "}
-                  <span className="text-purple-300 font-semibold">
+                  <span className="text-indigo-600 font-semibold">
                     {inputValue.trim().toUpperCase()}
                   </span>{" "}
-                  - Click "Add Custom"
+                  — Click "Add Custom"
                 </>
               ) : selectedSkills.some(
                   (s) => s.toLowerCase() === inputValue.trim().toLowerCase(),
                 ) ? (
                 <>
-                  <span className="text-amber-400 font-semibold">
+                  <span className="text-amber-600 font-semibold">
                     Already added
                   </span>{" "}
-                  - This skill is in your selection
+                  — This skill is in your selection
                 </>
               ) : (
                 <>Type to search or add a custom skill</>
@@ -421,153 +387,107 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
           </div>
         )}
 
-        {/* Selected Skills - Prominent Display with Beautiful Scrollbar */}
+        {/* Selected Skills */}
         {selectedSkills.length > 0 && (
-          <div className="mb-4">
-            <p className="text-xs font-semibold text-white/90 mb-3 flex items-center gap-2">
-              <div className="w-1.5 h-1.5 bg-linear-to-r from-purple-500 to-pink-500 rounded-full"></div>
-              Selected for Interview ({selectedSkills.length})
+          <div className="mb-5">
+            <p className="text-xs font-semibold text-gray-700 mb-2.5 flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block" />
+              Selected for Interview
+              <span className="ml-auto text-indigo-600 font-bold">
+                {selectedSkills.length}
+              </span>
             </p>
-            <div className="relative group">
-              {/* Custom scrollbar styling */}
-              <style jsx>{`
-                .custom-scrollbar::-webkit-scrollbar {
-                  width: 8px;
-                }
-                .custom-scrollbar::-webkit-scrollbar-track {
-                  background: rgba(139, 92, 246, 0.05);
-                  border-radius: 10px;
-                  margin: 4px;
-                }
-                .custom-scrollbar::-webkit-scrollbar-thumb {
-                  background: linear-gradient(
-                    to bottom,
-                    rgba(168, 85, 247, 0.4),
-                    rgba(236, 72, 153, 0.4)
-                  );
-                  border-radius: 10px;
-                  border: 2px solid rgba(139, 92, 246, 0.1);
-                }
-                .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-                  background: linear-gradient(
-                    to bottom,
-                    rgba(168, 85, 247, 0.6),
-                    rgba(236, 72, 153, 0.6)
-                  );
-                }
-                .custom-scrollbar {
-                  scrollbar-width: thin;
-                  scrollbar-color: rgba(168, 85, 247, 0.4)
-                    rgba(139, 92, 246, 0.05);
-                }
-              `}</style>
-              <div className="flex flex-wrap gap-2 p-4 bg-linear-to-br from-purple-500/5 via-pink-500/5 to-purple-500/5 rounded-xl border border-purple-400/20 max-h-40 overflow-y-auto shadow-sm custom-scrollbar">
-                {selectedSkills.map((skill) => (
-                  <div
-                    key={skill}
-                    className="inline-flex items-center gap-2 px-3.5 py-2 bg-linear-to-r from-purple-500/20 to-pink-500/20 border border-purple-400/40 rounded-lg text-purple-200 text-xs font-semibold shadow-sm"
+            <div className="flex flex-wrap gap-2 p-3.5 bg-indigo-50 rounded-xl border border-indigo-100 max-h-40 overflow-y-auto">
+              {selectedSkills.map((skill) => (
+                <div
+                  key={skill}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-indigo-200 rounded-lg text-indigo-700 text-xs font-semibold shadow-sm"
+                >
+                  <span>{skill}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeSkill(skill)}
+                    className="hover:bg-indigo-100 rounded-full p-0.5 text-indigo-400 hover:text-indigo-600 transition-all duration-200"
+                    aria-label={`Remove ${skill}`}
                   >
-                    <span>{skill}</span>
-                    <button
-                      type="button"
-                      onClick={() => removeSkill(skill)}
-                      className="hover:bg-purple-400/30 rounded-full p-0.5 transition-all duration-200"
-                      aria-label={`Remove ${skill}`}
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-              {/* Scroll indicator */}
-              {selectedSkills.length > 15 && (
-                <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
-                  <div className="bg-purple-500/20 border border-purple-400/40 rounded-full px-2 py-1 backdrop-blur-sm">
-                    <p className="text-xs text-purple-300 font-semibold">
-                      Scroll for more
-                    </p>
-                  </div>
+                    <X size={12} />
+                  </button>
                 </div>
-              )}
+              ))}
             </div>
-            <p className="text-xs text-white/50 mt-2 text-center">
+            <p className="text-xs text-gray-400 mt-2 text-center">
               Click the ✕ icon to remove any skill you don't want to be tested
               on
             </p>
           </div>
         )}
 
-        {/* Matching Skills when searching */}
+        {/* Search Results */}
         {inputValue.trim() &&
           (cvSkillsInSearch.length > 0 || otherSkillsInSearch.length > 0) && (
             <div className="mb-4 space-y-3">
-              {/* CV Skills in Search Results */}
+              {/* CV Skills in search */}
               {cvSkillsInSearch.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold text-white/90 mb-2 flex items-center gap-2">
-                    <div className="p-1 bg-linear-to-br from-slate-400 to-slate-600 rounded-md">
-                      <Sparkles size={10} className="text-white" />
-                    </div>
-                    From Your CV ({cvSkillsInSearch.length} match
-                    {cvSkillsInSearch.length !== 1 ? "es" : ""})
+                  <p className="text-xs font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                    <span className="flex items-center justify-center w-5 h-5 bg-gray-200 rounded-md">
+                      <Sparkles size={10} className="text-gray-600" />
+                    </span>
+                    From Your CV
+                    <span className="text-gray-400 font-normal">
+                      ({cvSkillsInSearch.length} match
+                      {cvSkillsInSearch.length !== 1 ? "es" : ""})
+                    </span>
                   </p>
-                  <div className="relative group">
-                    <div className="flex flex-wrap gap-2 p-3 bg-linear-to-br from-slate-500/5 via-slate-600/5 to-slate-500/5 rounded-xl border border-slate-400/20 shadow-sm max-h-64 overflow-y-auto custom-scrollbar">
-                      {cvSkillsInSearch.map((skill) => (
-                        <button
-                          key={skill}
-                          type="button"
-                          onClick={() => addSkill(skill)}
-                          className="group inline-flex items-center gap-2 px-3.5 py-2 bg-linear-to-r from-slate-500/15 to-slate-600/15 border border-slate-400/40 rounded-lg text-slate-300 text-xs font-semibold hover:from-slate-500/25 hover:to-slate-600/25 hover:border-slate-400/60 hover:shadow-lg hover:shadow-slate-500/10 transition-all duration-200"
-                        >
-                          <span>{skill}</span>
-                          <Plus
-                            size={14}
-                            className="group-hover:rotate-90 transition-transform duration-200"
-                          />
-                        </button>
-                      ))}
-                    </div>
+                  <div className="flex flex-wrap gap-2 p-3 bg-gray-50 rounded-xl border border-gray-200 max-h-48 overflow-y-auto">
+                    {cvSkillsInSearch.map((skill) => (
+                      <button
+                        key={skill}
+                        type="button"
+                        onClick={() => addSkill(skill)}
+                        className="group inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-gray-700 text-xs font-semibold hover:border-gray-300 hover:bg-gray-50 hover:shadow-sm transition-all duration-200"
+                      >
+                        <span>{skill}</span>
+                        <Plus
+                          size={12}
+                          className="text-gray-400 group-hover:rotate-90 transition-transform duration-200"
+                        />
+                      </button>
+                    ))}
                   </div>
-                  {cvSkillsInSearch.length > 10 && (
-                    <p className="text-xs text-slate-400 mt-2 text-center">
-                      Showing all {cvSkillsInSearch.length} matching skills from
-                      your CV
-                    </p>
-                  )}
                 </div>
               )}
 
-              {/* Other Skills in Search Results */}
+              {/* Other matching skills */}
               {otherSkillsInSearch.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold text-white/90 mb-2">
-                    Other Matching Skills (
-                    {otherSkillsInSearch.slice(0, PAGE_SIZE).length}
-                    {otherSkillsInSearch.length > PAGE_SIZE &&
-                      ` of ${otherSkillsInSearch.length}`}
-                    )
+                  <p className="text-xs font-semibold text-gray-700 mb-2">
+                    Other Matching Skills
+                    <span className="ml-1 text-gray-400 font-normal">
+                      ({otherSkillsInSearch.slice(0, PAGE_SIZE).length}
+                      {otherSkillsInSearch.length > PAGE_SIZE &&
+                        ` of ${otherSkillsInSearch.length}`}
+                      )
+                    </span>
                   </p>
-                  <div className="relative group">
-                    <div className="flex flex-wrap gap-2 max-h-64 overflow-y-auto p-3 bg-white/5 rounded-xl border border-white/10 shadow-sm custom-scrollbar">
-                      {otherSkillsInSearch.slice(0, PAGE_SIZE).map((skill) => (
-                        <button
-                          key={skill}
-                          type="button"
-                          onClick={() => addSkill(skill)}
-                          className="group inline-flex items-center gap-2 px-3.5 py-2 bg-white/5 border border-white/20 rounded-lg text-white/80 text-xs font-semibold hover:bg-linear-to-r hover:from-purple-500/10 hover:to-pink-500/10 hover:border-purple-400/40 hover:text-purple-200 hover:shadow-lg hover:shadow-purple-500/10 transition-all duration-200"
-                        >
-                          <span>{skill}</span>
-                          <Plus
-                            size={14}
-                            className="group-hover:rotate-90 transition-transform duration-200"
-                          />
-                        </button>
-                      ))}
-                    </div>
+                  <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto p-3 bg-gray-50 rounded-xl border border-gray-200">
+                    {otherSkillsInSearch.slice(0, PAGE_SIZE).map((skill) => (
+                      <button
+                        key={skill}
+                        type="button"
+                        onClick={() => addSkill(skill)}
+                        className="group inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-gray-700 text-xs font-semibold hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 hover:shadow-sm transition-all duration-200"
+                      >
+                        <span>{skill}</span>
+                        <Plus
+                          size={12}
+                          className="text-gray-400 group-hover:text-indigo-500 group-hover:rotate-90 transition-transform duration-200"
+                        />
+                      </button>
+                    ))}
                   </div>
                   {otherSkillsInSearch.length > PAGE_SIZE && (
-                    <p className="text-xs text-white/40 mt-2 text-center">
+                    <p className="text-xs text-gray-400 mt-2 text-center">
                       Showing top {PAGE_SIZE} results. Refine your search to see
                       more.
                     </p>
@@ -577,21 +497,23 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
             </div>
           )}
 
-        {/* Show categorized skills when NOT searching */}
+        {/* Browse skills (not searching) */}
         {!inputValue.trim() && (
           <>
-            {/* CV Skills with pagination (only show unselected) */}
+            {/* CV Skills with pagination */}
             {visibleCvSkills.length > 0 && (
               <div className="mb-4">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-xs font-semibold text-white/90 flex items-center gap-2">
-                    <div className="p-1 bg-linear-to-br from-slate-400 to-slate-600 rounded-md">
-                      <Sparkles size={12} className="text-white" />
-                    </div>
-                    Available CV Skills ({totalCvSkills})
+                <div className="flex items-center justify-between mb-2.5">
+                  <p className="text-xs font-semibold text-gray-700 flex items-center gap-2">
+                    <span className="flex items-center justify-center w-5 h-5 bg-gray-200 rounded-md">
+                      <Sparkles size={10} className="text-gray-600" />
+                    </span>
+                    Available CV Skills
+                    <span className="text-gray-400 font-normal">
+                      ({totalCvSkills})
+                    </span>
                   </p>
 
-                  {/* Right side: page controls + refresh */}
                   <div className="flex items-center gap-1.5">
                     {totalCvPages > 1 && (
                       <>
@@ -599,11 +521,11 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
                           type="button"
                           onClick={() => setCvPage((p) => Math.max(1, p - 1))}
                           disabled={cvPage === 1}
-                          className="p-1.5 rounded-lg bg-slate-500/10 border border-slate-400/30 text-slate-400 hover:bg-slate-500/20 hover:border-slate-400/50 hover:text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200"
+                          className="p-1.5 rounded-lg bg-gray-100 border border-gray-200 text-gray-500 hover:bg-gray-200 hover:text-gray-700 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200"
                         >
                           <ChevronLeft size={12} />
                         </button>
-                        <span className="text-xs font-semibold text-slate-400 px-1.5">
+                        <span className="text-xs font-semibold text-gray-500 px-1">
                           {cvPage} / {totalCvPages}
                         </span>
                         <button
@@ -612,17 +534,17 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
                             setCvPage((p) => Math.min(totalCvPages, p + 1))
                           }
                           disabled={cvPage === totalCvPages}
-                          className="p-1.5 rounded-lg bg-slate-500/10 border border-slate-400/30 text-slate-400 hover:bg-slate-500/20 hover:border-slate-400/50 hover:text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200"
+                          className="p-1.5 rounded-lg bg-gray-100 border border-gray-200 text-gray-500 hover:bg-gray-200 hover:text-gray-700 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200"
                         >
                           <ChevronRight size={12} />
                         </button>
-                        <div className="w-px h-4 bg-slate-400/20 mx-0.5" />
+                        <div className="w-px h-4 bg-gray-200 mx-0.5" />
                       </>
                     )}
                     <button
                       type="button"
                       onClick={handleRefreshSkills}
-                      className="p-1.5 rounded-lg bg-slate-500/10 border border-slate-400/30 text-slate-400 hover:bg-slate-500/20 hover:border-slate-400/50 hover:text-slate-300 transition-all duration-200"
+                      className="p-1.5 rounded-lg bg-gray-100 border border-gray-200 text-gray-500 hover:bg-gray-200 hover:text-gray-700 transition-all duration-200"
                       title="Refresh CV skills"
                     >
                       <RefreshCw
@@ -633,18 +555,18 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
                   </div>
                 </div>
 
-                <div className="flex flex-wrap gap-2 p-4 bg-linear-to-br from-slate-500/5 via-slate-600/5 to-slate-500/5 rounded-xl border border-slate-400/20 shadow-sm">
+                <div className="flex flex-wrap gap-2 p-3.5 bg-gray-50 rounded-xl border border-gray-200">
                   {visibleCvSkills.map((skill) => (
                     <button
                       key={skill}
                       type="button"
                       onClick={() => addSkill(skill)}
-                      className="group inline-flex items-center gap-2 px-3.5 py-2 bg-linear-to-r from-slate-500/10 to-slate-600/10 border border-slate-400/30 rounded-lg text-slate-300 text-xs font-semibold hover:from-slate-500/20 hover:to-slate-600/20 hover:border-slate-400/50 hover:shadow-lg hover:shadow-slate-500/10 transition-all duration-200"
+                      className="group inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-gray-700 text-xs font-semibold hover:border-gray-300 hover:shadow-sm transition-all duration-200"
                     >
                       <span>{skill}</span>
                       <Plus
-                        size={14}
-                        className="group-hover:rotate-90 transition-transform duration-200"
+                        size={12}
+                        className="text-gray-400 group-hover:rotate-90 transition-transform duration-200"
                       />
                     </button>
                   ))}
@@ -652,42 +574,39 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
               </div>
             )}
 
-            {/* Suggested Skills (only show unselected) */}
+            {/* Suggested Skills */}
             {suggestedSkillsToShow.length > 0 && (
               <div className="mb-4">
-                <p className="text-xs font-semibold text-white/90 mb-3 flex items-center gap-2">
-                  <div className="p-1 bg-linear-to-br from-emerald-500 to-green-600 rounded-md">
-                    <Sparkles size={12} className="text-white" />
-                  </div>
-                  Additional Suggested Skills ({suggestedSkillsToShow.length}
-                  {hiddenSuggestedSkillsCount > 0 &&
-                    ` of ${
-                      suggestedSkills.filter(
-                        (skill) =>
-                          !selectedSkills.includes(skill) &&
-                          !cvSkills.includes(skill),
-                      ).length
-                    }`}
-                  )
+                <p className="text-xs font-semibold text-gray-700 mb-2.5 flex items-center gap-2">
+                  <span className="flex items-center justify-center w-5 h-5 bg-emerald-100 rounded-md">
+                    <Sparkles size={10} className="text-emerald-600" />
+                  </span>
+                  Additional Suggested Skills
+                  <span className="text-gray-400 font-normal">
+                    ({suggestedSkillsToShow.length}
+                    {hiddenSuggestedSkillsCount > 0 &&
+                      ` of ${suggestedSkills.filter((s) => !selectedSkills.includes(s) && !cvSkills.includes(s)).length}`}
+                    )
+                  </span>
                 </p>
-                <div className="flex flex-wrap gap-2 p-4 bg-linear-to-br from-emerald-500/5 via-green-500/5 to-emerald-500/5 rounded-xl border border-emerald-400/20 shadow-sm">
+                <div className="flex flex-wrap gap-2 p-3.5 bg-emerald-50 rounded-xl border border-emerald-100">
                   {suggestedSkillsToShow.map((skill) => (
                     <button
                       key={skill}
                       type="button"
                       onClick={() => addSkill(skill)}
-                      className="group inline-flex items-center gap-2 px-3.5 py-2 bg-linear-to-r from-emerald-500/10 to-green-500/10 border border-emerald-400/30 rounded-lg text-emerald-300 text-xs font-semibold hover:from-emerald-500/20 hover:to-green-500/20 hover:border-emerald-400/50 hover:shadow-lg hover:shadow-emerald-500/10 transition-all duration-200"
+                      className="group inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-emerald-200 rounded-lg text-emerald-700 text-xs font-semibold hover:bg-emerald-50 hover:border-emerald-300 hover:shadow-sm transition-all duration-200"
                     >
                       <span>{skill}</span>
                       <Plus
-                        size={14}
-                        className="group-hover:rotate-90 transition-transform duration-200"
+                        size={12}
+                        className="text-emerald-500 group-hover:rotate-90 transition-transform duration-200"
                       />
                     </button>
                   ))}
                 </div>
                 {hiddenSuggestedSkillsCount > 0 && (
-                  <p className="text-xs text-white/40 mt-2 text-center">
+                  <p className="text-xs text-gray-400 mt-2 text-center">
                     + {hiddenSuggestedSkillsCount} more skill
                     {hiddenSuggestedSkillsCount > 1 ? "s" : ""} available. Use
                     search to find them.
@@ -696,10 +615,10 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
               </div>
             )}
 
-            {/* No CV Skills Message */}
+            {/* No CV skills */}
             {cvSkills.length === 0 && !authLoading && (
-              <div className="mb-4 p-4 bg-linear-to-r from-amber-500/10 to-orange-500/10 border border-amber-400/30 rounded-xl shadow-sm">
-                <p className="text-xs text-amber-300 text-center font-medium">
+              <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                <p className="text-xs text-amber-700 text-center font-medium">
                   💡 No skills extracted from your CV yet. Add custom skills
                   using the search box above.
                 </p>
@@ -708,14 +627,14 @@ const SkillsSelector = ({ selectedSkills = [], onSkillsChange }) => {
           </>
         )}
 
-        {/* Helper Text */}
-        <p className="mt-3 text-xs text-white/40 text-center">
+        {/* Footer */}
+        <p className="mt-2 text-xs text-gray-400 text-center">
           {selectedSkills.length > 0
-            ? `${selectedSkills.length} skill${selectedSkills.length !== 1 ? "s" : ""} selected for interview • Remove unwanted skills or add more`
+            ? `${selectedSkills.length} skill${selectedSkills.length !== 1 ? "s" : ""} selected · Remove unwanted skills or add more`
             : "Add skills using the search box above"}
         </p>
-      </CardBody>
-    </Card>
+      </div>
+    </div>
   );
 };
 

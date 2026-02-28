@@ -7,7 +7,6 @@ import { PricingSection } from "./Subscription/Pricing";
 import TestimonialsSection from "./Common/Testimonials";
 import ScrollToTop from "./Others/ScrollToTop";
 import Avatar from "./Common/Avatar";
-import SocialMediaSection from "./SocialMedia";
 import PreviousInterview from "./PreviousInterview";
 import Select from "./Common/Select";
 import CandidateFilter from "./Filter/CandidateFilter";
@@ -28,7 +27,6 @@ export {
   TestimonialsSection,
   ScrollToTop,
   Avatar,
-  SocialMediaSection,
   PreviousInterview,
   Select,
   CandidateFilter,

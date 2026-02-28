@@ -11,10 +11,10 @@ const ICE_SERVERS = [
 
 const Dot = ({ active, color = "green" }) => {
   const colors = {
-    green: active ? "bg-emerald-400" : "bg-slate-600",
-    orange: active ? "bg-orange-400" : "bg-slate-600",
-    yellow: active ? "bg-amber-400" : "bg-slate-600",
-    red: active ? "bg-red-400" : "bg-slate-600",
+    green: active ? "bg-emerald-500" : "bg-gray-200",
+    orange: active ? "bg-orange-500" : "bg-gray-200",
+    yellow: active ? "bg-amber-500" : "bg-gray-200",
+    red: active ? "bg-red-500" : "bg-gray-200",
   };
   return (
     <span
@@ -24,9 +24,9 @@ const Dot = ({ active, color = "green" }) => {
 };
 
 const StatusRow = ({ label, value, active, color }) => (
-  <div className="flex items-center justify-between py-2 border-b border-slate-800/60 last:border-0">
-    <span className="text-slate-500 text-xs">{label}</span>
-    <span className="flex items-center gap-2 text-xs font-medium text-slate-300">
+  <div className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+    <span className="text-gray-400 text-xs">{label}</span>
+    <span className="flex items-center gap-2 text-xs font-medium text-gray-700">
       <Dot active={active} color={color} />
       {value}
     </span>
@@ -324,11 +324,11 @@ const MobileCameraPage = () => {
 
   if (!sessionId || !userId) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 max-w-sm w-full text-center shadow-2xl">
-          <div className="w-14 h-14 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto mb-5">
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <div className="bg-white border border-gray-200 rounded-2xl p-8 max-w-sm w-full text-center shadow-sm">
+          <div className="w-14 h-14 rounded-full bg-red-50 border border-red-200 flex items-center justify-center mx-auto mb-5">
             <svg
-              className="w-7 h-7 text-red-400"
+              className="w-7 h-7 text-red-500"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -341,10 +341,10 @@ const MobileCameraPage = () => {
               />
             </svg>
           </div>
-          <h2 className="text-lg font-semibold text-white mb-2">
+          <h2 className="text-lg font-semibold text-gray-900 mb-2">
             Invalid Link
           </h2>
-          <p className="text-slate-500 text-sm">
+          <p className="text-gray-400 text-sm">
             Scan the QR code from your desktop interview page.
           </p>
         </div>
@@ -355,28 +355,28 @@ const MobileCameraPage = () => {
   const phaseConfig = {
     connecting: {
       label: "Connecting…",
-      accent: "text-amber-400",
+      accent: "text-amber-500",
       bar: "bg-amber-400",
     },
     camera: {
       label: "Starting camera…",
-      accent: "text-violet-400",
+      accent: "text-violet-500",
       bar: "bg-violet-500",
     },
     publishing: {
       label: "Establishing peer connection…",
-      accent: "text-violet-400",
+      accent: "text-violet-500",
       bar: "bg-violet-500",
     },
     live: {
       label: "Streaming Live",
-      accent: "text-emerald-400",
+      accent: "text-emerald-600",
       bar: "bg-emerald-500",
     },
     error: {
       label: "Connection Error",
-      accent: "text-red-400",
-      bar: "bg-red-500",
+      accent: "text-red-500",
+      bar: "bg-red-400",
     },
   };
 
@@ -387,26 +387,27 @@ const MobileCameraPage = () => {
 
   return (
     <div
-      className="min-h-screen flex flex-col items-center justify-center p-4"
+      className="min-h-screen flex flex-col items-center justify-center p-4 bg-gray-50"
       style={{
         background:
-          "radial-gradient(ellipse 80% 60% at 50% 0%, rgba(124,58,237,0.10) 0%, transparent 65%), #020617",
+          "radial-gradient(ellipse 80% 60% at 50% 0%, rgba(124,58,237,0.06) 0%, transparent 65%), #f8fafc",
       }}
     >
       <div className="w-full max-w-sm flex flex-col gap-4">
+        {/* Title */}
         <div className="text-center mb-2">
           <div
             className={`w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4 transition-all duration-500 ${
               isLive
-                ? "bg-emerald-500/15 border border-emerald-500/30"
+                ? "bg-emerald-50 border border-emerald-200"
                 : isError
-                  ? "bg-red-500/15 border border-red-500/30"
-                  : "bg-violet-500/15 border border-violet-500/30"
+                  ? "bg-red-50 border border-red-200"
+                  : "bg-violet-50 border border-violet-200"
             }`}
           >
             {isError ? (
               <svg
-                className="w-7 h-7 text-red-400"
+                className="w-7 h-7 text-red-500"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -420,7 +421,7 @@ const MobileCameraPage = () => {
               </svg>
             ) : (
               <svg
-                className={`w-7 h-7 ${isLive ? "text-emerald-400" : "text-violet-400"}`}
+                className={`w-7 h-7 ${isLive ? "text-emerald-500" : "text-violet-500"}`}
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -434,7 +435,7 @@ const MobileCameraPage = () => {
               </svg>
             )}
           </div>
-          <h1 className="text-xl font-bold text-white tracking-tight mb-1">
+          <h1 className="text-xl font-bold text-gray-900 tracking-tight mb-1">
             Secondary Camera
           </h1>
           <p className={`text-sm font-medium ${cfg.accent} transition-colors`}>
@@ -442,8 +443,10 @@ const MobileCameraPage = () => {
           </p>
         </div>
 
-        <div className="relative bg-slate-900 rounded-2xl overflow-hidden border border-slate-800/80 shadow-2xl">
-          <div className="h-0.5 w-full bg-slate-800">
+        {/* Video Card */}
+        <div className="relative bg-white rounded-2xl overflow-hidden border border-gray-200 shadow-sm">
+          {/* Progress bar */}
+          <div className="h-0.5 w-full bg-gray-100">
             <div
               className={`h-full ${cfg.bar} transition-all duration-700 ${
                 isLive ? "w-full" : isError ? "w-1/4" : "w-2/3 animate-pulse"
@@ -456,15 +459,16 @@ const MobileCameraPage = () => {
               autoPlay
               muted
               playsInline
-              className="w-full h-full object-cover"
+              className="w-full h-full object-cover bg-gray-900"
               style={{ transform: "scaleX(-1)" }}
             />
 
+            {/* Camera loading overlay */}
             {!cameraReady && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/90 gap-3">
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50/95 gap-3">
                 {isError ? (
                   <svg
-                    className="w-10 h-10 text-red-500/60"
+                    className="w-10 h-10 text-red-300"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
@@ -477,25 +481,26 @@ const MobileCameraPage = () => {
                     />
                   </svg>
                 ) : (
-                  <Spinner className="w-10 h-10 text-violet-500/60" />
+                  <Spinner className="w-10 h-10 text-violet-400" />
                 )}
-                <p className="text-slate-500 text-xs">
+                <p className="text-gray-400 text-xs">
                   {isError ? "Camera unavailable" : "Starting camera…"}
                 </p>
               </div>
             )}
 
+            {/* Live badge */}
             {isLive && (
               <div className="absolute top-3 left-3 flex items-center gap-1.5">
-                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/90 backdrop-blur-sm rounded-md">
+                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500 rounded-md shadow-sm">
                   <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
                   <span className="text-white text-[10px] font-bold tracking-widest">
                     LIVE
                   </span>
                 </div>
                 {zoomApplied && (
-                  <div className="px-2 py-1 bg-slate-900/80 backdrop-blur-sm rounded-md border border-slate-700/60">
-                    <span className="text-slate-300 text-[10px] font-semibold tracking-wider">
+                  <div className="px-2 py-1 bg-white/80 backdrop-blur-sm rounded-md border border-gray-200 shadow-sm">
+                    <span className="text-gray-600 text-[10px] font-semibold tracking-wider">
                       WIDE
                     </span>
                   </div>
@@ -503,9 +508,10 @@ const MobileCameraPage = () => {
               </div>
             )}
 
+            {/* P2P connecting badge */}
             {isLoading && cameraReady && (
               <div className="absolute top-3 left-3">
-                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-violet-600/90 backdrop-blur-sm rounded-md">
+                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-violet-500 rounded-md shadow-sm">
                   <Spinner className="w-2.5 h-2.5 text-white" />
                   <span className="text-white text-[10px] font-bold tracking-widest">
                     P2P…
@@ -516,13 +522,14 @@ const MobileCameraPage = () => {
           </div>
         </div>
 
+        {/* Error Box */}
         {isError && error && (
-          <div className="px-4 py-3 bg-red-500/8 border border-red-500/20 rounded-xl">
-            <p className="text-red-300 text-sm mb-3">{error}</p>
+          <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
+            <p className="text-red-600 text-sm mb-3">{error}</p>
             <button
               onClick={handleRetry}
               disabled={retrying}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/25 text-red-300 text-sm font-semibold rounded-xl transition-all duration-200 disabled:opacity-50"
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white hover:bg-red-50 border border-red-200 text-red-500 text-sm font-semibold rounded-xl transition-all duration-200 disabled:opacity-50 shadow-sm"
             >
               {retrying ? (
                 <>
@@ -536,7 +543,8 @@ const MobileCameraPage = () => {
           </div>
         )}
 
-        <div className="bg-slate-900/60 border border-slate-800/60 rounded-2xl px-4 py-1 backdrop-blur-sm">
+        {/* Status Panel */}
+        <div className="bg-white border border-gray-200 rounded-2xl px-4 py-1 shadow-sm">
           <StatusRow
             label="Server"
             value={socketConnected ? "Connected" : "Connecting…"}
@@ -575,7 +583,7 @@ const MobileCameraPage = () => {
           />
         </div>
 
-        <p className="text-center text-slate-700 text-xs pb-2">
+        <p className="text-center text-gray-300 text-xs pb-2">
           Keep this page open throughout the interview
         </p>
       </div>

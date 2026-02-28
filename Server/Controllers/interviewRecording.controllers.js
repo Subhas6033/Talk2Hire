@@ -5,8 +5,14 @@ const {
 } = require("../Upload/uploadOnFTP");
 const { asyncHandler, APIERR, APIRES } = require("../Utils/index.utils");
 const redis = require("../Config/redis.config");
+const { evaluateInterview } = require("../Service/evaluation.service");
 
+// ── Timing constants ──────────────────────────────────────────────────────────
 const RECORDING_TTL = 60 * 60 * 6;
+const MERGE_DELAY_MS = 5 * 60 * 1000; // 5 min — total window before merge starts
+const CHUNK_SETTLE_TIMEOUT_MS = 3 * 60 * 1000; // 3 min — max wait for in-flight chunks
+const CHUNK_SETTLE_POLL_MS = 5 * 1000; // 5 sec — polling interval
+
 const VIDEO_TYPES = ["primary_camera", "secondary_camera", "screen_recording"];
 
 const INTERVIEW_COLUMN_MAP = {
@@ -15,14 +21,13 @@ const INTERVIEW_COLUMN_MAP = {
   screen_recording: "scr_recording_url",
 };
 
-const FINALIZE_DELAY_MS = 3_000;
-const CHUNK_SETTLE_TIMEOUT_MS = 90_000;
-const CHUNK_SETTLE_POLL_MS = 2_000;
-
 /* ── Redis helpers ───────────────────────────────────────────────────────── */
 
 const redisKey = (userId, interviewId, videoType) =>
   `interview:${userId}:${interviewId}:recording:${videoType}`;
+
+// Prevents all three video types from each spawning their own evaluation run
+const evalLockKey = (interviewId) => `interview:${interviewId}:evaluation:lock`;
 
 async function redisGet(key) {
   try {
@@ -70,19 +75,6 @@ async function withRetry(
 
 /* ── DB helpers ──────────────────────────────────────────────────────────── */
 
-// ── FIX: Replaced SELECT + INSERT with a single atomic INSERT ... ON DUPLICATE KEY ──
-//
-// Root cause of ER_DUP_ENTRY:
-//   The previous version did SELECT (no row found) → INSERT across three concurrent
-//   requests (primary_camera, secondary_camera, screen_recording all start at once).
-//   All three found no row and all three tried to INSERT → duplicate key error for
-//   the one that lost the race.
-//
-// Fix:
-//   INSERT ... ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
-//   This is atomic — only one INSERT wins; the others hit the ON DUPLICATE KEY
-//   branch which sets LAST_INSERT_ID to the existing row's id so insertId is
-//   always correct for both new and existing rows.
 async function ensureVideoRecord(interviewId, userId, videoType) {
   const [result] = await pool.execute(
     `INSERT INTO interview_videos
@@ -90,14 +82,12 @@ async function ensureVideoRecord(interviewId, userId, videoType) {
         ftp_path, ftp_url, upload_status, upload_progress, total_chunks,
         uploaded_chunks, started_at)
      VALUES (?, ?, ?, ?, 0, '', '', 'pending', 0, 0, 0, NOW())
-     ON DUPLICATE KEY UPDATE
-       id = LAST_INSERT_ID(id)`,
+     ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
     [interviewId, userId, videoType, `${videoType}_${interviewId}.webm`],
   );
   return result.insertId;
 }
 
-// FIX: No-transaction upsert to avoid deadlocks on concurrent chunk uploads.
 async function insertChunkRecord(videoId, chunkNumber, chunkSize, ftpPath) {
   await withRetry(
     async () => {
@@ -113,9 +103,7 @@ async function insertChunkRecord(videoId, chunkNumber, chunkSize, ftpPath) {
         [videoId, chunkNumber, chunkSize, ftpPath],
       );
 
-      const isNewChunk = upsertResult.affectedRows === 1;
-
-      if (isNewChunk) {
+      if (upsertResult.affectedRows === 1) {
         await pool.execute(
           `UPDATE interview_videos
            SET uploaded_chunks = uploaded_chunks + 1,
@@ -126,7 +114,9 @@ async function insertChunkRecord(videoId, chunkNumber, chunkSize, ftpPath) {
         );
       } else {
         await pool.execute(
-          `UPDATE interview_videos SET total_chunks = GREATEST(total_chunks, ?), updated_at = NOW() WHERE id = ?`,
+          `UPDATE interview_videos
+           SET total_chunks = GREATEST(total_chunks, ?), updated_at = NOW()
+           WHERE id = ?`,
           [chunkNumber + 1, videoId],
         );
         console.log(
@@ -140,6 +130,133 @@ async function insertChunkRecord(videoId, chunkNumber, chunkSize, ftpPath) {
       label: `insertChunkRecord chunk=${chunkNumber}`,
     },
   );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ── Answer Analysis  (runs DURING the 5-minute merge window) ────────────────
+   ─────────────────────────────────────────────────────────────────────────────
+
+   Flow:
+     t=0   → endRecording() responds to client
+     t=0   → [primary_camera only] runAnswerAnalysisDuringWait() kicks off
+               • acquires a Redis NX lock so secondary/screen don't duplicate it
+               • calls evaluateInterview() — scores every Q&A with AI
+               • persists results to interview_evaluations + question_evaluations
+               • writes a summary row to interview_recording_analysis
+     t≈2m  → analysis typically finishes (well within the 5-min window)
+     t=5m  → finalizeRecording() runs (download chunks → ffmpeg → FTP upload)
+
+   Why a lock?
+     All three video types call endRecording() concurrently.
+     Without the lock all three would run evaluateInterview() simultaneously.
+     Redis SET NX EX guarantees exactly-one execution.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Evaluate every answered question for the interview and persist results.
+ * Returns a summary object that can be emitted to the socket or polled via REST.
+ *
+ * @param {string|number} interviewId
+ * @param {string|number} userId
+ * @returns {Promise<AnalysisSummary|null>}
+ */
+async function runAnswerAnalysisDuringWait(interviewId, userId) {
+  const lockKey = evalLockKey(interviewId);
+
+  // Atomic SET NX — only the first caller proceeds; the rest get null back
+  let lockAcquired = false;
+  try {
+    const result = await redis.set(lockKey, "1", "NX", "EX", 60 * 10); // 10-min TTL
+    lockAcquired = result === "OK";
+  } catch {
+    lockAcquired = false;
+  }
+
+  if (!lockAcquired) {
+    console.log(
+      `🔒 [EVAL] Lock already held for interview ${interviewId} — skipping duplicate`,
+    );
+    return null;
+  }
+
+  console.log(
+    `🧠 [EVAL] Starting answer analysis for interview ${interviewId}…`,
+  );
+
+  try {
+    // evaluateInterview() handles: fetching Q&A history → per-question AI scoring
+    // → overall summary → persisting to interview_evaluations / question_evaluations
+    const evalResult = await evaluateInterview(interviewId);
+    const { overallEvaluation, questionEvaluations, totalQuestions } =
+      evalResult;
+
+    // ── Write a lightweight summary row for easy REST polling ─────────────
+    await pool
+      .execute(
+        `INSERT INTO interview_recording_analysis
+         (interview_id, user_id, overall_score, hire_decision, experience_level,
+          total_questions, strengths, weaknesses, summary, analysed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE
+         overall_score    = VALUES(overall_score),
+         hire_decision    = VALUES(hire_decision),
+         experience_level = VALUES(experience_level),
+         total_questions  = VALUES(total_questions),
+         strengths        = VALUES(strengths),
+         weaknesses       = VALUES(weaknesses),
+         summary          = VALUES(summary),
+         analysed_at      = NOW()`,
+        [
+          interviewId,
+          userId,
+          overallEvaluation.overallScore,
+          overallEvaluation.hireDecision,
+          overallEvaluation.experienceLevel,
+          totalQuestions,
+          overallEvaluation.strengths ?? "",
+          overallEvaluation.weaknesses ?? "",
+          overallEvaluation.summary ?? "",
+        ],
+      )
+      .catch((err) =>
+        // Table might not exist yet on older deployments — non-fatal
+        console.warn(
+          `⚠️ [EVAL] interview_recording_analysis upsert skipped: ${err.message}`,
+        ),
+      );
+
+    const summary = {
+      overallScore: overallEvaluation.overallScore,
+      hireDecision: overallEvaluation.hireDecision,
+      experienceLevel: overallEvaluation.experienceLevel,
+      totalQuestions,
+      strengths: overallEvaluation.strengths,
+      weaknesses: overallEvaluation.weaknesses,
+      summary: overallEvaluation.summary,
+      averages: overallEvaluation.averages,
+      questionBreakdown: questionEvaluations.map((q) => ({
+        order: q.questionOrder,
+        question: q.question,
+        score: q.score,
+        quality: q.quality,
+        feedback: q.feedback,
+      })),
+    };
+
+    console.log(
+      `✅ [EVAL] Analysis complete — score=${summary.overallScore} ` +
+        `hire=${summary.hireDecision} (interview ${interviewId})`,
+    );
+
+    return summary;
+  } catch (err) {
+    console.error(
+      `❌ [EVAL] Analysis failed for interview ${interviewId}:`,
+      err.message,
+    );
+    await redisDel(lockKey); // release so a retry is possible
+    return null;
+  }
 }
 
 /* ── Start Recording ─────────────────────────────────────────────────────── */
@@ -172,7 +289,6 @@ const startRecording = asyncHandler(async (req, res) => {
   }
 
   const videoId = await ensureVideoRecord(interviewId, userId, videoType);
-
   const meta = {
     status: "recording",
     userId,
@@ -238,12 +354,7 @@ const uploadChunk = asyncHandler(async (req, res) => {
   }
 
   const meta = JSON.parse(cached);
-
-  if (
-    meta.status !== "recording" &&
-    meta.status !== "processing" &&
-    meta.status !== "completed"
-  )
+  if (!["recording", "processing", "completed"].includes(meta.status))
     throw new APIERR(400, "Recording not active");
 
   if (meta.status === "completed")
@@ -253,7 +364,6 @@ const uploadChunk = asyncHandler(async (req, res) => {
 
   const { videoId } = meta;
   const buffer = Buffer.from(req.file.buffer);
-
   const idx = String(chunkIndex).padStart(6, "0");
   const fileName = `${Date.now()}-chunk_${idx}.webm`;
   const remotePath = `/public/interview-videos/${userId}/${interviewId}/${videoType}/chunks`;
@@ -288,7 +398,6 @@ const endRecording = asyncHandler(async (req, res) => {
 
   const key = redisKey(userId, interviewId, videoType);
   const cached = await redisGet(key);
-
   let meta = cached ? JSON.parse(cached) : null;
 
   if (!meta) {
@@ -314,6 +423,7 @@ const endRecording = asyncHandler(async (req, res) => {
     "EX",
     RECORDING_TTL,
   );
+
   await pool.execute(
     `UPDATE interview_videos SET upload_status = 'merging', updated_at = NOW() WHERE id = ?`,
     [meta.videoId],
@@ -326,29 +436,158 @@ const endRecording = asyncHandler(async (req, res) => {
     );
   }
 
+  // ── Respond immediately — client is never blocked ─────────────────────────
   res
     .status(200)
     .json(
       new APIRES(
         200,
         { status: "processing", videoType },
-        "Recording stopped, merging chunks",
+        "Recording stopped — analysing answers and merging video in background",
       ),
     );
 
-  console.log(
-    `⏳ Waiting ${FINALIZE_DELAY_MS / 1000}s before merging ${videoType}…`,
-  );
-  setTimeout(() => {
-    finalizeRecording({
-      userId,
-      interviewId,
-      videoType,
-      videoId: meta.videoId,
-    }).catch((err) =>
-      console.error(`❌ Finalize failed (${videoType}):`, err.message),
+  // ── Background pipeline (fire-and-forget) ─────────────────────────────────
+  //
+  //   Timeline for each of the 3 video types running in parallel:
+  //
+  //   t=0   → endRecording() called for all three types
+  //   t=0   → [primary_camera only] answer analysis starts (Redis lock ensures once)
+  //   t≈2m  → AI evaluation finishes, scores saved to DB
+  //   t=5m  → MERGE_DELAY_MS elapses → finalizeRecording() runs
+  //              download chunks → ffmpeg concat → FTP upload → DB update
+  //
+  (async () => {
+    const pipelineStart = Date.now();
+    try {
+      // ── STEP 1: Evaluate answers (primary_camera trigger, runs once) ───────
+      if (videoType === "primary_camera") {
+        const analysisResult = await runAnswerAnalysisDuringWait(
+          interviewId,
+          userId,
+        );
+        if (analysisResult) {
+          console.log(
+            `📊 [PIPELINE] Analysis ready — overall=${analysisResult.overallScore} ` +
+              `hire=${analysisResult.hireDecision} ` +
+              `(${analysisResult.totalQuestions} questions, interview ${interviewId})`,
+          );
+          // To push this to the client in real-time, pass `io` into this module
+          // and emit here:
+          //   io.to(`interview_${interviewId}`).emit("analysis_complete", analysisResult);
+          // See interview.socket.js integration below.
+        }
+      }
+
+      // ── STEP 2: Wait out the remainder of the 5-minute window ─────────────
+      const elapsed = Date.now() - pipelineStart;
+      const remainingWait = Math.max(0, MERGE_DELAY_MS - elapsed);
+
+      if (remainingWait > 0) {
+        console.log(
+          `⏳ [PIPELINE] ${videoType} — waiting ${Math.round(remainingWait / 1000)}s before merge…`,
+        );
+        await new Promise((r) => setTimeout(r, remainingWait));
+      }
+
+      // ── STEP 3: Merge chunks → upload → update DB ─────────────────────────
+      console.log(
+        `🎬 [PIPELINE] Starting merge for ${videoType} (interview ${interviewId})`,
+      );
+      await finalizeRecording({
+        userId,
+        interviewId,
+        videoType,
+        videoId: meta.videoId,
+      });
+    } catch (err) {
+      console.error(`❌ [PIPELINE] Failed (${videoType}):`, err.message);
+    }
+  })();
+});
+
+/* ── GET /interviews/:interviewId/analysis  (REST polling endpoint) ──────── */
+
+const getAnalysisResult = asyncHandler(async (req, res) => {
+  const { interviewId } = req.params;
+  const userId = req.user.id;
+
+  // ── Try lightweight summary table first ───────────────────────────────────
+  const [summaryRows] = await pool
+    .execute(
+      `SELECT * FROM interview_recording_analysis
+     WHERE interview_id = ? AND user_id = ? LIMIT 1`,
+      [interviewId, userId],
+    )
+    .catch(() => [[]]);
+
+  if (summaryRows?.[0]) {
+    // Also attach per-question breakdown
+    const [qRows] = await pool
+      .execute(
+        `SELECT qe.score, qe.feedback, qe.correctness, qe.depth, qe.clarity,
+              iq.question_order, iq.question, iq.answer
+       FROM question_evaluations qe
+       JOIN interview_questions  iq ON qe.question_id = iq.id
+       WHERE qe.interview_id = ?
+       ORDER BY iq.question_order ASC`,
+        [interviewId],
+      )
+      .catch(() => [[]]);
+
+    return res
+      .status(200)
+      .json(
+        new APIRES(
+          200,
+          { ...summaryRows[0], questionBreakdown: qRows ?? [] },
+          "Analysis result",
+        ),
+      );
+  }
+
+  // ── Fall back to canonical evaluation tables ───────────────────────────────
+  const [evalRows] = await pool
+    .execute(
+      `SELECT overall_score, hire_decision, experience_level, strengths, weaknesses, summary
+     FROM interview_evaluations WHERE interview_id = ? LIMIT 1`,
+      [interviewId],
+    )
+    .catch(() => [[]]);
+
+  if (!evalRows?.[0]) {
+    return res
+      .status(202)
+      .json(
+        new APIRES(
+          202,
+          { status: "pending" },
+          "Analysis not yet complete — please retry",
+        ),
+      );
+  }
+
+  const [qRows] = await pool
+    .execute(
+      `SELECT qe.score, qe.feedback, qe.correctness, qe.depth, qe.clarity,
+            iq.question_order, iq.question, iq.answer
+     FROM question_evaluations qe
+     JOIN interview_questions  iq ON qe.question_id = iq.id
+     WHERE qe.interview_id = ?
+     ORDER BY iq.question_order ASC`,
+      [interviewId],
+    )
+    .catch(() => [[]]);
+
+  res
+    .status(200)
+    .json(
+      new APIRES(
+        200,
+        { ...evalRows[0], questionBreakdown: qRows ?? [] },
+        "Analysis result",
+      ),
     );
-  }, FINALIZE_DELAY_MS);
 });
 
 /* ── Finalize: merge chunks → upload merged video → update DB ────────────── */
@@ -356,6 +595,7 @@ const endRecording = asyncHandler(async (req, res) => {
 async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
   const key = redisKey(userId, interviewId, videoType);
   const fs = require("fs").promises;
+  const fsSync = require("fs");
   const path = require("path");
   const crypto = require("crypto");
   const ffmpeg = require("fluent-ffmpeg");
@@ -365,7 +605,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
   try {
     console.log(`🎬 Finalizing ${videoType} for interview ${interviewId}`);
 
-    // ── Poll until all chunks settled ─────────────────────────────────────
+    // ── Poll until all in-flight chunks have settled ───────────────────────
     console.log(`⏳ Waiting for all chunks to settle (${videoType})…`);
     let allChunks = [];
     const pollDeadline = Date.now() + CHUNK_SETTLE_TIMEOUT_MS;
@@ -377,10 +617,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
         [videoId],
       );
       const inFlight = rows.filter(
-        (r) =>
-          r.upload_status !== "uploaded" &&
-          r.upload_status !== "failed" &&
-          r.upload_status !== "merged",
+        (r) => !["uploaded", "failed", "merged"].includes(r.upload_status),
       );
       if (inFlight.length === 0) {
         allChunks = rows;
@@ -394,7 +631,8 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
 
     if (allChunks.length === 0) {
       const [finalRows] = await pool.execute(
-        `SELECT chunk_number, temp_ftp_path, chunk_size, upload_status FROM interview_video_chunks WHERE video_id = ?`,
+        `SELECT chunk_number, temp_ftp_path, chunk_size, upload_status
+         FROM interview_video_chunks WHERE video_id = ?`,
         [videoId],
       );
       allChunks = finalRows;
@@ -407,18 +645,17 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     const failedChunks = allChunks.filter((r) => r.upload_status === "failed");
     if (failedChunks.length > 0)
       console.warn(
-        `⚠️ ${failedChunks.length} chunk(s) failed for ${videoType}: ${failedChunks.map((c) => c.chunk_number).join(", ")}`,
+        `⚠️ ${failedChunks.length} failed chunk(s) for ${videoType}: ` +
+          failedChunks.map((c) => c.chunk_number).join(", "),
       );
 
     if (uploadedChunks.length === 0) {
-      console.warn(
-        `⚠️ No uploaded chunks for ${videoType} video ${videoId} — marking failed`,
-      );
+      console.warn(`⚠️ No uploaded chunks for ${videoType} — marking failed`);
       await pool.execute(
         `UPDATE interview_videos SET upload_status = 'failed', error_message = ?, updated_at = NOW() WHERE id = ?`,
         [
           failedChunks.length > 0
-            ? `All ${failedChunks.length} chunk(s) failed to upload`
+            ? `All ${failedChunks.length} chunk(s) failed`
             : "No chunks found",
           videoId,
         ],
@@ -436,31 +673,34 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     }
     if (gaps.length > 0) {
       console.warn(
-        `⚠️ Sequence gap(s) in ${videoType}: ${gaps.map((g) => `${g.after}→${g.before}`).join(", ")} — merging ${uploadedChunks.length} available chunks anyway`,
+        `⚠️ Sequence gap(s) in ${videoType}: ` +
+          gaps.map((g) => `${g.after}→${g.before}`).join(", ") +
+          ` — merging ${uploadedChunks.length} available chunks anyway`,
       );
     } else {
       console.log(
-        `✅ Chunk sequence verified — no gaps (${uploadedChunks.length} chunks, ${videoType})`,
+        `✅ Chunk sequence OK — ${uploadedChunks.length} chunks, ${videoType}`,
       );
     }
 
-    console.log(`📦 Merging ${uploadedChunks.length} chunks for ${videoType}`);
+    console.log(
+      `📦 Downloading ${uploadedChunks.length} chunks for ${videoType}…`,
+    );
     await fs.mkdir(tempDir, { recursive: true });
 
-    // ── Sequential download with retry ────────────────────────────────────
-    const chunkPaths = [];
-    for (const chunk of uploadedChunks) {
-      const localPath = path.join(
-        tempDir,
-        `chunk_${String(chunk.chunk_number).padStart(6, "0")}.webm`,
-      );
+    // ── Sequential FTP download with retry ────────────────────────────────
+    // We store each chunk as a Buffer in memory; for very long recordings
+    // (>100 chunks) you could stream-write to disk instead, but for typical
+    // interview lengths (10–20 chunks) this is fine.
+    const chunkBuffers = [];
 
-      await withRetry(
+    for (const chunk of uploadedChunks) {
+      const buf = await withRetry(
         async () => {
-          const buffer = await downloadFileFromFTP(chunk.temp_ftp_path);
-          if (!buffer || buffer.length === 0)
+          const b = await downloadFileFromFTP(chunk.temp_ftp_path);
+          if (!b || b.length === 0)
             throw new Error(`Empty buffer for chunk ${chunk.chunk_number}`);
-          await fs.writeFile(localPath, buffer);
+          return b;
         },
         {
           attempts: 4,
@@ -469,48 +709,87 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
         },
       );
 
-      const stat = await fs.stat(localPath);
-      if (stat.size === 0) {
-        console.warn(
-          `⚠️ Chunk ${chunk.chunk_number} is 0 bytes on disk — skipping`,
-        );
-        continue;
-      }
-
-      chunkPaths.push(localPath);
+      chunkBuffers.push(buf);
       console.log(
-        `↓ chunk ${chunk.chunk_number}/${uploadedChunks.length} (${videoType}) — ${stat.size} bytes`,
+        `↓ chunk ${chunk.chunk_number}/${uploadedChunks.length - 1} (${videoType}) — ${buf.length} bytes`,
       );
     }
 
-    if (chunkPaths.length === 0)
-      throw new Error("All downloaded chunks were empty — cannot merge");
-
-    // ── FFmpeg concat ─────────────────────────────────────────────────────
-    const concatPath = path.join(tempDir, "concat.txt");
-    await fs.writeFile(
-      concatPath,
-      chunkPaths.map((p) => `file '${p}'`).join("\n"),
-    );
+    // ── FIX: Binary concatenate all chunk buffers ─────────────────────────
+    //
+    // MediaRecorder produces a stream of WebM Cluster elements.
+    // Chunk 0 = EBML header + Tracks + first Cluster(s)
+    // Chunk N = additional Cluster(s) only
+    //
+    // Binary concat produces a single valid .webm stream because the
+    // WebM/Matroska container is designed to be appendable at the Cluster
+    // boundary — this is exactly how live WebM streaming works.
+    //
+    // DO NOT use ffmpeg concat demuxer (-f concat) for this — it treats
+    // each file as independent and fails when it finds no header in chunk 1+.
+    //
+    const totalBytes = chunkBuffers.reduce((s, b) => s + b.length, 0);
+    const rawWebmPath = path.join(tempDir, `${videoType}_raw.webm`);
     const mergedPath = path.join(tempDir, `${videoType}_merged.webm`);
 
+    console.log(
+      `🔗 Binary-concatenating ${chunkBuffers.length} chunks ` +
+        `(${(totalBytes / 1024 / 1024).toFixed(2)} MB raw) for ${videoType}…`,
+    );
+
+    // Write chunks sequentially to avoid one giant Buffer.concat in memory
+    const writeStream = fsSync.createWriteStream(rawWebmPath);
+    await new Promise((resolve, reject) => {
+      writeStream.on("error", reject);
+      writeStream.on("finish", resolve);
+      for (const buf of chunkBuffers) writeStream.write(buf);
+      writeStream.end();
+    });
+
+    // Free chunk buffers now that they're on disk
+    chunkBuffers.length = 0;
+
+    const rawStat = await fs.stat(rawWebmPath);
+    if (rawStat.size === 0)
+      throw new Error(`Binary concat produced empty file for ${videoType}`);
+
+    console.log(
+      `✅ Raw concat done: ${(rawStat.size / 1024 / 1024).toFixed(2)} MB → running FFmpeg re-mux…`,
+    );
+
+    // ── FFmpeg re-mux: fix timestamps + write clean container ────────────
+    //
+    // -fflags +genpts  → regenerate presentation timestamps so the output
+    //                    timeline starts at 0 and is monotonically increasing
+    //                    (MediaRecorder chunks often have discontinuous PTS)
+    // -c copy          → no re-encode — fast, lossless container rewrite
+    //
     await new Promise((resolve, reject) => {
       const ffmpegTimeout = setTimeout(
         () =>
           reject(new Error(`FFmpeg timed out after 30 minutes (${videoType})`)),
         30 * 60 * 1000,
       );
-      ffmpeg()
-        .input(concatPath)
-        .inputOptions(["-f concat", "-safe 0"])
-        .outputOptions(["-c copy"])
+
+      ffmpeg(rawWebmPath) // ← single input: the binary-concat file
+        .outputOptions([
+          "-c copy", // lossless — no re-encode
+          "-fflags +genpts", // regenerate PTS for clean timeline
+        ])
+        .on("start", (cmd) =>
+          console.log(`▶️  FFmpeg cmd (${videoType}): ${cmd}`),
+        )
         .on("end", () => {
           clearTimeout(ffmpegTimeout);
-          console.log(`✂️  FFmpeg done (${videoType})`);
+          console.log(`✂️  FFmpeg re-mux done (${videoType})`);
           resolve();
         })
-        .on("error", (err) => {
+        .on("error", (err, stdout, stderr) => {
           clearTimeout(ffmpegTimeout);
+          console.error(
+            `❌ FFmpeg error (${videoType}):`,
+            stderr || err.message,
+          );
           reject(err);
         })
         .save(mergedPath);
@@ -519,7 +798,18 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     // ── Verify output ─────────────────────────────────────────────────────
     const mergedStat = await fs.stat(mergedPath).catch(() => null);
     if (!mergedStat || mergedStat.size === 0)
-      throw new Error(`FFmpeg produced an empty merged file for ${videoType}`);
+      throw new Error(`FFmpeg produced empty merged file for ${videoType}`);
+
+    // Sanity check: merged file should be at least 80% of raw size
+    // (some overhead removed by re-mux, but not more than 20%)
+    if (mergedStat.size < rawStat.size * 0.8) {
+      console.warn(
+        `⚠️ Merged file (${mergedStat.size}) is <80% of raw (${rawStat.size}) — ` +
+          `possible data loss detected for ${videoType}. Falling back to raw upload.`,
+      );
+      // Fall back: upload the raw binary-concat instead of the re-muxed file
+      await fs.copyFile(rawWebmPath, mergedPath);
+    }
 
     const mergedBuffer = await fs.readFile(mergedPath);
     const checksum = crypto
@@ -528,17 +818,26 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
       .digest("hex");
     const fileSize = mergedBuffer.length;
 
+    // ── Probe duration from the properly-muxed file ───────────────────────
     const duration = await new Promise((resolve) => {
       ffmpeg.ffprobe(mergedPath, (err, meta) => {
-        resolve(err ? null : Math.round(meta?.format?.duration ?? 0));
+        if (err) {
+          console.warn(`⚠️ ffprobe failed for ${videoType}: ${err.message}`);
+          resolve(null);
+        } else {
+          const d = Math.round(meta?.format?.duration ?? 0);
+          console.log(`⏱️  Probed duration: ${d}s (${videoType})`);
+          resolve(d);
+        }
       });
     });
 
     console.log(
-      `📊 ${videoType}: ${(fileSize / 1024 / 1024).toFixed(2)} MB, ${duration}s, ${chunkPaths.length}/${uploadedChunks.length} chunks merged`,
+      `📊 ${videoType}: ${(fileSize / 1024 / 1024).toFixed(2)} MB final, ` +
+        `${duration}s, ${uploadedChunks.length} chunks merged`,
     );
 
-    // ── Upload merged file ────────────────────────────────────────────────
+    // ── Upload merged file to FTP ─────────────────────────────────────────
     const mergedFilename = `${videoType}_${interviewId}_${Date.now()}.webm`;
     const ftpResult = await withRetry(
       () =>
@@ -570,7 +869,9 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     );
 
     await pool.execute(
-      `UPDATE interview_video_chunks SET upload_status = 'merged' WHERE video_id = ? AND upload_status = 'uploaded'`,
+      `UPDATE interview_video_chunks
+       SET upload_status = 'merged'
+       WHERE video_id = ? AND upload_status = 'uploaded'`,
       [videoId],
     );
 
@@ -595,8 +896,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
         .catch(() => {});
     }
 
-    // Keep Redis key alive as "completed" for 30 minutes so late chunks
-    // are attached to the same videoId instead of creating ghost sessions.
+    // Keep Redis key as "completed" for 30 min for late-arriving chunks
     const currentMeta = JSON.parse((await redisGet(key)) || "{}");
     await redisSet(
       key,
@@ -609,16 +909,20 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
       60 * 30,
     );
 
+    // Clean up temp files
     await fs.rm(tempDir, { recursive: true, force: true });
     console.log(
-      `🎉 ${videoType} finalization complete — ${chunkPaths.length} chunks merged, ${(fileSize / 1024 / 1024).toFixed(2)} MB`,
+      `🎉 ${videoType} finalization complete — ` +
+        `${uploadedChunks.length} chunks → ${(fileSize / 1024 / 1024).toFixed(2)} MB, ${duration}s`,
     );
   } catch (err) {
     console.error(`❌ Finalize error (${videoType}):`, err.message);
 
     await pool
       .execute(
-        `UPDATE interview_videos SET upload_status = 'failed', error_message = ?, updated_at = NOW() WHERE id = ?`,
+        `UPDATE interview_videos
+         SET upload_status = 'failed', error_message = ?, updated_at = NOW()
+         WHERE id = ?`,
         [err.message, videoId],
       )
       .catch(() => {});
@@ -660,7 +964,8 @@ const getRecordingStatus = asyncHandler(async (req, res) => {
   }
 
   const [rows] = await pool.execute(
-    `SELECT upload_status, ftp_url, uploaded_chunks, total_chunks FROM interview_videos WHERE interview_id = ? AND user_id = ? AND video_type = ?`,
+    `SELECT upload_status, ftp_url, uploaded_chunks, total_chunks
+     FROM interview_videos WHERE interview_id = ? AND user_id = ? AND video_type = ?`,
     [interviewId, userId, videoType],
   );
   if (!rows[0]) throw new APIERR(404, "Recording not found");
@@ -687,7 +992,8 @@ const getRecordingUrls = asyncHandler(async (req, res) => {
   const userId = req.user.id;
 
   const [rows] = await pool.execute(
-    `SELECT video_type, ftp_url, upload_status, duration, file_size FROM interview_videos WHERE interview_id = ? AND user_id = ?`,
+    `SELECT video_type, ftp_url, upload_status, duration, file_size
+     FROM interview_videos WHERE interview_id = ? AND user_id = ?`,
     [interviewId, userId],
   );
 
@@ -727,5 +1033,7 @@ module.exports = {
   endRecording,
   getRecordingStatus,
   getRecordingUrls,
+  getAnalysisResult, // ← new REST endpoint
   finalizeRecording,
+  runAnswerAnalysisDuringWait, // ← exported for socket integration
 };

@@ -9,7 +9,6 @@ import Contact from "./Contact";
 import InterviewDashboard from "./Dashboard";
 import Profile from "./Profile.jsx";
 import VerifyPassword from "./Auth/VerifyPassword.jsx";
-import Hire from "./Hire.jsx";
 import MobileCameraPage from "./MobileCameraPage.jsx";
 import InterviewLive from "./Interviewlive.jsx";
 import CompanyRegister from "./Auth/CompanyRegister.jsx";
@@ -20,6 +19,8 @@ import CompanyInterviews from "./CompanyInterview.jsx";
 import UserJob from "./UserJob.jsx";
 import UserJobDetail from "./UserJobDetails.jsx";
 import CompanyProfile from "./CompanyProfile.jsx";
+import AppliedJobs from "./AppliedJobs.jsx";
+import SavedJobs from "./SavedJobs.jsx";
 
 export {
   Home,
@@ -33,7 +34,6 @@ export {
   InterviewDashboard,
   Profile,
   VerifyPassword,
-  Hire,
   MobileCameraPage,
   InterviewLive,
   CompanyRegister,
@@ -44,4 +44,6 @@ export {
   UserJob,
   UserJobDetail,
   CompanyProfile,
+  AppliedJobs,
+  SavedJobs,
 };

@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 
-const CHUNK_DURATION = 20000;
+const CHUNK_DURATION = 5000;
 
 const useSecondaryCamera = (interviewId, userId, socketRef) => {
   const [isRecording, setIsRecording] = useState(false);

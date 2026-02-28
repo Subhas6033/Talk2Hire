@@ -1,6 +1,6 @@
 import { useRef, useCallback, useEffect } from "react";
 const SAMPLE_RATE = 48000;
-const CHUNK_DURATION_MS = 20000;
+const CHUNK_DURATION_MS = 5000;
 const LIVEKIT_MODE = true;
 
 const useAudioRecording = (socketRef, interviewId, userId) => {

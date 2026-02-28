@@ -6,6 +6,7 @@ const {
   endRecording,
   getRecordingStatus,
   getRecordingUrls,
+  getAnalysisResult,
 } = require("../Controllers/interviewRecording.controllers.js");
 const { authMiddleware } = require("../Middlewares/auth.middlewares.js");
 
@@ -22,5 +23,6 @@ router.post("/:interviewId/chunk", chunkUpload.single("chunk"), uploadChunk);
 router.post("/:interviewId/end-recording", endRecording);
 router.get("/:interviewId/recording-status", getRecordingStatus);
 router.get("/:interviewId/urls", getRecordingUrls);
+router.get("/:interviewId/analysis", getAnalysisResult);
 
 module.exports = router;

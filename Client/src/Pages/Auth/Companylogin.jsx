@@ -25,7 +25,6 @@ const Companylogin = () => {
         password: data.password,
       }).unwrap();
 
-      // ✅ use actual role from response
       const role = result?.data?.role;
       if (role === "company") {
         navigate("/company/dashboard", { replace: true });
@@ -38,233 +37,379 @@ const Companylogin = () => {
   };
 
   const inputCls = (hasError) =>
-    `w-full px-4 py-3 rounded-xl text-sm text-stone-100 outline-none transition-all 
-     placeholder-stone-600 border font-secondary ${
-       hasError
-         ? "border-rose-500/40 bg-rose-950/30 focus:ring-2 focus:ring-rose-500/20"
-         : "border-white/10 bg-white/5 focus:border-amber-400/50 focus:bg-amber-400/5 focus:ring-2 focus:ring-amber-400/10"
-     }`;
+    `w-full px-4 py-3 rounded-xl text-sm outline-none transition-all font-secondary border ${
+      hasError
+        ? "border-rose-400/60 bg-rose-50 text-rose-800 focus:ring-2 focus:ring-rose-300/40 placeholder-rose-300"
+        : "border-slate-200 bg-white/70 text-slate-800 focus:border-amber-400 focus:bg-white focus:ring-2 focus:ring-amber-300/30 placeholder-slate-400"
+    }`;
 
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4 py-10 relative overflow-hidden font-secondary">
-      {/* Ambient blobs */}
-      <div
-        className="absolute -top-48 -right-48 w-150 h-150 rounded-full opacity-15 pointer-events-none"
-        style={{
-          background: "radial-gradient(circle, #c9a96e, transparent 70%)",
-          filter: "blur(100px)",
-        }}
-      />
-      <div
-        className="absolute -bottom-32 -left-32 w-96 h-96 rounded-full opacity-10 pointer-events-none"
-        style={{
-          background: "radial-gradient(circle, #4a7c6f, transparent 70%)",
-          filter: "blur(80px)",
-        }}
-      />
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700&family=DM+Sans:wght@300;400;500&display=swap');
 
-      <div className="relative z-10 w-full max-w-md">
+        .co-root * { font-family: 'DM Sans', sans-serif; }
+        .co-root h1 { font-family: 'Sora', sans-serif; }
+
+        @keyframes coFadeUp {
+          from { opacity: 0; transform: translateY(24px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes coBgFade { from { opacity:0; } to { opacity:1; } }
+
+        @keyframes floatX {
+          0%,100% { transform: translate(0,0) scale(1); }
+          33%      { transform: translate(18px,-14px) scale(1.05); }
+          66%      { transform: translate(-10px,12px) scale(0.96); }
+        }
+        @keyframes floatY {
+          0%,100% { transform: translate(0,0) scale(1); }
+          40%      { transform: translate(-16px,16px) scale(1.04); }
+          70%      { transform: translate(12px,-8px) scale(0.97); }
+        }
+        @keyframes floatZ {
+          0%,100% { transform: translate(0,0) rotate(0deg); }
+          50%      { transform: translate(8px,-20px) rotate(6deg); }
+        }
+        @keyframes meshDrift {
+          0%,100% { background-position: 0% 50%; }
+          50%      { background-position: 100% 50%; }
+        }
+        @keyframes shimmerBar {
+          0%   { background-position: -200% center; }
+          100% { background-position: 200% center; }
+        }
+        @keyframes pulseDot {
+          0%,100% { box-shadow: 0 0 0 0 rgba(217,119,6,0.5); }
+          50%      { box-shadow: 0 0 0 6px rgba(217,119,6,0); }
+        }
+        @keyframes spinnerRing {
+          to { transform: rotate(360deg); }
+        }
+
+        .blob-1 { animation: floatX 12s ease-in-out infinite; }
+        .blob-2 { animation: floatY 14s ease-in-out infinite 2s; }
+        .blob-3 { animation: floatZ 10s ease-in-out infinite 1s; }
+
+        .co-bg { animation: coBgFade .6s ease both; }
+        .co-card { animation: coFadeUp .55s cubic-bezier(.22,1,.36,1) .05s both; }
+        .co-header { animation: coFadeUp .55s cubic-bezier(.22,1,.36,1) .15s both; }
+        .co-form { animation: coFadeUp .55s cubic-bezier(.22,1,.36,1) .25s both; }
+
+        /* Mesh background */
+        .co-mesh {
+          background: linear-gradient(
+            135deg,
+            #fdf8f0 0%,
+            #fef9ec 20%,
+            #f0f7ff 50%,
+            #f5f0ff 80%,
+            #fdf8f0 100%
+          );
+          background-size: 300% 300%;
+          animation: meshDrift 18s ease infinite;
+        }
+
+        /* Card glass */
+        .co-card-glass {
+          background: rgba(255,255,255,0.75);
+          backdrop-filter: blur(28px) saturate(1.8);
+          -webkit-backdrop-filter: blur(28px) saturate(1.8);
+          border: 1px solid rgba(255,255,255,0.9);
+          box-shadow:
+            0 1px 0 0 rgba(255,255,255,0.95) inset,
+            0 8px 32px -4px rgba(180,140,60,0.12),
+            0 24px 64px -12px rgba(99,102,241,0.08);
+          border-radius: 28px;
+          overflow: hidden;
+        }
+
+        /* Accent bar shimmer */
+        .accent-bar {
+          height: 3px;
+          background: linear-gradient(90deg, #f59e0b, #d97706, #fbbf24, #d97706, #f59e0b);
+          background-size: 200% auto;
+          animation: shimmerBar 3s linear infinite;
+        }
+
+        /* Header area */
+        .co-card-header {
+          background: linear-gradient(135deg,
+            rgba(255,251,235,0.9) 0%,
+            rgba(255,255,255,0.7) 100%
+          );
+          border-bottom: 1px solid rgba(217,119,6,0.12);
+        }
+
+        /* Badge */
+        .biz-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          background: linear-gradient(135deg, #fef3c7, #fde68a);
+          border: 1px solid rgba(217,119,6,0.25);
+          border-radius: 999px;
+          padding: 4px 14px;
+          font-size: 0.68rem;
+          font-weight: 600;
+          letter-spacing: .1em;
+          color: #92400e;
+          text-transform: uppercase;
+          font-family: 'Sora', sans-serif;
+        }
+        .biz-dot {
+          width: 6px; height: 6px;
+          background: #d97706;
+          border-radius: 50%;
+          animation: pulseDot 2s ease-out infinite;
+        }
+
+        /* Icon box */
+        .icon-box {
+          background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+          border: 1.5px solid rgba(217,119,6,0.25);
+          border-radius: 14px;
+          width: 46px; height: 46px;
+          display: flex; align-items: center; justify-content: center;
+          box-shadow: 0 4px 12px rgba(217,119,6,0.15);
+        }
+
+        /* Submit button */
+        .btn-gold {
+          background: linear-gradient(135deg, #f59e0b 0%, #d97706 50%, #b45309 100%);
+          background-size: 200% auto;
+          border-radius: 14px;
+          font-family: 'Sora', sans-serif;
+          font-weight: 600;
+          font-size: 0.875rem;
+          color: #fff;
+          border: none;
+          transition: transform .15s, box-shadow .2s, background-position .4s;
+          box-shadow: 0 4px 20px rgba(217,119,6,0.35);
+          letter-spacing: .02em;
+        }
+        .btn-gold:hover:not(:disabled) {
+          background-position: right center;
+          transform: translateY(-2px);
+          box-shadow: 0 8px 28px rgba(217,119,6,0.45);
+        }
+        .btn-gold:active:not(:disabled) { transform: translateY(0); }
+        .btn-gold:disabled { opacity: .6; cursor: not-allowed; }
+
+        /* Spinner */
+        .co-spinner {
+          width: 16px; height: 16px;
+          border: 2px solid rgba(255,255,255,0.3);
+          border-top-color: #fff;
+          border-radius: 50%;
+          animation: spinnerRing .7s linear infinite;
+        }
+
+        /* Error banner */
+        .error-banner {
+          background: rgba(255,241,242,0.9);
+          border: 1px solid rgba(251,113,133,0.4);
+          border-radius: 12px;
+          padding: 10px 14px;
+        }
+
+        /* Divider */
+        .co-divider { border: none; border-top: 1px solid rgba(203,213,225,0.5); }
+
+        /* Links */
+        .link-gold { color: #d97706; font-weight: 500; transition: color .15s; }
+        .link-gold:hover { color: #b45309; text-decoration: underline; }
+
+        /* Muted text */
+        .text-co-muted { color: #64748b; font-size: 0.8rem; }
+
+        /* Dot grid texture */
+        .dot-grid {
+          background-image: radial-gradient(circle, rgba(217,119,6,0.12) 1px, transparent 1px);
+          background-size: 26px 26px;
+        }
+
+        /* Input focus override to remove outline on non-tailwind */
+        .co-root input:focus { outline: none; }
+      `}</style>
+
+      <div className="co-root co-mesh min-h-screen flex items-center justify-center px-4 py-12 relative overflow-hidden co-bg">
+        {/* Dot grid overlay */}
+        <div className="pointer-events-none absolute inset-0 dot-grid opacity-100" />
+
+        {/* Animated blobs */}
+        <div
+          className="blob-1 pointer-events-none absolute -top-32 -right-32 w-100 h-100 rounded-full opacity-35 blur-[110px]"
+          style={{
+            background: "radial-gradient(circle, #fde68a 0%, #fca5a5 100%)",
+          }}
+        />
+        <div
+          className="blob-2 pointer-events-none absolute -bottom-24 -left-24 w-90 h-90 rounded-full opacity-30 blur-[100px]"
+          style={{
+            background: "radial-gradient(circle, #a5b4fc 0%, #6ee7b7 100%)",
+          }}
+        />
+        <div
+          className="blob-3 pointer-events-none absolute top-1/3 right-1/4 w-55 h-55 rounded-full opacity-20 blur-[80px]"
+          style={{
+            background: "radial-gradient(circle, #fbbf24 0%, #c4b5fd 100%)",
+          }}
+        />
+
         {/* Card */}
-        <div className="bg-slate-900 border border-white/[0.07] rounded-3xl overflow-hidden shadow-2xl">
-          {/* Top accent bar */}
-          <div
-            className="h-0.5"
-            style={{ background: "linear-gradient(90deg, #c9a96e, #b08a4e)" }}
-          />
+        <div className="relative z-10 w-full max-w-105 co-card">
+          <div className="co-card-glass">
+            {/* Shimmer accent bar */}
+            <div className="accent-bar" />
 
-          {/* Header */}
-          <div
-            className="px-10 pt-9 pb-7 border-b border-white/6"
-            style={{
-              background: "linear-gradient(135deg, #1a1e28 0%, #151820 100%)",
-            }}
-          >
-            <span
-              className="inline-flex items-center gap-1.5 text-[10px] font-medium tracking-widest uppercase px-3 py-1 rounded-full mb-6 border"
-              style={{
-                color: "#c9a96e",
-                background: "rgba(201,169,110,0.1)",
-                borderColor: "rgba(201,169,110,0.2)",
-              }}
+            {/* Header */}
+            <div className="co-card-header px-9 pt-8 pb-7 co-header">
+              <div className="mb-5">
+                <span className="biz-badge">
+                  <span className="biz-dot" />
+                  Business Portal
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="icon-box shrink-0">
+                  <Building2 size={20} className="text-amber-700" />
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold text-slate-800 leading-tight tracking-tight">
+                    Welcome Back
+                  </h1>
+                  <p className="text-xs text-slate-500 font-light mt-0.5">
+                    Sign in to your company dashboard
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Form */}
+            <form
+              onSubmit={handleSubmit(onSubmit)}
+              className="px-9 pt-7 pb-9 space-y-5 co-form"
             >
-              ✦ Business Portal
-            </span>
-
-            <div className="flex items-center gap-3 mb-2">
-              <div
-                className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
-                style={{
-                  background: "rgba(201,169,110,0.1)",
-                  border: "1px solid rgba(201,169,110,0.25)",
-                }}
-              >
-                <Building2 size={20} style={{ color: "#c9a96e" }} />
-              </div>
-              <div>
-                <h1 className="text-2xl text-stone-100 font-primary font-bold leading-tight">
-                  Welcome Back
-                </h1>
-                <p className="text-xs text-stone-400/60 font-light">
-                  Sign in to your company dashboard
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Form */}
-          <form
-            onSubmit={handleSubmit(onSubmit)}
-            className="px-10 pt-8 pb-9 space-y-5"
-          >
-            {/* API Error banner */}
-            {error && (
-              <div className="flex items-start gap-2.5 p-3.5 rounded-xl bg-rose-950/30 border border-rose-500/30 animate-in fade-in duration-200">
-                <AlertCircle
-                  size={15}
-                  className="text-rose-400 mt-0.5 shrink-0"
-                />
-                <p className="text-xs text-rose-400 leading-relaxed">{error}</p>
-              </div>
-            )}
-
-            {/* Company Email */}
-            <div>
-              <label className="block text-xs font-medium text-amber-100/60 mb-1.5 tracking-wide">
-                Business Email *
-              </label>
-              <input
-                className={inputCls(!!errors.companyMail)}
-                placeholder="contact@company.com"
-                onChange={() => error && clearError()}
-                {...register("companyMail", {
-                  required: "Email is required",
-                  pattern: {
-                    value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-                    message: "Enter a valid email address",
-                  },
-                })}
-              />
-              {errors.companyMail && (
-                <p className="mt-1.5 text-xs text-rose-400 flex items-center gap-1">
-                  ⚠ {errors.companyMail.message}
-                </p>
+              {/* API Error banner */}
+              {error && (
+                <div className="error-banner flex items-start gap-2.5">
+                  <AlertCircle
+                    size={15}
+                    className="text-rose-500 mt-0.5 shrink-0"
+                  />
+                  <p className="text-xs text-rose-600 leading-relaxed">
+                    {error}
+                  </p>
+                </div>
               )}
-            </div>
 
-            {/* Password */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-medium text-amber-100/60 tracking-wide">
-                  Password *
+              {/* Business Email */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5 tracking-wide uppercase">
+                  Business Email *
                 </label>
-                <Link
-                  to="/verify-password"
-                  className="text-[11px] transition-colors hover:underline"
-                  style={{ color: "#c9a96e" }}
-                >
-                  Forgot password?
-                </Link>
-              </div>
-              <div className="relative">
                 <input
-                  type={showPassword ? "text" : "password"}
-                  className={inputCls(!!errors.password) + " pr-12"}
-                  placeholder="••••••••"
+                  className={inputCls(!!errors.companyMail)}
+                  placeholder="contact@company.com"
                   onChange={() => error && clearError()}
-                  {...register("password", {
-                    required: "Password is required",
-                    minLength: { value: 8, message: "At least 8 characters" },
+                  {...register("companyMail", {
+                    required: "Email is required",
+                    pattern: {
+                      value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+                      message: "Enter a valid email address",
+                    },
                   })}
                 />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((p) => !p)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-500 hover:text-stone-300 transition-colors p-1"
-                >
-                  {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
-                </button>
+                {errors.companyMail && (
+                  <p className="mt-1.5 text-xs text-rose-500 flex items-center gap-1">
+                    ⚠ {errors.companyMail.message}
+                  </p>
+                )}
               </div>
-              {errors.password && (
-                <p className="mt-1.5 text-xs text-rose-400 flex items-center gap-1">
-                  ⚠ {errors.password.message}
-                </p>
-              )}
-            </div>
 
-            {/* Submit */}
-            <button
-              type="submit"
-              disabled={!isValid || loading}
-              className="w-full py-3.5 rounded-xl text-sm font-semibold text-slate-950 transition-all hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-60 disabled:cursor-not-allowed disabled:transform-none flex items-center justify-center gap-2 mt-2"
-              style={{
-                background: "linear-gradient(135deg, #c9a96e, #b08a4e)",
-                boxShadow: "0 4px 20px rgba(201,169,110,0.25)",
-              }}
-            >
-              {loading ? (
-                <>
-                  <svg
-                    className="animate-spin w-4 h-4"
-                    viewBox="0 0 24 24"
-                    fill="none"
+              {/* Password */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-semibold text-slate-500 tracking-wide uppercase">
+                    Password *
+                  </label>
+                  <Link to="/verify-password" className="link-gold text-[11px]">
+                    Forgot password?
+                  </Link>
+                </div>
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    className={inputCls(!!errors.password) + " pr-12"}
+                    placeholder="••••••••"
+                    onChange={() => error && clearError()}
+                    {...register("password", {
+                      required: "Password is required",
+                      minLength: { value: 8, message: "At least 8 characters" },
+                    })}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((p) => !p)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-amber-600 transition-colors p-1"
                   >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8v8H4z"
-                    />
-                  </svg>
-                  Signing in...
-                </>
-              ) : (
-                "Sign In ✦"
-              )}
-            </button>
+                    {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                </div>
+                {errors.password && (
+                  <p className="mt-1.5 text-xs text-rose-500 flex items-center gap-1">
+                    ⚠ {errors.password.message}
+                  </p>
+                )}
+              </div>
 
-            {/* Divider */}
-            <div className="flex items-center gap-3 py-1">
-              <div className="flex-1 h-px bg-white/6" />
-              <span className="text-[10px] text-stone-600 tracking-widest uppercase">
-                or
-              </span>
-              <div className="flex-1 h-px bg-white/6" />
-            </div>
+              {/* Submit */}
+              <button
+                type="submit"
+                disabled={!isValid || loading}
+                className="btn-gold w-full py-3.5 flex items-center justify-center gap-2 mt-1"
+              >
+                {loading ? (
+                  <>
+                    <span className="co-spinner" />
+                    Signing in...
+                  </>
+                ) : (
+                  "Sign In ✦"
+                )}
+              </button>
 
-            {/* Footer links */}
-            <div className="space-y-2.5 text-center">
-              <p className="text-xs text-stone-500">
-                Don't have a company account?{" "}
-                <Link
-                  to="/signup/company"
-                  className="font-medium transition-colors hover:underline"
-                  style={{ color: "#c9a96e" }}
-                >
-                  Register here
-                </Link>
-              </p>
-              <p className="text-xs text-stone-500">
-                Not a company?{" "}
-                <Link
-                  to="/login"
-                  className="font-medium transition-colors hover:underline"
-                  style={{ color: "#c9a96e" }}
-                >
-                  User login
-                </Link>
-              </p>
-            </div>
-          </form>
+              {/* Divider */}
+              <div className="flex items-center gap-3 py-1">
+                <hr className="flex-1 co-divider" />
+                <span className="text-[10px] text-slate-400 tracking-widest uppercase">
+                  or
+                </span>
+                <hr className="flex-1 co-divider" />
+              </div>
+
+              {/* Footer links */}
+              <div className="space-y-2 text-center">
+                <p className="text-co-muted">
+                  Don't have a company account?{" "}
+                  <Link to="/signup/company" className="link-gold">
+                    Register here
+                  </Link>
+                </p>
+                <p className="text-co-muted">
+                  Not a company?{" "}
+                  <Link to="/login" className="link-gold">
+                    User login
+                  </Link>
+                </p>
+              </div>
+            </form>
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 };
 

@@ -36,14 +36,6 @@ const NAV_TOKENS = `
 const NAV_LINKS = [
   { href: "/jobs", label: "Find Jobs" },
   { href: "/companies", label: "Companies" },
-  { href: "/salaries", label: "Salaries" },
-];
-
-const PROFILE_LINKS = [
-  { label: "My Profile", href: "/profile", icon: User },
-  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { label: "Applications", href: "/applications", icon: FileText },
-  { label: "Saved Jobs", href: "/saved", icon: Bookmark },
 ];
 
 const Nav = () => {
@@ -68,6 +60,18 @@ const Nav = () => {
     setProfileOpen(false);
     navigate("/login");
   };
+
+  // ✅ Build profile links dynamically using the real user ID
+  const PROFILE_LINKS = [
+    {
+      label: "My Profile",
+      href: `/profile/${user?._id ?? user?.id ?? ""}`,
+      icon: User,
+    },
+    { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+    { label: "Applications", href: "/applications", icon: FileText },
+    { label: "Saved Jobs", href: "/saved", icon: Bookmark },
+  ];
 
   return (
     <>
@@ -131,7 +135,7 @@ const Nav = () => {
                 <div className="w-px h-6 bg-(--nav-border)" />
 
                 {/* Profile dropdown */}
-                <div className="relative">
+                <div className="relative z-50">
                   <button
                     onClick={() => setProfileOpen((p) => !p)}
                     className="flex items-center gap-2 px-3 py-1.5 rounded-xl hover:bg-(--nav-ink-08) transition-all"
@@ -178,7 +182,7 @@ const Nav = () => {
                         >
                           {/* User info header */}
                           <div className="px-4 py-3 bg-(--nav-cream) border-b border-(--nav-border)">
-                            <p className="text-xs font-bold text-(--nav-ink)] truncate">
+                            <p className="text-xs font-bold text-(--nav-ink) truncate">
                               {user?.fullName ?? "User"}
                             </p>
                             <p className="text-[11px] text-(--nav-ink-40) truncate mt-0.5">
@@ -191,7 +195,7 @@ const Nav = () => {
                             {PROFILE_LINKS.map(
                               ({ label, href, icon: Icon }) => (
                                 <button
-                                  key={href}
+                                  key={label}
                                   onClick={() => {
                                     navigate(href);
                                     setProfileOpen(false);
@@ -199,13 +203,13 @@ const Nav = () => {
                                   className={clsx(
                                     "w-full flex items-center gap-2.5 px-3 py-2 text-sm rounded-lg transition-all text-left",
                                     isActive(href)
-                                      ? "bg-(--nav-ink-08)] text-(--nav-ink) font-medium"
+                                      ? "bg-(--nav-ink-08) text-(--nav-ink) font-medium"
                                       : "text-(--nav-ink-70) hover:text-(--nav-ink) hover:bg-(--nav-ink-08)",
                                   )}
                                 >
                                   <Icon
                                     size={14}
-                                    className="text-(--nav-ink-40)] shrink-0"
+                                    className="text-(--nav-ink-40) shrink-0"
                                   />
                                   {label}
                                 </button>

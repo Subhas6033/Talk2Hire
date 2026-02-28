@@ -188,7 +188,7 @@ const JobSearchBar = ({ className }) => {
       )}
     >
       <label className="flex items-center gap-2.5 flex-1 px-3 py-2 rounded-xl bg-[var(--c-cream)] border border-[var(--c-border)] focus-within:border-[var(--c-slate)] focus-within:shadow-[0_0_0_3px_rgba(30,34,53,0.08)] transition-all">
-        <Search size={16} className="text-[var(--c-ink-40)] flex-shrink-0" />
+        <Search size={16} className="text-[var(--c-ink-40)] shrink-0" />
         <input
           type="text"
           value={query}
@@ -199,7 +199,7 @@ const JobSearchBar = ({ className }) => {
       </label>
       <div className="hidden sm:block w-px self-stretch my-1 bg-[var(--c-border)]" />
       <label className="flex items-center gap-2.5 flex-1 px-3 py-2 rounded-xl bg-[var(--c-cream)] border border-[var(--c-border)] focus-within:border-[var(--c-slate)] focus-within:shadow-[0_0_0_3px_rgba(30,34,53,0.08)] transition-all">
-        <MapPin size={16} className="text-[var(--c-ink-40)] flex-shrink-0" />
+        <MapPin size={16} className="text-[var(--c-ink-40)] shrink-0" />
         <input
           type="text"
           value={location}
@@ -211,9 +211,9 @@ const JobSearchBar = ({ className }) => {
       <motion.button
         whileTap={{ scale: 0.97 }}
         type="submit"
-        className="px-7 py-2.5 bg-[var(--c-slate)] text-white text-sm font-semibold rounded-xl shadow-md hover:bg-[var(--c-slate-2)] hover:shadow-lg transition-all flex items-center justify-center gap-2 flex-shrink-0"
+        className="px-7 py-2.5 bg-[var(--c-slate)] text-white text-sm font-semibold rounded-xl shadow-md hover:bg-[var(--c-slate-2)] hover:shadow-lg transition-all flex items-center justify-center gap-2 shrink-0"
       >
-        <Search size={15} /> Search Jobs
+        <Search size={15} />
       </motion.button>
     </motion.form>
   );
@@ -226,9 +226,9 @@ const mockJobs = [
   {
     id: 1,
     title: "Senior Frontend Engineer",
-    company: "Stripe",
-    logo: "S",
-    color: "#635bff",
+    company: "TCS",
+    logo: "/tcs.png",
+    color: "#000",
     location: "Remote · USA",
     salary: "$160k–$210k",
     tags: ["React", "TypeScript"],
@@ -239,9 +239,9 @@ const mockJobs = [
   {
     id: 2,
     title: "ML Infrastructure Engineer",
-    company: "Waymo",
-    logo: "W",
-    color: "#ff6d00",
+    company: "Netflix",
+    logo: "/netflix.jpg",
+    color: "#fff",
     location: "Mountain View, CA",
     salary: "$200k–$260k",
     tags: ["Python", "Kubernetes"],
@@ -253,7 +253,7 @@ const mockJobs = [
     id: 3,
     title: "Product Designer",
     company: "Figma",
-    logo: "F",
+    logo: "/figma.png",
     color: "#0acf83",
     location: "San Francisco · Hybrid",
     salary: "$140k–$185k",
@@ -266,7 +266,7 @@ const mockJobs = [
     id: 4,
     title: "DevOps / Platform Engineer",
     company: "Vercel",
-    logo: "V",
+    logo: "/vercel.png",
     color: "#000000",
     location: "Remote · Global",
     salary: "$150k–$195k",
@@ -350,10 +350,14 @@ const AnimatedJobBoard = memo(() => {
           >
             <div className="flex items-start gap-3 mb-4">
               <div
-                className="w-12 h-12 rounded-xl flex items-center justify-center text-white text-lg font-black flex-shrink-0 shadow-sm"
+                className="w-12 h-12 rounded-xl flex items-center justify-center text-white text-lg font-black shrink-0 shadow-sm"
                 style={{ backgroundColor: mockJobs[activeCard].color }}
               >
-                {mockJobs[activeCard].logo}
+                <img
+                  className="rounded-md bg-cover"
+                  src={mockJobs[activeCard].logo}
+                  alt={`${mockJobs[activeCard].logo} logo`}
+                />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between gap-2">
@@ -528,7 +532,7 @@ export const FeaturesSection = () => {
             whileInView={{ opacity: 1, x: 0 }}
             viewport={{ once: true }}
             transition={{ duration: 0.5, delay: 0.2 }}
-            className="flex-shrink-0"
+            className="shrink-0"
           >
             <Link
               to="/jobs"
@@ -666,8 +670,8 @@ export const TrustedCompaniesSlider = memo(() => {
       <style>{TOKENS}</style>
 
       {/* Subtle top/bottom rule lines */}
-      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[var(--c-border)] to-transparent" />
-      <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[var(--c-border)] to-transparent" />
+      <div className="absolute top-0 left-0 right-0 h-px bg-linear-to-r from-transparent via-[var(--c-border)] to-transparent" />
+      <div className="absolute bottom-0 left-0 right-0 h-px bg-linear-to-r from-transparent via-[var(--c-border)] to-transparent" />
 
       <div className="relative mx-auto max-w-7xl px-6">
         {/* Header row */}
@@ -722,8 +726,8 @@ export const TrustedCompaniesSlider = memo(() => {
 
         {/* Slider */}
         <div className="relative overflow-hidden rounded-2xl border border-[var(--c-border)] bg-[var(--c-cream)] p-4 shadow-[var(--sh-sm)]">
-          <div className="pointer-events-none absolute inset-y-0 left-0 w-20 z-10 bg-gradient-to-r from-[var(--c-cream)] to-transparent" />
-          <div className="pointer-events-none absolute inset-y-0 right-0 w-20 z-10 bg-gradient-to-l from-[var(--c-cream)] to-transparent" />
+          <div className="pointer-events-none absolute inset-y-0 left-0 w-20 z-10 bg-linear-to-r from-[var(--c-cream)] to-transparent" />
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-20 z-10 bg-linear-to-l from-[var(--c-cream)] to-transparent" />
 
           <motion.div
             className="flex gap-4 marquee-track"
@@ -735,7 +739,7 @@ export const TrustedCompaniesSlider = memo(() => {
                 key={`${c.name}-${i}`}
                 whileHover={{ y: -4, scale: 1.04, backgroundColor: "#ffffff" }}
                 transition={{ type: "spring", stiffness: 400, damping: 22 }}
-                className="flex-shrink-0 w-40 h-16 flex items-center justify-center bg-white rounded-xl border border-[var(--c-border)] shadow-[var(--sh-sm)] cursor-pointer transition-colors"
+                className="shrink-0 w-40 h-16 flex items-center justify-center bg-white rounded-xl border border-[var(--c-border)] shadow-[var(--sh-sm)] cursor-pointer transition-colors"
               >
                 <img
                   src={c.logo}
@@ -762,7 +766,7 @@ export const TrustedCompaniesSlider = memo(() => {
             Want to post a job and reach 50k+ candidates?
           </p>
           <Link
-            to="/hire"
+            to="/company/login"
             className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--c-slate)] hover:text-[var(--c-slate-2)] transition-colors"
           >
             List your company <ChevronRight size={14} />
@@ -1210,7 +1214,7 @@ export const HeroSection = () => {
                   </svg>
                 </span>
                 <br />
-                <span className="text-[var(--c-ink-40)]">Your Ambition.</span>
+                <span className="text-indigo-600">Your Ambition.</span>
               </h1>
               <p className="text-[var(--c-ink-70)] text-base leading-relaxed mb-8 max-w-md">
                 Discover roles at top-tier companies, practice with AI interview

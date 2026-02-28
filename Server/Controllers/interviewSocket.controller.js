@@ -7,12 +7,22 @@ const { evaluateInterview } = require("../Service/evaluation.service.js");
 const {
   mergeInterviewMedia,
 } = require("../Service/globalVideoMerger.service.js");
+const {
+  runAnswerAnalysisDuringWait,
+} = require("./interviewRecording.controllers.js");
 const Job = require("../Admin/models/job.models.js");
 const { pool } = require("../Config/database.config.js");
 
 const FACE_THROTTLE = 1000;
 const FACE_WINDOW = 3000;
 const MAX_FACE_WARN = 5;
+const NO_TRANSCRIPT_TIMEOUT_MS = 15_000;
+
+// FIX 1: Must match the total activate window in stt.service.js:
+// FLUSH_CHUNK_COUNT(30) × FLUSH_INTERVAL_MS(10) = 300ms flush
+// + ACTIVATE_DELAY_MS(1500ms) settle = 1800ms total.
+// Add 50ms buffer → 1850ms.
+const STT_GATE_DELAY_MS = 1850;
 
 const ttsInstanceCache = new Map();
 function getTTSInstance(id) {
@@ -21,6 +31,8 @@ function getTTSInstance(id) {
 }
 
 const sttConnectionCache = new Map();
+
+/* ── Violations schema bootstrap ─────────────────────────────────────────── */
 
 async function ensureViolationsSchema() {
   try {
@@ -69,7 +81,6 @@ async function ensureViolationsSchema() {
     }
 
     console.log("⚙️  Upgrading interview_violations schema...");
-
     const toAdd = [
       {
         col: "user_id",
@@ -96,27 +107,23 @@ async function ensureViolationsSchema() {
         sql: "ADD COLUMN updated_at DATETIME NULL ON UPDATE CURRENT_TIMESTAMP",
       },
     ];
-
     for (const { col, sql } of toAdd) {
       if (!colNames.includes(col)) {
         await pool.execute(`ALTER TABLE interview_violations ${sql}`);
         console.log(`  ✅ Added column: ${col}`);
       }
     }
-
     if (colNames.includes("occurred_at")) {
       await pool.execute(
         `UPDATE interview_violations SET start_time = occurred_at WHERE start_time IS NULL`,
       );
       console.log("  ✅ Back-filled start_time from occurred_at");
     }
-
     await pool
       .execute(
         `ALTER TABLE interview_violations MODIFY COLUMN start_time DATETIME(3) NOT NULL`,
       )
       .catch(() => {});
-
     console.log("✅ interview_violations schema upgrade complete");
   } catch (err) {
     console.error("❌ ensureViolationsSchema FAILED:", err.message);
@@ -124,6 +131,8 @@ async function ensureViolationsSchema() {
 }
 
 ensureViolationsSchema();
+
+/* ── Violation DB helpers ────────────────────────────────────────────────── */
 
 async function dbOpenViolation({
   interviewId,
@@ -146,13 +155,12 @@ async function dbOpenViolation({
       ],
     );
     console.log(
-      `🚨 [VIOLATION OPENED] type=${violationType} interviewId=${interviewId} ` +
-        `userId=${userId} startTime=${new Date(startTime).toISOString()} dbId=${result.insertId}`,
+      `🚨 [VIOLATION OPENED] type=${violationType} interviewId=${interviewId} userId=${userId} dbId=${result.insertId}`,
     );
     return result.insertId;
   } catch (err) {
     console.error(
-      `❌ [VIOLATION DB] openViolation FAILED (${violationType} / interview ${interviewId}):`,
+      `❌ [VIOLATION DB] openViolation FAILED (${violationType}):`,
       err.message,
     );
     return null;
@@ -166,9 +174,7 @@ async function dbCloseViolation({ violationId, endTime }) {
       `UPDATE interview_violations SET end_time = ?, resolved = 1, updated_at = NOW() WHERE id = ?`,
       [new Date(endTime), violationId],
     );
-    console.log(
-      `✅ [VIOLATION CLOSED] dbId=${violationId} endTime=${new Date(endTime).toISOString()}`,
-    );
+    console.log(`✅ [VIOLATION CLOSED] dbId=${violationId}`);
   } catch (err) {
     console.error(
       `❌ [VIOLATION DB] closeViolation FAILED (dbId=${violationId}):`,
@@ -184,14 +190,8 @@ async function dbIncrementWarning({ violationId, warningCount }) {
       `UPDATE interview_violations SET warning_count = ?, updated_at = NOW() WHERE id = ?`,
       [warningCount, violationId],
     );
-    console.log(
-      `⚠️  [VIOLATION DB] dbId=${violationId} warning_count → ${warningCount}`,
-    );
   } catch (err) {
-    console.error(
-      `❌ [VIOLATION DB] incrementWarning FAILED (dbId=${violationId}):`,
-      err.message,
-    );
+    console.error(`❌ [VIOLATION DB] incrementWarning FAILED:`, err.message);
   }
 }
 
@@ -219,18 +219,16 @@ async function dbSavePointViolation({
       ],
     );
     console.log(
-      `🚨 [VIOLATION SAVED] type=${violationType} interviewId=${interviewId} ` +
-        `at=${ts.toISOString()} dbId=${result.insertId}`,
+      `🚨 [VIOLATION SAVED] type=${violationType} interviewId=${interviewId} dbId=${result.insertId}`,
     );
     return result.insertId;
   } catch (err) {
-    console.error(
-      `❌ [VIOLATION DB] savePointViolation FAILED (${violationType} / interview ${interviewId}):`,
-      err.message,
-    );
+    console.error(`❌ [VIOLATION DB] savePointViolation FAILED:`, err.message);
     return null;
   }
 }
+
+/* ── TTS helpers ─────────────────────────────────────────────────────────── */
 
 async function streamTTSToClient(socket, text, interviewId) {
   return new Promise((resolve, reject) => {
@@ -248,6 +246,9 @@ async function streamTTSToClient(socket, text, interviewId) {
       () => settle(new Error(`TTS timed out (${chunkCount} chunks so far)`)),
       60_000,
     );
+
+    const sttConn = sttConnectionCache.get(interviewId)?.conn;
+    sttConn?.enterStandby?.();
 
     tts
       .speakStream(text, (chunk) => {
@@ -298,6 +299,8 @@ function cleanupSession(id) {
   }
 }
 
+/* ── Settings socket (mobile / secondary camera) ────────────────────────── */
+
 async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
   const session = getOrCreate(sessions, interviewId);
   session.mobileSocketId = socket.id;
@@ -333,7 +336,6 @@ async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
   });
 
   socket.on("mobile_webrtc_offer", ({ offer, identity }) => {
-    console.log(`📱 Relaying mobile WebRTC offer to desktop (${identity})`);
     if (session.desktopSocketId) {
       io.to(session.desktopSocketId).emit("mobile_webrtc_offer_relay", {
         offer,
@@ -341,9 +343,6 @@ async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
       });
     } else {
       session.pendingMobileOffer = { offer, identity };
-      console.warn(
-        `⚠️  Mobile offer buffered — desktop not yet connected (interviewId=${interviewId})`,
-      );
     }
   });
 
@@ -378,6 +377,8 @@ async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
   });
 }
 
+/* ── Interview socket (desktop / primary) ────────────────────────────────── */
+
 async function handleInterviewSocket(
   socket,
   interviewId,
@@ -391,21 +392,14 @@ async function handleInterviewSocket(
   console.log(`🖥️ Desktop socket: ${socket.id}`);
 
   if (session.pendingMobileOffer) {
-    console.log(`📱 Flushing buffered mobile offer to desktop`);
     socket.emit("mobile_webrtc_offer_relay", session.pendingMobileOffer);
     session.pendingMobileOffer = null;
   }
-
   if (session.pendingMobileIceCandidates?.length) {
-    console.log(
-      `📱 Flushing ${session.pendingMobileIceCandidates.length} buffered ICE candidates`,
-    );
-    for (const candidate of session.pendingMobileIceCandidates) {
+    for (const candidate of session.pendingMobileIceCandidates)
       socket.emit("mobile_webrtc_ice_from_mobile", { candidate });
-    }
     session.pendingMobileIceCandidates = [];
   }
-
   if (session.secondaryCameraConnected) {
     socket.emit("secondary_camera_ready", {
       connected: true,
@@ -418,24 +412,18 @@ async function handleInterviewSocket(
   }
 
   socket.on("mobile_webrtc_answer", ({ answer, identity }) => {
-    if (session.mobileSocketId) {
+    if (session.mobileSocketId)
       io.to(session.mobileSocketId).emit("mobile_webrtc_answer_from_server", {
         answer,
         identity,
       });
-    } else {
-      console.warn(
-        `⚠️  Desktop sent WebRTC answer but no mobile socket found (interviewId=${interviewId})`,
-      );
-    }
   });
 
   socket.on("mobile_webrtc_ice_candidate_desktop", ({ candidate }) => {
-    if (session.mobileSocketId) {
+    if (session.mobileSocketId)
       io.to(session.mobileSocketId).emit("mobile_webrtc_ice_from_desktop", {
         candidate,
       });
-    }
   });
 
   let firstQuestion = null;
@@ -487,7 +475,29 @@ async function handleInterviewSocket(
   let awaitingPlaybackDone = false;
   let clientReadyHandled = false;
   let playbackDoneTimer = null;
-  let lastNoConnWarn = 0;
+  let noTranscriptTimer = null;
+
+  const clearNoTranscriptTimer = () => {
+    if (noTranscriptTimer) {
+      clearTimeout(noTranscriptTimer);
+      noTranscriptTimer = null;
+    }
+  };
+
+  // FIX 2: noTranscriptTimer must not start until after the STT gate is fully
+  // open. Add the gate delay so the 15s window is measured from when the user
+  // can actually speak, not from when TTS finishes.
+  const startNoTranscriptTimer = () => {
+    clearNoTranscriptTimer();
+    // Delay by STT_GATE_DELAY_MS so timer starts when Deepgram is truly ready
+    noTranscriptTimer = setTimeout(() => {
+      if (!isListeningActive || isInterviewEnded || isProcessing) return;
+      console.warn(
+        `⏱️ No transcript in ${NO_TRANSCRIPT_TIMEOUT_MS / 1000}s — triggering idle fallback`,
+      );
+      handleIdle().catch(console.error);
+    }, NO_TRANSCRIPT_TIMEOUT_MS + STT_GATE_DELAY_MS);
+  };
 
   getTTSInstance(interviewId);
   socket.emit("server_ready", {
@@ -514,6 +524,7 @@ async function handleInterviewSocket(
       const conn = createSTTSession().startLiveTranscription({
         onTranscript: async (text) => {
           if (!text?.trim() || !isListeningActive || isProcessing) return;
+          clearNoTranscriptTimer();
           isListeningActive = false;
           conn.pauseIdleDetection?.();
           socket.emit("transcript_received", { text });
@@ -583,8 +594,19 @@ async function handleInterviewSocket(
       if (!conn.isConnected?.()) throw new Error("STT connection not ready");
       isListeningActive = true;
       isProcessing = false;
-      socket.emit("listening_enabled");
-      conn.resumeIdleDetection?.();
+
+      // activate() sends silence flush then opens gate after ACTIVATE_DELAY_MS.
+      conn.activate?.();
+
+      // FIX 3: Use STT_GATE_DELAY_MS (1250ms) so listening_enabled and the
+      // noTranscriptTimer only fire once the Deepgram gate is truly open.
+      // Previously 850ms < actual settle window, causing early idle triggers.
+      setTimeout(() => {
+        if (!isListeningActive || isInterviewEnded) return;
+        socket.emit("listening_enabled");
+        conn.resumeIdleDetection?.();
+        startNoTranscriptTimer();
+      }, STT_GATE_DELAY_MS);
     } catch (err) {
       console.error(`❌ enableListening failed: ${err.message}`);
       socket.emit("error", {
@@ -597,6 +619,7 @@ async function handleInterviewSocket(
 
   async function transitionToNextQuestion(text) {
     try {
+      clearNoTranscriptTimer();
       sttConnectionCache.get(interviewId)?.conn?.pauseIdleDetection?.();
       isListeningActive = false;
       awaitingPlaybackDone = true;
@@ -620,6 +643,7 @@ async function handleInterviewSocket(
   }
 
   async function handleIdle() {
+    clearNoTranscriptTimer();
     sttConnectionCache.get(interviewId)?.conn?.pauseIdleDetection?.();
     isListeningActive = false;
     socket.emit("listening_disabled");
@@ -673,6 +697,10 @@ async function handleInterviewSocket(
   async function processTranscript(text) {
     if (isInterviewEnded || isProcessing) return;
     isProcessing = true;
+    const processingTimeout = setTimeout(() => {
+      console.error("processTranscript timed out — resetting isProcessing");
+      isProcessing = false;
+    }, 30_000);
     isListeningActive = false;
     socket.emit("listening_disabled");
     try {
@@ -749,10 +777,13 @@ async function handleInterviewSocket(
         message: `Failed to process Q${currentOrder}: ${err.message}`,
       });
       isProcessing = false;
+    } finally {
+      clearTimeout(processingTimeout);
     }
   }
 
   async function handleRepeat(text) {
+    clearNoTranscriptTimer();
     const lower = text.toLowerCase();
     const yes = ["yes", "yeah", "sure", "repeat", "again", "please"].some((w) =>
       lower.includes(w),
@@ -778,9 +809,14 @@ async function handleInterviewSocket(
     isInterviewEnded = true;
     isListeningActive = false;
     awaitingPlaybackDone = false;
+    clearNoTranscriptTimer();
     if (playbackDoneTimer) {
       clearTimeout(playbackDoneTimer);
       playbackDoneTimer = null;
+    }
+    if (faceViolTimeout) {
+      clearTimeout(faceViolTimeout);
+      faceViolTimeout = null;
     }
 
     socket.emit("listening_disabled");
@@ -796,10 +832,6 @@ async function handleInterviewSocket(
       } catch (_) {}
       sttConnectionCache.delete(interviewId);
     }
-    if (faceViolTimeout) {
-      clearTimeout(faceViolTimeout);
-      faceViolTimeout = null;
-    }
 
     if (openFaceViolId) {
       await dbCloseViolation({
@@ -814,15 +846,79 @@ async function handleInterviewSocket(
     session.currentQText = "";
 
     socket.emit("evaluation_started", {});
-    evaluateInterview(interviewId)
-      .then((r) => {
-        socket.emit("evaluation_complete", {
-          results: {
-            overallScore: r.overallEvaluation.overallScore,
-            hireDecision: r.overallEvaluation.hireDecision,
-            experienceLevel: r.overallEvaluation.experienceLevel,
-          },
-        });
+
+    (async () => {
+      try {
+        console.log(
+          `🧠 [SOCKET] Running answer analysis for interview ${interviewId}…`,
+        );
+        const analysisResult = await runAnswerAnalysisDuringWait(
+          interviewId,
+          userId,
+        );
+
+        if (analysisResult) {
+          io.to(`interview_${interviewId}`).emit("analysis_complete", {
+            overallScore: analysisResult.overallScore,
+            hireDecision: analysisResult.hireDecision,
+            experienceLevel: analysisResult.experienceLevel,
+            totalQuestions: analysisResult.totalQuestions,
+            averages: analysisResult.averages,
+            questionBreakdown: analysisResult.questionBreakdown,
+            strengths: analysisResult.strengths,
+            weaknesses: analysisResult.weaknesses,
+            summary: analysisResult.summary,
+          });
+
+          console.log(
+            `📊 [SOCKET] analysis_complete emitted — ` +
+              `score=${analysisResult.overallScore} hire=${analysisResult.hireDecision}`,
+          );
+        } else {
+          const [rows] = await pool
+            .execute(
+              `SELECT * FROM interview_recording_analysis WHERE interview_id = ? LIMIT 1`,
+              [interviewId],
+            )
+            .catch(() => [[]]);
+
+          if (rows?.[0]) {
+            const [qRows] = await pool
+              .execute(
+                `SELECT qe.score, qe.feedback, iq.question_order AS \`order\`, iq.question
+               FROM question_evaluations qe
+               JOIN interview_questions iq ON qe.question_id = iq.id
+               WHERE qe.interview_id = ?
+               ORDER BY iq.question_order ASC`,
+                [interviewId],
+              )
+              .catch(() => [[]]);
+
+            io.to(`interview_${interviewId}`).emit("analysis_complete", {
+              ...rows[0],
+              questionBreakdown: qRows ?? [],
+            });
+          }
+        }
+
+        const evalRows = await pool
+          .execute(
+            `SELECT overall_score, hire_decision, experience_level
+           FROM interview_evaluations WHERE interview_id = ? LIMIT 1`,
+            [interviewId],
+          )
+          .catch(() => [[]]);
+
+        if (evalRows[0]?.[0]) {
+          socket.emit("evaluation_complete", {
+            results: {
+              overallScore: evalRows[0][0].overall_score,
+              hireDecision: evalRows[0][0].hire_decision,
+              experienceLevel: evalRows[0][0].experience_level,
+            },
+          });
+        }
+
         mergeInterviewMedia(interviewId, {
           layout: "picture-in-picture",
           deleteChunksAfter: true,
@@ -833,14 +929,21 @@ async function handleInterviewSocket(
             }),
           )
           .catch((e) => socket.emit("media_merge_error", { error: e.message }));
+
         cleanupSession(interviewId);
-      })
-      .catch(() =>
-        socket.emit("evaluation_error", { message: "Evaluation failed." }),
-      );
+      } catch (err) {
+        console.error(
+          "❌ endInterview background pipeline failed:",
+          err.message,
+        );
+        socket.emit("evaluation_error", { message: "Evaluation failed." });
+      }
+    })();
 
     isProcessing = false;
   }
+
+  /* ── Socket event listeners ──────────────────────────────────────────── */
 
   socket.on("setup_mode", () => {
     session.isSetupMode = true;
@@ -886,6 +989,7 @@ async function handleInterviewSocket(
       session.currentOrder = 1;
       session.currentQText = "";
       currentOrder = 1;
+      // FIX 4: Removed orphaned `c;` typo that was present in original code
       currentQText = "";
     }
 
@@ -895,6 +999,9 @@ async function handleInterviewSocket(
     currentQText = firstQuestion.question;
     session.currentQText = currentQText;
     session.currentOrder = currentOrder;
+    ensureSTTConnection().catch((e) =>
+      console.warn("⚠️ STT pre-warm failed:", e.message),
+    );
 
     try {
       socket.emit("question", { question: firstQuestion.question });
@@ -935,26 +1042,25 @@ async function handleInterviewSocket(
     });
   });
 
+  let sttReconnectBuffer = [];
   socket.on("user_audio_chunk", async (buf) => {
-    if (session.isSetupMode || !session.interviewStarted || !isListeningActive)
+    if (!isListeningActive || session.isSetupMode || !session.interviewStarted)
       return;
     const cached = sttConnectionCache.get(interviewId);
     if (!cached?.conn?.isConnected?.()) {
-      const now = Date.now();
-      if (now - lastNoConnWarn > 3000) {
-        console.warn("⚠️ STT connection lost — reconnecting...");
-        lastNoConnWarn = now;
-      }
+      sttReconnectBuffer.push(buf);
       if (!session._sttReconnecting) {
         session._sttReconnecting = true;
         ensureSTTConnection()
           .then((conn) => {
             conn.resumeIdleDetection?.();
+            sttReconnectBuffer.forEach((b) => conn.send(b));
+            sttReconnectBuffer = [];
             session._sttReconnecting = false;
           })
-          .catch((e) => {
+          .catch(() => {
+            sttReconnectBuffer = [];
             session._sttReconnecting = false;
-            console.error("❌ STT auto-reconnect failed:", e.message);
           });
       }
       return;
@@ -967,24 +1073,15 @@ async function handleInterviewSocket(
     const now = Date.now();
     if (now - lastHolisticTime < FACE_THROTTLE) return;
     lastHolisticTime = now;
-
     try {
       if (faceCount === 0) {
         if (!faceFirstMissing) {
           faceFirstMissing = now;
-          console.log(
-            `👁️  [FACE] No face detected — tracking absence interviewId=${interviewId}`,
-          );
           return;
         }
         const absenceMs = now - faceFirstMissing;
         if (absenceMs < FACE_WINDOW) return;
-
         faceWarnCount++;
-        console.log(
-          `⚠️  [FACE VIOLATION] NO_FACE warning #${faceWarnCount} interviewId=${interviewId}`,
-        );
-
         if (!openFaceViolId) {
           openFaceViolId = await dbOpenViolation({
             interviewId,
@@ -999,19 +1096,16 @@ async function handleInterviewSocket(
             warningCount: faceWarnCount,
           });
         }
-
         socket.emit("face_violation", {
           type: "NO_FACE",
           count: faceWarnCount,
           max: MAX_FACE_WARN,
           message: `No face detected — warning ${faceWarnCount} of ${MAX_FACE_WARN}`,
         });
-
         if (faceWarnCount >= MAX_FACE_WARN) {
           socket.emit("face_violation_alert", {
             type: "NO_FACE",
-            message:
-              "Repeated face absence has been logged and will be reviewed.",
+            message: "Repeated face absence has been logged.",
           });
           faceWarnCount = 0;
         }
@@ -1029,11 +1123,6 @@ async function handleInterviewSocket(
           timestamp,
         });
       } else {
-        if (faceFirstMissing) {
-          console.log(
-            `✅ [FACE] Face returned after ${Math.round((now - faceFirstMissing) / 1000)}s interviewId=${interviewId}`,
-          );
-        }
         faceFirstMissing = null;
         if (openFaceViolId) {
           await dbCloseViolation({ violationId: openFaceViolId, endTime: now });
@@ -1082,6 +1171,7 @@ async function handleInterviewSocket(
   socket.on("disconnect", () => {
     console.log(`🖥️ Desktop disconnected: ${socket.id}`);
     if (session.desktopSocketId === socket.id) session.desktopSocketId = null;
+    clearNoTranscriptTimer();
     if (faceViolTimeout) {
       clearTimeout(faceViolTimeout);
       faceViolTimeout = null;
@@ -1095,6 +1185,8 @@ async function handleInterviewSocket(
 
   socket.on("error", (e) => console.error("❌ socket error:", e));
 }
+
+/* ── Session factory ─────────────────────────────────────────────────────── */
 
 function getOrCreate(sessions, interviewId) {
   if (!sessions.has(interviewId)) {
@@ -1114,6 +1206,8 @@ function getOrCreate(sessions, interviewId) {
   }
   return sessions.get(interviewId);
 }
+
+/* ── Server init ─────────────────────────────────────────────────────────── */
 
 function initInterviewSocket(httpServer) {
   const io = new Server(httpServer, {

@@ -78,7 +78,7 @@ const Footer = () => {
       <style>{TOKENS}</style>
 
       {/* ── Top accent bar ── */}
-      <div className="h-0.5 w-full bg-gradient-to-r from-transparent via-[#d97706] to-transparent opacity-30" />
+      <div className="h-0.5 w-full bg-linear-to-r from-transparent via-[#d97706] to-transparent opacity-30" />
 
       {/* ── Subtle radial glow (warm amber, very light) ── */}
       <div className="absolute pointer-events-none inset-0 bg-[radial-gradient(ellipse_at_50%_100%,rgba(217,119,6,0.06),transparent_65%)]" />
@@ -122,7 +122,7 @@ const Footer = () => {
               <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-xl bg-[#faf9f7] border border-[rgba(13,13,18,0.09)] focus-within:border-[#1e2235] focus-within:shadow-[0_0_0_3px_rgba(30,34,53,0.07)] transition-all">
                 <Mail
                   size={13}
-                  className="text-[rgba(13,13,18,0.35)] flex-shrink-0"
+                  className="text-[rgba(13,13,18,0.35)] shrink-0"
                 />
                 <input
                   type="email"
@@ -133,7 +133,7 @@ const Footer = () => {
               <motion.button
                 whileTap={{ scale: 0.96 }}
                 type="submit"
-                className="px-3.5 py-2 rounded-xl bg-[#1e2235] text-white text-xs font-semibold hover:bg-[#2d3352] transition-colors flex-shrink-0"
+                className="px-3.5 py-2 rounded-xl bg-[#1e2235] text-white text-xs font-semibold hover:bg-[#2d3352] transition-colors shrink-0"
               >
                 <ArrowRight size={14} />
               </motion.button>
@@ -190,7 +190,7 @@ const Footer = () => {
         <div className="flex flex-col items-center justify-between gap-3 py-5 text-xs text-[rgba(13,13,18,0.40)] md:flex-row border-b border-[rgba(13,13,18,0.06)]">
           <div className="flex items-center gap-1.5">
             <MapPin size={11} className="opacity-60" />
-            <span>Bengaluru, India</span>
+            <span>Wilmington, DE 19801, USA</span>
           </div>
 
           <p className="text-center">

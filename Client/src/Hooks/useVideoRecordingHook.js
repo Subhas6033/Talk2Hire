@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
-const CHUNK_DURATION = 20000; // 20-s chunks
+const CHUNK_DURATION = 5000; // 5-s chunks
 const LIVEKIT_MODE = true;
 
 // ─── MIME type detection ──────────────────────────────────────────────────────
