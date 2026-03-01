@@ -900,11 +900,6 @@ const getViolationClips = asyncHandler(async (req, res) => {
 
   if (!interviewRows?.[0]) throw new APIERR(404, "Interview not found");
 
-  const interview = interviewRows[0];
-
-  const isCandidate = interview.user_id && interview.user_id === userId;
-  // if (!isCandidate) throw new APIERR(403, "Access denied");
-
   // ── Fetch violations ──────────────────────────────────────────────────────
   const [rows] = await pool.execute(
     `SELECT id, violation_type, start_time, end_time, duration_seconds,

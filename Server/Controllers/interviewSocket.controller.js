@@ -18,7 +18,7 @@ const FACE_WINDOW = 3000;
 const MAX_FACE_WARN = 5;
 const NO_TRANSCRIPT_TIMEOUT_MS = 15_000;
 
-// FIX 1: Must match the total activate window in stt.service.js:
+// Must match the total activate window in stt.service.js:
 // FLUSH_CHUNK_COUNT(30) × FLUSH_INTERVAL_MS(10) = 300ms flush
 // + ACTIVATE_DELAY_MS(1500ms) settle = 1800ms total.
 // Add 50ms buffer → 1850ms.
@@ -230,11 +230,29 @@ async function dbSavePointViolation({
 
 /* ── TTS helpers ─────────────────────────────────────────────────────────── */
 
-async function streamTTSToClient(socket, text, interviewId) {
+/**
+ * streamTTSToClient
+ *
+ * FIX: Pre-warm the STT connection while TTS chunks are still playing on the
+ * client instead of waiting for playback_done to arrive before starting the
+ * warmup. The Deepgram settle window (STT_GATE_DELAY_MS = 1850ms) now runs
+ * in parallel with the client's Web Audio playback queue draining, so by the
+ * time the client emits playback_done the gate is already fully open and
+ * enableListening() emits listening_enabled with zero (or minimal) additional
+ * delay.
+ *
+ * The pre-warm timestamp is stored on session._preWarmStartedAt so that
+ * enableListening() can compute how much of the gate delay has already elapsed
+ * and only wait the remaining time before emitting listening_enabled.
+ *
+ * All other logic is unchanged.
+ */
+async function streamTTSToClient(socket, text, interviewId, session) {
   return new Promise((resolve, reject) => {
     const tts = getTTSInstance(interviewId);
     let chunkCount = 0;
     let settled = false;
+    let preWarmStarted = false;
 
     const settle = (err) => {
       if (settled) return;
@@ -248,20 +266,41 @@ async function streamTTSToClient(socket, text, interviewId) {
     );
 
     const sttConn = sttConnectionCache.get(interviewId)?.conn;
+    // Put STT in standby while TTS is playing so Deepgram ignores speaker bleed
     sttConn?.enterStandby?.();
 
     tts
       .speakStream(text, (chunk) => {
         if (settled) return;
+
         if (chunk === null) {
+          // All TTS chunks have been fetched and sent to the client.
+          // The client's Web Audio queue will keep draining for several more
+          // seconds. Start the STT warmup NOW so the Deepgram settle window
+          // runs in parallel with client playback instead of sequentially.
           clearTimeout(hardTimeout);
-          console.log(`TTS fetched: ${chunkCount} chunks`);
+          console.log(`TTS fetched: ${chunkCount} chunks — pre-warming STT`);
+
+          const conn = sttConnectionCache.get(interviewId)?.conn;
+          if (conn?.isConnected?.() && !preWarmStarted) {
+            preWarmStarted = true;
+            // Record when activate() was called so enableListening() can
+            // subtract the elapsed time from STT_GATE_DELAY_MS.
+            session._preWarmStartedAt = Date.now();
+            conn.activate?.();
+            console.log(
+              `🔥 STT pre-warm started at ${session._preWarmStartedAt} — ` +
+                `gate will open in ${STT_GATE_DELAY_MS}ms`,
+            );
+          }
+
           try {
             socket.emit("tts_end");
           } catch (_) {}
           settle();
           return;
         }
+
         chunkCount++;
         if (!socket.connected) {
           settle(new Error("Socket disconnected during TTS"));
@@ -484,9 +523,9 @@ async function handleInterviewSocket(
     }
   };
 
-  // FIX 2: noTranscriptTimer must not start until after the STT gate is fully
-  // open. Add the gate delay so the 15s window is measured from when the user
-  // can actually speak, not from when TTS finishes.
+  // noTranscriptTimer must not start until after the STT gate is fully open.
+  // Add the gate delay so the 15s window is measured from when the user can
+  // actually speak, not from when TTS finishes.
   const startNoTranscriptTimer = () => {
     clearNoTranscriptTimer();
     // Delay by STT_GATE_DELAY_MS so timer starts when Deepgram is truly ready
@@ -576,6 +615,27 @@ async function handleInterviewSocket(
     });
   }
 
+  /**
+   * enableListening
+   *
+   * FIX: streamTTSToClient now calls conn.activate() as soon as the last TTS
+   * chunk is fetched (while the client is still playing audio). It stores
+   * session._preWarmStartedAt so we can compute how much of the STT_GATE_DELAY_MS
+   * window has already elapsed by the time playback_done arrives.
+   *
+   * Instead of always waiting the full STT_GATE_DELAY_MS here, we compute the
+   * remaining wait: max(0, STT_GATE_DELAY_MS - elapsedSincePreWarm).
+   *
+   * Typical scenario:
+   *   - Short TTS (5 chunks, ~200ms fetch):  preWarm starts ~200ms before
+   *     playback_done. Remaining wait ≈ 1650ms — small delay.
+   *   - Long TTS  (150 chunks, ~6s fetch):   preWarm starts ~6s before
+   *     playback_done. By the time playback_done arrives, the gate has been
+   *     open for several seconds. Remaining wait = 0ms — instant.
+   *
+   * If preWarm never happened (conn not ready, first question, etc.) we fall
+   * back to the full STT_GATE_DELAY_MS wait and call activate() here.
+   */
   const enableListening = async () => {
     if (playbackDoneTimer) {
       clearTimeout(playbackDoneTimer);
@@ -589,24 +649,42 @@ async function handleInterviewSocket(
     )
       return;
     awaitingPlaybackDone = false;
+
     try {
       const conn = await ensureSTTConnection();
       if (!conn.isConnected?.()) throw new Error("STT connection not ready");
       isListeningActive = true;
       isProcessing = false;
 
-      // activate() sends silence flush then opens gate after ACTIVATE_DELAY_MS.
-      conn.activate?.();
+      // Compute how much of the gate delay has already elapsed since the
+      // pre-warm was started during TTS streaming.
+      const preWarmElapsed = session._preWarmStartedAt
+        ? Date.now() - session._preWarmStartedAt
+        : 0;
+      const remaining = Math.max(0, STT_GATE_DELAY_MS - preWarmElapsed);
 
-      // FIX 3: Use STT_GATE_DELAY_MS (1250ms) so listening_enabled and the
-      // noTranscriptTimer only fire once the Deepgram gate is truly open.
-      // Previously 850ms < actual settle window, causing early idle triggers.
+      // Clear the pre-warm timestamp so it doesn't carry over to the next Q
+      session._preWarmStartedAt = null;
+
+      if (remaining > 0 && preWarmElapsed === 0) {
+        // Pre-warm didn't happen (e.g. conn wasn't ready during TTS) — call
+        // activate() now and wait the full gate delay.
+        console.log(
+          `⏱️ STT no pre-warm — calling activate() now, waiting ${remaining}ms`,
+        );
+        conn.activate?.();
+      } else {
+        console.log(
+          `⏱️ STT pre-warm elapsed=${preWarmElapsed}ms, remaining=${remaining}ms`,
+        );
+      }
+
       setTimeout(() => {
         if (!isListeningActive || isInterviewEnded) return;
         socket.emit("listening_enabled");
         conn.resumeIdleDetection?.();
         startNoTranscriptTimer();
-      }, STT_GATE_DELAY_MS);
+      }, remaining);
     } catch (err) {
       console.error(`❌ enableListening failed: ${err.message}`);
       socket.emit("error", {
@@ -617,13 +695,18 @@ async function handleInterviewSocket(
     }
   };
 
+  // Internal wrapper that passes session to streamTTSToClient
+  async function _streamTTS(text) {
+    return streamTTSToClient(socket, text, interviewId, session);
+  }
+
   async function transitionToNextQuestion(text) {
     try {
       clearNoTranscriptTimer();
       sttConnectionCache.get(interviewId)?.conn?.pauseIdleDetection?.();
       isListeningActive = false;
       awaitingPlaybackDone = true;
-      await streamTTSToClient(socket, text, interviewId);
+      await _streamTTS(text);
       if (playbackDoneTimer) clearTimeout(playbackDoneTimer);
       playbackDoneTimer = setTimeout(() => {
         console.warn("⚠️ playback_done timeout (15s) — enabling STT anyway");
@@ -972,7 +1055,7 @@ async function handleInterviewSocket(
       try {
         socket.emit("question", { question: currentQText });
         awaitingPlaybackDone = true;
-        await streamTTSToClient(socket, currentQText, interviewId);
+        await _streamTTS(currentQText);
         if (playbackDoneTimer) clearTimeout(playbackDoneTimer);
         playbackDoneTimer = setTimeout(() => enableListening(), 15_000);
       } catch (err) {
@@ -989,7 +1072,6 @@ async function handleInterviewSocket(
       session.currentOrder = 1;
       session.currentQText = "";
       currentOrder = 1;
-      // FIX 4: Removed orphaned `c;` typo that was present in original code
       currentQText = "";
     }
 
@@ -1006,7 +1088,7 @@ async function handleInterviewSocket(
     try {
       socket.emit("question", { question: firstQuestion.question });
       awaitingPlaybackDone = true;
-      await streamTTSToClient(socket, firstQuestion.question, interviewId);
+      await _streamTTS(firstQuestion.question);
       if (playbackDoneTimer) clearTimeout(playbackDoneTimer);
       playbackDoneTimer = setTimeout(() => enableListening(), 15_000);
     } catch (err) {
@@ -1202,6 +1284,7 @@ function getOrCreate(sessions, interviewId) {
       interviewStarted: false,
       currentOrder: 1,
       currentQText: "",
+      _preWarmStartedAt: null, // tracks when STT activate() was called during TTS
     });
   }
   return sessions.get(interviewId);

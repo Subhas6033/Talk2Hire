@@ -143,15 +143,28 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
     source.connect(ctx.destination);
     activeSourcesRef.current.add(source);
 
+    // FIX: Guard fireDone on activeSourcesRef.size === 0.
+    // Previously fireDone() could fire while other sources were still playing
+    // because the check only looked at decodedQueueRef and pendingDecodeRef,
+    // not whether sibling sources were still active. Now we only fire done
+    // when this is truly the last source AND nothing else is queued/decoding.
     source.onended = () => {
       activeSourcesRef.current.delete(source);
 
+      // More decoded audio waiting — schedule it immediately
       if (decodedQueueRef.current.length > 0) {
         scheduleNext();
         return;
       }
+
+      // Still decoding incoming chunks — wait for drainDecodeQueue to finish
       if (pendingDecodeRef.current.length > 0 || isDecodingRef.current) return;
-      if (flushRequestedRef.current) fireDone();
+
+      // This was the last source AND no more audio is pending anywhere —
+      // only now is it safe to fire done
+      if (activeSourcesRef.current.size === 0 && flushRequestedRef.current) {
+        fireDone();
+      }
     };
 
     source.start(nextStartTimeRef.current);

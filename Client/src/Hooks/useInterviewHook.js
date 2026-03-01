@@ -25,27 +25,8 @@ import useAudioRecording from "./useAudioRecording";
 import { useTTS } from "./useSpeechHook";
 
 const MIC_SAMPLE_RATE = 48000;
-const CALIBRATION_MS = 1500;
-const GATE_MULTIPLIER = 3.0;
-const MIN_NOISE_GATE = 0.005;
-const MAX_NOISE_GATE = 0.03;
-const SILENCE_TIMEOUT_MS = 1200;
-const DIAGNOSTIC_INTERVAL_MS = 3000;
 
-// FIX 1: Must match STT_GATE_DELAY_MS in the server controller (1250ms).
-// The client must not send audio to the server until the Deepgram gate is
-// open, otherwise real speech gets ignored. We skip chunks for this duration
-// after each listening_enabled event using sttWarmupUntilRef.
-// FIX 1: Must match STT_GATE_DELAY_MS in the server controller (1850ms).
-// Total = 300ms flush drip + 1500ms settle + 50ms buffer.
-const STT_GATE_WARMUP_MS = 1850;
-
-function getRMS(input) {
-  let sum = 0;
-  for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
-  return Math.sqrt(sum / input.length);
-}
-
+// Convert Float32 audio samples to PCM16 for Deepgram
 function toPCM16(input) {
   const pcm16 = new Int16Array(input.length);
   for (let i = 0; i < input.length; i++) {
@@ -55,121 +36,11 @@ function toPCM16(input) {
   return pcm16;
 }
 
-function createAdaptiveNoiseGate(label = "MIC") {
-  const state = {
-    calibrating: true,
-    calibrationSamples: [],
-    calibrationStartTime: Date.now(),
-    ambientRMS: null,
-    threshold: MIN_NOISE_GATE,
-    lastSpeechTime: 0,
-    lastDiagnosticTime: 0,
-    chunksSent: 0,
-    chunksDropped: 0,
-    chunksTrailing: 0,
-    lastRMS: 0,
-    peakRMS: 0,
-  };
-
-  function calibrate(rms) {
-    if (rms < 0.03) state.calibrationSamples.push(rms);
-    const elapsed = Date.now() - state.calibrationStartTime;
-    if (elapsed >= CALIBRATION_MS && state.calibrationSamples.length > 5) {
-      const avg =
-        state.calibrationSamples.reduce((a, b) => a + b, 0) /
-        state.calibrationSamples.length;
-      state.ambientRMS = avg;
-      state.threshold = Math.min(
-        MAX_NOISE_GATE,
-        Math.max(MIN_NOISE_GATE, avg * GATE_MULTIPLIER),
-      );
-      state.calibrating = false;
-      console.log(
-        `[${label}] Noise calibration complete — threshold: ${state.threshold.toFixed(6)}`,
-      );
-    }
-  }
-
-  function printDiagnostics(rms, decision) {
-    const now = Date.now();
-    if (now - state.lastDiagnosticTime < DIAGNOSTIC_INTERVAL_MS) return;
-    state.lastDiagnosticTime = now;
-    const silenceSince = state.lastSpeechTime
-      ? `${((now - state.lastSpeechTime) / 1000).toFixed(1)}s ago`
-      : "never spoken";
-    console.log(
-      `[${label}] threshold=${state.threshold.toFixed(6)} rms=${rms.toFixed(6)} decision=${decision} lastSpeech=${silenceSince} sent=${state.chunksSent} dropped=${state.chunksDropped}`,
-    );
-  }
-
-  function shouldSend(rms) {
-    state.lastRMS = rms;
-    if (rms > state.peakRMS) state.peakRMS = rms;
-    const now = Date.now();
-
-    if (state.calibrating) {
-      calibrate(rms);
-      state.chunksSent++;
-      printDiagnostics(rms, "SEND (calibrating)");
-      return { send: true, reason: "calibrating" };
-    }
-
-    if (rms >= state.threshold) {
-      state.chunksTrailing = 0;
-      state.lastSpeechTime = now;
-      state.chunksSent++;
-      printDiagnostics(rms, "SEND (speech)");
-      return { send: true, reason: "speech" };
-    }
-
-    const silenceMs = now - state.lastSpeechTime;
-    const MAX_TRAILING_CHUNKS = 30;
-    if (
-      state.lastSpeechTime > 0 &&
-      silenceMs < SILENCE_TIMEOUT_MS &&
-      state.chunksTrailing < MAX_TRAILING_CHUNKS
-    ) {
-      state.chunksTrailing++;
-      state.chunksSent++;
-      printDiagnostics(rms, `SEND (trailing, ${silenceMs}ms)`);
-      return { send: true, reason: "trailing" };
-    }
-
-    state.chunksDropped++;
-    printDiagnostics(rms, `DROP silence`);
-    return { send: false, reason: "silence" };
-  }
-
-  function reset() {
-    state.calibrating = true;
-    state.calibrationSamples = [];
-    state.calibrationStartTime = Date.now();
-    state.ambientRMS = null;
-    state.threshold = MIN_NOISE_GATE;
-    state.lastSpeechTime = 0;
-    state.lastDiagnosticTime = 0;
-    state.chunksSent = 0;
-    state.chunksDropped = 0;
-    state.chunksTrailing = 0;
-    state.lastRMS = 0;
-    state.peakRMS = 0;
-    console.log(`[${label}] Noise gate reset — recalibrating`);
-  }
-
-  function getStats() {
-    return {
-      calibrating: state.calibrating,
-      ambientRMS: state.ambientRMS,
-      threshold: state.threshold,
-      lastRMS: state.lastRMS,
-      peakRMS: state.peakRMS,
-      chunksSent: state.chunksSent,
-      chunksDropped: state.chunksDropped,
-      chunksTrailing: state.chunksTrailing,
-    };
-  }
-
-  return { shouldSend, reset, getStats };
+// Simple RMS — used only to detect a completely dead/disconnected mic
+function getRMS(input) {
+  let sum = 0;
+  for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
+  return Math.sqrt(sum / input.length);
 }
 
 export const useInterview = (interviewId, userId, cameraStream) => {
@@ -188,34 +59,25 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const localCameraTrackRef = useRef(null);
   const micProcessorRef = useRef(null);
   const micStreamRef = useRef(null);
-
   const remoteDescriptionSetRef = useRef(false);
 
-  const noiseGateRef = useRef(createAdaptiveNoiseGate("MIC"));
-
-  // FIX 2: Replace chunk-count warmup with a timestamp-based warmup.
-  // sttWarmupUntilRef stores the absolute time until which audio should be
-  // dropped. Set to Date.now() + STT_GATE_WARMUP_MS on each listening_enabled.
-  // This is immune to variable chunk rates and AudioContext scheduling jitter.
-  const sttWarmupUntilRef = useRef(0);
-
-  const isPlayingRef = useRef(false);
+  // Refs that mirror Redux state for use inside onaudioprocess
+  // (onaudioprocess closure can't read Redux state directly)
   const isListeningRef = useRef(false);
   const canListenRef = useRef(false);
   const hasStartedRef = useRef(false);
   const serverReadyRef = useRef(false);
-  const ttsStreamActiveRef = useRef(false);
   const micStreamingActiveRef = useRef(false);
 
+  // Keep refs in sync with Redux state
   useEffect(() => {
-    isPlayingRef.current = interview.isPlaying;
     isListeningRef.current = interview.isListening;
     canListenRef.current = interview.canListen;
     serverReadyRef.current = interview.serverReady;
-    ttsStreamActiveRef.current = interview.ttsStreamActive;
     micStreamingActiveRef.current = interview.micStreamingActive;
   }, [interview]);
 
+  // Recording duration timer
   useEffect(() => {
     if (!interview.isInitializing && interview.status === "live") {
       dispatch(startRecording());
@@ -230,6 +92,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }
   }, [interview.isInitializing, interview.status, dispatch]);
 
+  // ── AudioContext ─────────────────────────────────────────────────────────
   const ensureAudioContext = useCallback(async () => {
     try {
       if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
@@ -261,18 +124,13 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     return () => document.removeEventListener("click", resume);
   }, []); // eslint-disable-line
 
+  // ── TTS ──────────────────────────────────────────────────────────────────
   const { enqueueTTSChunk, flushTTS, resetTTS } = useTTS({
     onPlayStart: () => {
-      isPlayingRef.current = true;
       dispatch(setIsPlaying(true));
       dispatch(disableListening());
     },
-    // FIX 3: Do NOT reset noise gate on TTS end. The gate calibrated once at
-    // mic startup in silence — that calibration is still valid. Resetting here
-    // triggers a 1500ms recalibration window that floods Deepgram with
-    // near-silence chunks before the user can speak.
     onPlayEnd: () => {
-      isPlayingRef.current = false;
       dispatch(setIsPlaying(false));
     },
   });
@@ -298,11 +156,12 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch, flushTTS],
   );
 
+  // ── Interview event handlers ──────────────────────────────────────────────
   const handleQuestion = useCallback(
     (payload) => {
       const text =
         typeof payload === "string" ? payload : payload?.question || "";
-      if (isPlayingRef.current) resetTTS();
+      resetTTS();
       dispatch(setCurrentQuestion(text));
       dispatch(setTtsStreamActive(true));
       dispatch(disableListening());
@@ -312,7 +171,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const handleNextQuestion = useCallback(
     (payload) => {
-      if (isPlayingRef.current) resetTTS();
+      resetTTS();
       dispatch(receiveNextQuestion(payload));
       dispatch(setTtsStreamActive(true));
       dispatch(disableListening());
@@ -351,6 +210,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch],
   );
 
+  // ── WebRTC ────────────────────────────────────────────────────────────────
   const setupWebRTCPeerConnection = useCallback(() => {
     const existingPc = pcRef.current;
     if (
@@ -412,9 +272,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     pc.oniceconnectionstatechange = () => {
       console.log("[WebRTC] ICE connection state:", pc.iceConnectionState);
       if (pc.iceConnectionState === "failed") {
-        console.error(
-          "[WebRTC] ICE failed — likely no TURN server. Check VITE_TURN_URL in .env",
-        );
+        console.error("[WebRTC] ICE failed — check VITE_TURN_URL in .env");
         pc.restartIce?.();
       }
     };
@@ -499,6 +357,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [setupWebRTCPeerConnection],
   );
 
+  // ── Mic streaming ─────────────────────────────────────────────────────────
   const startMicStreaming = useCallback(
     async (existingStream = null) => {
       if (localMicTrackRef.current) {
@@ -532,13 +391,20 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         source.connect(processor);
         processor.connect(ctx.destination);
 
-        // FIX 4: Calibrate the noise gate ONCE at startup in silence.
-        // Never reset it again during the session — the threshold measured here
-        // remains valid for the entire interview. Resetting during TTS caused a
-        // 1500ms window where TTS speaker bleed was treated as ambient noise,
-        // inflating the threshold and causing real speech to be gated out.
-        noiseGateRef.current.reset();
-
+        // ─────────────────────────────────────────────────────────────────────
+        // NO CLIENT-SIDE NOISE GATE. All audio is forwarded directly to
+        // Deepgram. Deepgram handles silence detection via:
+        //   - vad_events=true        → SpeechStarted / UtteranceEnd events
+        //   - endpointing=300        → 300ms silence triggers speech_final
+        //   - utterance_end_ms=1500  → fallback finalisation after 1500ms
+        //
+        // Previously a client noise gate with threshold ~0.030 was dropping
+        // all speech (typical RMS ~0.025) before it reached Deepgram, causing
+        // empty transcripts and idle-fallback misfires.
+        //
+        // The only frame we skip is a completely dead/zero signal, which
+        // indicates a disconnected or muted microphone (rms < 0.0001).
+        // ─────────────────────────────────────────────────────────────────────
         processor.onaudioprocess = (e) => {
           if (!micStreamingActiveRef.current) return;
           if (!isListeningRef.current) return;
@@ -546,33 +412,12 @@ export const useInterview = (interviewId, userId, cameraStream) => {
           if (!socketRef.current?.connected) return;
 
           const input = e.inputBuffer.getChannelData(0);
-          const rms = getRMS(input);
-          const { send, reason } = noiseGateRef.current.shouldSend(rms);
 
-          // Never send during calibration window
-          const stats = noiseGateRef.current.getStats();
-          if (stats.calibrating) return;
+          // Skip dead-mic frames only (all zeros / hardware muted)
+          if (getRMS(input) < 0.0001) return;
 
-          // FIX 5: Use timestamp-based warmup instead of chunk count.
-          // After each listening_enabled the client blocks audio for
-          // STT_GATE_WARMUP_MS so the Deepgram VAD has fully settled before
-          // real speech arrives. Chunk counting was unreliable because
-          // AudioContext chunk delivery timing is not perfectly constant.
-          if (Date.now() < sttWarmupUntilRef.current) {
-            console.log(`[MIC DROP] warmup — rms=${rms.toFixed(6)}`);
-            return;
-          }
-
-          if (!send) {
-            console.log(
-              `[MIC DROP] rms=${rms.toFixed(6)} reason=${reason}`,
-              stats,
-            );
-          }
-
-          if (send) {
-            socketRef.current.emit("user_audio_chunk", toPCM16(input).buffer);
-          }
+          // Pass raw PCM16 to Deepgram — let its VAD decide what is speech
+          socketRef.current.emit("user_audio_chunk", toPCM16(input).buffer);
         };
 
         if (audioRecording.connectMicrophoneAudio) {
@@ -617,23 +462,19 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     [dispatch, ensureAudioContext, startMicStreaming],
   );
 
+  // ── WebRTC answer / ICE ───────────────────────────────────────────────────
   const handleWebRTCAnswer = useCallback(async ({ answer }) => {
     if (!pcRef.current) return;
-
     if (remoteDescriptionSetRef.current) {
-      console.warn(
-        "[WebRTC] Duplicate webrtc_answer received — ignoring (already set)",
-      );
+      console.warn("[WebRTC] Duplicate answer — ignoring");
       return;
     }
-
     if (pcRef.current.signalingState !== "have-local-offer") {
       console.warn(
-        `[WebRTC] Ignoring answer — wrong signalingState: ${pcRef.current.signalingState}`,
+        `[WebRTC] Ignoring answer — signalingState: ${pcRef.current.signalingState}`,
       );
       return;
     }
-
     try {
       remoteDescriptionSetRef.current = true;
       await pcRef.current.setRemoteDescription(
@@ -655,28 +496,21 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }
   }, []);
 
+  // ── Listening enable / disable ────────────────────────────────────────────
   const enableListeningImmediate = useCallback(() => {
     isListeningRef.current = true;
     canListenRef.current = true;
-    // FIX 6: Set the warmup deadline as an absolute timestamp.
-    // Audio chunks produced before this time will be dropped in onaudioprocess.
-    // This replaces the old chunk-count approach which could drift.
-    sttWarmupUntilRef.current = Date.now() + STT_GATE_WARMUP_MS;
-    console.log(
-      `[MIC] Warmup window set — dropping audio for ${STT_GATE_WARMUP_MS}ms`,
-    );
+    console.log("[MIC] Listening enabled");
     dispatch(enableListening());
   }, [dispatch]);
 
   const disableListeningImmediate = useCallback(() => {
     isListeningRef.current = false;
     canListenRef.current = false;
-    // FIX 7: Clear the warmup timestamp when listening stops so stale warmup
-    // doesn't carry over to the next question window.
-    sttWarmupUntilRef.current = 0;
     dispatch(disableListening());
   }, [dispatch]);
 
+  // ── Cleanup ───────────────────────────────────────────────────────────────
   const cleanupWebRTC = useCallback(() => {
     if (pcRef.current) {
       pcRef.current.close();
@@ -700,6 +534,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     };
   }, [resetTTS, cleanupWebRTC]);
 
+  // ── Public API ────────────────────────────────────────────────────────────
   return {
     ...interview,
     socketRef,
@@ -728,6 +563,5 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     setMicStreamingActive: (v) => dispatch(setMicStreamingActive(v)),
     initializeInterview: (d) => dispatch(initializeInterview(d)),
     cleanupWebRTC,
-    getNoiseGateStats: () => noiseGateRef.current.getStats(),
   };
 };

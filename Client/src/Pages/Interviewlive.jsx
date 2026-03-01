@@ -10,6 +10,7 @@ import { Card } from "../Components/Common/Card";
 import { useStreams } from "../Hooks/streamContext";
 import streamStore from "../Hooks/streamSingleton";
 
+// Use module-level flags to survive React StrictMode double-invoke
 let _globalSocketInitialized = false;
 let _globalClientReadyEmitted = false;
 
@@ -103,6 +104,7 @@ const InterviewLive = () => {
     interview.status === "live" && !interview.isInitializing,
   );
 
+  // Reset global flags on unmount so re-mounting works correctly
   useEffect(() => {
     return () => {
       _globalSocketInitialized = false;
@@ -110,6 +112,7 @@ const InterviewLive = () => {
     };
   }, []); // eslint-disable-line
 
+  // Redirect if no session data found after a grace period
   useEffect(() => {
     if (!sessionData) {
       const t = setTimeout(() => {
@@ -149,6 +152,7 @@ const InterviewLive = () => {
     stopServerRecordingOnce,
   ]); // eslint-disable-line
 
+  // Attach primary camera stream to the video element once
   useEffect(() => {
     if (!videoRef.current || !primaryCameraStream) return;
     videoRef.current.srcObject = primaryCameraStream;
@@ -264,6 +268,7 @@ const InterviewLive = () => {
     };
   }, []); // eslint-disable-line
 
+  // ── Main socket initialisation ───────────────────────────────────────────
   useEffect(() => {
     if (_globalSocketInitialized || !sessionData || !preInitializedSocket)
       return;
@@ -273,6 +278,7 @@ const InterviewLive = () => {
 
     const init = async () => {
       try {
+        // Wait for socket to connect (max 10s)
         let retries = 0;
         while (!socket.connected && retries < 50) {
           await new Promise((r) => setTimeout(r, 200));
@@ -286,6 +292,7 @@ const InterviewLive = () => {
 
         interview.socketRef.current = socket;
 
+        // ── Mobile WebRTC relay ──────────────────────────────────────────
         socket.on("mobile_webrtc_offer_relay", async ({ offer, identity }) => {
           const pc = setupMobilePeerConnection();
           try {
@@ -310,6 +317,7 @@ const InterviewLive = () => {
           } catch (_) {}
         });
 
+        // ── Debug logger (silences high-frequency events) ────────────────
         const silenced = new Set([
           "user_audio_chunk",
           "video_chunk",
@@ -321,6 +329,7 @@ const InterviewLive = () => {
           if (!silenced.has(ev)) console.log(`[SOCKET] "${ev}"`);
         });
 
+        // ── Interview event listeners ────────────────────────────────────
         socket.on("secondary_camera_ready", () =>
           setMobileCameraConnected(true),
         );
@@ -381,6 +390,7 @@ const InterviewLive = () => {
         );
         socket.on("error", () => interview.setStatus("error"));
 
+        // ── Mark interview as live ───────────────────────────────────────
         interview.setStatus("live");
         interview.setServerReady(true);
         interview.setIsInitializing(false);
@@ -393,8 +403,11 @@ const InterviewLive = () => {
         socket.emit("request_secondary_camera_status", {
           interviewId: sessionData.interviewId,
         });
+
+        // Start mic streaming (uses pre-initialized stream if available)
         interview.autoStartInterview(micStream).catch(console.error);
 
+        // Emit client_ready exactly once per session
         if (!_globalClientReadyEmitted) {
           _globalClientReadyEmitted = true;
           socket.emit("client_ready", {
@@ -427,6 +440,7 @@ const InterviewLive = () => {
     };
   }, []); // eslint-disable-line
 
+  // ── Start all recordings once interview is live ──────────────────────────
   useEffect(() => {
     if (
       recordingsStartedRef.current ||
@@ -476,6 +490,7 @@ const InterviewLive = () => {
     isVideoRecording,
   ]); // eslint-disable-line
 
+  // Attach mobile stream to server recording when track arrives
   useEffect(() => {
     if (!recordingsStartedRef.current) return;
     if (!pendingMobileStreamRef.current) return;
@@ -485,6 +500,7 @@ const InterviewLive = () => {
     pendingMobileStreamRef.current = null;
   }, [mobileTrackAttached]); // eslint-disable-line
 
+  // Auto-navigate to dashboard when evaluation is complete
   useEffect(() => {
     if (evaluationStatus === "complete" && evaluationResults)
       setTimeout(() => navigate("/dashboard"), 2000);
@@ -512,6 +528,7 @@ const InterviewLive = () => {
     navigate("/dashboard");
   };
 
+  // ── Loading screen ───────────────────────────────────────────────────────
   if (!sessionData) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -523,6 +540,7 @@ const InterviewLive = () => {
     );
   }
 
+  // ── Sub-components ───────────────────────────────────────────────────────
   const Dot = ({ on, color = "gray" }) => {
     const c = {
       gray: "bg-gray-300",
@@ -563,6 +581,7 @@ const InterviewLive = () => {
     );
   };
 
+  // ── Render ───────────────────────────────────────────────────────────────
   return (
     <section className="min-h-screen bg-gray-50 p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
