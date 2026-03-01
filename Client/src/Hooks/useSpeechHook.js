@@ -40,18 +40,6 @@ function pcm16ToWav(
   return wav;
 }
 
-/**
- * useTTS — PCM16 audio playback hook
- *
- * Usage (wire these up in your component):
- *   const { enqueueTTSChunk, flushTTS, resetTTS } = useTTS({ onPlayStart, onPlayEnd });
- *   socket.on("tts_audio", ({ audio }) => enqueueTTSChunk(audio));
- *   socket.on("tts_end",   ()          => flushTTS(() => socket.emit("playback_done")));
- *
- * flushTTS(onDone) — fires onDone() when Web Audio queue fully drains,
- * OR after an 8s safety timeout if Web Audio never fires onended
- * (e.g. AudioContext suspended by browser autoplay policy).
- */
 export function useTTS({ onPlayStart, onPlayEnd }) {
   const ttsCtxRef = useRef(null);
   const decodedQueueRef = useRef([]);
@@ -142,12 +130,6 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
     source.buffer = buffer;
     source.connect(ctx.destination);
     activeSourcesRef.current.add(source);
-
-    // FIX: Guard fireDone on activeSourcesRef.size === 0.
-    // Previously fireDone() could fire while other sources were still playing
-    // because the check only looked at decodedQueueRef and pendingDecodeRef,
-    // not whether sibling sources were still active. Now we only fire done
-    // when this is truly the last source AND nothing else is queued/decoding.
     source.onended = () => {
       activeSourcesRef.current.delete(source);
 
@@ -227,25 +209,9 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
   );
 
   // ── flushTTS ────────────────────────────────────────────────────────────
-  /**
-   * Call on tts_end. onDone fires when audio fully plays.
-   *
-   * FIX 1: Reset doneCalledRef BEFORE clearTimeout to eliminate the race
-   * condition where the previous fallback timer fires between clearTimeout
-   * and the guard reset, bypassing double-fire protection and emitting
-   * playback_done twice.
-   *
-   * FIX 2: Increased fallback from 5s to 8s. 150 TTS chunks at 48kHz can
-   * legitimately take 6-7 seconds to play through. 5s was too aggressive
-   * and would fire the fallback mid-playback, causing playback_done to emit
-   * before audio finished, which sent listening_enabled too early.
-   */
+
   const flushTTS = useCallback(
     (onDone) => {
-      // FIX 1: Reset the double-fire guard FIRST — before clearTimeout.
-      // If the old fallback timer fires between clearTimeout and this reset,
-      // doneCalledRef=true would have blocked it. Resetting first ensures
-      // the new flush cycle starts clean without a race window.
       doneCalledRef.current = false;
 
       if (fallbackTimerRef.current) {
@@ -255,10 +221,6 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
 
       onDoneRef.current = onDone ?? null;
       flushRequestedRef.current = true;
-
-      // FIX 2: 8s fallback — was 5s, too short for long TTS responses.
-      // 150 chunks × ~40ms/chunk = ~6s of audio. The fallback must be
-      // longer than the longest realistic TTS response to avoid false fires.
       fallbackTimerRef.current = setTimeout(() => {
         if (!doneCalledRef.current) {
           console.warn(

@@ -390,21 +390,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         micProcessorRef.current = processor;
         source.connect(processor);
         processor.connect(ctx.destination);
-
-        // ─────────────────────────────────────────────────────────────────────
-        // NO CLIENT-SIDE NOISE GATE. All audio is forwarded directly to
-        // Deepgram. Deepgram handles silence detection via:
-        //   - vad_events=true        → SpeechStarted / UtteranceEnd events
-        //   - endpointing=300        → 300ms silence triggers speech_final
-        //   - utterance_end_ms=1500  → fallback finalisation after 1500ms
-        //
-        // Previously a client noise gate with threshold ~0.030 was dropping
-        // all speech (typical RMS ~0.025) before it reached Deepgram, causing
-        // empty transcripts and idle-fallback misfires.
-        //
-        // The only frame we skip is a completely dead/zero signal, which
-        // indicates a disconnected or muted microphone (rms < 0.0001).
-        // ─────────────────────────────────────────────────────────────────────
         processor.onaudioprocess = (e) => {
           if (!micStreamingActiveRef.current) return;
           if (!isListeningRef.current) return;

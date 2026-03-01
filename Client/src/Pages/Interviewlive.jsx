@@ -5,15 +5,198 @@ import useVideoRecording from "../Hooks/useVideoRecordingHook";
 import useHolisticDetection from "../Hooks/useHolisticDetectionHook";
 import useScreenRecording from "../Hooks/useScreenRecording";
 import useServerRecording from "../Hooks/useServerRecording";
-import { Button } from "../Components/index";
-import { Card } from "../Components/Common/Card";
 import { useStreams } from "../Hooks/streamContext";
 import streamStore from "../Hooks/streamSingleton";
 
-// Use module-level flags to survive React StrictMode double-invoke
+// Module-level flags to survive React StrictMode double-invoke
 let _globalSocketInitialized = false;
 let _globalClientReadyEmitted = false;
 
+// ── Minimal style block: ONLY keyframes + font import (impossible in Tailwind) ──
+const STYLES = `
+  @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&family=Lora:wght@400;500;600&display=swap');
+
+  .font-sora { font-family: 'Sora', sans-serif; }
+  .font-dm   { font-family: 'DM Mono', monospace; }
+  .font-lora { font-family: 'Lora', serif; }
+
+  @keyframes il-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%       { opacity: 0.5; transform: scale(0.85); }
+  }
+  @keyframes il-wave {
+    0%, 100% { height: 6px; }
+    50%       { height: 18px; }
+  }
+  @keyframes il-fadeup {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes il-spin {
+    to { transform: rotate(360deg); }
+  }
+  @keyframes il-live {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(5,150,105,0.5); }
+    50%       { box-shadow: 0 0 0 6px rgba(5,150,105,0); }
+  }
+  @keyframes il-overlay-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  @keyframes il-slide-down {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .anim-fadeup    { animation: il-fadeup 0.4s ease both; }
+  .anim-spin      { animation: il-spin 0.8s linear infinite; }
+  .anim-overlay   { animation: il-overlay-in 0.4s ease both; }
+  .anim-slidedown { animation: il-slide-down 0.3s ease both; }
+  .anim-live-dot  { animation: il-live 1.5s ease-in-out infinite; }
+  .anim-badge-dot { animation: il-pulse 1.4s ease-in-out infinite; }
+
+  /* wave-bar uses animated height — can't do with Tailwind h-* */
+  .wave-bar {
+    width: 3px;
+    height: 6px;
+    border-radius: 99px;
+    background: #059669;
+    animation: il-wave 1s ease-in-out infinite;
+  }
+`;
+
+// ── Tailwind badge color map ────────────────────────────────────────────────────
+const BADGE = {
+  blue: {
+    bg: "bg-blue-50",
+    text: "text-blue-700",
+    border: "border-blue-200",
+    dot: "bg-blue-500",
+  },
+  emerald: {
+    bg: "bg-emerald-50",
+    text: "text-emerald-800",
+    border: "border-emerald-200",
+    dot: "bg-emerald-500",
+  },
+  red: {
+    bg: "bg-red-50",
+    text: "text-red-800",
+    border: "border-red-200",
+    dot: "bg-red-500",
+  },
+  orange: {
+    bg: "bg-orange-50",
+    text: "text-orange-800",
+    border: "border-orange-200",
+    dot: "bg-orange-500",
+  },
+  purple: {
+    bg: "bg-purple-50",
+    text: "text-purple-800",
+    border: "border-purple-200",
+    dot: "bg-purple-500",
+  },
+  green: {
+    bg: "bg-green-50",
+    text: "text-green-800",
+    border: "border-green-200",
+    dot: "bg-green-500",
+  },
+  gray: {
+    bg: "bg-stone-100",
+    text: "text-stone-400",
+    border: "border-stone-200",
+    dot: "bg-stone-300",
+  },
+};
+
+// ── Pure sub-components (no hooks — safe to define outside render) ─────────────
+
+const StatusBadge = ({ label, on, color = "gray" }) => {
+  const c = BADGE[on ? color : "gray"];
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-dm text-[10px] font-medium tracking-[0.04em] uppercase border transition-all duration-300 ${c.bg} ${c.text} ${c.border}`}
+    >
+      <span
+        className={`w-1.5 h-1.5 rounded-full shrink-0 ${c.dot} ${on ? "anim-badge-dot" : ""}`}
+      />
+      {label}
+    </span>
+  );
+};
+
+const CamChip = ({ active, activeLabel, activeColor, idleLabel }) => {
+  const c = BADGE[active ? activeColor : "gray"];
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-dm text-[10px] font-medium tracking-[0.04em] uppercase border transition-all duration-300 ${c.bg} ${c.text} ${c.border}`}
+    >
+      <span
+        className={`w-1.5 h-1.5 rounded-full shrink-0 ${c.dot} ${active ? "anim-badge-dot" : ""}`}
+      />
+      {active ? activeLabel : idleLabel}
+    </span>
+  );
+};
+
+const SpeakingIndicator = () => (
+  <div className="flex items-center gap-1" style={{ height: 24 }}>
+    {[0, 1, 2, 3, 4].map((i) => (
+      <div
+        key={i}
+        className="wave-bar"
+        style={{ animationDelay: `${i * 0.12}s` }}
+      />
+    ))}
+    <span className="font-dm text-[10px] text-emerald-600 tracking-[0.05em] uppercase ml-2">
+      AI Speaking
+    </span>
+  </div>
+);
+
+const ListeningIndicator = () => (
+  <div className="flex items-center gap-2">
+    {[0, 1, 2].map((i) => (
+      <div
+        key={i}
+        className="rounded-full bg-emerald-500 wave-bar"
+        style={{ width: 7, animationDelay: `${i * 0.15}s` }}
+      />
+    ))}
+    <span className="font-sora text-xs text-emerald-600 font-semibold">
+      Listening…
+    </span>
+  </div>
+);
+
+const Spinner = ({ size = 20, color = "#2563EB", track = "#BFDBFE" }) => (
+  <div
+    className="anim-spin rounded-full shrink-0"
+    style={{
+      width: size,
+      height: size,
+      border: `2px solid ${track}`,
+      borderTopColor: color,
+    }}
+  />
+);
+
+const LiveDot = () => (
+  <div className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 anim-live-dot" />
+);
+
+// ── Card wrapper ──────────────────────────────────────────────────────────────
+const Panel = ({ children, className = "" }) => (
+  <div
+    className={`bg-white border border-[#E8E4DE] rounded-2xl overflow-hidden shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)] transition-shadow duration-200 hover:shadow-[0_8px_32px_rgba(0,0,0,0.10)] ${className}`}
+  >
+    {children}
+  </div>
+);
+
+// ── Main component ─────────────────────────────────────────────────────────────
 const InterviewLive = () => {
   const navigate = useNavigate();
   const streamsRef = useStreams();
@@ -41,7 +224,6 @@ const InterviewLive = () => {
   const preWarmComplete = stableRef.current?.preWarmComplete ?? {};
 
   const screenShareStreamRef = useRef(null);
-
   const interview = useInterview(
     sessionData?.interviewId,
     sessionData?.userId,
@@ -67,7 +249,6 @@ const InterviewLive = () => {
     interview.socketRef,
     preWarmSessionIds.screenRecordingId,
   );
-
   const serverRecording = useServerRecording(
     sessionData?.interviewId,
     primaryCameraStream,
@@ -104,7 +285,6 @@ const InterviewLive = () => {
     interview.status === "live" && !interview.isInitializing,
   );
 
-  // Reset global flags on unmount so re-mounting works correctly
   useEffect(() => {
     return () => {
       _globalSocketInitialized = false;
@@ -112,7 +292,6 @@ const InterviewLive = () => {
     };
   }, []); // eslint-disable-line
 
-  // Redirect if no session data found after a grace period
   useEffect(() => {
     if (!sessionData) {
       const t = setTimeout(() => {
@@ -152,7 +331,6 @@ const InterviewLive = () => {
     stopServerRecordingOnce,
   ]); // eslint-disable-line
 
-  // Attach primary camera stream to the video element once
   useEffect(() => {
     if (!videoRef.current || !primaryCameraStream) return;
     videoRef.current.srcObject = primaryCameraStream;
@@ -164,57 +342,45 @@ const InterviewLive = () => {
 
   const setupMobilePeerConnection = useCallback(() => {
     if (mobilePcRef.current) {
-      const state = mobilePcRef.current.connectionState;
-      if (
-        state === "failed" ||
-        state === "closed" ||
-        state === "disconnected"
-      ) {
+      const s = mobilePcRef.current.connectionState;
+      if (s === "failed" || s === "closed" || s === "disconnected") {
         try {
           mobilePcRef.current.close();
         } catch (_) {}
         mobilePcRef.current = null;
-      } else {
-        return mobilePcRef.current;
-      }
+      } else return mobilePcRef.current;
     }
-
-    const ICE_SERVERS = [
-      { urls: "stun:stun.l.google.com:19302" },
-      { urls: "stun:stun1.l.google.com:19302" },
-    ];
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+      ],
+    });
     mobilePcRef.current = pc;
-
     pc.onicecandidate = ({ candidate }) => {
-      if (candidate && interview.socketRef.current?.connected) {
+      if (candidate && interview.socketRef.current?.connected)
         interview.socketRef.current.emit(
           "mobile_webrtc_ice_candidate_desktop",
           { candidate },
         );
-      }
     };
-
     pc.ontrack = (event) => {
       if (event.track.kind !== "video") return;
       const el = mobileVideoRef.current;
       if (el) {
-        const remoteStream = new MediaStream([event.track]);
-        el.srcObject = remoteStream;
+        const rs = new MediaStream([event.track]);
+        el.srcObject = rs;
         el.muted = true;
         el.play().catch(() => {});
-        pendingMobileStreamRef.current = remoteStream;
+        pendingMobileStreamRef.current = rs;
       }
       setMobileTrackAttached(true);
       setMobileCameraConnected(true);
     };
-
     pc.onconnectionstatechange = () => {
-      if (["disconnected", "failed", "closed"].includes(pc.connectionState)) {
+      if (["disconnected", "failed", "closed"].includes(pc.connectionState))
         setMobileTrackAttached(false);
-      }
     };
-
     return pc;
   }, [interview.socketRef]);
 
@@ -268,17 +434,13 @@ const InterviewLive = () => {
     };
   }, []); // eslint-disable-line
 
-  // ── Main socket initialisation ───────────────────────────────────────────
   useEffect(() => {
     if (_globalSocketInitialized || !sessionData || !preInitializedSocket)
       return;
     _globalSocketInitialized = true;
-
     const socket = preInitializedSocket;
-
     const init = async () => {
       try {
-        // Wait for socket to connect (max 10s)
         let retries = 0;
         while (!socket.connected && retries < 50) {
           await new Promise((r) => setTimeout(r, 200));
@@ -289,10 +451,8 @@ const InterviewLive = () => {
           navigate("/interview");
           return;
         }
-
         interview.socketRef.current = socket;
 
-        // ── Mobile WebRTC relay ──────────────────────────────────────────
         socket.on("mobile_webrtc_offer_relay", async ({ offer, identity }) => {
           const pc = setupMobilePeerConnection();
           try {
@@ -308,7 +468,6 @@ const InterviewLive = () => {
             console.error("[MOBILE-PC] offer handling failed:", err.message);
           }
         });
-
         socket.on("mobile_webrtc_ice_from_mobile", async ({ candidate }) => {
           const pc = mobilePcRef.current;
           if (!pc || !candidate) return;
@@ -317,7 +476,6 @@ const InterviewLive = () => {
           } catch (_) {}
         });
 
-        // ── Debug logger (silences high-frequency events) ────────────────
         const silenced = new Set([
           "user_audio_chunk",
           "video_chunk",
@@ -329,7 +487,6 @@ const InterviewLive = () => {
           if (!silenced.has(ev)) console.log(`[SOCKET] "${ev}"`);
         });
 
-        // ── Interview event listeners ────────────────────────────────────
         socket.on("secondary_camera_ready", () =>
           setMobileCameraConnected(true),
         );
@@ -343,8 +500,8 @@ const InterviewLive = () => {
         });
         socket.on("tts_end", () =>
           interview.handleTtsEnd(() => {
-            const liveSocket = interview.socketRef.current;
-            if (liveSocket?.connected) liveSocket.emit("playback_done");
+            const ls = interview.socketRef.current;
+            if (ls?.connected) ls.emit("playback_done");
           }),
         );
         socket.on("idle_prompt", (d) => interview.handleIdlePrompt(d));
@@ -390,7 +547,6 @@ const InterviewLive = () => {
         );
         socket.on("error", () => interview.setStatus("error"));
 
-        // ── Mark interview as live ───────────────────────────────────────
         interview.setStatus("live");
         interview.setServerReady(true);
         interview.setIsInitializing(false);
@@ -399,15 +555,11 @@ const InterviewLive = () => {
           userId: sessionData.userId,
         });
         setSocketReady(true);
-
         socket.emit("request_secondary_camera_status", {
           interviewId: sessionData.interviewId,
         });
-
-        // Start mic streaming (uses pre-initialized stream if available)
         interview.autoStartInterview(micStream).catch(console.error);
 
-        // Emit client_ready exactly once per session
         if (!_globalClientReadyEmitted) {
           _globalClientReadyEmitted = true;
           socket.emit("client_ready", {
@@ -422,9 +574,7 @@ const InterviewLive = () => {
         navigate("/interview");
       }
     };
-
     init();
-
     return () => {
       if (isLeavingRef.current) {
         cleanupAllRecordings();
@@ -440,7 +590,6 @@ const InterviewLive = () => {
     };
   }, []); // eslint-disable-line
 
-  // ── Start all recordings once interview is live ──────────────────────────
   useEffect(() => {
     if (
       recordingsStartedRef.current ||
@@ -453,9 +602,7 @@ const InterviewLive = () => {
       isVideoRecording
     )
       return;
-
     recordingsStartedRef.current = true;
-
     (async () => {
       try {
         await audioRecording.startRecording(preWarmSessionIds.audioId);
@@ -465,9 +612,7 @@ const InterviewLive = () => {
           streamsRef.current?.screenShareStream;
         if (activeScreen?.active)
           await screenRecording.startRecording(activeScreen);
-
         await serverRecording.start();
-
         if (pendingMobileStreamRef.current) {
           serverRecording
             .startSecondary(pendingMobileStreamRef.current)
@@ -490,17 +635,15 @@ const InterviewLive = () => {
     isVideoRecording,
   ]); // eslint-disable-line
 
-  // Attach mobile stream to server recording when track arrives
   useEffect(() => {
-    if (!recordingsStartedRef.current) return;
-    if (!pendingMobileStreamRef.current) return;
+    if (!recordingsStartedRef.current || !pendingMobileStreamRef.current)
+      return;
     serverRecording
       .startSecondary(pendingMobileStreamRef.current)
       .catch(console.error);
     pendingMobileStreamRef.current = null;
   }, [mobileTrackAttached]); // eslint-disable-line
 
-  // Auto-navigate to dashboard when evaluation is complete
   useEffect(() => {
     if (evaluationStatus === "complete" && evaluationResults)
       setTimeout(() => navigate("/dashboard"), 2000);
@@ -509,402 +652,416 @@ const InterviewLive = () => {
   const handleEndInterview = async () => {
     if (!confirm("Are you sure you want to end the interview?")) return;
     isLeavingRef.current = true;
-
     await cleanupAllRecordings();
-
     const socket = interview.socketRef.current;
     if (socket) {
       socket.offAny();
       socket.removeAllListeners();
       socket.disconnect();
     }
-
     interview.cleanupWebRTC();
     if (mobilePcRef.current) {
       mobilePcRef.current.close();
       mobilePcRef.current = null;
     }
-
     navigate("/dashboard");
   };
 
-  // ── Loading screen ───────────────────────────────────────────────────────
+  // ── Loading screen ──────────────────────────────────────────────────────────
   if (!sessionData) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <div className="animate-spin w-12 h-12 border-4 border-purple-200 border-t-purple-500 rounded-full mx-auto" />
-          <p className="text-gray-400 text-sm">Loading interview session…</p>
+      <>
+        <style>{STYLES}</style>
+        <div className="font-sora min-h-screen bg-[#F7F5F2] flex items-center justify-center">
+          <div className="text-center">
+            <div className="anim-spin w-12 h-12 border-2 border-stone-200 border-t-blue-500 rounded-full mx-auto mb-4" />
+            <p className="font-dm text-[11px] text-stone-400 tracking-[0.06em] uppercase">
+              Loading session…
+            </p>
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
-  // ── Sub-components ───────────────────────────────────────────────────────
-  const Dot = ({ on, color = "gray" }) => {
-    const c = {
-      gray: "bg-gray-300",
-      blue: "bg-blue-500",
-      green: "bg-green-500",
-      red: "bg-red-500",
-      orange: "bg-orange-500",
-      purple: "bg-purple-500",
-      emerald: "bg-emerald-500",
-    };
-    return (
-      <span
-        className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
-          on ? c[color] + " animate-pulse" : "bg-gray-300"
-        }`}
-      />
-    );
-  };
+  // ── Derived values for dynamic inline styles ────────────────────────────────
+  const aiIconGradient = interview.isPlaying
+    ? "linear-gradient(135deg,#2563EB,#1D4ED8)"
+    : interview.isListening
+      ? "linear-gradient(135deg,#059669,#065F46)"
+      : undefined;
 
-  const StatusBadge = ({ label, on, color = "gray" }) => {
-    const bg = {
-      gray: "bg-gray-100 text-gray-400 border border-gray-200",
-      blue: "bg-blue-50 text-blue-600 border border-blue-200",
-      green: "bg-green-50 text-green-600 border border-green-200",
-      red: "bg-red-50 text-red-600 border border-red-200",
-      orange: "bg-orange-50 text-orange-600 border border-orange-200",
-      purple: "bg-purple-50 text-purple-600 border border-purple-200",
-      emerald: "bg-emerald-50 text-emerald-600 border border-emerald-200",
-    };
-    return (
-      <div
-        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold ${
-          on ? bg[color] : bg.gray
-        }`}
-      >
-        <Dot on={on} color={color} /> {label}
-      </div>
-    );
-  };
+  const aiIconShadow = interview.isPlaying
+    ? "0 4px 16px rgba(37,99,235,0.25)"
+    : interview.isListening
+      ? "0 4px 16px rgba(5,150,105,0.25)"
+      : undefined;
 
-  // ── Render ───────────────────────────────────────────────────────────────
+  // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <section className="min-h-screen bg-gray-50 p-4 md:p-6">
-      <div className="max-w-7xl mx-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
-          {/* ── Main Panel ── */}
-          <div className="lg:col-span-2">
-            <Card className="flex flex-col border border-gray-200 bg-white shadow-sm min-h-150">
-              {/* Header */}
-              <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 flex-wrap gap-3">
-                <div className="flex items-center gap-3">
-                  <div
-                    className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                      interview.isPlaying
-                        ? "bg-blue-500"
-                        : interview.isListening
-                          ? "bg-emerald-500"
-                          : "bg-gray-100"
-                    }`}
-                  >
-                    <span
-                      className={`text-sm font-bold ${
-                        interview.isPlaying || interview.isListening
-                          ? "text-white"
-                          : "text-gray-500"
-                      }`}
-                    >
-                      {interview.isPlaying ? "AI" : "🎤"}
-                    </span>
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-gray-900">Talk2Hire</p>
-                    <p className="text-xs text-gray-400">
-                      {interview.isPlaying
-                        ? "Speaking…"
-                        : interview.isListening
-                          ? "Listening…"
-                          : interview.currentQuestion
-                            ? "Ready"
-                            : "Initialising…"}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <StatusBadge
-                    label="Audio"
-                    on={audioRecording?.isRecording}
-                    color="blue"
-                  />
-                  <StatusBadge
-                    label="Mic"
-                    on={interview.isListening}
-                    color="emerald"
-                  />
-                  <StatusBadge
-                    label="Camera"
-                    on={isVideoRecording}
-                    color="red"
-                  />
-                  <StatusBadge
-                    label="Mobile"
-                    on={mobileTrackAttached}
-                    color="orange"
-                  />
-                  <StatusBadge
-                    label="Screen"
-                    on={screenRecording.isRecording}
-                    color="purple"
-                  />
-                  <StatusBadge
-                    label="Recording"
-                    on={serverRecording.isRecording}
-                    color="green"
-                  />
-                </div>
+    <>
+      <style>{STYLES}</style>
+
+      {/* ── Page root ── */}
+      <div
+        className="font-sora min-h-screen bg-[#F7F5F2] px-5 py-6"
+        style={{
+          backgroundImage:
+            "radial-gradient(ellipse at 0% 0%, rgba(37,99,235,0.03) 0%, transparent 50%)," +
+            "radial-gradient(ellipse at 100% 100%, rgba(124,58,237,0.03) 0%, transparent 50%)",
+        }}
+      >
+        <div className="max-w-7xl mx-auto">
+          {/* ── Top navbar ── */}
+          <div className="flex items-center justify-between mb-5 pb-4 border-b border-[#F0EDE8]">
+            <div className="flex items-center gap-2.5">
+              <div
+                className="w-8 h-8 rounded-[10px] flex items-center justify-center shrink-0"
+                style={{
+                  background: "linear-gradient(135deg,#2563EB,#7C3AED)",
+                }}
+              >
+                <span className="text-white text-sm font-bold">T</span>
               </div>
-
-              {/* Face Violation Warning */}
-              {faceViolationWarning && (
-                <div className="px-5 py-3 bg-red-50 border-b border-red-100">
-                  <p className="text-sm font-semibold text-red-600">
-                    ⚠️{" "}
-                    {faceViolationWarning.type === "NO_FACE"
-                      ? `No face detected — ${faceViolationWarning.max - faceViolationWarning.count} warning(s) remaining`
-                      : "Multiple faces detected"}
-                  </p>
-                </div>
-              )}
-
-              {/* Evaluation Banner */}
-              {evaluationStatus === "started" && (
-                <div className="px-5 py-3 bg-blue-50 border-b border-blue-100 flex items-center gap-3">
-                  <div className="animate-spin w-4 h-4 border-2 border-blue-300 border-t-blue-500 rounded-full shrink-0" />
-                  <p className="text-sm font-semibold text-blue-600">
-                    Evaluating your responses…
-                  </p>
-                </div>
-              )}
-
-              {/* Question Body */}
-              <div className="flex-1 p-6 flex flex-col justify-center space-y-5">
-                {interview.currentQuestion ? (
-                  <>
-                    {interview.idlePrompt && (
-                      <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
-                        <p className="text-sm text-amber-700">
-                          {interview.idlePrompt}
-                        </p>
-                      </div>
-                    )}
-                    <div className="space-y-3">
-                      <div className="flex items-center gap-2">
-                        <span className="w-7 h-7 rounded-lg bg-purple-500 flex items-center justify-center text-xs font-bold text-white">
-                          Q
-                        </span>
-                        <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-                          Question {interview.questionOrder ?? ""}
-                        </span>
-                      </div>
-                      <p className="text-xl md:text-2xl text-gray-900 leading-relaxed font-medium">
-                        {interview.currentQuestion}
-                      </p>
-                    </div>
-                    {interview.isListening && (
-                      <div className="flex items-center gap-2">
-                        {[0, 1, 2].map((i) => (
-                          <span
-                            key={i}
-                            className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce"
-                            style={{ animationDelay: `${i * 0.12}s` }}
-                          />
-                        ))}
-                        <span className="text-sm text-emerald-600 font-semibold">
-                          Listening…
-                        </span>
-                      </div>
-                    )}
-                    {interview.liveTranscript && (
-                      <div className="p-3 bg-gray-50 rounded-xl border border-gray-200">
-                        <p className="text-sm text-gray-500 italic">
-                          {interview.liveTranscript}
-                        </p>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div className="flex items-center justify-center gap-3 text-gray-400 text-sm">
-                    <div className="animate-spin w-5 h-5 border-2 border-purple-200 border-t-purple-500 rounded-full" />
-                    Waiting for first question…
-                  </div>
-                )}
-              </div>
-
-              {/* User Answer */}
-              {interview.userText && (
-                <div className="border-t border-gray-100 p-5 bg-gray-50">
-                  <div className="flex items-start gap-3">
-                    <span className="w-7 h-7 rounded-lg bg-emerald-500 flex items-center justify-center text-xs font-bold text-white shrink-0 mt-0.5">
-                      A
-                    </span>
-                    <p className="text-sm text-gray-600 leading-relaxed">
-                      {interview.userText}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Footer */}
-              <div className="border-t border-gray-100 px-5 py-3 flex items-center justify-between">
-                <div className="flex items-center gap-2 text-xs text-gray-400 font-medium">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  Live • {interview.recordingDuration ?? "00:00"}
-                </div>
-                <Button
-                  variant="secondary"
-                  onClick={handleEndInterview}
-                  className="text-xs px-4 py-1.5"
-                >
-                  End Interview
-                </Button>
-              </div>
-            </Card>
+              <span className="font-sora font-bold text-[15px] text-[#1C1917]">
+                Talk2Hire
+              </span>
+              <span className="font-dm text-[10px] text-stone-400 bg-[#F7F5F2] border border-[#E8E4DE] px-2 py-0.5 rounded-full tracking-[0.05em] uppercase">
+                Live Session
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <LiveDot />
+              <span className="font-dm text-[12px] text-stone-400 tracking-[0.05em]">
+                {interview.recordingDuration ?? "00:00"}
+              </span>
+            </div>
           </div>
 
-          {/* ── Camera Panels ── */}
-          <div className="lg:col-span-1 space-y-3">
-            {/* Primary Camera */}
-            <Card className="overflow-hidden border border-gray-200 bg-white shadow-sm">
-              <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
-                <span className="text-xs font-bold text-gray-600">
-                  Primary Camera
-                </span>
-                <span
-                  className={`text-[11px] font-bold px-2 py-0.5 rounded ${
-                    isVideoRecording
-                      ? "bg-red-50 text-red-500 border border-red-200"
-                      : "bg-gray-100 text-gray-400"
-                  }`}
-                >
-                  {isVideoRecording ? "● REC" : "STANDBY"}
-                </span>
-              </div>
-              <div className="aspect-video bg-gray-900">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  className="w-full h-full object-cover"
-                  style={{ transform: "scaleX(-1)" }}
-                />
-              </div>
-            </Card>
+          {/* ── Two-column grid ── */}
+          <div
+            className="grid gap-5"
+            style={{ gridTemplateColumns: "1fr 340px" }}
+          >
+            {/* ── Main panel ── */}
+            <div>
+              <Panel className="flex flex-col min-h-140">
+                {/* Card header */}
+                <div className="flex items-center justify-between flex-wrap gap-3 px-5 py-3.5 border-b border-[#F0EDE8]">
+                  {/* AI avatar */}
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300 ${!aiIconGradient ? "bg-[#F7F5F2]" : ""}`}
+                      style={{
+                        background: aiIconGradient,
+                        boxShadow: aiIconShadow,
+                      }}
+                    >
+                      {interview.isPlaying ? (
+                        <span className="font-dm text-[13px] font-bold text-white">
+                          AI
+                        </span>
+                      ) : (
+                        <span className="text-base">🎤</span>
+                      )}
+                    </div>
+                    <div>
+                      <p className="font-sora font-bold text-sm text-[#1C1917] m-0 leading-none mb-1">
+                        AI Interviewer
+                      </p>
+                      <p className="font-dm text-[10px] text-stone-400 tracking-[0.04em] uppercase m-0 leading-none">
+                        {interview.isPlaying
+                          ? "Speaking"
+                          : interview.isListening
+                            ? "Listening"
+                            : interview.currentQuestion
+                              ? "Ready"
+                              : "Initialising"}
+                      </p>
+                    </div>
+                  </div>
 
-            {/* Mobile Camera */}
-            <Card className="overflow-hidden border border-gray-200 bg-white shadow-sm">
-              <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
-                <span className="text-xs font-bold text-gray-600">
-                  Mobile Camera
-                </span>
-                <span
-                  className={`text-[11px] font-bold px-2 py-0.5 rounded ${
-                    mobileTrackAttached
-                      ? "bg-orange-50 text-orange-500 border border-orange-200"
-                      : mobileCameraConnected
-                        ? "bg-green-50 text-green-600 border border-green-200"
-                        : "bg-gray-100 text-gray-400"
-                  }`}
-                >
-                  {mobileTrackAttached
-                    ? "● LIVE"
-                    : mobileCameraConnected
-                      ? "● JOINING"
-                      : "WAITING"}
-                </span>
-              </div>
-              <div className="relative aspect-video bg-gray-900">
-                <video
-                  id="secondary-camera-video"
-                  ref={mobileVideoRef}
-                  autoPlay
-                  playsInline
-                  className="w-full h-full object-cover"
-                  style={{
-                    transform: "scaleX(-1)",
-                    opacity: mobileTrackAttached ? 1 : 0,
-                    transition: "opacity 0.3s ease",
-                  }}
-                />
-                {!mobileCameraConnected && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/95 gap-2">
-                    <div className="animate-spin w-8 h-8 border-2 border-orange-200 border-t-orange-500 rounded-full" />
-                    <p className="text-gray-400 text-xs">Waiting for mobile…</p>
-                    <p className="text-gray-300 text-xs">
-                      Scan the QR code on your phone
-                    </p>
+                  {/* Status badges */}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <StatusBadge
+                      label="Audio"
+                      on={audioRecording?.isRecording}
+                      color="blue"
+                    />
+                    <StatusBadge
+                      label="Mic"
+                      on={interview.isListening}
+                      color="emerald"
+                    />
+                    <StatusBadge
+                      label="Camera"
+                      on={isVideoRecording}
+                      color="red"
+                    />
+                    <StatusBadge
+                      label="Mobile"
+                      on={mobileTrackAttached}
+                      color="orange"
+                    />
+                    <StatusBadge
+                      label="Screen"
+                      on={screenRecording.isRecording}
+                      color="purple"
+                    />
+                    <StatusBadge
+                      label="Recording"
+                      on={serverRecording.isRecording}
+                      color="green"
+                    />
                   </div>
-                )}
-                {mobileCameraConnected && !mobileTrackAttached && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/90 gap-2">
-                    <div className="animate-spin w-8 h-8 border-2 border-green-200 border-t-green-500 rounded-full" />
-                    <p className="text-gray-500 text-xs">
-                      Connecting video track…
-                    </p>
-                  </div>
-                )}
-              </div>
-            </Card>
+                </div>
 
-            {/* Screen Share */}
-            <Card className="overflow-hidden border border-gray-200 bg-white shadow-sm">
-              <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
-                <span className="text-xs font-bold text-gray-600">Screen</span>
-                <span
-                  className={`text-[11px] font-bold px-2 py-0.5 rounded ${
-                    screenRecording.isRecording
-                      ? "bg-purple-50 text-purple-500 border border-purple-200"
-                      : "bg-gray-100 text-gray-400"
-                  }`}
-                >
-                  {screenRecording.isRecording ? "● REC" : "STANDBY"}
-                </span>
-              </div>
-              <div className="relative aspect-video bg-gray-900">
-                <video
-                  ref={screenVideoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  className="w-full h-full object-contain"
-                />
-                {!screenVideoActive && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                    <span className="text-3xl opacity-20">🖥️</span>
-                    <p className="text-gray-400 text-xs">
-                      {screenShareStreamRef.current
-                        ? "Connecting…"
-                        : "No screen share"}
+                {/* Face violation banner */}
+                {faceViolationWarning && (
+                  <div className="anim-slidedown flex items-center gap-2 px-5 py-2.5 bg-red-50 border-b border-red-200">
+                    <span className="text-sm">⚠️</span>
+                    <p className="font-sora font-semibold text-[13px] text-red-800 m-0">
+                      {faceViolationWarning.type === "NO_FACE"
+                        ? `No face detected — ${faceViolationWarning.max - faceViolationWarning.count} warning(s) remaining`
+                        : "Multiple faces detected"}
                     </p>
                   </div>
                 )}
-              </div>
-            </Card>
+
+                {/* Evaluation banner */}
+                {evaluationStatus === "started" && (
+                  <div className="anim-slidedown flex items-center gap-2.5 px-5 py-2.5 bg-blue-50 border-b border-blue-200">
+                    <Spinner size={16} />
+                    <p className="font-sora font-semibold text-[13px] text-blue-700 m-0">
+                      Evaluating your responses…
+                    </p>
+                  </div>
+                )}
+
+                {/* Question body */}
+                <div className="flex-1 flex flex-col justify-center gap-5 px-7 py-8">
+                  {interview.currentQuestion ? (
+                    <div className="anim-fadeup flex flex-col gap-5">
+                      {/* Idle prompt */}
+                      {interview.idlePrompt && (
+                        <div className="px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl">
+                          <p className="font-lora italic text-[13px] text-amber-800 m-0 leading-relaxed">
+                            {interview.idlePrompt}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Question */}
+                      <div>
+                        <div className="flex items-center gap-2.5 mb-3.5">
+                          <div className="w-7 h-7 rounded-lg bg-[#1C1917] flex items-center justify-center shrink-0">
+                            <span className="font-dm text-[11px] text-white font-medium">
+                              Q
+                            </span>
+                          </div>
+                          <span className="font-dm text-[10px] text-stone-400 tracking-[0.08em] uppercase">
+                            Question {interview.questionOrder ?? ""}
+                          </span>
+                        </div>
+                        <p className="font-lora text-[22px] leading-[1.55] text-[#1C1917] m-0 font-medium">
+                          {interview.currentQuestion}
+                        </p>
+                      </div>
+
+                      {/* Speaking / listening indicator */}
+                      {interview.isPlaying && <SpeakingIndicator />}
+                      {interview.isListening && !interview.isPlaying && (
+                        <ListeningIndicator />
+                      )}
+
+                      {/* Live transcript */}
+                      {interview.liveTranscript && (
+                        <div className="px-4 py-3 bg-[#FAFAF9] border border-[#F0EDE8] rounded-xl">
+                          <p className="font-lora italic text-[13px] text-stone-500 m-0 leading-relaxed">
+                            {interview.liveTranscript}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-3">
+                      <Spinner size={18} color="#7C3AED" track="#DDD6FE" />
+                      <span className="font-dm text-[12px] text-stone-400 tracking-[0.04em]">
+                        Waiting for first question…
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* User answer */}
+                {interview.userText && (
+                  <div className="anim-fadeup border-t border-[#F0EDE8] bg-[#FAFAF9] px-6 py-4">
+                    <div className="flex items-start gap-3">
+                      <div
+                        className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
+                        style={{
+                          background: "linear-gradient(135deg,#059669,#065F46)",
+                          boxShadow: "0 2px 8px rgba(5,150,105,0.2)",
+                        }}
+                      >
+                        <span className="font-dm text-[11px] text-white font-medium">
+                          A
+                        </span>
+                      </div>
+                      <p className="font-sora text-[13px] text-stone-500 leading-[1.65] m-0">
+                        {interview.userText}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Card footer */}
+                <div className="flex items-center justify-between border-t border-[#F0EDE8] px-5 py-3">
+                  <div className="flex items-center gap-2">
+                    <LiveDot />
+                    <span className="font-dm text-[12px] text-stone-400 tracking-[0.05em]">
+                      Live · {interview.recordingDuration ?? "00:00"}
+                    </span>
+                  </div>
+                  <button
+                    onClick={handleEndInterview}
+                    className="font-sora text-[12px] font-semibold px-4.5 py-1.75 rounded-full border border-[#E8E4DE] bg-white text-[#1C1917] cursor-pointer transition-all duration-200 hover:bg-red-50 hover:border-red-200 hover:text-red-700 tracking-[0.01em]"
+                  >
+                    End Interview
+                  </button>
+                </div>
+              </Panel>
+            </div>
+
+            {/* ── Right sidebar: camera panels ── */}
+            <div className="flex flex-col gap-3.5">
+              {/* Primary Camera */}
+              <Panel>
+                <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-[#F0EDE8]">
+                  <span className="font-dm text-[10px] tracking-[0.08em] uppercase text-stone-400 font-medium">
+                    Primary
+                  </span>
+                  <CamChip
+                    active={isVideoRecording}
+                    activeLabel="● REC"
+                    activeColor="red"
+                    idleLabel="STANDBY"
+                  />
+                </div>
+                <div className="relative aspect-video bg-[#111] overflow-hidden">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    muted
+                    playsInline
+                    className="w-full h-full object-cover"
+                    style={{ transform: "scaleX(-1)" }}
+                  />
+                </div>
+              </Panel>
+
+              {/* Mobile Camera */}
+              <Panel>
+                <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-[#F0EDE8]">
+                  <span className="font-dm text-[10px] tracking-[0.08em] uppercase text-stone-400 font-medium">
+                    Mobile
+                  </span>
+                  <CamChip
+                    active={mobileTrackAttached}
+                    activeLabel="● LIVE"
+                    activeColor="orange"
+                    idleLabel={mobileCameraConnected ? "JOINING" : "WAITING"}
+                  />
+                </div>
+                <div className="relative aspect-video bg-[#111] overflow-hidden">
+                  <video
+                    id="secondary-camera-video"
+                    ref={mobileVideoRef}
+                    autoPlay
+                    playsInline
+                    className="w-full h-full object-cover transition-opacity duration-300"
+                    style={{
+                      transform: "scaleX(-1)",
+                      opacity: mobileTrackAttached ? 1 : 0,
+                    }}
+                  />
+                  {!mobileCameraConnected && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-white/97">
+                      <Spinner size={28} color="#EA580C" track="#FED7AA" />
+                      <p className="font-dm text-[10px] text-stone-400 tracking-[0.05em] uppercase m-0">
+                        Waiting for mobile
+                      </p>
+                      <p className="font-sora text-[11px] text-stone-300 m-0">
+                        Scan the QR on your phone
+                      </p>
+                    </div>
+                  )}
+                  {mobileCameraConnected && !mobileTrackAttached && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-white/92">
+                      <Spinner size={28} color="#16A34A" track="#BBF7D0" />
+                      <p className="font-dm text-[10px] text-stone-400 tracking-[0.05em] uppercase m-0">
+                        Connecting stream…
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </Panel>
+
+              {/* Screen Share */}
+              <Panel>
+                <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-[#F0EDE8]">
+                  <span className="font-dm text-[10px] tracking-[0.08em] uppercase text-stone-400 font-medium">
+                    Screen
+                  </span>
+                  <CamChip
+                    active={screenRecording.isRecording}
+                    activeLabel="● REC"
+                    activeColor="purple"
+                    idleLabel="STANDBY"
+                  />
+                </div>
+                <div className="relative aspect-video bg-[#111] overflow-hidden">
+                  <video
+                    ref={screenVideoRef}
+                    autoPlay
+                    muted
+                    playsInline
+                    className="w-full h-full object-contain"
+                  />
+                  {!screenVideoActive && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5">
+                      <span className="text-[28px] opacity-10">🖥️</span>
+                      <p className="font-dm text-[10px] text-[#C8C3BD] tracking-[0.05em] uppercase m-0">
+                        {screenShareStreamRef.current
+                          ? "Connecting…"
+                          : "No screen share"}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </Panel>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Interview Terminated Overlay */}
+      {/* ── Interview terminated overlay ── */}
       {isInterviewTerminated && (
-        <div className="fixed inset-0 bg-white/90 backdrop-blur-sm flex items-center justify-center z-50 p-6">
-          <div className="bg-white border border-gray-200 rounded-2xl p-8 text-center max-w-sm w-full shadow-2xl">
-            <div className="w-16 h-16 rounded-full bg-red-50 border border-red-200 flex items-center justify-center mx-auto mb-4">
-              <span className="text-red-500 text-2xl">✕</span>
+        <div className="anim-overlay fixed inset-0 bg-[#F7F5F2]/90 backdrop-blur-md flex items-center justify-center z-50 p-6">
+          <div className="bg-white border border-[#E8E4DE] rounded-2xl p-10 text-center max-w-sm w-full shadow-[0_24px_64px_rgba(0,0,0,0.12)]">
+            <div className="w-16 h-16 rounded-full bg-red-50 border border-red-200 flex items-center justify-center mx-auto mb-5">
+              <span className="text-red-600 text-2xl font-bold">✕</span>
             </div>
-            <h3 className="text-xl font-bold text-gray-900 mb-2">
+            <h3 className="font-sora font-bold text-xl text-[#1C1917] m-0 mb-2">
               Interview Terminated
             </h3>
-            <p className="text-gray-400 text-sm">
+            <p className="font-sora text-[13px] text-stone-400 m-0 leading-relaxed">
               Your session was ended due to a proctoring violation.
             </p>
           </div>
         </div>
       )}
-    </section>
+    </>
   );
 };
 
