@@ -15,7 +15,7 @@ const FLUSH_CHUNK_COUNT = 30; // 30 × 10ms = 300ms total flush duration
 const FLUSH_INTERVAL_MS = 10; // one chunk every 10ms
 
 const STT_URL =
-  `wss://api.deepgram.com/v1/listen` +
+  `https://api.deepgram.com/v1/listen` +
   `?model=nova-2` +
   `&language=en-US` +
   `&smart_format=true` +

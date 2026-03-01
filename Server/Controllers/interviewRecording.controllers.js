@@ -133,6 +133,278 @@ async function insertChunkRecord(videoId, chunkNumber, chunkSize, ftpPath) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+   ── Violation Clip Cutting  (runs AFTER primary_camera merge completes) ──────
+   ─────────────────────────────────────────────────────────────────────────────
+
+   Flow:
+     1. Fetch all violations for the interview that have both start_time and end_time
+     2. For each violation, use ffmpeg to cut the clip from the merged .webm
+     3. Upload each clip to FTP under /public/interview-videos/{interviewId}/violations/
+     4. Store clip_url and clip_ftp_path back in interview_violations row
+
+   Schema requirement — run this migration once:
+     ALTER TABLE interview_violations
+       ADD COLUMN clip_url      VARCHAR(2048) NULL AFTER details,
+       ADD COLUMN clip_ftp_path VARCHAR(2048) NULL AFTER clip_url,
+       ADD COLUMN clip_status   ENUM('pending','processing','completed','failed')
+                                NOT NULL DEFAULT 'pending' AFTER clip_ftp_path;
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Ensures the three clip columns exist on interview_violations.
+ * Safe to call on every startup — no-ops if columns already exist.
+ */
+async function ensureViolationClipColumns() {
+  try {
+    const [cols] = await pool.execute(
+      `SELECT COLUMN_NAME
+       FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME   = 'interview_violations'`,
+    );
+    const colNames = new Set(cols.map((c) => c.COLUMN_NAME));
+
+    if (!colNames.has("clip_url")) {
+      await pool.execute(
+        `ALTER TABLE interview_violations ADD COLUMN clip_url VARCHAR(2048) NULL`,
+      );
+      console.log("✅ [VIOLATIONS] Added column: clip_url");
+    }
+    if (!colNames.has("clip_ftp_path")) {
+      await pool.execute(
+        `ALTER TABLE interview_violations ADD COLUMN clip_ftp_path VARCHAR(2048) NULL`,
+      );
+      console.log("✅ [VIOLATIONS] Added column: clip_ftp_path");
+    }
+    if (!colNames.has("clip_status")) {
+      await pool.execute(
+        `ALTER TABLE interview_violations
+         ADD COLUMN clip_status ENUM('pending','processing','completed','failed')
+         NOT NULL DEFAULT 'pending'`,
+      );
+      console.log("✅ [VIOLATIONS] Added column: clip_status");
+    }
+  } catch (err) {
+    console.warn(`⚠️ [VIOLATIONS] ensureViolationClipColumns: ${err.message}`);
+  }
+}
+
+// Run schema bootstrap at module load
+ensureViolationClipColumns();
+
+/**
+ * Cut a clip from a local video file using ffmpeg and return the output path.
+ *
+ * @param {string}      inputPath  - Path to the full merged .webm
+ * @param {string}      outputPath - Destination path for the clip
+ * @param {number}      startSec   - Start offset in seconds (float OK)
+ * @param {number}      durationSec - Duration in seconds (float OK)
+ * @returns {Promise<void>}
+ */
+async function cutVideoClip(inputPath, outputPath, startSec, durationSec) {
+  const ffmpeg = require("fluent-ffmpeg");
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `ffmpeg clip cut timed out (start=${startSec}s dur=${durationSec}s)`,
+          ),
+        ),
+      5 * 60 * 1000, // 5-minute safety net per clip
+    );
+
+    ffmpeg(inputPath)
+      .setStartTime(startSec)
+      .setDuration(durationSec)
+      .outputOptions([
+        "-c copy", // no re-encode — fast
+        "-avoid_negative_ts make_zero", // fix timestamps at clip boundary
+      ])
+      .on("start", (cmd) => console.log(`✂️  [CLIP] ffmpeg: ${cmd}`))
+      .on("end", () => {
+        clearTimeout(timeout);
+        resolve();
+      })
+      .on("error", (err, _stdout, stderr) => {
+        clearTimeout(timeout);
+        console.error(`❌ [CLIP] ffmpeg error: ${stderr || err.message}`);
+        reject(err);
+      })
+      .save(outputPath);
+  });
+}
+
+/**
+ * Cut violation clips from the merged primary_camera video and upload to FTP.
+ * Stores clip_url + clip_ftp_path + clip_status on each interview_violations row.
+ *
+ * @param {string|number} interviewId
+ * @param {string}        mergedVideoLocalPath  - Local filesystem path to the merged .webm
+ * @param {Date|string}   recordingStartedAt    - When the recording started (used to compute offsets)
+ */
+async function cutAndUploadViolationClips(
+  interviewId,
+  mergedVideoLocalPath,
+  recordingStartedAt,
+) {
+  const fs = require("fs").promises;
+  const fsSync = require("fs");
+  const path = require("path");
+
+  const startEpoch = new Date(recordingStartedAt).getTime();
+
+  // ── Fetch all closed violations (start_time + end_time both set) ──────────
+  let violations = [];
+  try {
+    const [rows] = await pool.execute(
+      `SELECT id, violation_type, start_time, end_time
+       FROM interview_violations
+       WHERE interview_id = ?
+         AND start_time IS NOT NULL
+         AND end_time   IS NOT NULL
+         AND clip_status IN ('pending', 'failed')
+       ORDER BY start_time ASC`,
+      [interviewId],
+    );
+    violations = rows;
+  } catch (err) {
+    console.warn(`⚠️ [CLIP] Could not fetch violations: ${err.message}`);
+    return;
+  }
+
+  if (violations.length === 0) {
+    console.log(
+      `ℹ️  [CLIP] No closed violations to clip for interview ${interviewId}`,
+    );
+    return;
+  }
+
+  console.log(
+    `✂️  [CLIP] Processing ${violations.length} violation clip(s) for interview ${interviewId}`,
+  );
+
+  const tempDir = `/tmp/clips_${interviewId}_${Date.now()}`;
+  await fs.mkdir(tempDir, { recursive: true });
+
+  let successCount = 0;
+  let failCount = 0;
+
+  for (const viol of violations) {
+    const violId = viol.id;
+    const violType = viol.violation_type;
+
+    // ── Compute offsets relative to recording start ───────────────────────
+    const violStartEpoch = new Date(viol.start_time).getTime();
+    const violEndEpoch = new Date(viol.end_time).getTime();
+
+    // Add 2-second padding on each side so the clip has context
+    const PAD_SEC = 2;
+    const rawStartSec = (violStartEpoch - startEpoch) / 1000;
+    const rawDurationSec = (violEndEpoch - violStartEpoch) / 1000;
+
+    // Clamp: start must be >= 0, duration must be > 0
+    const clipStartSec = Math.max(0, rawStartSec - PAD_SEC);
+    const clipDurationSec = rawDurationSec + PAD_SEC * 2;
+
+    if (clipDurationSec <= 0) {
+      console.warn(
+        `⚠️  [CLIP] Violation ${violId} has zero/negative duration — skipping`,
+      );
+      await pool
+        .execute(
+          `UPDATE interview_violations SET clip_status = 'failed' WHERE id = ?`,
+          [violId],
+        )
+        .catch(() => {});
+      failCount++;
+      continue;
+    }
+
+    const clipFilename = `violation_${violType}_${violId}_${Date.now()}.webm`;
+    const clipLocalPath = path.join(tempDir, clipFilename);
+    const ftpRemotePath = `/public/interview-videos/${interviewId}/violations`;
+
+    // Mark as processing
+    await pool
+      .execute(
+        `UPDATE interview_violations SET clip_status = 'processing' WHERE id = ?`,
+        [violId],
+      )
+      .catch(() => {});
+
+    try {
+      // ── Cut the clip ───────────────────────────────────────────────────
+      await cutVideoClip(
+        mergedVideoLocalPath,
+        clipLocalPath,
+        clipStartSec,
+        clipDurationSec,
+      );
+
+      // ── Verify output ──────────────────────────────────────────────────
+      const stat = await fs.stat(clipLocalPath).catch(() => null);
+      if (!stat || stat.size === 0) {
+        throw new Error(`ffmpeg produced empty clip for violation ${violId}`);
+      }
+
+      console.log(
+        `✅ [CLIP] Cut violation ${violId} (${violType}): ` +
+          `t=${clipStartSec.toFixed(2)}s dur=${clipDurationSec.toFixed(2)}s → ${(stat.size / 1024).toFixed(1)} KB`,
+      );
+
+      // ── Upload to FTP ──────────────────────────────────────────────────
+      const clipBuffer = await fs.readFile(clipLocalPath);
+      const ftpResult = await withRetry(
+        () => uploadFileToFTP(clipBuffer, clipFilename, ftpRemotePath),
+        {
+          attempts: 3,
+          baseDelayMs: 2000,
+          label: `Upload violation clip ${violId}`,
+        },
+      );
+
+      console.log(`📤 [CLIP] Violation ${violId} uploaded → ${ftpResult.url}`);
+
+      // ── Persist to DB ──────────────────────────────────────────────────
+      await pool.execute(
+        `UPDATE interview_violations
+         SET clip_url      = ?,
+             clip_ftp_path = ?,
+             clip_status   = 'completed',
+             updated_at    = NOW()
+         WHERE id = ?`,
+        [ftpResult.url, ftpResult.remotePath, violId],
+      );
+
+      // Clean up local clip file immediately to save disk
+      await fs.unlink(clipLocalPath).catch(() => {});
+      successCount++;
+    } catch (err) {
+      console.error(
+        `❌ [CLIP] Failed to process violation ${violId} (${violType}): ${err.message}`,
+      );
+      await pool
+        .execute(
+          `UPDATE interview_violations SET clip_status = 'failed', updated_at = NOW() WHERE id = ?`,
+          [violId],
+        )
+        .catch(() => {});
+      failCount++;
+    }
+  }
+
+  // Cleanup temp dir
+  await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+
+  console.log(
+    `🎬 [CLIP] Violation clipping complete for interview ${interviewId}: ` +
+      `${successCount} succeeded, ${failCount} failed`,
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
    ── Answer Analysis  (runs DURING the 5-minute merge window) ────────────────
    ─────────────────────────────────────────────────────────────────────────────
 
@@ -456,6 +728,8 @@ const endRecording = asyncHandler(async (req, res) => {
   //   t≈2m  → AI evaluation finishes, scores saved to DB
   //   t=5m  → MERGE_DELAY_MS elapses → finalizeRecording() runs
   //              download chunks → ffmpeg concat → FTP upload → DB update
+  //   t=5m+ → [primary_camera only] cutAndUploadViolationClips() runs
+  //              cut violation clips from merged video → FTP upload → DB update
   //
   (async () => {
     const pipelineStart = Date.now();
@@ -472,10 +746,6 @@ const endRecording = asyncHandler(async (req, res) => {
               `hire=${analysisResult.hireDecision} ` +
               `(${analysisResult.totalQuestions} questions, interview ${interviewId})`,
           );
-          // To push this to the client in real-time, pass `io` into this module
-          // and emit here:
-          //   io.to(`interview_${interviewId}`).emit("analysis_complete", analysisResult);
-          // See interview.socket.js integration below.
         }
       }
 
@@ -494,12 +764,35 @@ const endRecording = asyncHandler(async (req, res) => {
       console.log(
         `🎬 [PIPELINE] Starting merge for ${videoType} (interview ${interviewId})`,
       );
-      await finalizeRecording({
+      const finalizeResult = await finalizeRecording({
         userId,
         interviewId,
         videoType,
         videoId: meta.videoId,
       });
+
+      // ── STEP 4: [primary_camera only] Cut violation clips ──────────────────
+      //
+      //   We only cut clips from the primary_camera feed because:
+      //     • It has the best view of the candidate's face
+      //     • The violation timestamps (NO_FACE, MULTIPLE_FACES) are derived
+      //       from the front-facing camera holistic detection
+      //     • Avoids running 3× the same clips from 3 different feeds
+      //
+      if (videoType === "primary_camera" && finalizeResult?.mergedLocalPath) {
+        console.log(
+          `✂️  [PIPELINE] Starting violation clip extraction for interview ${interviewId}`,
+        );
+        await cutAndUploadViolationClips(
+          interviewId,
+          finalizeResult.mergedLocalPath,
+          finalizeResult.recordingStartedAt,
+        ).catch((err) =>
+          console.error(
+            `❌ [PIPELINE] Violation clipping failed: ${err.message}`,
+          ),
+        );
+      }
     } catch (err) {
       console.error(`❌ [PIPELINE] Failed (${videoType}):`, err.message);
     }
@@ -590,8 +883,76 @@ const getAnalysisResult = asyncHandler(async (req, res) => {
     );
 });
 
+/* ── GET /interviews/:interviewId/violations  (REST endpoint) ────────────── */
+
+const getViolationClips = asyncHandler(async (req, res) => {
+  const { interviewId } = req.params;
+  const userId = req.user.id;
+
+  // ── Auth: interview must exist AND candidate must match ───────────────────
+  const [interviewRows] = await pool.execute(
+    `SELECT id, user_id
+     FROM interviews
+     WHERE id = ?
+     LIMIT 1`,
+    [interviewId],
+  );
+
+  if (!interviewRows?.[0]) throw new APIERR(404, "Interview not found");
+
+  const interview = interviewRows[0];
+
+  const isCandidate = interview.user_id && interview.user_id === userId;
+  // if (!isCandidate) throw new APIERR(403, "Access denied");
+
+  // ── Fetch violations ──────────────────────────────────────────────────────
+  const [rows] = await pool.execute(
+    `SELECT id, violation_type, start_time, end_time, duration_seconds,
+            warning_count, resolved, details, clip_url, clip_ftp_path, clip_status
+     FROM interview_violations
+     WHERE interview_id = ?
+     ORDER BY start_time ASC`,
+    [interviewId],
+  );
+
+  res.status(200).json(
+    new APIRES(
+      200,
+      {
+        total: rows.length,
+        clipsReady: rows.filter((r) => r.clip_status === "completed").length,
+        violations: rows.map((r) => ({
+          id: r.id,
+          type: r.violation_type,
+          startTime: r.start_time,
+          endTime: r.end_time,
+          durationSeconds: r.duration_seconds,
+          warningCount: r.warning_count,
+          resolved: !!r.resolved,
+          details: r.details
+            ? typeof r.details === "string"
+              ? JSON.parse(r.details)
+              : r.details
+            : null,
+          clipUrl: r.clip_url ?? null,
+          clipFtpPath: r.clip_ftp_path ?? null,
+          clipStatus: r.clip_status ?? "pending",
+        })),
+      },
+      "Violation clips",
+    ),
+  );
+});
+
 /* ── Finalize: merge chunks → upload merged video → update DB ────────────── */
 
+/**
+ * @returns {Promise<{ mergedLocalPath: string|null, recordingStartedAt: Date|null }>}
+ *   mergedLocalPath is set if merge succeeded (used for clip cutting).
+ *   It points to the temp file — callers must NOT delete tempDir before using it.
+ *   The function itself cleans up tempDir ONLY on error; on success tempDir cleanup
+ *   is deferred to after clip cutting (see endRecording pipeline).
+ */
 async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
   const key = redisKey(userId, interviewId, videoType);
   const fs = require("fs").promises;
@@ -601,6 +962,16 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
   const ffmpeg = require("fluent-ffmpeg");
 
   const tempDir = `/tmp/merge_${interviewId}_${videoType}_${Date.now()}`;
+
+  // ── Fetch recording started_at for clip offset calculation ───────────────
+  let recordingStartedAt = null;
+  try {
+    const [videoRows] = await pool.execute(
+      `SELECT started_at FROM interview_videos WHERE id = ? LIMIT 1`,
+      [videoId],
+    );
+    recordingStartedAt = videoRows?.[0]?.started_at ?? null;
+  } catch (_) {}
 
   try {
     console.log(`🎬 Finalizing ${videoType} for interview ${interviewId}`);
@@ -661,7 +1032,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
         ],
       );
       await redisDel(key);
-      return;
+      return { mergedLocalPath: null, recordingStartedAt };
     }
 
     // ── Gap detection ─────────────────────────────────────────────────────
@@ -688,10 +1059,6 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     );
     await fs.mkdir(tempDir, { recursive: true });
 
-    // ── Sequential FTP download with retry ────────────────────────────────
-    // We store each chunk as a Buffer in memory; for very long recordings
-    // (>100 chunks) you could stream-write to disk instead, but for typical
-    // interview lengths (10–20 chunks) this is fine.
     const chunkBuffers = [];
 
     for (const chunk of uploadedChunks) {
@@ -715,19 +1082,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
       );
     }
 
-    // ── FIX: Binary concatenate all chunk buffers ─────────────────────────
-    //
-    // MediaRecorder produces a stream of WebM Cluster elements.
-    // Chunk 0 = EBML header + Tracks + first Cluster(s)
-    // Chunk N = additional Cluster(s) only
-    //
-    // Binary concat produces a single valid .webm stream because the
-    // WebM/Matroska container is designed to be appendable at the Cluster
-    // boundary — this is exactly how live WebM streaming works.
-    //
-    // DO NOT use ffmpeg concat demuxer (-f concat) for this — it treats
-    // each file as independent and fails when it finds no header in chunk 1+.
-    //
+    // ── Binary concatenate all chunk buffers ──────────────────────────────
     const totalBytes = chunkBuffers.reduce((s, b) => s + b.length, 0);
     const rawWebmPath = path.join(tempDir, `${videoType}_raw.webm`);
     const mergedPath = path.join(tempDir, `${videoType}_merged.webm`);
@@ -737,7 +1092,6 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
         `(${(totalBytes / 1024 / 1024).toFixed(2)} MB raw) for ${videoType}…`,
     );
 
-    // Write chunks sequentially to avoid one giant Buffer.concat in memory
     const writeStream = fsSync.createWriteStream(rawWebmPath);
     await new Promise((resolve, reject) => {
       writeStream.on("error", reject);
@@ -746,7 +1100,6 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
       writeStream.end();
     });
 
-    // Free chunk buffers now that they're on disk
     chunkBuffers.length = 0;
 
     const rawStat = await fs.stat(rawWebmPath);
@@ -758,12 +1111,6 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     );
 
     // ── FFmpeg re-mux: fix timestamps + write clean container ────────────
-    //
-    // -fflags +genpts  → regenerate presentation timestamps so the output
-    //                    timeline starts at 0 and is monotonically increasing
-    //                    (MediaRecorder chunks often have discontinuous PTS)
-    // -c copy          → no re-encode — fast, lossless container rewrite
-    //
     await new Promise((resolve, reject) => {
       const ffmpegTimeout = setTimeout(
         () =>
@@ -771,11 +1118,8 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
         30 * 60 * 1000,
       );
 
-      ffmpeg(rawWebmPath) // ← single input: the binary-concat file
-        .outputOptions([
-          "-c copy", // lossless — no re-encode
-          "-fflags +genpts", // regenerate PTS for clean timeline
-        ])
+      ffmpeg(rawWebmPath)
+        .outputOptions(["-c copy", "-fflags +genpts"])
         .on("start", (cmd) =>
           console.log(`▶️  FFmpeg cmd (${videoType}): ${cmd}`),
         )
@@ -800,14 +1144,11 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     if (!mergedStat || mergedStat.size === 0)
       throw new Error(`FFmpeg produced empty merged file for ${videoType}`);
 
-    // Sanity check: merged file should be at least 80% of raw size
-    // (some overhead removed by re-mux, but not more than 20%)
     if (mergedStat.size < rawStat.size * 0.8) {
       console.warn(
         `⚠️ Merged file (${mergedStat.size}) is <80% of raw (${rawStat.size}) — ` +
           `possible data loss detected for ${videoType}. Falling back to raw upload.`,
       );
-      // Fall back: upload the raw binary-concat instead of the re-muxed file
       await fs.copyFile(rawWebmPath, mergedPath);
     }
 
@@ -818,7 +1159,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
       .digest("hex");
     const fileSize = mergedBuffer.length;
 
-    // ── Probe duration from the properly-muxed file ───────────────────────
+    // ── Probe duration ────────────────────────────────────────────────────
     const duration = await new Promise((resolve) => {
       ffmpeg.ffprobe(mergedPath, (err, meta) => {
         if (err) {
@@ -896,7 +1237,6 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
         .catch(() => {});
     }
 
-    // Keep Redis key as "completed" for 30 min for late-arriving chunks
     const currentMeta = JSON.parse((await redisGet(key)) || "{}");
     await redisSet(
       key,
@@ -909,12 +1249,28 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
       60 * 30,
     );
 
-    // Clean up temp files
-    await fs.rm(tempDir, { recursive: true, force: true });
+    // ── Defer temp dir cleanup to after clip cutting ───────────────────────
+    // For primary_camera we return the mergedPath so violation clips can be
+    // cut from the local file (avoiding a re-download from FTP).
+    // The caller (endRecording pipeline) is responsible for cleaning up tempDir
+    // after cutAndUploadViolationClips() finishes.
+    // For all other types, clean up now.
+    if (videoType !== "primary_camera") {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    } else {
+      console.log(`📂 [FINALIZE] Keeping tempDir for clip cutting: ${tempDir}`);
+    }
+
     console.log(
       `🎉 ${videoType} finalization complete — ` +
         `${uploadedChunks.length} chunks → ${(fileSize / 1024 / 1024).toFixed(2)} MB, ${duration}s`,
     );
+
+    return {
+      mergedLocalPath: videoType === "primary_camera" ? mergedPath : null,
+      recordingStartedAt,
+      tempDir: videoType === "primary_camera" ? tempDir : null,
+    };
   } catch (err) {
     console.error(`❌ Finalize error (${videoType}):`, err.message);
 
@@ -938,7 +1294,10 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
 
     await redisDel(key);
     try {
-      await fs.rm(tempDir, { recursive: true, force: true });
+      await require("fs").promises.rm(tempDir, {
+        recursive: true,
+        force: true,
+      });
     } catch {}
     throw err;
   }
@@ -1033,7 +1392,9 @@ module.exports = {
   endRecording,
   getRecordingStatus,
   getRecordingUrls,
-  getAnalysisResult, // ← new REST endpoint
+  getAnalysisResult,
+  getViolationClips, // ← new REST endpoint
   finalizeRecording,
-  runAnswerAnalysisDuringWait, // ← exported for socket integration
+  runAnswerAnalysisDuringWait,
+  cutAndUploadViolationClips, // ← exported for direct use / testing
 };

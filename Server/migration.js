@@ -19,6 +19,11 @@ const { pool } = require("./Config/database.config.js");
      1. question_evaluations          ← per-question AI scores
      2. skill_evaluations             ← per-technology skill scores
      3. interview_recording_analysis  ← lightweight summary for REST polling
+
+   Columns this migration adds to existing tables (3 new):
+     4. interview_violations.clip_url       ← public FTP URL of the cut clip
+     5. interview_violations.clip_ftp_path  ← internal FTP path
+     6. interview_violations.clip_status    ← pipeline state tracking
    ───────────────────────────────────────────────────────────────────────────── */
 
 const MIGRATIONS = [
@@ -143,10 +148,52 @@ const MIGRATIONS = [
         COMMENT='Lightweight analysis summary produced during the video merge window';
     `,
   },
+
+  /* ── 4. interview_violations — add violation clip columns ───────────────────
+     Three new columns to track the ffmpeg clip-cut pipeline per violation row.
+     Uses ALTER TABLE … ADD COLUMN IF NOT EXISTS (MySQL 8.0.3+).
+     Each statement is idempotent — safe to re-run on an already-migrated DB.
+     ───────────────────────────────────────────────────────────────────────── */
+  {
+    table: "interview_violations (clip_url)",
+    sql: `
+      ALTER TABLE interview_violations
+        ADD COLUMN IF NOT EXISTS clip_url VARCHAR(2048) NULL
+          COMMENT 'Public FTP URL of the violation video clip'
+          AFTER details;
+    `,
+  },
+  {
+    table: "interview_violations (clip_ftp_path)",
+    sql: `
+      ALTER TABLE interview_violations
+        ADD COLUMN IF NOT EXISTS clip_ftp_path VARCHAR(2048) NULL
+          COMMENT 'Internal FTP path of the violation video clip'
+          AFTER clip_url;
+    `,
+  },
+  {
+    table: "interview_violations (clip_status)",
+    sql: `
+      ALTER TABLE interview_violations
+        ADD COLUMN IF NOT EXISTS clip_status
+          ENUM('pending','processing','completed','failed')
+          NOT NULL DEFAULT 'pending'
+          COMMENT 'State of the ffmpeg clip-cut + FTP upload pipeline'
+          AFTER clip_ftp_path;
+    `,
+  },
+  {
+    table: "interview_violations (idx_clip_status)",
+    sql: `
+      ALTER TABLE interview_violations
+        ADD INDEX IF NOT EXISTS idx_clip_status (clip_status);
+    `,
+  },
 ];
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   Inspection helpers  (same style as your existing inspect script)
+   Inspection helpers
    ───────────────────────────────────────────────────────────────────────────── */
 
 async function inspectTable(connection, tableName) {
@@ -251,18 +298,18 @@ const inspect = async () => {
     const ALL_TABLES = [
       // ── Your existing tables ──────────────────────────────────────────────
       "interviews",
-      "interview_questions", // stores question text + answer text (answer col)
-      "interview_evaluations", // overall evaluation written by evaluation.service.js
+      "interview_questions",
+      "interview_evaluations",
       "interview_videos",
       "interview_video_chunks",
       "interview_screen_recordings",
       "interview_audio",
       "interview_audio_chunks",
-      "interview_violations",
+      "interview_violations", // ← now has clip_url / clip_ftp_path / clip_status
       // ── Newly created tables ──────────────────────────────────────────────
-      "question_evaluations", // per-question AI scores
-      "skill_evaluations", // per-technology skill scores
-      "interview_recording_analysis", // lightweight REST-polling summary
+      "question_evaluations",
+      "skill_evaluations",
+      "interview_recording_analysis",
     ];
 
     console.log("🔍  Inspecting all tables…\n");
@@ -271,8 +318,6 @@ const inspect = async () => {
     }
 
     // ── STEP 3: Verify interview_questions has an 'answer' column ──────────
-    // The evaluation service reads q.answer from this table.
-    // If your column is named differently, rename it or add it below.
     console.log("🔎  Checking interview_questions.answer column…");
     const [answerCol] = await connection.query(`
       SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE
@@ -308,7 +353,7 @@ const inspect = async () => {
         SELECT
           interview_id,
           video_type,
-          COUNT(*)         AS total_chunks,
+          COUNT(*)          AS total_chunks,
           MIN(chunk_number) AS first_chunk,
           MAX(chunk_number) AS last_chunk,
           SUM(chunk_size)   AS total_bytes_stored
@@ -348,6 +393,31 @@ const inspect = async () => {
     if (analysisSummary.length > 0) {
       console.log("\n📊  Recent analysis results:\n");
       console.table(analysisSummary);
+    }
+
+    // ── STEP 6: Violation clip summary ────────────────────────────────────
+    const [clipSummary] = await connection
+      .query(
+        `
+        SELECT
+          interview_id,
+          violation_type,
+          COUNT(*)                                          AS total_violations,
+          SUM(clip_status = 'completed')                    AS clips_ready,
+          SUM(clip_status = 'pending')                      AS clips_pending,
+          SUM(clip_status = 'processing')                   AS clips_processing,
+          SUM(clip_status = 'failed')                       AS clips_failed,
+          ROUND(AVG(duration_seconds), 2)                   AS avg_duration_sec
+        FROM interview_violations
+        GROUP BY interview_id, violation_type
+        ORDER BY interview_id, violation_type;
+      `,
+      )
+      .catch(() => [[]]);
+
+    if (clipSummary.length > 0) {
+      console.log("\n✂️   Violation clip summary (interview_violations):\n");
+      console.table(clipSummary);
     }
   } catch (err) {
     console.error("❌ Script failed:", err.message);

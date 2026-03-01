@@ -3,7 +3,12 @@ import axios from "axios";
 
 const BASE = import.meta.env.VITE_BACKEND_URL;
 const INTERVIEW_API = `${BASE}/api/v1/company/interview`;
-const VIOLATION_API = `${BASE}/api/v1/company/violation`;
+
+// Recording router is mounted at /api/v1/video in app.js:
+//   app.use("/api/v1/video", interviewVideoUpload)
+// So the violations endpoint resolves to:
+//   GET /api/v1/video/:interviewId/violations
+const RECORDING_API = `${BASE}/api/v1/video`;
 
 /* ── Thunks ──────────────────────────────────────────────────────────────── */
 
@@ -49,10 +54,16 @@ export const fetchViolations = createAsyncThunk(
   "companyInterviews/fetchViolations",
   async (interviewId, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(`${VIOLATION_API}/${interviewId}`, {
-        withCredentials: true,
-      });
-      return { interviewId, violations: data.data?.violations ?? [] };
+      // ✅ Correct: matches app.use("/api/v1/video", interviewVideoUpload)
+      //            + router.get("/:interviewId/violations", getViolationClips)
+      const { data } = await axios.get(
+        `${RECORDING_API}/${interviewId}/violations`,
+        { withCredentials: true },
+      );
+      return {
+        interviewId,
+        violations: data.data?.violations ?? [],
+      };
     } catch (err) {
       return rejectWithValue(
         err.response?.data?.message ?? "Failed to load proctoring data",

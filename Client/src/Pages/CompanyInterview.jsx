@@ -123,6 +123,159 @@ const CardSkeleton = () => (
   </div>
 );
 
+/* ── Violation Clip Player ───────────────────────────────────────────────── */
+const ViolationClipPlayer = ({ clipUrl, violationType }) => {
+  const videoRef = useRef(null);
+  const [playing, setPlaying] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+
+  const cfg = vtypeConfig(violationType);
+
+  const togglePlay = (e) => {
+    e.stopPropagation();
+    const el = videoRef.current;
+    if (!el) return;
+    if (el.paused) {
+      el.play();
+      setPlaying(true);
+    } else {
+      el.pause();
+      setPlaying(false);
+    }
+  };
+
+  const onTimeUpdate = () => {
+    const el = videoRef.current;
+    if (!el || !el.duration) return;
+    setCurrentTime(el.currentTime);
+    setProgress((el.currentTime / el.duration) * 100);
+  };
+
+  const onLoadedMetadata = () => setDuration(videoRef.current?.duration ?? 0);
+  const onEnded = () => setPlaying(false);
+
+  const seek = (e) => {
+    e.stopPropagation();
+    const el = videoRef.current;
+    if (!el) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    el.currentTime = ((e.clientX - rect.left) / rect.width) * el.duration;
+  };
+
+  const fmt = (s) => {
+    if (!s || isNaN(s)) return "0:00";
+    return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+  };
+
+  return (
+    <div className="mt-3 rounded-xl overflow-hidden border border-gray-200 bg-black group/clip">
+      {/* Video element */}
+      <div
+        className="relative aspect-video cursor-pointer"
+        onClick={togglePlay}
+      >
+        <video
+          ref={videoRef}
+          src={clipUrl}
+          preload="metadata"
+          playsInline
+          muted={muted}
+          onTimeUpdate={onTimeUpdate}
+          onLoadedMetadata={onLoadedMetadata}
+          onEnded={onEnded}
+          className="w-full h-full object-cover"
+        />
+
+        {/* Play / Pause overlay */}
+        <div
+          className={`absolute inset-0 flex items-center justify-center bg-black/20 transition-opacity duration-150 ${
+            playing ? "opacity-0 hover:opacity-100" : "opacity-100"
+          }`}
+        >
+          <div className="w-10 h-10 rounded-full bg-white/90 backdrop-blur-sm flex items-center justify-center shadow-lg group-hover/clip:scale-110 transition-transform">
+            {playing ? (
+              <Pause size={15} className="text-gray-800" />
+            ) : (
+              <Play size={15} className="text-gray-800 ml-0.5" />
+            )}
+          </div>
+        </div>
+
+        {/* Top-right controls */}
+        <div className="absolute top-2 right-2 flex gap-1.5 opacity-0 group-hover/clip:opacity-100 transition-opacity">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setMuted((m) => {
+                if (videoRef.current) videoRef.current.muted = !m;
+                return !m;
+              });
+            }}
+            className="w-6 h-6 rounded-lg bg-black/50 backdrop-blur-sm flex items-center justify-center hover:bg-black/70 transition-colors"
+          >
+            {muted ? (
+              <VolumeX size={11} className="text-white" />
+            ) : (
+              <Volume2 size={11} className="text-white" />
+            )}
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              videoRef.current?.requestFullscreen?.();
+            }}
+            className="w-6 h-6 rounded-lg bg-black/50 backdrop-blur-sm flex items-center justify-center hover:bg-black/70 transition-colors"
+          >
+            <Maximize2 size={11} className="text-white" />
+          </button>
+          <a
+            href={clipUrl}
+            download
+            onClick={(e) => e.stopPropagation()}
+            className="w-6 h-6 rounded-lg bg-black/50 backdrop-blur-sm flex items-center justify-center hover:bg-black/70 transition-colors"
+            title="Download clip"
+          >
+            <Download size={11} className="text-white" />
+          </a>
+        </div>
+
+        {/* Bottom progress bar */}
+        <div className="absolute bottom-0 left-0 right-0 px-2 pb-1.5 opacity-0 group-hover/clip:opacity-100 transition-opacity">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-white/80 font-mono">
+              {fmt(currentTime)}
+            </span>
+            <div
+              className="flex-1 h-1 bg-white/30 rounded-full cursor-pointer"
+              onClick={seek}
+            >
+              <div
+                className="h-full rounded-full transition-all"
+                style={{
+                  width: `${progress}%`,
+                  // Use the violation type accent colour from cfg
+                  background:
+                    violationType === "NO_FACE"
+                      ? "#ef4444"
+                      : violationType === "MULTIPLE_FACES"
+                        ? "#f59e0b"
+                        : "#6366f1",
+                }}
+              />
+            </div>
+            <span className="text-[10px] text-white/80 font-mono">
+              {fmt(duration)}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 /* ── Violations Tab Content (driven by hook data) ────────────────────────── */
 const ViolationsPanel = ({ violations, isLoading, error }) => {
   if (isLoading) {
@@ -160,7 +313,8 @@ const ViolationsPanel = ({ violations, isLoading, error }) => {
   }
 
   const summary = violations.reduce((acc, v) => {
-    acc[v.violation_type] = (acc[v.violation_type] ?? 0) + 1;
+    acc[v.type ?? v.violation_type] =
+      (acc[v.type ?? v.violation_type] ?? 0) + 1;
     return acc;
   }, {});
 
@@ -186,68 +340,105 @@ const ViolationsPanel = ({ violations, isLoading, error }) => {
       {/* Timeline */}
       <div className="space-y-2">
         {violations.map((v, i) => {
-          const cfg = vtypeConfig(v.violation_type);
+          // Support both API shapes: { type } from getViolationClips, or { violation_type } from raw DB
+          const violType = v.type ?? v.violation_type;
+          const cfg = vtypeConfig(violType);
           const Icon = cfg.icon;
-          const dur = fmtDuration(v.duration_seconds);
+          const dur = fmtDuration(v.durationSeconds ?? v.duration_seconds);
+          const clipUrl = v.clipUrl ?? v.clip_url ?? null;
+          const clipStatus = v.clipStatus ?? v.clip_status ?? null;
+
           return (
             <div
               key={v.id ?? i}
-              className="flex items-start gap-3 bg-white border border-gray-100 rounded-2xl p-3.5 shadow-sm"
+              className="bg-white border border-gray-100 rounded-2xl p-3.5 shadow-sm"
             >
-              <div
-                className={`w-8 h-8 rounded-xl border flex items-center justify-center shrink-0 ${cfg.cls}`}
-              >
-                <Icon size={14} />
-              </div>
-
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span
-                    className={`text-xs font-bold px-2 py-0.5 rounded-lg border ${cfg.cls}`}
-                  >
-                    {cfg.label}
-                  </span>
-                  {v.warning_count > 1 && (
-                    <span className="text-[11px] text-amber-600 font-semibold bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-lg">
-                      {v.warning_count} warnings
-                    </span>
-                  )}
-                  <span
-                    className={`text-[11px] font-semibold px-2 py-0.5 rounded-lg border ${
-                      v.resolved
-                        ? "bg-emerald-50 text-emerald-600 border-emerald-100"
-                        : "bg-red-50 text-red-500 border-red-100"
-                    }`}
-                  >
-                    {v.resolved ? "Resolved" : "Unresolved"}
-                  </span>
+              {/* ── Violation header row ─────────────────────────────── */}
+              <div className="flex items-start gap-3">
+                <div
+                  className={`w-8 h-8 rounded-xl border flex items-center justify-center shrink-0 ${cfg.cls}`}
+                >
+                  <Icon size={14} />
                 </div>
-                <div className="flex items-center gap-3 mt-1.5 flex-wrap">
-                  <span className="flex items-center gap-1 text-xs text-gray-400">
-                    <Clock size={10} /> Start: {fmtTime(v.start_time)}
-                  </span>
-                  {v.end_time && (
+
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span
+                      className={`text-xs font-bold px-2 py-0.5 rounded-lg border ${cfg.cls}`}
+                    >
+                      {cfg.label}
+                    </span>
+                    {(v.warningCount ?? v.warning_count) > 1 && (
+                      <span className="text-[11px] text-amber-600 font-semibold bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-lg">
+                        {v.warningCount ?? v.warning_count} warnings
+                      </span>
+                    )}
+                    <span
+                      className={`text-[11px] font-semibold px-2 py-0.5 rounded-lg border ${
+                        v.resolved
+                          ? "bg-emerald-50 text-emerald-600 border-emerald-100"
+                          : "bg-red-50 text-red-500 border-red-100"
+                      }`}
+                    >
+                      {v.resolved ? "Resolved" : "Unresolved"}
+                    </span>
+
+                    {/* Clip status badge */}
+                    {clipStatus && clipStatus !== "completed" && (
+                      <span
+                        className={`text-[11px] font-semibold px-2 py-0.5 rounded-lg border ${
+                          clipStatus === "processing"
+                            ? "bg-indigo-50 text-indigo-500 border-indigo-100"
+                            : clipStatus === "failed"
+                              ? "bg-red-50 text-red-400 border-red-100"
+                              : "bg-gray-50 text-gray-400 border-gray-100"
+                        }`}
+                      >
+                        {clipStatus === "processing"
+                          ? "⏳ Processing clip…"
+                          : clipStatus === "failed"
+                            ? "Clip unavailable"
+                            : "Clip pending"}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-3 mt-1.5 flex-wrap">
                     <span className="flex items-center gap-1 text-xs text-gray-400">
-                      <Clock size={10} /> End: {fmtTime(v.end_time)}
+                      <Clock size={10} /> Start:{" "}
+                      {fmtTime(v.startTime ?? v.start_time)}
                     </span>
-                  )}
-                  {dur && (
-                    <span className="text-xs font-semibold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-lg">
-                      {dur}
-                    </span>
-                  )}
-                  {v.violation_type === "MULTIPLE_FACES" &&
-                    v.details?.faceCount && (
+                    {(v.endTime ?? v.end_time) && (
+                      <span className="flex items-center gap-1 text-xs text-gray-400">
+                        <Clock size={10} /> End:{" "}
+                        {fmtTime(v.endTime ?? v.end_time)}
+                      </span>
+                    )}
+                    {dur && (
+                      <span className="text-xs font-semibold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-lg">
+                        {dur}
+                      </span>
+                    )}
+                    {violType === "MULTIPLE_FACES" && v.details?.faceCount && (
                       <span className="text-xs text-gray-400">
                         {v.details.faceCount} faces detected
                       </span>
                     )}
+                  </div>
                 </div>
+
+                <span className="text-[11px] text-gray-300 font-mono shrink-0 mt-0.5">
+                  #{i + 1}
+                </span>
               </div>
 
-              <span className="text-[11px] text-gray-300 font-mono shrink-0 mt-0.5">
-                #{i + 1}
-              </span>
+              {/* ── Violation clip video (only when URL is ready) ────── */}
+              {clipUrl && clipStatus === "completed" && (
+                <ViolationClipPlayer
+                  clipUrl={clipUrl}
+                  violationType={violType}
+                />
+              )}
             </div>
           );
         })}
@@ -347,7 +538,6 @@ const VideoCard = ({ icon: Icon, label, subtitle, video, color }) => {
         className="relative bg-black aspect-video cursor-pointer"
         onClick={togglePlay}
       >
-        {/* Real video — preload="metadata" renders first frame as thumbnail */}
         <video
           ref={videoRef}
           src={video.url}
@@ -360,7 +550,6 @@ const VideoCard = ({ icon: Icon, label, subtitle, video, color }) => {
           className="w-full h-full object-cover"
         />
 
-        {/* Colour tint only while paused */}
         {!playing && (
           <div
             className="absolute inset-0 pointer-events-none"
@@ -370,7 +559,6 @@ const VideoCard = ({ icon: Icon, label, subtitle, video, color }) => {
           />
         )}
 
-        {/* Play/Pause button */}
         <div
           className={`absolute inset-0 flex items-center justify-center transition-opacity duration-150 ${playing ? "opacity-0 hover:opacity-100" : "opacity-100"}`}
         >
@@ -383,7 +571,6 @@ const VideoCard = ({ icon: Icon, label, subtitle, video, color }) => {
           </div>
         </div>
 
-        {/* Mute + fullscreen — top right on hover */}
         <div className="absolute top-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
             onClick={(e) => {
@@ -412,7 +599,6 @@ const VideoCard = ({ icon: Icon, label, subtitle, video, color }) => {
           </button>
         </div>
 
-        {/* Progress bar + timestamps — bottom on hover */}
         <div className="absolute bottom-0 left-0 right-0 px-2 pb-2 opacity-0 group-hover:opacity-100 transition-opacity">
           <div className="flex items-center gap-2 mb-1">
             <span className="text-[10px] text-white/80 font-mono">
@@ -434,7 +620,6 @@ const VideoCard = ({ icon: Icon, label, subtitle, video, color }) => {
         </div>
       </div>
 
-      {/* Footer */}
       <div className="p-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div
@@ -450,7 +635,6 @@ const VideoCard = ({ icon: Icon, label, subtitle, video, color }) => {
             </p>
           </div>
         </div>
-        {/* <a download> never triggers video play */}
         <a
           href={video.url}
           download
@@ -490,7 +674,6 @@ const CandidateModal = ({
 
   const { candidate, job, answers = [], videos = {} } = interview;
 
-  // Fetch violations the first time user opens the Violations tab
   const handleTabChange = (tab) => {
     setActiveTab(tab);
     if (tab === "violations" && violations === null) {
@@ -599,7 +782,7 @@ const CandidateModal = ({
           ))}
         </div>
 
-        {/* Body — no overflow-y-auto on the container; each tab manages its own layout */}
+        {/* Body */}
         <div className="flex-1 overflow-y-auto px-7 py-6">
           {/* OVERVIEW */}
           {activeTab === "overview" && (
@@ -616,11 +799,7 @@ const CandidateModal = ({
                     label: "Interview Date",
                     value: new Date(interview.created_at).toLocaleDateString(
                       "en-IN",
-                      {
-                        day: "numeric",
-                        month: "short",
-                        year: "numeric",
-                      },
+                      { day: "numeric", month: "short", year: "numeric" },
                     ),
                     icon: Clock,
                     color: "#8b5cf6",
@@ -819,7 +998,7 @@ const CandidateModal = ({
             </div>
           )}
 
-          {/* RECORDINGS — full grid, no scroll */}
+          {/* RECORDINGS */}
           {activeTab === "recordings" && (
             <div className="space-y-5">
               <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 flex items-start gap-3">
@@ -829,8 +1008,6 @@ const CandidateModal = ({
                   primary webcam, and mobile camera.
                 </p>
               </div>
-
-              {/* All three recordings in a fixed 3-col grid, no scroll */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <VideoCard
                   icon={Monitor}
@@ -857,7 +1034,7 @@ const CandidateModal = ({
             </div>
           )}
 
-          {/* VIOLATIONS — dedicated tab */}
+          {/* VIOLATIONS */}
           {activeTab === "violations" && (
             <div className="space-y-4">
               <div className="flex items-center gap-2 mb-1">
@@ -875,7 +1052,7 @@ const CandidateModal = ({
           )}
         </div>
 
-        {/* Footer — hire / reject for pending interviews */}
+        {/* Footer */}
         {interview.status === "pending" && (
           <div className="flex items-center justify-between px-7 py-4 border-t border-gray-100 bg-gray-50">
             <p className="text-xs text-gray-400">
@@ -1037,7 +1214,6 @@ const CompanyInterviews = () => {
     violationsError,
   } = useCompanyInterviews();
 
-  // Group interviews by job for the "All Jobs" view
   const byJob = {};
   interviews.forEach((c) => {
     const key = c.job?.id ?? "unknown";
@@ -1070,7 +1246,6 @@ const CompanyInterviews = () => {
             </button>
           </div>
 
-          {/* Stats strip */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
             {[
               {
@@ -1141,7 +1316,6 @@ const CompanyInterviews = () => {
             })}
           </div>
 
-          {/* Status filter tabs */}
           <div className="flex items-center gap-1">
             {["all", "pending", "hired", "rejected"].map((s) => (
               <button
@@ -1289,7 +1463,6 @@ const CompanyInterviews = () => {
         )}
       </div>
 
-      {/* Detail loading overlay */}
       {isLoadingDetail && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm">
           <div className="bg-white rounded-2xl p-8 flex items-center gap-4 shadow-xl">
@@ -1301,7 +1474,6 @@ const CompanyInterviews = () => {
         </div>
       )}
 
-      {/* Candidate detail modal */}
       {selectedInterview && !isLoadingDetail && (
         <CandidateModal
           interview={selectedInterview}

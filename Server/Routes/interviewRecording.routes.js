@@ -7,6 +7,7 @@ const {
   getRecordingStatus,
   getRecordingUrls,
   getAnalysisResult,
+  getViolationClips,
 } = require("../Controllers/interviewRecording.controllers.js");
 const { authMiddleware } = require("../Middlewares/auth.middlewares.js");
 
@@ -24,5 +25,6 @@ router.post("/:interviewId/end-recording", endRecording);
 router.get("/:interviewId/recording-status", getRecordingStatus);
 router.get("/:interviewId/urls", getRecordingUrls);
 router.get("/:interviewId/analysis", getAnalysisResult);
+router.get("/:interviewId/violations", getViolationClips);
 
 module.exports = router;
