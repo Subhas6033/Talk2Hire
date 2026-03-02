@@ -583,14 +583,15 @@ const UserJobDetail = () => {
   const skills = parseSkills(job.skills);
   const palette = getPalette(job.companyName);
   const typeSty = getTypeSty(job.type);
-  const initials =
-    (job.companyName || "CO")
-      .split(" ")
-      .filter(Boolean)
-      .map((w) => w[0] || "")
-      .join("")
-      .slice(0, 2)
-      .toUpperCase() || "CO";
+  const initials = job.companyName
+    ? job.companyName
+        .split(" ")
+        .filter(Boolean)
+        .map((w) => w[0] || "")
+        .join("")
+        .slice(0, 2)
+        .toUpperCase()
+    : "?";
   const postedText = timeAgo(job.posted);
 
   return (
@@ -690,20 +691,49 @@ const UserJobDetail = () => {
             >
               <div className="flex items-start gap-3 sm:gap-4">
                 {/* Company avatar */}
-                <div
-                  className="shrink-0 rounded-2xl flex items-center justify-center text-white font-extrabold"
-                  style={{
-                    width: isMobile ? 56 : 72,
-                    height: isMobile ? 56 : 72,
-                    background: palette.bg,
-                    boxShadow: `0 6px 20px ${palette.shadow}`,
-                    fontSize: isMobile ? 20 : 24,
-                    fontFamily: "'Fraunces', serif",
-                    letterSpacing: "0.02em",
-                  }}
-                >
-                  {initials}
-                </div>
+                {job.companyLogo ? (
+                  <div
+                    className="shrink-0 rounded-2xl overflow-hidden border border-gray-200 bg-white"
+                    style={{
+                      width: isMobile ? 56 : 72,
+                      height: isMobile ? 56 : 72,
+                      boxShadow: `0 6px 20px ${palette.shadow}`,
+                    }}
+                  >
+                    <img
+                      src={job.companyLogo}
+                      alt={job.companyName}
+                      className="w-full h-full object-contain p-1.5"
+                      onError={(e) => {
+                        // fallback to initials div on error
+                        e.currentTarget.parentElement.innerHTML = `
+          <div style="
+            width:100%;height:100%;display:flex;align-items:center;
+            justify-content:center;font-weight:800;color:#fff;
+            background:${palette.bg};
+            font-size:${isMobile ? 20 : 24}px;
+            font-family:'Fraunces',serif;letter-spacing:0.02em;
+            border-radius:inherit;
+          ">${initials}</div>`;
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div
+                    className="shrink-0 rounded-2xl flex items-center justify-center text-white font-extrabold"
+                    style={{
+                      width: isMobile ? 56 : 72,
+                      height: isMobile ? 56 : 72,
+                      background: palette.bg,
+                      boxShadow: `0 6px 20px ${palette.shadow}`,
+                      fontSize: isMobile ? 20 : 24,
+                      fontFamily: "'Fraunces', serif",
+                      letterSpacing: "0.02em",
+                    }}
+                  >
+                    {initials}
+                  </div>
+                )}
                 <div className="min-w-0">
                   <h1
                     className="font-bold text-gray-900 m-0 mb-1.5 leading-tight wrap-break-word"
@@ -716,7 +746,7 @@ const UserJobDetail = () => {
                   </h1>
                   <p className="m-0 text-sm text-gray-500 flex items-center gap-1 font-medium">
                     <Building2 size={13} color="#9CA3AF" />
-                    {job.companyName || "Company"}
+                    {job.companyName || "Unknown Company"}
                   </p>
                 </div>
               </div>

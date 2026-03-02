@@ -15,7 +15,7 @@ import {
   Filter,
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { usePublicJobs } from "../Hooks/useJobHook";
 
 // ─── Constants ────────────────────────────────────────────────
@@ -52,8 +52,10 @@ const JOBS_PER_PAGE = 9;
 const parseSkills = (skills) => {
   if (Array.isArray(skills)) return skills;
   if (typeof skills === "string") {
+    if (!skills.trim()) return [];
     try {
-      return JSON.parse(skills);
+      const parsed = JSON.parse(skills);
+      return Array.isArray(parsed) ? parsed : [String(parsed)];
     } catch {
       return skills
         .split(",")
@@ -104,16 +106,34 @@ const PALETTES = [
   { bg: "#FFF1F2", text: "#E11D48", border: "#FECDD3" },
 ];
 
-const CompanyAvatar = ({ name, index, size = 48 }) => {
+// ─── Single CompanyAvatar — logo if available, else first letter ──
+const CompanyAvatar = ({ name, logo, index, size = 48 }) => {
   const pal = PALETTES[index % PALETTES.length];
-  const initials = name
-    ? name
-        .split(" ")
-        .map((w) => w[0])
-        .join("")
-        .slice(0, 2)
-        .toUpperCase()
-    : "CO";
+  const initial = name ? name.trim()[0].toUpperCase() : "C";
+  const [imgError, setImgError] = useState(false);
+
+  if (logo && !imgError) {
+    return (
+      <div
+        className="shrink-0 rounded-2xl overflow-hidden border"
+        style={{
+          width: size,
+          height: size,
+          borderColor: pal.border,
+          background: "#fff",
+          flexShrink: 0,
+        }}
+      >
+        <img
+          src={logo}
+          alt={name}
+          className="w-full h-full object-contain p-1"
+          onError={() => setImgError(true)}
+        />
+      </div>
+    );
+  }
+
   return (
     <div
       className="flex items-center justify-center font-bold shrink-0 rounded-2xl"
@@ -123,11 +143,12 @@ const CompanyAvatar = ({ name, index, size = 48 }) => {
         background: pal.bg,
         color: pal.text,
         border: `1.5px solid ${pal.border}`,
-        fontSize: size * 0.3,
+        fontSize: size * 0.35,
         letterSpacing: "0.02em",
+        flexShrink: 0,
       }}
     >
-      {initials}
+      {initial}
     </div>
   );
 };
@@ -180,7 +201,11 @@ const JobCard = ({ job, index, onClick, animDelay }) => {
       {/* Top row */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3 flex-1 min-w-0">
-          <CompanyAvatar name={job.companyName} index={index} />
+          <CompanyAvatar
+            name={job.companyName}
+            logo={job.companyLogo}
+            index={index}
+          />
           <div className="min-w-0 flex-1">
             <h3
               className="font-bold text-sm m-0 leading-tight truncate"
@@ -194,12 +219,12 @@ const JobCard = ({ job, index, onClick, animDelay }) => {
               {job.title}
             </h3>
             <p className="m-0 mt-0.5 text-xs text-gray-400 font-medium">
-              {job.companyName || "Company"}
+              {job.companyName || "Unknown Company"}
             </p>
           </div>
         </div>
         <div
-          className="flex items-center justify-center shrink-0 rounded-lg transition-all duration-200"
+          className="flex items-center justify-center shrink-0 rounded-lg"
           style={{
             width: 28,
             height: 28,
@@ -294,7 +319,7 @@ const JobCard = ({ job, index, onClick, animDelay }) => {
   );
 };
 
-// ─── Filter pill ──────────────────────────────────────────────
+// ─── Filter Pill ──────────────────────────────────────────────
 const FilterPill = ({ label, value, onChange, options, placeholder }) => {
   const active = !!value;
   return (
@@ -435,6 +460,7 @@ const SkeletonCard = ({ delay = 0 }) => (
 // ─── Main Page ────────────────────────────────────────────────
 const UserJob = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [showFilters, setShowFilters] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [mounted, setMounted] = useState(false);
@@ -445,8 +471,8 @@ const UserJob = () => {
     total,
     isFetching,
     error,
-    search,
-    setSearch,
+    q,
+    setQ,
     department,
     setDepartment,
     location,
@@ -461,9 +487,18 @@ const UserJob = () => {
 
   const totalCount = useCountUp(total, 600);
 
+  // Sync URL params into hook on first mount
+  useEffect(() => {
+    const urlQ = searchParams.get("q");
+    const urlLocation = searchParams.get("location");
+    if (urlQ) setQ(urlQ);
+    if (urlLocation) setLocation(urlLocation);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     setCurrentPage(1);
-  }, [search, department, location, type, experience]);
+  }, [q, department, location, type, experience]);
+
   useEffect(() => {
     const t = setTimeout(() => setMounted(true), 50);
     return () => clearTimeout(t);
@@ -591,7 +626,7 @@ const UserJob = () => {
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-50 border border-red-200 text-red-600 text-xs font-semibold cursor-pointer transition-all duration-150 hover:bg-red-100"
                   style={{ animation: "fadeIn 0.2s ease" }}
                 >
-                  <X size={13} />{" "}
+                  <X size={13} />
                   <span className="hidden sm:inline">Clear filters</span>
                 </button>
               )}
@@ -610,18 +645,18 @@ const UserJob = () => {
                 />
                 <input
                   type="text"
-                  placeholder="Search by title, company, skill…"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search by title, department, location…"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
                   className="w-full pl-10 pr-9 py-2.5 sm:py-3 rounded-xl border border-gray-200 bg-white text-sm text-gray-900 font-normal transition-all duration-200"
                   style={{
                     fontFamily: "'DM Sans', sans-serif",
                     boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
                   }}
                 />
-                {search && (
+                {q && (
                   <button
-                    onClick={() => setSearch("")}
+                    onClick={() => setQ("")}
                     className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 bg-gray-100 border-none rounded-md flex items-center justify-center cursor-pointer hover:bg-gray-200 transition-colors"
                   >
                     <X size={12} color="#6B7280" />
@@ -739,7 +774,7 @@ const UserJob = () => {
             </div>
           )}
 
-          {/* Grid anchor */}
+          {/* Grid scroll anchor */}
           <div ref={gridRef} style={{ scrollMarginTop: 120 }} />
 
           {/* States */}

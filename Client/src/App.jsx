@@ -31,6 +31,8 @@ import {
   CompanyProfile,
   AppliedJobs,
   SavedJobs,
+  CompanyPage,
+  CompanyDetail,
 } from "./Pages/index.pages.js";
 import { InterviewSetup } from "./Components/index.js";
 import { useStreams } from "./Hooks/streamContext";
@@ -100,6 +102,8 @@ const App = () => {
                 <Route path="/terms" element={<Terms />} />
                 <Route path="/contact" element={<Contact />} />
                 <Route path="/verify-password" element={<VerifyPassword />} />
+                <Route path="/companies" element={<CompanyPage />} />
+                <Route path="/companies/:id" element={<CompanyDetail />} />
 
                 <Route
                   path="/login"

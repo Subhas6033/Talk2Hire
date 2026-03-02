@@ -8,6 +8,7 @@ import companyReducer from "../API/companyAuthApi";
 import jobReducer from "../API/jobApi";
 import dashboardReducer from "../API/companyDashboardApi";
 import companyInterviewReducer from "../API/companyInterviewApi";
+import applicationReducer from "../API/ApplicationApi";
 
 export const store = configureStore({
   reducer: {
@@ -19,6 +20,7 @@ export const store = configureStore({
     jobs: jobReducer,
     dashboard: dashboardReducer,
     companyInterviews: companyInterviewReducer,
+    applications: applicationReducer,
   },
 });
 

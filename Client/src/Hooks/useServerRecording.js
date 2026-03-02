@@ -1,6 +1,8 @@
 import { useRef, useState, useCallback, useEffect } from "react";
+import axios from "axios";
 
 const CHUNK_INTERVAL_MS = 20_000;
+const API_BASE = import.meta.env.VITE_BACKEND_URL;
 
 function pickMimeType() {
   const candidates = [
@@ -30,21 +32,18 @@ function createRecorderSession(interviewId, videoType) {
 
     sessionReadyPromise = (async () => {
       try {
-        const res = await fetch("/api/v1/video/start-recording", {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ interviewId, videoType }),
-        });
-        if (!res.ok) {
-          console.error(`❌ start-recording (${videoType}):`, await res.text());
-          sessionReadyPromise = null;
-          return false;
-        }
+        await axios.post(
+          `${API_BASE}/api/v1/video/start-recording`,
+          { interviewId, videoType },
+          { withCredentials: true },
+        );
         sessionStarted = true;
         return true;
       } catch (err) {
-        console.error(`❌ start-recording error (${videoType}):`, err.message);
+        console.error(
+          `❌ start-recording (${videoType}):`,
+          err.response?.data || err.message,
+        );
         sessionReadyPromise = null;
         return false;
       }
@@ -63,20 +62,13 @@ function createRecorderSession(interviewId, videoType) {
     form.append("chunkIndex", String(index));
     form.append("videoType", videoType);
     try {
-      const res = await fetch(`/api/v1/video/${interviewId}/chunk`, {
-        method: "POST",
-        credentials: "include",
-        body: form,
+      await axios.post(`${API_BASE}/api/v1/video/${interviewId}/chunk`, form, {
+        withCredentials: true,
       });
-      if (!res.ok)
-        console.error(
-          `❌ Chunk ${index} (${videoType}) failed:`,
-          await res.text(),
-        );
     } catch (err) {
       console.error(
-        `❌ Chunk ${index} (${videoType}) network error:`,
-        err.message,
+        `❌ Chunk ${index} (${videoType}) failed:`,
+        err.response?.data || err.message,
       );
     }
   }
@@ -240,14 +232,18 @@ const useServerRecording = (
 
     await Promise.allSettled(
       videoTypes.map((videoType) =>
-        fetch(`/api/v1/video/${interviewId}/end-recording`, {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ videoType }),
-        }).catch((err) =>
-          console.error(`❌ end-recording (${videoType}):`, err.message),
-        ),
+        axios
+          .post(
+            `${API_BASE}/api/v1/video/${interviewId}/end-recording`,
+            { videoType },
+            { withCredentials: true },
+          )
+          .catch((err) =>
+            console.error(
+              `❌ end-recording (${videoType}):`,
+              err.response?.data || err.message,
+            ),
+          ),
       ),
     );
 

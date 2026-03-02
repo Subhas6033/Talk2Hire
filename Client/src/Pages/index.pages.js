@@ -21,6 +21,8 @@ import UserJobDetail from "./UserJobDetails.jsx";
 import CompanyProfile from "./CompanyProfile.jsx";
 import AppliedJobs from "./AppliedJobs.jsx";
 import SavedJobs from "./SavedJobs.jsx";
+import CompanyPage from "./CompanyShowcase.jsx";
+import CompanyDetail from "./CompanyDetails.jsx";
 
 export {
   Home,
@@ -46,4 +48,6 @@ export {
   CompanyProfile,
   AppliedJobs,
   SavedJobs,
+  CompanyPage,
+  CompanyDetail,
 };

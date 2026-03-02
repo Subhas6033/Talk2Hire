@@ -61,7 +61,6 @@ const Nav = () => {
     navigate("/login");
   };
 
-  // ✅ Build profile links dynamically using the real user ID
   const PROFILE_LINKS = [
     {
       label: "My Profile",
@@ -82,7 +81,7 @@ const Nav = () => {
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.45, ease: "easeOut" }}
         className={clsx(
-          "nav-root sticky top-0 z-50 transition-all duration-300",
+          "nav-root sticky top-0 z-200 transition-all duration-300",
           scrolled
             ? "bg-white/95 backdrop-blur-xl shadow-(--nav-shadow-sm) border-b border-(--nav-border)"
             : "bg-white border-b border-(--nav-border)",
@@ -135,7 +134,7 @@ const Nav = () => {
                 <div className="w-px h-6 bg-(--nav-border)" />
 
                 {/* Profile dropdown */}
-                <div className="relative z-50">
+                <div className="relative z-201">
                   <button
                     onClick={() => setProfileOpen((p) => !p)}
                     className="flex items-center gap-2 px-3 py-1.5 rounded-xl hover:bg-(--nav-ink-08) transition-all"
@@ -178,7 +177,7 @@ const Nav = () => {
                           animate={{ opacity: 1, y: 0, scale: 1 }}
                           exit={{ opacity: 0, y: 6, scale: 0.96 }}
                           transition={{ duration: 0.15, ease: "easeOut" }}
-                          className="absolute right-0 top-full mt-2 w-56 bg-white border border-(--nav-border) rounded-2xl shadow-(--nav-shadow-lg) z-20 overflow-hidden"
+                          className="absolute right-0 top-full mt-2 w-56 bg-white border border-(--nav-border) rounded-2xl shadow-(--nav-shadow-lg) z-202 overflow-hidden"
                         >
                           {/* User info header */}
                           <div className="px-4 py-3 bg-(--nav-cream) border-b border-(--nav-border)">

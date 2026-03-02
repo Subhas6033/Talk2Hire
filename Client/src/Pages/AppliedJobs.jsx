@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { motion, AnimatePresence, useInView } from "motion/react";
+import { useApplications } from "../Hooks/useAppliedJobsHooks";
 
 // ─── Tiny SVG Icon primitive ─────────────────────────────────────────────────
 const Icon = ({
@@ -208,139 +209,78 @@ const STATUSES = [
 
 const statusOf = (key) => STATUSES.find((s) => s.key === key) || STATUSES[0];
 
-// ─── Sample data ──────────────────────────────────────────────────────────────
-const INITIAL_JOBS = [
-  {
-    id: 1,
-    company: "Stripe",
-    role: "Senior Frontend Engineer",
-    location: "San Francisco, CA",
-    type: "Full-time",
-    salary: "$160k–$200k",
-    status: "interviewing",
-    date: "Jan 28",
-    logo: "S",
-    logoColor: "bg-[#635BFF]",
-    starred: true,
-    notes: "3rd round — system design",
-    tags: ["React", "TypeScript"],
-  },
-  {
-    id: 2,
-    company: "Linear",
-    role: "Product Engineer",
-    location: "Remote",
-    type: "Full-time",
-    salary: "$140k–$170k",
-    status: "screening",
-    date: "Feb 01",
-    logo: "L",
-    logoColor: "bg-slate-900",
-    starred: true,
-    notes: "Async take-home received",
-    tags: ["React", "GraphQL"],
-  },
-  {
-    id: 3,
-    company: "Vercel",
-    role: "UI Engineer",
-    location: "Remote",
-    type: "Full-time",
-    salary: "$130k–$160k",
-    status: "applied",
-    date: "Feb 05",
-    logo: "V",
-    logoColor: "bg-black",
-    starred: false,
-    notes: "",
-    tags: ["Next.js", "CSS"],
-  },
-  {
-    id: 4,
-    company: "Figma",
-    role: "Frontend Software Engineer",
-    location: "New York, NY",
-    type: "Full-time",
-    salary: "$150k–$185k",
-    status: "offer",
-    date: "Jan 20",
-    logo: "F",
-    logoColor: "bg-[#F24E1E]",
-    starred: true,
-    notes: "Offer expires Feb 20",
-    tags: ["React", "WebGL"],
-  },
-  {
-    id: 5,
-    company: "Notion",
-    role: "Software Engineer, Web",
-    location: "San Francisco, CA",
-    type: "Full-time",
-    salary: "$140k–$165k",
-    status: "rejected",
-    date: "Jan 15",
-    logo: "N",
-    logoColor: "bg-slate-800",
-    starred: false,
-    notes: "Went with another candidate",
-    tags: ["React"],
-  },
-  {
-    id: 6,
-    company: "Loom",
-    role: "React Native Developer",
-    location: "Remote",
-    type: "Contract",
-    salary: "$95/hr",
-    status: "applied",
-    date: "Feb 06",
-    logo: "L",
-    logoColor: "bg-[#625DF5]",
-    starred: false,
-    notes: "",
-    tags: ["React Native"],
-  },
-  {
-    id: 7,
-    company: "Retool",
-    role: "Staff Frontend Engineer",
-    location: "San Francisco, CA",
-    type: "Full-time",
-    salary: "$170k–$210k",
-    status: "screening",
-    date: "Feb 02",
-    logo: "R",
-    logoColor: "bg-[#3D5AFE]",
-    starred: true,
-    notes: "Recruiter call Feb 10",
-    tags: ["React", "TypeScript", "SQL"],
-  },
-  {
-    id: 8,
-    company: "Craft.io",
-    role: "Frontend Developer",
-    location: "Remote",
-    type: "Full-time",
-    salary: "$100k–$130k",
-    status: "applied",
-    date: "Feb 07",
-    logo: "C",
-    logoColor: "bg-teal-600",
-    starred: false,
-    notes: "",
-    tags: ["Vue", "TypeScript"],
-  },
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const parseSkills = (skills) => {
+  if (Array.isArray(skills)) return skills;
+  if (typeof skills === "string" && skills.trim()) {
+    try {
+      return JSON.parse(skills);
+    } catch {
+      return skills
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+  }
+  return [];
+};
+
+const formatDate = (dateStr) => {
+  if (!dateStr) return "";
+  return new Date(dateStr).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+};
+
+// Deterministic logo color from company name
+const LOGO_COLORS = [
+  "bg-indigo-600",
+  "bg-teal-600",
+  "bg-rose-600",
+  "bg-amber-600",
+  "bg-blue-700",
+  "bg-slate-800",
+  "bg-violet-600",
+  "bg-emerald-700",
+  "bg-orange-600",
 ];
+const getLogoColor = (name = "") => {
+  if (!name) return LOGO_COLORS[0];
+  const code = [...name].reduce((acc, c) => acc + c.charCodeAt(0), 0);
+  return LOGO_COLORS[code % LOGO_COLORS.length];
+};
 
 // ─── Logo avatar ──────────────────────────────────────────────────────────────
-const CompanyLogo = ({ logo, logoColor, size = "w-11 h-11" }) => (
-  <div
-    className={`${size} ${logoColor} rounded-2xl flex items-center justify-center text-white font-black text-lg shrink-0 shadow-sm`}
-    style={{ fontFamily: "'Fraunces', serif" }}
-  >
-    {logo}
-  </div>
-);
+const CompanyLogo = ({ company, companyLogo, size = "w-11 h-11" }) => {
+  const [imgErr, setImgErr] = useState(false);
+  const letter = company ? company.trim()[0].toUpperCase() : "?";
+  const color = getLogoColor(company);
+
+  if (companyLogo && !imgErr) {
+    return (
+      <div
+        className={`${size} rounded-2xl overflow-hidden border border-slate-100 bg-white shrink-0 shadow-sm flex items-center justify-center`}
+      >
+        <img
+          src={companyLogo}
+          alt={company}
+          className="w-full h-full object-contain p-1"
+          onError={() => setImgErr(true)}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`${size} ${color} rounded-2xl flex items-center justify-center text-white font-black text-lg shrink-0 shadow-sm`}
+      style={{ fontFamily: "'Fraunces', serif" }}
+    >
+      {letter}
+    </div>
+  );
+};
 
 // ─── Status pill ──────────────────────────────────────────────────────────────
 const StatusPill = ({ statusKey }) => {
@@ -359,6 +299,7 @@ const StatusPill = ({ statusKey }) => {
 const JobCard = ({ job, index, onSelect, onStar, onDelete }) => {
   const ref = useRef(null);
   const inView = useInView(ref, { once: true, margin: "-40px" });
+  const tags = parseSkills(job.skills);
 
   return (
     <motion.div
@@ -374,13 +315,12 @@ const JobCard = ({ job, index, onSelect, onStar, onDelete }) => {
       onClick={() => onSelect(job)}
       className="bg-white rounded-2xl border border-slate-100 p-5 cursor-pointer group relative overflow-hidden transition-shadow"
     >
-      {/* Subtle left accent line */}
       <div
         className={`absolute left-0 top-4 bottom-4 w-0.5 rounded-full ${statusOf(job.status).dot}`}
       />
 
       <div className="flex items-start gap-4">
-        <CompanyLogo logo={job.logo} logoColor={job.logoColor} />
+        <CompanyLogo company={job.company} companyLogo={job.companyLogo} />
 
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
@@ -410,23 +350,29 @@ const JobCard = ({ job, index, onSelect, onStar, onDelete }) => {
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5 mt-2.5">
+            {job.location && (
+              <span className="flex items-center gap-1 text-xs text-slate-400">
+                <Ic.MapPin size={11} /> {job.location}
+              </span>
+            )}
+            {job.salary && (
+              <span className="flex items-center gap-1 text-xs text-slate-400">
+                <Ic.DollarSign size={11} /> {job.salary}
+              </span>
+            )}
             <span className="flex items-center gap-1 text-xs text-slate-400">
-              <Ic.MapPin size={11} /> {job.location}
-            </span>
-            <span className="flex items-center gap-1 text-xs text-slate-400">
-              <Ic.DollarSign size={11} /> {job.salary}
-            </span>
-            <span className="flex items-center gap-1 text-xs text-slate-400">
-              <Ic.Calendar size={11} /> {job.date}
+              <Ic.Calendar size={11} /> {formatDate(job.appliedAt)}
             </span>
           </div>
 
           <div className="flex items-center justify-between mt-3 gap-2">
             <div className="flex items-center gap-1.5 flex-wrap">
               <StatusPill statusKey={job.status} />
-              <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-xs font-medium">
-                {job.type}
-              </span>
+              {job.type && (
+                <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-xs font-medium">
+                  {job.type}
+                </span>
+              )}
             </div>
             {job.notes && (
               <p className="text-xs text-slate-400 italic truncate max-w-35">
@@ -435,9 +381,9 @@ const JobCard = ({ job, index, onSelect, onStar, onDelete }) => {
             )}
           </div>
 
-          {job.tags.length > 0 && (
+          {tags.length > 0 && (
             <div className="flex gap-1.5 mt-2.5 flex-wrap">
-              {job.tags.map((t) => (
+              {tags.map((t) => (
                 <span
                   key={t}
                   className="px-2 py-0.5 rounded-md bg-slate-50 border border-slate-200 text-slate-500 text-xs font-medium"
@@ -450,7 +396,6 @@ const JobCard = ({ job, index, onSelect, onStar, onDelete }) => {
         </div>
       </div>
 
-      {/* Delete button on hover */}
       <motion.button
         initial={{ opacity: 0 }}
         whileHover={{ opacity: 1 }}
@@ -506,6 +451,8 @@ const PipelineStep = ({ status, count, total, isActive, onClick }) => {
 // ─── Detail Modal ─────────────────────────────────────────────────────────────
 const DetailModal = ({ job, onClose, onStatusChange, onStar }) => {
   const s = statusOf(job.status);
+  const tags = parseSkills(job.skills);
+
   return (
     <motion.div
       className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-900/20 backdrop-blur-md"
@@ -527,8 +474,8 @@ const DetailModal = ({ job, onClose, onStatusChange, onStar }) => {
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-4">
               <CompanyLogo
-                logo={job.logo}
-                logoColor={job.logoColor}
+                company={job.company}
+                companyLogo={job.companyLogo}
                 size="w-14 h-14"
               />
               <div>
@@ -564,15 +511,17 @@ const DetailModal = ({ job, onClose, onStatusChange, onStar }) => {
               { Icon: Ic.MapPin, v: job.location },
               { Icon: Ic.Briefcase, v: job.type },
               { Icon: Ic.DollarSign, v: job.salary },
-              { Icon: Ic.Calendar, v: `Applied ${job.date}` },
-            ].map(({ Icon, v }, i) => (
-              <span
-                key={i}
-                className="flex items-center gap-1.5 text-xs font-medium text-slate-500 bg-white/70 px-2.5 py-1 rounded-full"
-              >
-                <Icon size={11} /> {v}
-              </span>
-            ))}
+              { Icon: Ic.Calendar, v: `Applied ${formatDate(job.appliedAt)}` },
+            ]
+              .filter(({ v }) => v)
+              .map(({ Icon, v }, i) => (
+                <span
+                  key={i}
+                  className="flex items-center gap-1.5 text-xs font-medium text-slate-500 bg-white/70 px-2.5 py-1 rounded-full"
+                >
+                  <Icon size={11} /> {v}
+                </span>
+              ))}
           </div>
         </div>
 
@@ -602,21 +551,23 @@ const DetailModal = ({ job, onClose, onStatusChange, onStar }) => {
           </div>
 
           {/* Tags */}
-          <div>
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">
-              Tech Stack
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {job.tags.map((t) => (
-                <span
-                  key={t}
-                  className="px-3 py-1 rounded-xl bg-slate-100 text-slate-600 text-xs font-semibold"
-                >
-                  {t}
-                </span>
-              ))}
+          {tags.length > 0 && (
+            <div>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">
+                Tech Stack
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {tags.map((t) => (
+                  <span
+                    key={t}
+                    className="px-3 py-1 rounded-xl bg-slate-100 text-slate-600 text-xs font-semibold"
+                  >
+                    {t}
+                  </span>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Notes */}
           {job.notes && (
@@ -647,235 +598,62 @@ const DetailModal = ({ job, onClose, onStatusChange, onStar }) => {
   );
 };
 
-// ─── Add Job Modal ────────────────────────────────────────────────────────────
-const AddJobModal = ({ onClose, onAdd }) => {
-  const [form, setForm] = useState({
-    company: "",
-    role: "",
-    location: "Remote",
-    salary: "",
-    type: "Full-time",
-    status: "applied",
-    tags: "",
-  });
-  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
-
-  const handleSubmit = () => {
-    if (!form.company || !form.role) return;
-    onAdd({
-      id: Date.now(),
-      ...form,
-      tags: form.tags
-        ? form.tags
-            .split(",")
-            .map((t) => t.trim())
-            .filter(Boolean)
-        : [],
-      date: new Date().toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-      }),
-      logo: form.company[0].toUpperCase(),
-      logoColor: [
-        "bg-indigo-600",
-        "bg-teal-600",
-        "bg-rose-600",
-        "bg-amber-600",
-        "bg-blue-700",
-        "bg-slate-800",
-      ][Math.floor(Math.random() * 6)],
-      starred: false,
-      notes: "",
-    });
-    onClose();
-  };
-
-  const inputCls =
-    "w-full px-4 py-2.5 rounded-xl border-2 border-slate-100 bg-slate-50 text-sm text-slate-800 font-medium placeholder-slate-300 focus:outline-none focus:border-indigo-300 focus:bg-white transition-colors";
-  const labelCls =
-    "block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1.5";
-
-  return (
-    <motion.div
-      className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-900/20 backdrop-blur-md"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      onClick={onClose}
-    >
-      <motion.div
-        className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden"
-        initial={{ opacity: 0, scale: 0.93, y: 28 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.93, y: 28 }}
-        transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="px-8 pt-7 pb-5 border-b border-slate-100 flex items-center justify-between">
-          <h2
-            className="text-xl font-black text-slate-900"
-            style={{ fontFamily: "'Fraunces', serif" }}
-          >
-            Track New Job
-          </h2>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-xl bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
-          >
-            <Ic.X size={16} />
-          </button>
+// ─── Skeleton ─────────────────────────────────────────────────────────────────
+const CardSkeleton = ({ i }) => (
+  <div className="bg-white rounded-2xl border border-slate-100 p-5 animate-pulse">
+    <div className="flex gap-4">
+      <div className="w-11 h-11 rounded-2xl bg-slate-100 shrink-0" />
+      <div className="flex-1 space-y-2">
+        <div className="h-3.5 bg-slate-100 rounded w-3/5" />
+        <div className="h-2.5 bg-slate-50 rounded w-2/5" />
+        <div className="h-2.5 bg-slate-50 rounded w-4/5 mt-3" />
+        <div className="flex gap-2 mt-2">
+          <div className="h-5 w-20 bg-slate-100 rounded-full" />
+          <div className="h-5 w-16 bg-slate-100 rounded-full" />
         </div>
-
-        <div className="px-8 py-6 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className={labelCls}>Company *</label>
-              <input
-                className={inputCls}
-                placeholder="Stripe"
-                value={form.company}
-                onChange={(e) => set("company", e.target.value)}
-              />
-            </div>
-            <div>
-              <label className={labelCls}>Role *</label>
-              <input
-                className={inputCls}
-                placeholder="Senior Engineer"
-                value={form.role}
-                onChange={(e) => set("role", e.target.value)}
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className={labelCls}>Location</label>
-              <input
-                className={inputCls}
-                placeholder="Remote"
-                value={form.location}
-                onChange={(e) => set("location", e.target.value)}
-              />
-            </div>
-            <div>
-              <label className={labelCls}>Salary</label>
-              <input
-                className={inputCls}
-                placeholder="$120k–$150k"
-                value={form.salary}
-                onChange={(e) => set("salary", e.target.value)}
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className={labelCls}>Type</label>
-              <select
-                className={inputCls}
-                value={form.type}
-                onChange={(e) => set("type", e.target.value)}
-              >
-                {["Full-time", "Part-time", "Contract", "Freelance"].map(
-                  (t) => (
-                    <option key={t}>{t}</option>
-                  ),
-                )}
-              </select>
-            </div>
-            <div>
-              <label className={labelCls}>Status</label>
-              <select
-                className={inputCls}
-                value={form.status}
-                onChange={(e) => set("status", e.target.value)}
-              >
-                {STATUSES.map((s) => (
-                  <option key={s.key} value={s.key}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div>
-            <label className={labelCls}>
-              Tech Tags{" "}
-              <span className="normal-case font-normal">(comma separated)</span>
-            </label>
-            <input
-              className={inputCls}
-              placeholder="React, TypeScript, Node.js"
-              value={form.tags}
-              onChange={(e) => set("tags", e.target.value)}
-            />
-          </div>
-
-          <div className="flex gap-3 pt-2">
-            <button
-              onClick={handleSubmit}
-              className="flex-1 py-3 rounded-2xl bg-slate-900 text-white text-sm font-bold hover:bg-slate-800 transition-colors"
-            >
-              Add Job
-            </button>
-            <button
-              onClick={onClose}
-              className="px-5 py-3 rounded-2xl bg-slate-100 text-slate-500 text-sm font-bold hover:bg-slate-200 transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      </motion.div>
-    </motion.div>
-  );
-};
+      </div>
+    </div>
+  </div>
+);
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 const AppliedJobs = () => {
-  const [jobs, setJobs] = useState(INITIAL_JOBS);
-  const [selectedJob, setSelectedJob] = useState(null);
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [activeFilter, setActiveFilter] = useState("all");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [sortBy, setSortBy] = useState("date");
+  const {
+    applications,
+    allApplications,
+    counts,
+    total,
+    isFetching,
+    error,
+    searchQuery,
+    setSearchQuery,
+    activeFilter,
+    setActiveFilter,
+    sortBy,
+    setSortBy,
+    updateStatus,
+    toggleStar,
+    deleteApplication,
+  } = useApplications();
 
-  const updateStatus = (id, status) => {
-    setJobs((j) => j.map((job) => (job.id === id ? { ...job, status } : job)));
+  const [selectedJob, setSelectedJob] = useState(null);
+
+  // Keep modal in sync when application updates (status/star changes optimistically)
+  const handleUpdateStatus = (id, status) => {
+    updateStatus(id, status);
     if (selectedJob?.id === id) setSelectedJob((j) => ({ ...j, status }));
   };
-  const toggleStar = (id) => {
-    setJobs((j) =>
-      j.map((job) => (job.id === id ? { ...job, starred: !job.starred } : job)),
-    );
+
+  const handleToggleStar = (id) => {
+    toggleStar(id);
     if (selectedJob?.id === id)
       setSelectedJob((j) => ({ ...j, starred: !j.starred }));
   };
-  const deleteJob = (id) => {
-    setJobs((j) => j.filter((job) => job.id !== id));
+
+  const handleDelete = (id) => {
+    deleteApplication(id);
     if (selectedJob?.id === id) setSelectedJob(null);
   };
-  const addJob = (job) => setJobs((j) => [job, ...j]);
-
-  const counts = STATUSES.reduce((acc, s) => {
-    acc[s.key] = jobs.filter((j) => j.status === s.key).length;
-    return acc;
-  }, {});
-
-  const filtered = jobs
-    .filter((j) => activeFilter === "all" || j.status === activeFilter)
-    .filter(
-      (j) =>
-        !searchQuery ||
-        [j.company, j.role, j.location, ...j.tags].some((v) =>
-          v.toLowerCase().includes(searchQuery.toLowerCase()),
-        ),
-    )
-    .sort((a, b) => {
-      if (sortBy === "starred")
-        return (b.starred ? 1 : 0) - (a.starred ? 1 : 0);
-      if (sortBy === "company") return a.company.localeCompare(b.company);
-      return 0; // date = insertion order
-    });
 
   return (
     <>
@@ -889,7 +667,7 @@ const AppliedJobs = () => {
         className="min-h-screen bg-[#F7F6F3]"
         style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
       >
-        {/* ── Sidebar-style top header ── */}
+        {/* ── Header ── */}
         <div className="bg-white border-b border-slate-100">
           <div className="max-w-7xl mx-auto px-6 py-5">
             <motion.div
@@ -910,7 +688,9 @@ const AppliedJobs = () => {
                     Job Tracker
                   </h1>
                   <p className="text-xs text-slate-400 font-medium">
-                    {jobs.length} applications tracked
+                    {isFetching
+                      ? "Loading…"
+                      : `${total} application${total !== 1 ? "s" : ""} tracked`}
                   </p>
                 </div>
               </div>
@@ -936,14 +716,6 @@ const AppliedJobs = () => {
                   <option value="starred">Starred</option>
                   <option value="company">A–Z</option>
                 </select>
-                <motion.button
-                  whileHover={{ scale: 1.04 }}
-                  whileTap={{ scale: 0.96 }}
-                  onClick={() => setShowAddModal(true)}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-bold shadow-md hover:bg-slate-800 transition-colors"
-                >
-                  <Ic.Plus size={15} /> Track Job
-                </motion.button>
               </div>
             </motion.div>
           </div>
@@ -977,7 +749,7 @@ const AppliedJobs = () => {
                   className="text-2xl font-black"
                   style={{ fontFamily: "'Fraunces', serif" }}
                 >
-                  {jobs.length}
+                  {total}
                 </span>
                 <span className="text-xs font-bold">All</span>
               </motion.button>
@@ -986,7 +758,7 @@ const AppliedJobs = () => {
                   key={s.key}
                   status={s}
                   count={counts[s.key] || 0}
-                  total={jobs.length}
+                  total={total}
                   isActive={activeFilter === s.key}
                   onClick={() =>
                     setActiveFilter((f) => (f === s.key ? "all" : s.key))
@@ -1024,8 +796,21 @@ const AppliedJobs = () => {
             )}
           </AnimatePresence>
 
+          {/* ── Error banner ── */}
+          {error && (
+            <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 text-sm font-medium">
+              <Ic.AlertCircle size={15} /> {error}
+            </div>
+          )}
+
           {/* ── Job grid ── */}
-          {filtered.length === 0 ? (
+          {isFetching ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {[...Array(6)].map((_, i) => (
+                <CardSkeleton key={i} i={i} />
+              ))}
+            </div>
+          ) : applications.length === 0 ? (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -1038,22 +823,24 @@ const AppliedJobs = () => {
                 className="text-lg font-black text-slate-400"
                 style={{ fontFamily: "'Fraunces', serif" }}
               >
-                No jobs found
+                {total === 0 ? "No applications yet" : "No jobs found"}
               </h3>
               <p className="text-sm text-slate-300 mt-1">
-                Try adjusting your filters or add a new application.
+                {total === 0
+                  ? "Apply to jobs to start tracking them here."
+                  : "Try adjusting your filters."}
               </p>
             </motion.div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {filtered.map((job, i) => (
+              {applications.map((job, i) => (
                 <JobCard
                   key={job.id}
                   job={job}
                   index={i}
                   onSelect={setSelectedJob}
-                  onStar={toggleStar}
-                  onDelete={deleteJob}
+                  onStar={handleToggleStar}
+                  onDelete={handleDelete}
                 />
               ))}
             </div>
@@ -1070,7 +857,7 @@ const AppliedJobs = () => {
               {
                 Icon: Ic.Award,
                 label: "Offer rate",
-                value: `${jobs.length ? Math.round(((counts.offer || 0) / jobs.length) * 100) : 0}%`,
+                value: `${total ? Math.round(((counts.offer || 0) / total) * 100) : 0}%`,
                 color: "text-emerald-500",
               },
               {
@@ -1082,7 +869,7 @@ const AppliedJobs = () => {
               {
                 Icon: Ic.Star,
                 label: "Starred",
-                value: `${jobs.filter((j) => j.starred).length}`,
+                value: `${allApplications.filter((j) => j.starred).length}`,
                 color: "text-amber-400",
               },
               {
@@ -1116,14 +903,9 @@ const AppliedJobs = () => {
           <DetailModal
             job={selectedJob}
             onClose={() => setSelectedJob(null)}
-            onStatusChange={updateStatus}
-            onStar={toggleStar}
+            onStatusChange={handleUpdateStatus}
+            onStar={handleToggleStar}
           />
-        )}
-      </AnimatePresence>
-      <AnimatePresence>
-        {showAddModal && (
-          <AddJobModal onClose={() => setShowAddModal(false)} onAdd={addJob} />
         )}
       </AnimatePresence>
     </>

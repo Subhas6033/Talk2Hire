@@ -36,14 +36,23 @@ export const fetchPublicJobs = createAsyncThunk(
   async (filters = {}, { rejectWithValue }) => {
     try {
       const params = {};
-      if (filters.search) params.search = filters.search;
-      if (filters.department) params.department = filters.department;
-      if (filters.location) params.location = filters.location;
-      if (filters.type) params.type = filters.type;
-      if (filters.experience) params.experience = filters.experience;
+      if (filters.q?.trim()) params.q = filters.q.trim();
+      if (filters.location?.trim()) params.location = filters.location.trim();
+      if (filters.type?.trim()) params.type = filters.type.trim();
+      if (filters.department?.trim())
+        params.department = filters.department.trim();
+      if (filters.experience?.trim())
+        params.experience = filters.experience.trim(); // ← ADD
+      if (filters.page) params.page = filters.page;
+      if (filters.limit) params.limit = filters.limit;
 
-      const { data } = await api.get("/public-jobs", { params });
-      return data.data; // { jobs, total }
+      const { data } = await api.get("/search", { params });
+
+      return {
+        jobs: data.data.jobs,
+        total: data.data.pagination.total,
+        pagination: data.data.pagination,
+      };
     } catch (err) {
       return rejectWithValue(
         err.response?.data?.message || "Failed to fetch public jobs",
@@ -126,25 +135,33 @@ export const toggleJobStatus = createAsyncThunk(
 
 const initialState = {
   jobs: [],
-  publicJobs: [], // ← ADDED
-  publicTotal: 0, // ← ADDED
+
+  // Public job listing
+  publicJobs: [],
+  publicTotal: 0,
+  publicPagination: {
+    total: 0,
+    page: 1,
+    limit: 9,
+    totalPages: 0,
+    hasNext: false,
+    hasPrev: false,
+  },
+
   selectedJob: null,
   counts: { all: 0, active: 0, closed: 0, draft: 0 },
   total: 0,
 
-  // Granular loading states per action
   loading: {
     fetch: false,
-    fetchPublic: false, // ← ADDED
+    fetchPublic: false,
     create: false,
     update: false,
     delete: false,
     toggle: false,
   },
 
-  // Track which job ID is being mutated (for per-card UI feedback)
   mutatingId: null,
-
   error: null,
   successMessage: null,
 };
@@ -164,152 +181,142 @@ const jobSlice = createSlice({
     clearSelectedJob: (state) => {
       state.selectedJob = null;
     },
-    // Optimistic filter/search on cached jobs (UI-only, no API call)
-    setFilters: (state, action) => {
-      state.activeFilters = action.payload;
-    },
   },
   extraReducers: (builder) => {
-    // ── Fetch All ──────────────────────────────────────────────
+    // ── Fetch All (admin) ──────────────────────────────────
     builder
-      .addCase(fetchJobs.pending, (state) => {
-        state.loading.fetch = true;
-        state.error = null;
+      .addCase(fetchJobs.pending, (s) => {
+        s.loading.fetch = true;
+        s.error = null;
       })
-      .addCase(fetchJobs.fulfilled, (state, { payload }) => {
-        state.loading.fetch = false;
-        state.jobs = payload.jobs;
-        state.counts = payload.counts;
-        state.total = payload.total;
+      .addCase(fetchJobs.fulfilled, (s, { payload }) => {
+        s.loading.fetch = false;
+        s.jobs = payload.jobs;
+        s.counts = payload.counts;
+        s.total = payload.total;
       })
-      .addCase(fetchJobs.rejected, (state, { payload }) => {
-        state.loading.fetch = false;
-        state.error = payload;
+      .addCase(fetchJobs.rejected, (s, { payload }) => {
+        s.loading.fetch = false;
+        s.error = payload;
       });
 
-    // ── Fetch Public Jobs ──────────────────────────────────────
+    // ── Fetch Public Jobs ──────────────────────────────────
+    // Each call replaces the list (server handles pagination).
     builder
-      .addCase(fetchPublicJobs.pending, (state) => {
-        state.loading.fetchPublic = true;
-        state.error = null;
+      .addCase(fetchPublicJobs.pending, (s) => {
+        s.loading.fetchPublic = true;
+        s.error = null;
       })
-      .addCase(fetchPublicJobs.fulfilled, (state, { payload }) => {
-        state.loading.fetchPublic = false;
-        state.publicJobs = payload.jobs;
-        state.publicTotal = payload.total;
+      .addCase(fetchPublicJobs.fulfilled, (s, { payload }) => {
+        s.loading.fetchPublic = false;
+        s.publicJobs = payload.jobs;
+        s.publicTotal = payload.total;
+        s.publicPagination = payload.pagination;
       })
-      .addCase(fetchPublicJobs.rejected, (state, { payload }) => {
-        state.loading.fetchPublic = false;
-        state.error = payload;
+      .addCase(fetchPublicJobs.rejected, (s, { payload }) => {
+        s.loading.fetchPublic = false;
+        s.error = payload;
       });
 
-    // ── Fetch By ID ────────────────────────────────────────────
+    // ── Fetch By ID ────────────────────────────────────────
     builder
-      .addCase(fetchJobById.pending, (state) => {
-        state.loading.fetch = true;
-        state.error = null;
+      .addCase(fetchJobById.pending, (s) => {
+        s.loading.fetch = true;
+        s.error = null;
       })
-      .addCase(fetchJobById.fulfilled, (state, { payload }) => {
-        state.loading.fetch = false;
-        state.selectedJob = payload;
+      .addCase(fetchJobById.fulfilled, (s, { payload }) => {
+        s.loading.fetch = false;
+        s.selectedJob = payload;
       })
-      .addCase(fetchJobById.rejected, (state, { payload }) => {
-        state.loading.fetch = false;
-        state.error = payload;
+      .addCase(fetchJobById.rejected, (s, { payload }) => {
+        s.loading.fetch = false;
+        s.error = payload;
       });
 
-    // ── Create ─────────────────────────────────────────────────
+    // ── Create ─────────────────────────────────────────────
     builder
-      .addCase(createJob.pending, (state) => {
-        state.loading.create = true;
-        state.error = null;
-        state.successMessage = null;
+      .addCase(createJob.pending, (s) => {
+        s.loading.create = true;
+        s.error = null;
+        s.successMessage = null;
       })
-      .addCase(createJob.fulfilled, (state, { payload }) => {
-        state.loading.create = false;
-        state.jobs.unshift(payload);
-        state.counts.all += 1;
-        state.counts[payload.status] = (state.counts[payload.status] || 0) + 1;
-        state.total += 1;
-        state.successMessage = "Job posted successfully";
+      .addCase(createJob.fulfilled, (s, { payload }) => {
+        s.loading.create = false;
+        s.jobs.unshift(payload);
+        s.counts.all += 1;
+        s.counts[payload.status] = (s.counts[payload.status] || 0) + 1;
+        s.total += 1;
+        s.successMessage = "Job posted successfully";
       })
-      .addCase(createJob.rejected, (state, { payload }) => {
-        state.loading.create = false;
-        state.error = payload;
+      .addCase(createJob.rejected, (s, { payload }) => {
+        s.loading.create = false;
+        s.error = payload;
       });
 
-    // ── Update ─────────────────────────────────────────────────
+    // ── Update ─────────────────────────────────────────────
     builder
-      .addCase(updateJob.pending, (state, { meta }) => {
-        state.loading.update = true;
-        state.mutatingId = meta.arg.id;
-        state.error = null;
-        state.successMessage = null;
+      .addCase(updateJob.pending, (s, { meta }) => {
+        s.loading.update = true;
+        s.mutatingId = meta.arg.id;
+        s.error = null;
       })
-      .addCase(updateJob.fulfilled, (state, { payload }) => {
-        state.loading.update = false;
-        state.mutatingId = null;
-        state.jobs = state.jobs.map((j) => (j.id === payload.id ? payload : j));
-        if (state.selectedJob?.id === payload.id) state.selectedJob = payload;
-        state.successMessage = "Job updated successfully";
+      .addCase(updateJob.fulfilled, (s, { payload }) => {
+        s.loading.update = false;
+        s.mutatingId = null;
+        s.jobs = s.jobs.map((j) => (j.id === payload.id ? payload : j));
+        if (s.selectedJob?.id === payload.id) s.selectedJob = payload;
+        s.successMessage = "Job updated successfully";
       })
-      .addCase(updateJob.rejected, (state, { payload }) => {
-        state.loading.update = false;
-        state.mutatingId = null;
-        state.error = payload;
+      .addCase(updateJob.rejected, (s, { payload }) => {
+        s.loading.update = false;
+        s.mutatingId = null;
+        s.error = payload;
       });
 
-    // ── Delete ─────────────────────────────────────────────────
+    // ── Delete ─────────────────────────────────────────────
     builder
-      .addCase(deleteJob.pending, (state, { meta }) => {
-        state.loading.delete = true;
-        state.mutatingId = meta.arg;
-        state.error = null;
+      .addCase(deleteJob.pending, (s, { meta }) => {
+        s.loading.delete = true;
+        s.mutatingId = meta.arg;
       })
-      .addCase(deleteJob.fulfilled, (state, { payload: id }) => {
-        state.loading.delete = false;
-        state.mutatingId = null;
-        const deleted = state.jobs.find((j) => j.id === id);
+      .addCase(deleteJob.fulfilled, (s, { payload: id }) => {
+        s.loading.delete = false;
+        s.mutatingId = null;
+        const deleted = s.jobs.find((j) => j.id === id);
         if (deleted) {
-          state.counts.all = Math.max(0, state.counts.all - 1);
-          state.counts[deleted.status] = Math.max(
-            0,
-            state.counts[deleted.status] - 1,
-          );
-          state.total = Math.max(0, state.total - 1);
+          s.counts.all = Math.max(0, s.counts.all - 1);
+          s.counts[deleted.status] = Math.max(0, s.counts[deleted.status] - 1);
+          s.total = Math.max(0, s.total - 1);
         }
-        state.jobs = state.jobs.filter((j) => j.id !== id);
-        state.successMessage = "Job deleted successfully";
+        s.jobs = s.jobs.filter((j) => j.id !== id);
+        s.successMessage = "Job deleted successfully";
       })
-      .addCase(deleteJob.rejected, (state, { payload }) => {
-        state.loading.delete = false;
-        state.mutatingId = null;
-        state.error = payload;
+      .addCase(deleteJob.rejected, (s, { payload }) => {
+        s.loading.delete = false;
+        s.mutatingId = null;
+        s.error = payload;
       });
 
-    // ── Toggle Status ──────────────────────────────────────────
+    // ── Toggle Status ──────────────────────────────────────
     builder
-      .addCase(toggleJobStatus.pending, (state, { meta }) => {
-        state.loading.toggle = true;
-        state.mutatingId = meta.arg;
-        state.error = null;
+      .addCase(toggleJobStatus.pending, (s, { meta }) => {
+        s.loading.toggle = true;
+        s.mutatingId = meta.arg;
       })
-      .addCase(toggleJobStatus.fulfilled, (state, { payload }) => {
-        state.loading.toggle = false;
-        state.mutatingId = null;
-        // Update counts
-        const old = state.jobs.find((j) => j.id === payload.id);
+      .addCase(toggleJobStatus.fulfilled, (s, { payload }) => {
+        s.loading.toggle = false;
+        s.mutatingId = null;
+        const old = s.jobs.find((j) => j.id === payload.id);
         if (old && old.status !== payload.status) {
-          state.counts[old.status] = Math.max(0, state.counts[old.status] - 1);
-          state.counts[payload.status] =
-            (state.counts[payload.status] || 0) + 1;
+          s.counts[old.status] = Math.max(0, s.counts[old.status] - 1);
+          s.counts[payload.status] = (s.counts[payload.status] || 0) + 1;
         }
-        state.jobs = state.jobs.map((j) => (j.id === payload.id ? payload : j));
+        s.jobs = s.jobs.map((j) => (j.id === payload.id ? payload : j));
       })
-      .addCase(toggleJobStatus.rejected, (state, { payload }) => {
-        state.loading.toggle = false;
-        state.mutatingId = null;
-        state.error = payload;
+      .addCase(toggleJobStatus.rejected, (s, { payload }) => {
+        s.loading.toggle = false;
+        s.mutatingId = null;
+        s.error = payload;
       });
   },
 });
