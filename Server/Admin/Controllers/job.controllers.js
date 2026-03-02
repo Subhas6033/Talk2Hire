@@ -1,5 +1,6 @@
 const Job = require("../models/job.models.js");
 const { APIERR, APIRES, asyncHandler } = require("../../Utils/index.utils.js");
+const { pool } = require("../../Config/database.config.js");
 
 const createJob = asyncHandler(async (req, res) => {
   const {
@@ -222,6 +223,148 @@ const getPublicJobById = asyncHandler(async (req, res) => {
   return res.status(200).json(new APIRES(200, job, "Job fetched successfully"));
 });
 
+const searchJobs = async (req, res) => {
+  try {
+    const {
+      q = "",
+      location = "",
+      type = "",
+      department = "",
+      experience = "",
+      page = 1,
+      limit = 9,
+    } = req.query;
+
+    const pageNum = Math.max(1, parseInt(page, 10));
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit, 10)));
+    const offset = (pageNum - 1) * limitNum;
+
+    const conditions = ["j.status = 'active'"];
+    const params = [];
+
+    if (q.trim()) {
+      conditions.push(
+        `(j.title LIKE ? OR j.department LIKE ? OR j.location LIKE ? OR j.description LIKE ?)`,
+      );
+      const like = `%${q.trim()}%`;
+      params.push(like, like, like, like);
+    }
+    if (location.trim()) {
+      conditions.push(`j.location LIKE ?`);
+      params.push(`%${location.trim()}%`);
+    }
+    if (type.trim()) {
+      conditions.push(`j.type = ?`);
+      params.push(type.trim());
+    }
+    if (department.trim()) {
+      conditions.push(`j.department = ?`);
+      params.push(department.trim());
+    }
+    if (experience.trim()) {
+      conditions.push(`j.experience = ?`);
+      params.push(experience.trim());
+    }
+
+    const whereSQL = `WHERE ${conditions.join(" AND ")}`;
+
+    const dataSQL = `
+      SELECT
+        j.id,
+        j.company_id,
+        j.title,
+        j.department,
+        j.location,
+        j.type,
+        j.experience,
+        j.salary,
+        j.description,
+        j.skills,
+        j.status,
+        j.applicants,
+        j.posted        AS posted,
+        c.companyName             AS companyName,
+        c.logo             AS companyLogo
+      FROM jobs j
+      LEFT JOIN company_details c ON c.id = j.company_id
+      ${whereSQL}
+      ORDER BY j.posted DESC
+      LIMIT ? OFFSET ?
+    `;
+
+    const countSQL = `
+      SELECT COUNT(*) AS total
+      FROM jobs j
+      ${whereSQL}
+    `;
+
+    const [[jobs], [[{ total }]]] = await Promise.all([
+      pool.query(dataSQL, [...params, limitNum, offset]),
+      pool.query(countSQL, params),
+    ]);
+
+    const totalPages = Math.ceil(total / limitNum);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        jobs,
+        pagination: {
+          total,
+          page: pageNum,
+          limit: limitNum,
+          totalPages,
+          hasNext: pageNum < totalPages,
+          hasPrev: pageNum > 1,
+        },
+        filters: { q, location, type, department, experience },
+      },
+    });
+  } catch (err) {
+    console.error("[searchJobs]", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch jobs.",
+      ...(process.env.NODE_ENV === "development" && { error: err.message }),
+    });
+  }
+};
+
+const getJob = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [[job]] = await pool.query(
+      `SELECT
+        j.id,
+        j.company_id,
+        j.title,
+        j.department,
+        j.location,
+        j.type
+       FROM jobs j
+       WHERE j.id = ?
+       LIMIT 1`,
+      [id],
+    );
+
+    if (!job) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Job not found." });
+    }
+
+    return res.status(200).json({ success: true, data: job });
+  } catch (err) {
+    console.error("[getJobById]", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch job.",
+      ...(process.env.NODE_ENV === "development" && { error: err.message }),
+    });
+  }
+};
+
 module.exports = {
   createJob,
   getAllJobs,
@@ -233,4 +376,6 @@ module.exports = {
   deleteJob,
   getPublicJobs,
   getPublicJobById,
+  getJob,
+  searchJobs,
 };

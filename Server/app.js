@@ -15,6 +15,7 @@ const companyDashboardRoutes = require("./Admin/routes/dashboard.routes.js");
 const companyInterviewRoutes = require("./Admin/routes/interview.routes.js");
 const interviewVideoUpload = require("./Routes/interviewRecording.routes.js");
 const violationsRoutes = require("./Routes/violation.routes.js");
+const applicationRoutes = require("./Admin/routes/application.routes.js");
 
 dotenv.config();
 
@@ -111,6 +112,7 @@ app.use("/api/v1/result", resultRouter);
 app.use("/api/v1/interview", videoUploadRoutes);
 app.use("/api/v1/hiring", hiringRoutes);
 app.use("/api/v1/video", interviewVideoUpload);
+app.use("/api/v1/applications", applicationRoutes);
 
 // Company Routes
 app.use("/api/v1/company/auth", companyAuthRoutes);

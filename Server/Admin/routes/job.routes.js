@@ -11,34 +11,36 @@ const {
   deleteJob,
   getPublicJobs,
   getPublicJobById,
+  searchJobs,
+  getJob,
 } = require("../Controllers/job.controllers.js");
 const {
   companyAuthMiddleware,
   authMiddleware,
 } = require("../../Middlewares/auth.middlewares.js");
 
-router.get("/public-jobs", getPublicJobs).get("/public/:id", getPublicJobById);
+router.get("/search", searchJobs);
+router.get("/public-jobs", getPublicJobs);
+router.get("/public/:id", getPublicJobById);
 
-router
-  .get("/counts", authMiddleware, companyAuthMiddleware, getJobCounts)
+router.get("/counts", authMiddleware, companyAuthMiddleware, getJobCounts);
+router.post("/", authMiddleware, companyAuthMiddleware, createJob);
+router.get("/", authMiddleware, companyAuthMiddleware, getAllJobs);
+router.put("/:id", authMiddleware, companyAuthMiddleware, updateJob);
+router.delete("/:id", authMiddleware, companyAuthMiddleware, deleteJob);
+router.patch(
+  "/:id/toggle-status",
+  authMiddleware,
+  companyAuthMiddleware,
+  toggleJobStatus,
+);
+router.patch(
+  "/:id/applicants",
+  authMiddleware,
+  companyAuthMiddleware,
+  incrementApplicants,
+);
 
-  .post("/", authMiddleware, companyAuthMiddleware, createJob)
-  .get("/", authMiddleware, companyAuthMiddleware, getAllJobs)
-  .get("/:id", authMiddleware, companyAuthMiddleware, getJobById)
-  .put("/:id", authMiddleware, companyAuthMiddleware, updateJob)
-  .delete("/:id", authMiddleware, companyAuthMiddleware, deleteJob)
-
-  .patch(
-    "/:id/toggle-status",
-    authMiddleware,
-    companyAuthMiddleware,
-    toggleJobStatus,
-  )
-  .patch(
-    "/:id/applicants",
-    authMiddleware,
-    companyAuthMiddleware,
-    incrementApplicants,
-  );
+router.get("/:id", authMiddleware, companyAuthMiddleware, getJobById);
 
 module.exports = router;

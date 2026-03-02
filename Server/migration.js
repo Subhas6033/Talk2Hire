@@ -32,162 +32,54 @@ const MIGRATIONS = [
      Populated by Evaluation.saveQuestionEvaluation() inside evaluation.service.js
      ───────────────────────────────────────────────────────────────────────── */
   {
-    table: "question_evaluations",
+    table: "applications",
     sql: `
-      CREATE TABLE IF NOT EXISTS question_evaluations (
-        id            BIGINT UNSIGNED  AUTO_INCREMENT PRIMARY KEY,
+      CREATE TABLE IF NOT EXISTS applications (
+        id          BIGINT UNSIGNED  AUTO_INCREMENT PRIMARY KEY,
 
-        interview_id  BIGINT UNSIGNED  NOT NULL
-                        COMMENT 'FK → interviews.id',
-        question_id   BIGINT UNSIGNED  NOT NULL
-                        COMMENT 'FK → interview_questions.id',
+        user_id     BIGINT UNSIGNED  NOT NULL
+                      COMMENT 'FK → users.id',
+        job_id      BIGINT UNSIGNED  NOT NULL
+                      COMMENT 'FK → jobs.id',
 
-        -- AI scores (all 0-100)
-        score         TINYINT UNSIGNED NOT NULL DEFAULT 0
-                        COMMENT 'Overall answer score',
-        correctness   TINYINT UNSIGNED NOT NULL DEFAULT 0,
-        depth         TINYINT UNSIGNED NOT NULL DEFAULT 0,
-        clarity       TINYINT UNSIGNED NOT NULL DEFAULT 0,
-        confidence    TINYINT UNSIGNED NOT NULL DEFAULT 0,
+        status      ENUM(
+                      'applied',
+                      'screening',
+                      'interviewing',
+                      'offer',
+                      'rejected'
+                    ) NOT NULL DEFAULT 'applied',
 
-        -- Classification
-        quality         VARCHAR(20) NULL  COMMENT 'strong | average | weak | irrelevant',
-        detected_level  VARCHAR(20) NULL  COMMENT 'BEGINNER | INTERMEDIATE | ADVANCED',
+        starred     TINYINT(1)       NOT NULL DEFAULT 0
+                      COMMENT '1 = starred by candidate',
 
-        -- Narrative
-        feedback      TEXT         NULL,
-        strengths     JSON         NULL  COMMENT 'Array of strength strings',
-        weaknesses    JSON         NULL  COMMENT 'Array of weakness strings',
+        notes       TEXT             NULL
+                      COMMENT 'Candidate personal notes about this application',
 
-        -- Source tracing
-        eval_source   VARCHAR(20)  NOT NULL DEFAULT 'ai'
-                        COMMENT 'ai | pre_validation | fallback',
+        created_at  DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at  DATETIME         NULL     ON UPDATE CURRENT_TIMESTAMP,
 
-        created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at    DATETIME     NULL     ON UPDATE CURRENT_TIMESTAMP,
-
-        UNIQUE KEY uq_question (interview_id, question_id),
-        INDEX idx_interview (interview_id),
-        INDEX idx_question  (question_id),
-        INDEX idx_score     (score)
+        UNIQUE KEY uq_user_job (user_id, job_id),
+        INDEX idx_user   (user_id),
+        INDEX idx_job    (job_id),
+        INDEX idx_status (status)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-        COMMENT='Per-question AI evaluation scores';
+        COMMENT='Candidate job applications with pipeline status tracking';
     `,
   },
 
-  /* ── 2. skill_evaluations ───────────────────────────────────────────────────
-     One row per technology/skill within an interview.
-     Populated by Evaluation.saveSkillEvaluation() inside evaluation.service.js
+  /* ── 0b. applications — verify FKs exist (informational only) ─────────────
+     MySQL will enforce FKs only if both parent tables exist.
+     If you want hard FK constraints, run this after table creation.
      ───────────────────────────────────────────────────────────────────────── */
   {
-    table: "skill_evaluations",
+    table: "applications (foreign keys)",
     sql: `
-      CREATE TABLE IF NOT EXISTS skill_evaluations (
-        id            BIGINT UNSIGNED  AUTO_INCREMENT PRIMARY KEY,
-
-        interview_id  BIGINT UNSIGNED  NOT NULL
-                        COMMENT 'FK → interviews.id',
-        technology    VARCHAR(100)     NOT NULL
-                        COMMENT 'e.g. React, Node.js, SQL',
-
-        average_score TINYINT UNSIGNED NOT NULL DEFAULT 0
-                        COMMENT '0-100 average across questions for this tech',
-        level         VARCHAR(20)      NOT NULL DEFAULT 'BEGINNER'
-                        COMMENT 'BEGINNER | INTERMEDIATE | ADVANCED',
-
-        created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at    DATETIME NULL     ON UPDATE CURRENT_TIMESTAMP,
-
-        UNIQUE KEY uq_skill (interview_id, technology),
-        INDEX idx_interview  (interview_id),
-        INDEX idx_technology (technology),
-        INDEX idx_score      (average_score)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-        COMMENT='Per-technology skill scores aggregated across an interview';
-    `,
-  },
-
-  /* ── 3. interview_recording_analysis ────────────────────────────────────────
-     Lightweight summary row written during the 5-minute video-merge window.
-     Used by GET /:interviewId/analysis for fast REST polling.
-     Full scores live in question_evaluations / interview_evaluations.
-     ───────────────────────────────────────────────────────────────────────── */
-  {
-    table: "interview_recording_analysis",
-    sql: `
-      CREATE TABLE IF NOT EXISTS interview_recording_analysis (
-        id               BIGINT UNSIGNED  AUTO_INCREMENT PRIMARY KEY,
-
-        interview_id     BIGINT UNSIGNED  NOT NULL
-                           COMMENT 'FK → interviews.id',
-        user_id          BIGINT UNSIGNED  NULL
-                           COMMENT 'FK → users.id',
-
-        -- Overall verdict
-        overall_score    TINYINT UNSIGNED NOT NULL DEFAULT 0
-                           COMMENT '0-100 weighted average across all questions',
-        hire_decision    ENUM('YES','MAYBE','NO') NOT NULL DEFAULT 'NO',
-        experience_level ENUM('BEGINNER','INTERMEDIATE','ADVANCED')
-                           NOT NULL DEFAULT 'BEGINNER',
-        total_questions  TINYINT UNSIGNED NOT NULL DEFAULT 0,
-
-        -- AI-generated narrative
-        strengths        TEXT NULL  COMMENT 'Bullet-pointed key strengths',
-        weaknesses       TEXT NULL  COMMENT 'Bullet-pointed improvement areas',
-        summary          TEXT NULL  COMMENT '2-3 paragraph overall assessment',
-
-        -- Timestamps
-        analysed_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at       DATETIME NULL     ON UPDATE CURRENT_TIMESTAMP,
-
-        UNIQUE KEY uq_interview (interview_id),
-        INDEX idx_user      (user_id),
-        INDEX idx_hire      (hire_decision),
-        INDEX idx_analysed  (analysed_at)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-        COMMENT='Lightweight analysis summary produced during the video merge window';
-    `,
-  },
-
-  /* ── 4. interview_violations — add violation clip columns ───────────────────
-     Three new columns to track the ffmpeg clip-cut pipeline per violation row.
-     Uses ALTER TABLE … ADD COLUMN IF NOT EXISTS (MySQL 8.0.3+).
-     Each statement is idempotent — safe to re-run on an already-migrated DB.
-     ───────────────────────────────────────────────────────────────────────── */
-  {
-    table: "interview_violations (clip_url)",
-    sql: `
-      ALTER TABLE interview_violations
-        ADD COLUMN IF NOT EXISTS clip_url VARCHAR(2048) NULL
-          COMMENT 'Public FTP URL of the violation video clip'
-          AFTER details;
-    `,
-  },
-  {
-    table: "interview_violations (clip_ftp_path)",
-    sql: `
-      ALTER TABLE interview_violations
-        ADD COLUMN IF NOT EXISTS clip_ftp_path VARCHAR(2048) NULL
-          COMMENT 'Internal FTP path of the violation video clip'
-          AFTER clip_url;
-    `,
-  },
-  {
-    table: "interview_violations (clip_status)",
-    sql: `
-      ALTER TABLE interview_violations
-        ADD COLUMN IF NOT EXISTS clip_status
-          ENUM('pending','processing','completed','failed')
-          NOT NULL DEFAULT 'pending'
-          COMMENT 'State of the ffmpeg clip-cut + FTP upload pipeline'
-          AFTER clip_ftp_path;
-    `,
-  },
-  {
-    table: "interview_violations (idx_clip_status)",
-    sql: `
-      ALTER TABLE interview_violations
-        ADD INDEX IF NOT EXISTS idx_clip_status (clip_status);
+      ALTER TABLE applications
+        ADD CONSTRAINT IF NOT EXISTS fk_app_user
+          FOREIGN KEY (user_id) REFERENCES users(id)  ON DELETE CASCADE,
+        ADD CONSTRAINT IF NOT EXISTS fk_app_job
+          FOREIGN KEY (job_id)  REFERENCES jobs(id)   ON DELETE CASCADE;
     `,
   },
 ];
