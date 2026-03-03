@@ -123,7 +123,34 @@ const Login = () => {
 
   return (
     <>
-      <title>QuantamHash Corporation | Login</title>
+      {/* Basic SEO */}
+      <title>User Login | Talk2Hire Careers Portal</title>
+
+      <meta
+        name="description"
+        content="Sign in to your Talk2Hire account to continue AI-powered interview practice and track your progress."
+      />
+
+      <meta name="robots" content="noindex, nofollow" />
+
+      <link rel="canonical" href="https://talk2hire.com/login" />
+
+      {/* Open Graph */}
+      <meta property="og:title" content="User Login | Talk2Hire" />
+      <meta
+        property="og:description"
+        content="Access your Talk2Hire dashboard and continue preparing with AI mock interviews."
+      />
+      <meta property="og:type" content="website" />
+      <meta property="og:url" content="https://talk2hire.com/login" />
+
+      {/* Twitter */}
+      <meta name="twitter:card" content="summary" />
+      <meta name="twitter:title" content="User Login | Talk2Hire" />
+      <meta
+        name="twitter:description"
+        content="Sign in to Talk2Hire and continue your interview preparation journey."
+      />
 
       {/* ── Keyframe animations injected once ── */}
       <style>{`

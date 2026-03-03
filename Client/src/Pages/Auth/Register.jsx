@@ -473,6 +473,48 @@ const RegistrationForm = () => {
 
   return (
     <>
+      {/* Basic SEO */}
+      <title>Create Your Profile | Talk2Hire AI Job Platform</title>
+
+      <meta
+        name="description"
+        content="Upload your resume and create your Talk2Hire profile in seconds. Our AI extracts your details and matches you with the right job opportunities instantly."
+      />
+
+      <meta
+        name="keywords"
+        content="AI job matching, resume upload platform, create job profile, online interview preparation, Talk2Hire signup"
+      />
+
+      <meta name="robots" content="index, follow" />
+
+      <link rel="canonical" href="https://talk2hire.com/signup" />
+
+      {/* Open Graph */}
+      <meta property="og:title" content="Create Your Profile | Talk2Hire" />
+      <meta
+        property="og:description"
+        content="Upload your resume and let AI instantly match you with top opportunities on Talk2Hire."
+      />
+      <meta property="og:type" content="website" />
+      <meta property="og:url" content="https://talk2hire.com/signup" />
+      <meta
+        property="og:image"
+        content="https://talk2hire.com/talk2hirelogo.jpeg"
+      />
+
+      {/* Twitter */}
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta name="twitter:title" content="Create Your Profile | Talk2Hire" />
+      <meta
+        name="twitter:description"
+        content="Smart resume upload. Instant AI job matching. Start your career journey with Talk2Hire."
+      />
+      <meta
+        name="twitter:image"
+        content="https://talk2hire.com/talk2hirelogo.jpeg"
+      />
+
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap');
         * { box-sizing: border-box; }

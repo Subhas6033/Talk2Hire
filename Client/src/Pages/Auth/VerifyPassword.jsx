@@ -67,7 +67,33 @@ const VerifyPassword = () => {
 
   return (
     <>
-      <title>Verify OTP | QuantamHash Corporation</title>
+      {/* Basic SEO */}
+      <title>Verify OTP | Talk2Hire Careers Portal</title>
+
+      <meta
+        name="description"
+        content="Verify your OTP to securely reset your Talk2Hire account password."
+      />
+
+      <meta name="robots" content="noindex, nofollow" />
+
+      <link rel="canonical" href="https://talk2hire.com/verify-password" />
+
+      {/* Open Graph */}
+      <meta property="og:title" content="Verify OTP | Talk2Hire" />
+      <meta
+        property="og:description"
+        content="Securely verify your one-time password to reset your account."
+      />
+      <meta property="og:type" content="website" />
+      <meta property="og:url" content="https://talk2hire.com/verify-password" />
+
+      {/* Prevent caching of sensitive page */}
+      <meta
+        httpEquiv="Cache-Control"
+        content="no-store, no-cache, must-revalidate"
+      />
+      <meta httpEquiv="Pragma" content="no-cache" />
 
       <section className="min-h-screen flex items-center justify-center px-6 py-20 bg-linear-to-br from-bgDark via-[#11162a] to-bgDark relative overflow-hidden">
         {/* Background glows */}

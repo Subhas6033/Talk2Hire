@@ -1222,272 +1222,304 @@ const CompanyInterviews = () => {
   });
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-6 py-6">
-          <div className="flex items-center justify-between flex-wrap gap-4 mb-5">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">Interviews</h1>
-              <p className="text-sm text-gray-400 mt-0.5">
-                Review candidates and make hiring decisions
-              </p>
-            </div>
-            <button
-              onClick={() => loadInterviews()}
-              disabled={isLoadingList}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition-all disabled:opacity-50"
-            >
-              <RefreshCw
-                size={14}
-                className={isLoadingList ? "animate-spin" : ""}
-              />
-              Refresh
-            </button>
-          </div>
+    <>
+      {/* Basic SEO */}
+      <title>Company Interviews Dashboard | Talk2Hire Business Portal</title>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-            {[
-              {
-                label: "Total Interviews",
-                value: counts.all,
-                icon: Video,
-                color: "indigo",
-              },
-              {
-                label: "Under Review",
-                value: counts.pending,
-                icon: Eye,
-                color: "amber",
-              },
-              {
-                label: "Hired",
-                value: counts.hired,
-                icon: CheckCircle,
-                color: "emerald",
-              },
-              {
-                label: "Avg. Candidate Score",
-                value: counts.avg_score,
-                icon: TrendingUp,
-                color: "violet",
-              },
-            ].map(({ label, value, icon: Icon, color }) => {
-              const colors = {
-                indigo: {
-                  bg: "bg-indigo-50",
-                  text: "text-indigo-600",
-                  border: "border-indigo-100",
-                },
-                amber: {
-                  bg: "bg-amber-50",
-                  text: "text-amber-600",
-                  border: "border-amber-100",
-                },
-                emerald: {
-                  bg: "bg-emerald-50",
-                  text: "text-emerald-600",
-                  border: "border-emerald-100",
-                },
-                violet: {
-                  bg: "bg-violet-50",
-                  text: "text-violet-600",
-                  border: "border-violet-100",
-                },
-              }[color];
-              return (
-                <div
-                  key={label}
-                  className={`flex items-center gap-3 px-4 py-3 rounded-2xl border ${colors.bg} ${colors.border}`}
-                >
-                  <Icon size={18} className={colors.text} />
-                  <div>
-                    {isLoadingList ? (
-                      <Skeleton className="h-6 w-8 mb-1" />
-                    ) : (
-                      <p className={`text-xl font-black ${colors.text}`}>
-                        {value}
-                      </p>
-                    )}
-                    <p className="text-[11px] text-gray-400">{label}</p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+      <meta
+        name="description"
+        content="Review candidate interviews, watch recordings, analyze AI scores, and make hiring decisions inside the Talk2Hire company dashboard."
+      />
 
-          <div className="flex items-center gap-1">
-            {["all", "pending", "hired", "rejected"].map((s) => (
+      {/* Prevent Search Engine Indexing */}
+      <meta name="robots" content="noindex, nofollow, noarchive, nosnippet" />
+
+      <link rel="canonical" href="https://talk2hire.com/company/interviews" />
+
+      {/* Open Graph (optional – internal sharing only) */}
+      <meta
+        property="og:title"
+        content="Company Interviews Dashboard | Talk2Hire Business Portal"
+      />
+      <meta
+        property="og:description"
+        content="Manage candidate interviews, proctoring logs, and hiring decisions."
+      />
+      <meta property="og:type" content="website" />
+      <meta
+        property="og:url"
+        content="https://talk2hire.com/company/interviews"
+      />
+
+      {/* Main component starts from here */}
+      <div className="min-h-screen bg-gray-50">
+        {/* Header */}
+        <div className="bg-white border-b border-gray-200">
+          <div className="max-w-7xl mx-auto px-6 py-6">
+            <div className="flex items-center justify-between flex-wrap gap-4 mb-5">
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">Interviews</h1>
+                <p className="text-sm text-gray-400 mt-0.5">
+                  Review candidates and make hiring decisions
+                </p>
+              </div>
               <button
-                key={s}
-                onClick={() => changeStatus(s)}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium capitalize transition-all ${
-                  filterStatus === s
-                    ? "bg-indigo-50 text-indigo-600"
-                    : "text-gray-500 hover:text-gray-800 hover:bg-gray-100"
-                }`}
+                onClick={() => loadInterviews()}
+                disabled={isLoadingList}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition-all disabled:opacity-50"
               >
-                {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
-                <span
-                  className={`text-[11px] px-1.5 py-0.5 rounded-full font-semibold ${
+                <RefreshCw
+                  size={14}
+                  className={isLoadingList ? "animate-spin" : ""}
+                />
+                Refresh
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+              {[
+                {
+                  label: "Total Interviews",
+                  value: counts.all,
+                  icon: Video,
+                  color: "indigo",
+                },
+                {
+                  label: "Under Review",
+                  value: counts.pending,
+                  icon: Eye,
+                  color: "amber",
+                },
+                {
+                  label: "Hired",
+                  value: counts.hired,
+                  icon: CheckCircle,
+                  color: "emerald",
+                },
+                {
+                  label: "Avg. Candidate Score",
+                  value: counts.avg_score,
+                  icon: TrendingUp,
+                  color: "violet",
+                },
+              ].map(({ label, value, icon: Icon, color }) => {
+                const colors = {
+                  indigo: {
+                    bg: "bg-indigo-50",
+                    text: "text-indigo-600",
+                    border: "border-indigo-100",
+                  },
+                  amber: {
+                    bg: "bg-amber-50",
+                    text: "text-amber-600",
+                    border: "border-amber-100",
+                  },
+                  emerald: {
+                    bg: "bg-emerald-50",
+                    text: "text-emerald-600",
+                    border: "border-emerald-100",
+                  },
+                  violet: {
+                    bg: "bg-violet-50",
+                    text: "text-violet-600",
+                    border: "border-violet-100",
+                  },
+                }[color];
+                return (
+                  <div
+                    key={label}
+                    className={`flex items-center gap-3 px-4 py-3 rounded-2xl border ${colors.bg} ${colors.border}`}
+                  >
+                    <Icon size={18} className={colors.text} />
+                    <div>
+                      {isLoadingList ? (
+                        <Skeleton className="h-6 w-8 mb-1" />
+                      ) : (
+                        <p className={`text-xl font-black ${colors.text}`}>
+                          {value}
+                        </p>
+                      )}
+                      <p className="text-[11px] text-gray-400">{label}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center gap-1">
+              {["all", "pending", "hired", "rejected"].map((s) => (
+                <button
+                  key={s}
+                  onClick={() => changeStatus(s)}
+                  className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium capitalize transition-all ${
                     filterStatus === s
-                      ? "bg-indigo-100 text-indigo-600"
-                      : "bg-gray-100 text-gray-500"
+                      ? "bg-indigo-50 text-indigo-600"
+                      : "text-gray-500 hover:text-gray-800 hover:bg-gray-100"
                   }`}
                 >
-                  {counts[s] ?? 0}
-                </span>
+                  {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
+                  <span
+                    className={`text-[11px] px-1.5 py-0.5 rounded-full font-semibold ${
+                      filterStatus === s
+                        ? "bg-indigo-100 text-indigo-600"
+                        : "bg-gray-100 text-gray-500"
+                    }`}
+                  >
+                    {counts[s] ?? 0}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="max-w-7xl mx-auto px-6 py-6">
+          <div className="flex items-center gap-3 mb-6 flex-wrap">
+            <div className="relative flex-1 min-w-50">
+              <Search
+                size={15}
+                className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400"
+              />
+              <input
+                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm bg-white outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 transition-all"
+                placeholder="Search candidates or roles..."
+                value={search}
+                onChange={(e) => changeSearch(e.target.value)}
+              />
+            </div>
+            <div className="relative">
+              <Filter
+                size={14}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+              />
+              <select
+                className="pl-8 pr-8 py-2.5 rounded-xl border border-gray-200 text-sm bg-white outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 transition-all appearance-none cursor-pointer text-gray-600"
+                value={filterJobId}
+                onChange={(e) => changeJob(e.target.value)}
+              >
+                <option value="all">All Jobs</option>
+                {jobs.map((j) => (
+                  <option key={j.id} value={j.id}>
+                    {j.title}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown
+                size={13}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+              />
+            </div>
+          </div>
+
+          {listFailed && (
+            <div className="bg-red-50 border border-red-200 rounded-2xl p-6 text-center mb-6">
+              <AlertCircle size={28} className="text-red-400 mx-auto mb-2" />
+              <p className="text-sm font-semibold text-red-600 mb-3">
+                Failed to load interviews
+              </p>
+              <button
+                onClick={() => loadInterviews()}
+                className="px-4 py-2 rounded-xl bg-red-100 text-red-600 text-sm font-medium hover:bg-red-200 transition-all"
+              >
+                Try Again
               </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Content */}
-      <div className="max-w-7xl mx-auto px-6 py-6">
-        <div className="flex items-center gap-3 mb-6 flex-wrap">
-          <div className="relative flex-1 min-w-50">
-            <Search
-              size={15}
-              className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400"
-            />
-            <input
-              className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm bg-white outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 transition-all"
-              placeholder="Search candidates or roles..."
-              value={search}
-              onChange={(e) => changeSearch(e.target.value)}
-            />
-          </div>
-          <div className="relative">
-            <Filter
-              size={14}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-            />
-            <select
-              className="pl-8 pr-8 py-2.5 rounded-xl border border-gray-200 text-sm bg-white outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 transition-all appearance-none cursor-pointer text-gray-600"
-              value={filterJobId}
-              onChange={(e) => changeJob(e.target.value)}
-            >
-              <option value="all">All Jobs</option>
-              {jobs.map((j) => (
-                <option key={j.id} value={j.id}>
-                  {j.title}
-                </option>
-              ))}
-            </select>
-            <ChevronDown
-              size={13}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
-            />
-          </div>
-        </div>
-
-        {listFailed && (
-          <div className="bg-red-50 border border-red-200 rounded-2xl p-6 text-center mb-6">
-            <AlertCircle size={28} className="text-red-400 mx-auto mb-2" />
-            <p className="text-sm font-semibold text-red-600 mb-3">
-              Failed to load interviews
-            </p>
-            <button
-              onClick={() => loadInterviews()}
-              className="px-4 py-2 rounded-xl bg-red-100 text-red-600 text-sm font-medium hover:bg-red-200 transition-all"
-            >
-              Try Again
-            </button>
-          </div>
-        )}
-
-        {isLoadingList && (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <CardSkeleton key={i} />
-            ))}
-          </div>
-        )}
-
-        {!isLoadingList &&
-          !listFailed &&
-          (filterJobId === "all" ? (
-            <div className="space-y-8">
-              {Object.values(byJob).map(({ job, items }) => (
-                <div key={job?.id ?? "unknown"}>
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="w-8 h-8 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center">
-                      <Briefcase size={14} className="text-indigo-500" />
-                    </div>
-                    <div>
-                      <h2 className="text-sm font-bold text-gray-800">
-                        {job?.title ?? "Unknown Position"}
-                      </h2>
-                      <p className="text-xs text-gray-400">
-                        {items.length} candidate{items.length !== 1 ? "s" : ""}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                    {items.map((c) => (
-                      <CandidateCard
-                        key={c.id}
-                        interview={c}
-                        onClick={() => openInterview(c.id)}
-                      />
-                    ))}
-                  </div>
-                </div>
-              ))}
             </div>
-          ) : (
+          )}
+
+          {isLoadingList && (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {interviews.map((c) => (
-                <CandidateCard
-                  key={c.id}
-                  interview={c}
-                  onClick={() => openInterview(c.id)}
-                />
+              {Array.from({ length: 6 }).map((_, i) => (
+                <CardSkeleton key={i} />
               ))}
             </div>
-          ))}
+          )}
 
-        {!isLoadingList && !listFailed && interviews.length === 0 && (
-          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col items-center justify-center py-20 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-indigo-50 flex items-center justify-center mb-4">
-              <Users size={28} className="text-indigo-300" />
+          {!isLoadingList &&
+            !listFailed &&
+            (filterJobId === "all" ? (
+              <div className="space-y-8">
+                {Object.values(byJob).map(({ job, items }) => (
+                  <div key={job?.id ?? "unknown"}>
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-8 h-8 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center">
+                        <Briefcase size={14} className="text-indigo-500" />
+                      </div>
+                      <div>
+                        <h2 className="text-sm font-bold text-gray-800">
+                          {job?.title ?? "Unknown Position"}
+                        </h2>
+                        <p className="text-xs text-gray-400">
+                          {items.length} candidate
+                          {items.length !== 1 ? "s" : ""}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {items.map((c) => (
+                        <CandidateCard
+                          key={c.id}
+                          interview={c}
+                          onClick={() => openInterview(c.id)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {interviews.map((c) => (
+                  <CandidateCard
+                    key={c.id}
+                    interview={c}
+                    onClick={() => openInterview(c.id)}
+                  />
+                ))}
+              </div>
+            ))}
+
+          {!isLoadingList && !listFailed && interviews.length === 0 && (
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col items-center justify-center py-20 text-center">
+              <div className="w-16 h-16 rounded-2xl bg-indigo-50 flex items-center justify-center mb-4">
+                <Users size={28} className="text-indigo-300" />
+              </div>
+              <h3 className="text-base font-bold text-gray-700 mb-1">
+                No candidates found
+              </h3>
+              <p className="text-sm text-gray-400 max-w-xs">
+                Try adjusting your filters or search terms.
+              </p>
             </div>
-            <h3 className="text-base font-bold text-gray-700 mb-1">
-              No candidates found
-            </h3>
-            <p className="text-sm text-gray-400 max-w-xs">
-              Try adjusting your filters or search terms.
-            </p>
+          )}
+        </div>
+
+        {isLoadingDetail && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl p-8 flex items-center gap-4 shadow-xl">
+              <Loader2 size={22} className="animate-spin text-indigo-500" />
+              <p className="text-sm text-gray-600 font-medium">
+                Loading interview details…
+              </p>
+            </div>
           </div>
         )}
+
+        {selectedInterview && !isLoadingDetail && (
+          <CandidateModal
+            interview={selectedInterview}
+            onClose={closeInterview}
+            onHire={hire}
+            onReject={reject}
+            isDeciding={isDeciding}
+            violations={violations}
+            isLoadingViolations={isLoadingViolations}
+            violationsError={violationsError}
+            onLoadViolations={loadViolations}
+          />
+        )}
       </div>
-
-      {isLoadingDetail && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl p-8 flex items-center gap-4 shadow-xl">
-            <Loader2 size={22} className="animate-spin text-indigo-500" />
-            <p className="text-sm text-gray-600 font-medium">
-              Loading interview details…
-            </p>
-          </div>
-        </div>
-      )}
-
-      {selectedInterview && !isLoadingDetail && (
-        <CandidateModal
-          interview={selectedInterview}
-          onClose={closeInterview}
-          onHire={hire}
-          onReject={reject}
-          isDeciding={isDeciding}
-          violations={violations}
-          isLoadingViolations={isLoadingViolations}
-          violationsError={violationsError}
-          onLoadViolations={loadViolations}
-        />
-      )}
-    </div>
+    </>
   );
 };
 

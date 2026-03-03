@@ -521,6 +521,93 @@ const UserJob = () => {
 
   return (
     <>
+      <title>Browse Job Openings | Talk2Hire Careers Portal</title>
+
+      {/* Meta Basics */}
+      <meta charSet="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+      <meta
+        name="description"
+        content="Explore the latest job openings across engineering, design, marketing, and more on Talk2Hire. Filter by location, experience, and job type to find your next opportunity."
+      />
+
+      <meta
+        name="keywords"
+        content="jobs, hiring, careers, engineering jobs, remote jobs, marketing jobs, Talk2Hire jobs"
+      />
+
+      <meta name="robots" content="index, follow" />
+
+      {/* Canonical */}
+      <link rel="canonical" href="https://talk2hire.com/jobs" />
+
+      <meta name="theme-color" content="#4F46E5" />
+
+      {/* Open Graph */}
+      <meta property="og:type" content="website" />
+      <meta property="og:site_name" content="Talk2Hire" />
+      <meta property="og:title" content="Browse Job Openings | Talk2Hire" />
+      <meta
+        property="og:description"
+        content="Find full-time, part-time, contract, and remote job opportunities powered by AI matching."
+      />
+      <meta property="og:url" content="https://talk2hire.com/jobs" />
+      <meta
+        property="og:image"
+        content="https://talk2hire.com/talk2hirelogo.jpeg"
+      />
+
+      {/* Twitter */}
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta name="twitter:title" content="Browse Job Openings | Talk2Hire" />
+      <meta
+        name="twitter:description"
+        content="Discover curated job listings with AI-powered filtering and smart matching."
+      />
+      <meta
+        name="twitter:image"
+        content="https://talk2hire.com/talk2hirelogo.jpeg"
+      />
+
+      {/* Structured Data */}
+      <script type="application/ld+json">
+        {JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "CollectionPage",
+          name: "Talk2Hire Job Listings",
+          url: "https://talk2hire.com/jobs",
+          description:
+            "Browse open job opportunities filtered by department, experience level, location, and job type.",
+          isPartOf: {
+            "@type": "WebSite",
+            name: "Talk2Hire",
+            url: "https://talk2hire.com/",
+          },
+          publisher: {
+            "@type": "Organization",
+            name: "QuantamHash Corporation",
+            address: {
+              "@type": "PostalAddress",
+              streetAddress: "800 N King Street, Suite 304",
+              addressLocality: "Wilmington",
+              addressRegion: "DE",
+              postalCode: "19801",
+              addressCountry: "US",
+            },
+          },
+          mainEntity: {
+            "@type": "ItemList",
+            itemListElement: jobs.slice(0, 10).map((job, index) => ({
+              "@type": "ListItem",
+              position: index + 1,
+              url: `https://talk2hire.com/jobs/${job.id}`,
+              name: job.title,
+            })),
+          },
+        })}
+      </script>
+
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=DM+Sans:wght@400;500;600&display=swap');
         * { box-sizing: border-box; }

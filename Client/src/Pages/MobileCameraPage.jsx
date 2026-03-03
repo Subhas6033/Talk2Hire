@@ -281,6 +281,9 @@ const MobileCameraPage = () => {
         timestamp: Date.now(),
         streamType: "webrtc",
       });
+
+      await new Promise((r) => setTimeout(r, 300));
+      if (!mountedRef.current) return;
       await startWebRTC(socket);
     });
 
@@ -386,208 +389,301 @@ const MobileCameraPage = () => {
   const isLoading = !isLive && !isError;
 
   return (
-    <div
-      className="min-h-screen flex flex-col items-center justify-center p-4 bg-gray-50"
-      style={{
-        background:
-          "radial-gradient(ellipse 80% 60% at 50% 0%, rgba(124,58,237,0.06) 0%, transparent 65%), #f8fafc",
-      }}
-    >
-      <div className="w-full max-w-sm flex flex-col gap-4">
-        {/* Title */}
-        <div className="text-center mb-2">
-          <div
-            className={`w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4 transition-all duration-500 ${
-              isLive
-                ? "bg-emerald-50 border border-emerald-200"
-                : isError
-                  ? "bg-red-50 border border-red-200"
-                  : "bg-violet-50 border border-violet-200"
-            }`}
-          >
-            {isError ? (
-              <svg
-                className="w-7 h-7 text-red-500"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.5}
-                  d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-            ) : (
-              <svg
-                className={`w-7 h-7 ${isLive ? "text-emerald-500" : "text-violet-500"}`}
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.5}
-                  d="M15 10l4.553-2.069A1 1 0 0121 8.867v6.266a1 1 0 01-1.447.902L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
-                />
-              </svg>
-            )}
-          </div>
-          <h1 className="text-xl font-bold text-gray-900 tracking-tight mb-1">
-            Secondary Camera
-          </h1>
-          <p className={`text-sm font-medium ${cfg.accent} transition-colors`}>
-            {cfg.label}
-          </p>
-        </div>
+    <>
+      {/* Basic SEO */}
+      <title>Secondary Camera | Talk2Hire</title>
 
-        {/* Video Card */}
-        <div className="relative bg-white rounded-2xl overflow-hidden border border-gray-200 shadow-sm">
-          {/* Progress bar */}
-          <div className="h-0.5 w-full bg-gray-100">
+      <meta
+        name="description"
+        content="Connect your mobile device as a secure secondary camera for your Talk2Hire AI interview session. Real-time WebRTC streaming with live monitoring."
+      />
+
+      {/* Private Utility page */}
+      <meta name="robots" content="noindex, nofollow" />
+
+      <link
+        rel="canonical"
+        href="https://talk2hire.com/interview/mobile-camera"
+      />
+
+      <meta name="theme-color" content="#7C3AED" />
+
+      {/* Open Graph */}
+      <meta property="og:type" content="website" />
+      <meta property="og:site_name" content="Talk2Hire" />
+      <meta property="og:title" content="Secondary Camera | Talk2Hire" />
+      <meta
+        property="og:description"
+        content="Securely connect your mobile phone as a secondary camera during your AI-powered interview session."
+      />
+      <meta
+        property="og:url"
+        content="https://talk2hire.com/interview/mobile-camera"
+      />
+      <meta
+        property="og:image"
+        content="https://talk2hire.com/talk2hirelogo.jpeg"
+      />
+
+      {/* Twitter */}
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta name="twitter:title" content="Secondary Camera | Talk2Hire" />
+      <meta
+        name="twitter:description"
+        content="Use your phone as a secondary camera for secure AI interviews."
+      />
+      <meta
+        name="twitter:image"
+        content="https://talk2hire.com/talk2hirelogo.jpeg"
+      />
+
+      {/* Structured Data */}
+      <script type="application/ld+json">
+        {JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "WebApplication",
+          name: "Talk2Hire Secondary Camera",
+          url: "https://talk2hire.com/interview/mobile-camera",
+          applicationCategory: "BusinessApplication",
+          operatingSystem: "Web",
+          browserRequirements:
+            "Requires camera permission and WebRTC-enabled browser",
+          isPartOf: {
+            "@type": "WebApplication",
+            name: "Talk2Hire",
+            url: "https://talk2hire.com/",
+          },
+          publisher: {
+            "@type": "Organization",
+            name: "QuantamHash Corporation",
+            address: {
+              "@type": "PostalAddress",
+              streetAddress: "800 N King Street, Suite 304",
+              addressLocality: "Wilmington",
+              addressRegion: "DE",
+              postalCode: "19801",
+              addressCountry: "US",
+            },
+          },
+          description:
+            "Mobile WebRTC secondary camera system used during AI-powered interviews for real-time monitoring, proctoring, and enhanced security.",
+          featureList: [
+            "WebRTC peer-to-peer streaming",
+            "Secure secondary camera connection",
+            "Live mobile video feed",
+            "Hardware zoom optimization",
+            "Real-time interview monitoring",
+          ],
+        })}
+      </script>
+      {/* Main Components */}
+      <div
+        className="min-h-screen flex flex-col items-center justify-center p-4 bg-gray-50"
+        style={{
+          background:
+            "radial-gradient(ellipse 80% 60% at 50% 0%, rgba(124,58,237,0.06) 0%, transparent 65%), #f8fafc",
+        }}
+      >
+        <div className="w-full max-w-sm flex flex-col gap-4">
+          {/* Title */}
+          <div className="text-center mb-2">
             <div
-              className={`h-full ${cfg.bar} transition-all duration-700 ${
-                isLive ? "w-full" : isError ? "w-1/4" : "w-2/3 animate-pulse"
+              className={`w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4 transition-all duration-500 ${
+                isLive
+                  ? "bg-emerald-50 border border-emerald-200"
+                  : isError
+                    ? "bg-red-50 border border-red-200"
+                    : "bg-violet-50 border border-violet-200"
               }`}
-            />
+            >
+              {isError ? (
+                <svg
+                  className="w-7 h-7 text-red-500"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+              ) : (
+                <svg
+                  className={`w-7 h-7 ${isLive ? "text-emerald-500" : "text-violet-500"}`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M15 10l4.553-2.069A1 1 0 0121 8.867v6.266a1 1 0 01-1.447.902L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+                  />
+                </svg>
+              )}
+            </div>
+            <h1 className="text-xl font-bold text-gray-900 tracking-tight mb-1">
+              Secondary Camera
+            </h1>
+            <p
+              className={`text-sm font-medium ${cfg.accent} transition-colors`}
+            >
+              {cfg.label}
+            </p>
           </div>
-          <div className="relative" style={{ aspectRatio: "9/16" }}>
-            <video
-              ref={videoElRef}
-              autoPlay
-              muted
-              playsInline
-              className="w-full h-full object-cover bg-gray-900"
-              style={{ transform: "scaleX(-1)" }}
-            />
 
-            {/* Camera loading overlay */}
-            {!cameraReady && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50/95 gap-3">
-                {isError ? (
-                  <svg
-                    className="w-10 h-10 text-red-300"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={1.5}
-                      d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
-                    />
-                  </svg>
-                ) : (
-                  <Spinner className="w-10 h-10 text-violet-400" />
-                )}
-                <p className="text-gray-400 text-xs">
-                  {isError ? "Camera unavailable" : "Starting camera…"}
-                </p>
-              </div>
-            )}
+          {/* Video Card */}
+          <div className="relative bg-white rounded-2xl overflow-hidden border border-gray-200 shadow-sm">
+            {/* Progress bar */}
+            <div className="h-0.5 w-full bg-gray-100">
+              <div
+                className={`h-full ${cfg.bar} transition-all duration-700 ${
+                  isLive ? "w-full" : isError ? "w-1/4" : "w-2/3 animate-pulse"
+                }`}
+              />
+            </div>
+            <div className="relative" style={{ aspectRatio: "9/16" }}>
+              <video
+                ref={videoElRef}
+                autoPlay
+                muted
+                playsInline
+                className="w-full h-full object-cover bg-gray-900"
+                style={{ transform: "scaleX(-1)" }}
+              />
 
-            {/* Live badge */}
-            {isLive && (
-              <div className="absolute top-3 left-3 flex items-center gap-1.5">
-                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500 rounded-md shadow-sm">
-                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                  <span className="text-white text-[10px] font-bold tracking-widest">
-                    LIVE
-                  </span>
+              {/* Camera loading overlay */}
+              {!cameraReady && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50/95 gap-3">
+                  {isError ? (
+                    <svg
+                      className="w-10 h-10 text-red-300"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={1.5}
+                        d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
+                      />
+                    </svg>
+                  ) : (
+                    <Spinner className="w-10 h-10 text-violet-400" />
+                  )}
+                  <p className="text-gray-400 text-xs">
+                    {isError ? "Camera unavailable" : "Starting camera…"}
+                  </p>
                 </div>
-                {zoomApplied && (
-                  <div className="px-2 py-1 bg-white/80 backdrop-blur-sm rounded-md border border-gray-200 shadow-sm">
-                    <span className="text-gray-600 text-[10px] font-semibold tracking-wider">
-                      WIDE
+              )}
+
+              {/* Live badge */}
+              {isLive && (
+                <div className="absolute top-3 left-3 flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500 rounded-md shadow-sm">
+                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                    <span className="text-white text-[10px] font-bold tracking-widest">
+                      LIVE
                     </span>
                   </div>
-                )}
-              </div>
-            )}
-
-            {/* P2P connecting badge */}
-            {isLoading && cameraReady && (
-              <div className="absolute top-3 left-3">
-                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-violet-500 rounded-md shadow-sm">
-                  <Spinner className="w-2.5 h-2.5 text-white" />
-                  <span className="text-white text-[10px] font-bold tracking-widest">
-                    P2P…
-                  </span>
+                  {zoomApplied && (
+                    <div className="px-2 py-1 bg-white/80 backdrop-blur-sm rounded-md border border-gray-200 shadow-sm">
+                      <span className="text-gray-600 text-[10px] font-semibold tracking-wider">
+                        WIDE
+                      </span>
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Error Box */}
-        {isError && error && (
-          <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
-            <p className="text-red-600 text-sm mb-3">{error}</p>
-            <button
-              onClick={handleRetry}
-              disabled={retrying}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white hover:bg-red-50 border border-red-200 text-red-500 text-sm font-semibold rounded-xl transition-all duration-200 disabled:opacity-50 shadow-sm"
-            >
-              {retrying ? (
-                <>
-                  <Spinner className="w-4 h-4 text-red-400" />
-                  Retrying…
-                </>
-              ) : (
-                "Try Again"
               )}
-            </button>
+
+              {/* P2P connecting badge */}
+              {isLoading && cameraReady && (
+                <div className="absolute top-3 left-3">
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-violet-500 rounded-md shadow-sm">
+                    <Spinner className="w-2.5 h-2.5 text-white" />
+                    <span className="text-white text-[10px] font-bold tracking-widest">
+                      P2P…
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-        )}
 
-        {/* Status Panel */}
-        <div className="bg-white border border-gray-200 rounded-2xl px-4 py-1 shadow-sm">
-          <StatusRow
-            label="Server"
-            value={socketConnected ? "Connected" : "Connecting…"}
-            active={socketConnected}
-            color="green"
-          />
-          <StatusRow
-            label="Camera"
-            value={cameraReady ? "Active" : "Waiting…"}
-            active={cameraReady}
-            color="orange"
-          />
-          <StatusRow
-            label="Peer Connection"
-            value={peerConnected ? "Established" : "Pending…"}
-            active={peerConnected}
-            color="yellow"
-          />
-          <StatusRow
-            label="Stream"
-            value={trackPublished ? "Publishing via WebRTC" : "Not publishing"}
-            active={trackPublished}
-            color="green"
-          />
-          <StatusRow
-            label="Wide Angle"
-            value={
-              !cameraReady
-                ? "Pending…"
-                : zoomApplied
-                  ? "Active (hardware)"
-                  : "Not supported"
-            }
-            active={zoomApplied}
-            color="yellow"
-          />
+          {/* Error Box */}
+          {isError && error && (
+            <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
+              <p className="text-red-600 text-sm mb-3">{error}</p>
+              <button
+                onClick={handleRetry}
+                disabled={retrying}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white hover:bg-red-50 border border-red-200 text-red-500 text-sm font-semibold rounded-xl transition-all duration-200 disabled:opacity-50 shadow-sm"
+              >
+                {retrying ? (
+                  <>
+                    <Spinner className="w-4 h-4 text-red-400" />
+                    Retrying…
+                  </>
+                ) : (
+                  "Try Again"
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* Status Panel */}
+          <div className="bg-white border border-gray-200 rounded-2xl px-4 py-1 shadow-sm">
+            <StatusRow
+              label="Server"
+              value={socketConnected ? "Connected" : "Connecting…"}
+              active={socketConnected}
+              color="green"
+            />
+            <StatusRow
+              label="Camera"
+              value={cameraReady ? "Active" : "Waiting…"}
+              active={cameraReady}
+              color="orange"
+            />
+            <StatusRow
+              label="Peer Connection"
+              value={peerConnected ? "Established" : "Pending…"}
+              active={peerConnected}
+              color="yellow"
+            />
+            <StatusRow
+              label="Stream"
+              value={
+                trackPublished ? "Publishing via WebRTC" : "Not publishing"
+              }
+              active={trackPublished}
+              color="green"
+            />
+            <StatusRow
+              label="Wide Angle"
+              value={
+                !cameraReady
+                  ? "Pending…"
+                  : zoomApplied
+                    ? "Active (hardware)"
+                    : "Not supported"
+              }
+              active={zoomApplied}
+              color="yellow"
+            />
+          </div>
+
+          <p className="text-center text-gray-300 text-xs pb-2">
+            Keep this page open throughout the interview
+          </p>
         </div>
-
-        <p className="text-center text-gray-300 text-xs pb-2">
-          Keep this page open throughout the interview
-        </p>
       </div>
-    </div>
+    </>
   );
 };
 

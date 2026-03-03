@@ -395,8 +395,33 @@ const Dashboard = () => {
 
   return (
     <>
+      {/* Basic SEO */}
+      <title>Your Interview Dashboard | Talk2Hire Careers Portal</title>
+
+      <meta
+        name="description"
+        content="Track your interview performance, review AI feedback, and monitor your skill progress inside your Talk2Hire dashboard."
+      />
+
+      {/*  CRITICAL — Prevent indexing */}
+      <meta name="robots" content="noindex, nofollow, noarchive, nosnippet" />
+
+      <meta name="googlebot" content="noindex, nofollow" />
+
+      <link rel="canonical" href="https://talk2hire.com/dashboard" />
+
+      {/* Open Graph (private safe) */}
+      <meta property="og:title" content="Your Dashboard | Talk2Hire" />
+      <meta
+        property="og:description"
+        content="Private interview performance dashboard."
+      />
+      <meta property="og:type" content="website" />
+      <meta property="og:url" content="https://talk2hire.com/dashboard" />
+
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap');`}</style>
 
+      {/* Main Components Starts from here */}
       <div
         className="min-h-screen bg-linear-to-br from-slate-50 to-indigo-50/60 px-6 py-10"
         style={{ fontFamily: "'DM Sans', sans-serif" }}

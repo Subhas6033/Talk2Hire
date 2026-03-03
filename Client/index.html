@@ -1,11 +1,154 @@
 <!doctype html>
 <html lang="en">
   <head>
+    <!-- Basic Meta -->
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="shortcut icon" href="/onlineInterview.png" type="image/x-icon" />
-    <title>QuantamHash Corporation | Homepage</title>
+
+    <title>Talk2Hire | AI-Powered Online Interview & Hiring Platform</title>
+
+    <meta
+      name="description"
+      content="Talk2Hire is an AI-powered online interview platform that helps companies hire smarter and candidates prepare better. Conduct live interviews, practice mock interviews, and streamline recruitment effortlessly."
+    />
+    <meta
+      name="keywords"
+      content="Talk2Hire, AI interviews, online interview platform, mock interview practice, hiring software, recruitment platform"
+    />
+    <meta name="author" content="Talk2Hire Team" />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://talk2hire.com/" />
+
+    <!-- Favicon -->
+    <link rel="shortcut icon" href="/talk2hirelogo.jpeg" type="image/x-icon" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Talk2Hire" />
+    <meta
+      property="og:title"
+      content="Talk2Hire | AI-Powered Online Interview Platform"
+    />
+    <meta
+      property="og:description"
+      content="Conduct AI-powered interviews, practice mock interviews, and hire top talent faster with Talk2Hire."
+    />
+    <meta property="og:url" content="https://talk2hire.com/" />
+    <meta property="og:image" content="https://talk2hire.com/homepage.jpeg" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Talk2Hire | AI Interview Platform" />
+    <meta
+      name="twitter:description"
+      content="Smarter hiring starts here. AI-driven interviews and mock interview preparation."
+    />
+    <meta name="twitter:image" content="https://talk2hire.com/homepage.jpeg" />
+
+    <meta name="theme-color" content="#2563eb" />
+
+    <!-- Structured Data -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "name": "QuantamHash Corporation",
+            "url": "https://quantamhashcorporation.com/",
+            "logo": "https://talk2hire.com/talk2hirelogo.jpeg",
+            "foundingDate": "2024",
+            "address": {
+              "@type": "PostalAddress",
+              "streetAddress": "800 N King Street, Suite 304",
+              "addressLocality": "Wilmington",
+              "addressRegion": "DE",
+              "postalCode": "19801",
+              "addressCountry": "US"
+            },
+            "contactPoint": {
+              "@type": "ContactPoint",
+              "contactType": "customer support",
+              "email": "contact@talk2hire.com"
+            },
+            "sameAs": [
+              "https://www.linkedin.com/company/quantumhash-corporation/",
+              "https://x.com/QuantumhashCrp",
+              "https://www.instagram.com/quantumhash_corporation/",
+              "https://www.facebook.com/profile.php?id=61582410893482",
+              "https://www.youtube.com/@QuantumHashCorporation",
+              "https://github.com/Quantumhash-Corporation"
+            ]
+          },
+
+          {
+            "@type": "WebSite",
+            "name": "Talk2Hire",
+            "url": "https://talk2hire.com/",
+            "publisher": {
+              "@type": "Organization",
+              "name": "QuantamHash Corporation"
+            },
+            "potentialAction": {
+              "@type": "SearchAction",
+              "target": "https://talk2hire.com/jobs?q={search_term_string}",
+              "query-input": "required name=search_term_string"
+            }
+          },
+
+          {
+            "@type": "SoftwareApplication",
+            "name": "Talk2Hire",
+            "url": "https://talk2hire.com/",
+            "applicationCategory": "BusinessApplication",
+            "operatingSystem": "Web",
+            "publisher": {
+              "@type": "Organization",
+              "name": "QuantamHash Corporation"
+            },
+            "description": "Talk2Hire is an AI-powered online interview and recruitment platform for conducting structured interviews and practicing mock interviews.",
+            "image": "https://talk2hire.com/talk2hirelogo.jpeg",
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            }
+          },
+
+          {
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "What is Talk2Hire?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Talk2Hire is an AI-powered interview platform that helps companies conduct structured online interviews and allows candidates to practice mock interviews."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How does Talk2Hire help recruiters?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Recruiters can streamline hiring by conducting structured AI-powered interviews, evaluating candidates efficiently, and managing recruitment workflows."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can candidates practice interviews on Talk2Hire?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes, candidates can practice mock interviews to improve their skills and prepare for real job interviews."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
   </head>
+
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>

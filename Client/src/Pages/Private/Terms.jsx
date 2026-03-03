@@ -5,7 +5,52 @@ import { Card } from "../../Components/Common/Card";
 const Terms = () => {
   return (
     <>
-      <title>QuantamHash Corporation | Terms</title>
+      {/* Basic SEO */}
+      <title>Terms & Conditions | Talk2Hire</title>
+
+      <meta
+        name="description"
+        content="Read the Terms and Conditions for using Talk2Hire. Understand your rights, responsibilities, and the rules governing our AI-powered job and interview platform."
+      />
+
+      <meta name="robots" content="index, follow" />
+
+      <link rel="canonical" href="https://talk2hire.com/terms" />
+
+      {/* Open Graph */}
+      <meta property="og:title" content="Terms & Conditions | Talk2Hire" />
+      <meta
+        property="og:description"
+        content="Review the terms governing the use of Talk2Hire's AI job matching and interview preparation platform."
+      />
+      <meta property="og:type" content="website" />
+      <meta property="og:url" content="https://talk2hire.com/terms" />
+
+      {/* Twitter */}
+      <meta name="twitter:card" content="summary" />
+      <meta name="twitter:title" content="Terms & Conditions | Talk2Hire" />
+      <meta
+        name="twitter:description"
+        content="Understand the rules, responsibilities, and legal terms for using Talk2Hire."
+      />
+
+      {/* Structured Data */}
+      <script type="application/ld+json">
+        {JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "WebPage",
+          name: "Terms and Conditions",
+          url: "https://talk2hire.com/terms",
+          description:
+            "Terms and Conditions outlining the legal agreement between Talk2Hire and its users.",
+          publisher: {
+            "@type": "Organization",
+            name: "Talk2Hire",
+            url: "https://talk2hire.com/",
+          },
+        })}
+      </script>
+
       <section className="min-h-screen flex items-center justify-center px-6 py-20 relative overflow-hidden">
         {/* Background glows */}
         <div className="absolute top-[-30%] left-[-20%] h-125 w-125 rounded-full bg-purpleGlow/20 blur-[160px]" />

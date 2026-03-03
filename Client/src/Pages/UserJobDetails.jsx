@@ -528,6 +528,41 @@ const UserJobDetail = () => {
 
   const handleApply = () => navigate(`/interview?jobId=${job?.id}`);
 
+  const EMPLOYMENT_MAP = {
+    "Full-time": "FULL_TIME",
+    "Part-time": "PART_TIME",
+    Contract: "CONTRACTOR",
+    Internship: "INTERN",
+    Temporary: "TEMPORARY",
+    Volunteer: "VOLUNTEER",
+    Remote: "FULL_TIME",
+  };
+
+  const employmentType = EMPLOYMENT_MAP[job?.type] || "FULL_TIME";
+
+  const isoDate = job?.posted
+    ? new Date(job.posted).toISOString()
+    : new Date().toISOString();
+
+  const validThrough = new Date(
+    new Date(job?.posted || Date.now()).getTime() + 30 * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
+  // Optional salary parsing (if range string like "80000-100000")
+  const salaryData = job?.salary
+    ? typeof job.salary === "number"
+      ? {
+          "@type": "MonetaryAmount",
+          currency: "USD",
+          value: {
+            "@type": "QuantitativeValue",
+            value: job.salary,
+            unitText: "YEAR",
+          },
+        }
+      : undefined
+    : undefined;
+
   const isLoading =
     loading?.fetch ||
     loading?.fetchById ||
@@ -596,6 +631,116 @@ const UserJobDetail = () => {
 
   return (
     <>
+      <title>
+        {job.title} at {job.companyName} | Talk2Hire Careers Portal
+      </title>
+
+      <meta
+        name="description"
+        content={`${job.title} position at ${job.companyName}${
+          job.location ? ` in ${job.location}` : ""
+        }. Apply now through AI-powered interviews on Talk2Hire.`}
+      />
+      <meta name="robots" content="index, follow" />
+
+      <link rel="canonical" href={`https://talk2hire.com/jobs/${job.id}`} />
+
+      <meta name="theme-color" content="#4F46E5" />
+
+      {/* ========== OPEN GRAPH ========== */}
+      <meta property="og:type" content="website" />
+      <meta property="og:site_name" content="Talk2Hire" />
+      <meta
+        property="og:title"
+        content={`${job.title} at ${job.companyName}`}
+      />
+      <meta
+        property="og:description"
+        content={`Apply for ${job.title} at ${job.companyName}${
+          job.location ? ` in ${job.location}` : ""
+        }.`}
+      />
+      <meta
+        property="og:url"
+        content={`https://talk2hire.com/jobs/${job.id}`}
+      />
+      <meta
+        property="og:image"
+        content={job.companyLogo || "https://talk2hire.com/talk2hirelogo.jpeg"}
+      />
+
+      {/* ========== TWITTER ========== */}
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta
+        name="twitter:title"
+        content={`${job.title} at ${job.companyName}`}
+      />
+      <meta
+        name="twitter:description"
+        content={`Join ${job.companyName} as a ${job.title}. Apply today.`}
+      />
+      <meta
+        name="twitter:image"
+        content={job.companyLogo || "https://talk2hire.com/talk2hirelogo.jpeg"}
+      />
+
+      {/* ========== GOOGLE JOBS STRUCTURED DATA ========== */}
+      <script type="application/ld+json">
+        {JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "JobPosting",
+
+          title: job.title,
+          description: job.description,
+
+          identifier: {
+            "@type": "PropertyValue",
+            name: job.companyName,
+            value: job.id,
+          },
+
+          datePosted: isoDate,
+          validThrough: validThrough,
+
+          employmentType: employmentType,
+
+          hiringOrganization: {
+            "@type": "Organization",
+            name: job.companyName,
+            sameAs: job.companyWebsite || undefined,
+            logo: job.companyLogo || "https://talk2hire.com/talk2hirelogo.jpeg",
+          },
+
+          jobLocation: job.location
+            ? {
+                "@type": "Place",
+                address: {
+                  "@type": "PostalAddress",
+                  addressLocality: job.location,
+                  addressCountry: "US",
+                },
+              }
+            : undefined,
+
+          jobLocationType: job.type === "Remote" ? "TELECOMMUTE" : undefined,
+
+          applicantLocationRequirements:
+            job.type === "Remote"
+              ? {
+                  "@type": "Country",
+                  name: "United States",
+                }
+              : undefined,
+
+          baseSalary: salaryData || undefined,
+
+          responsibilities: job.responsibilities || undefined,
+          qualifications: job.requirements || undefined,
+          industry: job.department || undefined,
+
+          directApply: true,
+        })}
+      </script>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=DM+Sans:wght@400;500;600;700&display=swap');
         * { box-sizing: border-box; }

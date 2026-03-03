@@ -1,5 +1,6 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import axios from "axios";
+import streamStore from "./streamSingleton";
 
 const CHUNK_INTERVAL_MS = 20_000;
 const API_BASE = import.meta.env.VITE_BACKEND_URL;
@@ -154,47 +155,57 @@ const useServerRecording = (
   const screenRef = useRef(null);
   const stoppedRef = useRef(false);
 
-  const start = useCallback(async () => {
-    if (stoppedRef.current || !interviewId) return;
+  const start = useCallback(
+    async (liveScreenStreamOverride = null) => {
+      if (stoppedRef.current || !interviewId) return;
 
-    const sessions = [];
+      const sessions = [];
 
-    if (cameraStream?.active || micStream?.active) {
-      const tracks = [];
-      if (cameraStream) {
-        const vt = cameraStream.getVideoTracks()[0];
-        if (vt?.readyState === "live") tracks.push(vt);
+      if (cameraStream?.active || micStream?.active) {
+        const tracks = [];
+        if (cameraStream) {
+          const vt = cameraStream.getVideoTracks()[0];
+          if (vt?.readyState === "live") tracks.push(vt);
+        }
+        if (micStream) {
+          const at = micStream.getAudioTracks()[0];
+          if (at?.readyState === "live") tracks.push(at);
+        }
+        if (tracks.length > 0) {
+          primaryRef.current = createRecorderSession(
+            interviewId,
+            "primary_camera",
+          );
+          sessions.push(primaryRef.current.start(new MediaStream(tracks)));
+        }
       }
-      if (micStream) {
-        const at = micStream.getAudioTracks()[0];
-        if (at?.readyState === "live") tracks.push(at);
-      }
-      if (tracks.length > 0) {
-        primaryRef.current = createRecorderSession(
-          interviewId,
-          "primary_camera",
-        );
-        sessions.push(primaryRef.current.start(new MediaStream(tracks)));
-      }
-    }
 
-    if (screenStream?.active) {
-      const vt = screenStream.getVideoTracks()[0];
-      if (vt?.readyState === "live") {
-        screenRef.current = createRecorderSession(
-          interviewId,
-          "screen_recording",
-        );
-        sessions.push(screenRef.current.start(new MediaStream([vt])));
-      }
-    }
+      // ✅ Use override passed at call time, fall back to streamStore, then prop
+      const liveScreenStream =
+        liveScreenStreamOverride ??
+        streamStore.screenShareStream ??
+        screenStream ??
+        null;
 
-    const results = await Promise.allSettled(sessions);
-    const anyStarted = results.some(
-      (r) => r.status === "fulfilled" && r.value === true,
-    );
-    if (anyStarted) setIsRecording(true);
-  }, [interviewId, cameraStream, micStream, screenStream]);
+      if (liveScreenStream?.active) {
+        const vt = liveScreenStream.getVideoTracks()[0];
+        if (vt?.readyState === "live") {
+          screenRef.current = createRecorderSession(
+            interviewId,
+            "screen_recording",
+          );
+          sessions.push(screenRef.current.start(new MediaStream([vt])));
+        }
+      }
+
+      const results = await Promise.allSettled(sessions);
+      const anyStarted = results.some(
+        (r) => r.status === "fulfilled" && r.value === true,
+      );
+      if (anyStarted) setIsRecording(true);
+    },
+    [interviewId, cameraStream, micStream, screenStream],
+  );
 
   const startSecondary = useCallback(
     async (secondaryCamStream) => {

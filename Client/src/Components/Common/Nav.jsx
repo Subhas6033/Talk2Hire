@@ -90,16 +90,20 @@ const Nav = () => {
         <nav className="mx-auto max-w-7xl px-6 h-16 flex items-center justify-between gap-8">
           {/* ── Logo ── */}
           <Link to="/" className="flex items-center gap-2.5 shrink-0 group">
-            <div className="w-9 h-9 rounded-xl bg-(--nav-slate) flex items-center justify-center shadow-md group-hover:shadow-lg transition-shadow">
-              <Briefcase size={17} className="text-white" />
-            </div>
-            <div className="leading-none">
-              <span className="font-bold text-(--nav-ink) text-[15px] tracking-tight block">
-                Talk2Hire
-              </span>
-              <span className="text-[10px] text-(--nav-amber) font-semibold tracking-wide">
-                Careers Portal
-              </span>
+            <div className="flex items-center gap-2 leading-none">
+              <img
+                src="/talk2hirelogo.jpeg"
+                alt="Talk2Hire"
+                className="h-12 w-12 rounded-full"
+              />
+              <div>
+                <span className="font-bold text-(--nav-ink) text-[15px] tracking-tight block">
+                  Talk2Hire
+                </span>
+                <span className="text-[10px] text-(--nav-amber) font-semibold tracking-wide">
+                  Careers Portal
+                </span>
+              </div>
             </div>
           </Link>
 

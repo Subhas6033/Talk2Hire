@@ -45,6 +45,40 @@ const Companylogin = () => {
 
   return (
     <>
+      {/* Basic SEO */}
+      <title>Company Login | Talk2Hire Business Portal</title>
+      <meta
+        name="description"
+        content="Securely sign in to your Talk2Hire Business Portal to manage interviews, evaluate candidates, and streamline your hiring process."
+      />
+      <meta name="robots" content="noindex, nofollow" />
+      <link rel="canonical" href="https://talk2hire.com/login/company" />
+
+      {/* Open Graph */}
+      <meta property="og:title" content="Company Login | Talk2Hire" />
+      <meta
+        property="og:description"
+        content="Access your Talk2Hire company dashboard to manage hiring and interviews."
+      />
+      <meta property="og:type" content="website" />
+      <meta property="og:url" content="https://talk2hire.com/login/company" />
+      <meta
+        property="og:image"
+        content="https://talk2hire.com/talk2hirelogo.jpeg"
+      />
+
+      {/* Twitter */}
+      <meta name="twitter:card" content="summary" />
+      <meta name="twitter:title" content="Company Login | Talk2Hire" />
+      <meta
+        name="twitter:description"
+        content="Sign in to your Talk2Hire Business Portal."
+      />
+      <meta
+        name="twitter:image"
+        content="https://talk2hire.com/talk2hirelogo.jpeg"
+      />
+
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700&family=DM+Sans:wght@300;400;500&display=swap');
 
@@ -233,6 +267,7 @@ const Companylogin = () => {
         .co-root input:focus { outline: none; }
       `}</style>
 
+      {/* Main Component Starts from here */}
       <div className="co-root co-mesh min-h-screen flex items-center justify-center px-4 py-12 relative overflow-hidden co-bg">
         {/* Dot grid overlay */}
         <div className="pointer-events-none absolute inset-0 dot-grid opacity-100" />

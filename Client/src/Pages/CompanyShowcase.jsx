@@ -420,6 +420,60 @@ const CompaniesPage = () => {
 
   return (
     <>
+      {/* Basic SEO */}
+      <title>
+        Companies Hiring Now | Explore Top Employers | Talk2Hire Careers Portal
+      </title>
+
+      <meta
+        name="description"
+        content="Browse top companies actively hiring across tech, finance, healthcare, climate tech, and more. Discover company culture, open roles, ratings, and apply directly on Talk2Hire."
+      />
+
+      <meta
+        name="keywords"
+        content="companies hiring, top employers, hiring companies, tech companies hiring, startups hiring, browse companies, company jobs"
+      />
+
+      <meta name="robots" content="index, follow" />
+
+      <link rel="canonical" href="https://talk2hire.com/companies" />
+
+      {/* Open Graph */}
+      <meta property="og:title" content="Companies Hiring Now | Talk2Hire" />
+      <meta
+        property="og:description"
+        content="Explore top companies actively hiring. Discover culture, ratings, and open roles."
+      />
+      <meta property="og:type" content="website" />
+      <meta property="og:url" content="https://talk2hire.com/companies" />
+
+      {/* Twitter */}
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta name="twitter:title" content="Companies Hiring Now | Talk2Hire" />
+      <meta
+        name="twitter:description"
+        content="Discover top companies and explore open roles across industries."
+      />
+
+      {/* Structured Data */}
+      <script type="application/ld+json">
+        {JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "ItemList",
+          name: "Companies Hiring on Talk2Hire",
+          url: "https://talk2hire.com/companies",
+          numberOfItems: 9,
+          itemListElement: COMPANIES.map((company, index) => ({
+            "@type": "Organization",
+            position: index + 1,
+            name: company.name,
+            industry: company.industry,
+            url: `https://talk2hire.com/companies`,
+          })),
+        })}
+      </script>
+
       <style>{FONT_IMPORT}</style>
 
       <div

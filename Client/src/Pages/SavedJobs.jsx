@@ -786,6 +786,87 @@ const SavedJobs = () => {
 
   return (
     <>
+      <title>Saved Jobs | Talk2Hire Careers Portal</title>
+
+      {/* Description */}
+      <meta
+        name="description"
+        content="View and manage your saved job opportunities on Talk2Hire. Track AI match scores, review job details, and apply quickly."
+      />
+
+      {/* Private Dashboard Page */}
+      <meta name="robots" content="noindex, nofollow, noarchive" />
+
+      {/* Canonical */}
+      <link rel="canonical" href="https://talk2hire.com/saved" />
+
+      {/* Theme Color */}
+      <meta name="theme-color" content="#7C3AED" />
+
+      {/* Open Graph */}
+      <meta property="og:type" content="website" />
+      <meta property="og:site_name" content="Talk2Hire" />
+      <meta property="og:title" content="Saved Jobs | Talk2Hire" />
+      <meta
+        property="og:description"
+        content="Access your saved job listings, AI match scores, and application insights within Talk2Hire."
+      />
+      <meta property="og:url" content="https://talk2hire.com/saved" />
+      <meta
+        property="og:image"
+        content="https://talk2hire.com/talk2hirelogo.jpeg"
+      />
+
+      {/* Twitter */}
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta name="twitter:title" content="Saved Jobs | Talk2Hire" />
+      <meta
+        name="twitter:description"
+        content="Track and manage your saved job opportunities with AI-powered insights."
+      />
+      <meta
+        name="twitter:image"
+        content="https://talk2hire.com/talk2hirelogo.jpeg"
+      />
+
+      {/* Structured Data */}
+      <script type="application/ld+json">
+        {JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "WebApplication",
+          name: "Talk2Hire Saved Jobs Dashboard",
+          url: "https://talk2hire.com/saved",
+          applicationCategory: "BusinessApplication",
+          operatingSystem: "Web",
+          isPartOf: {
+            "@type": "WebApplication",
+            name: "Talk2Hire",
+            url: "https://talk2hire.com/",
+          },
+          publisher: {
+            "@type": "Organization",
+            name: "QuantamHash Corporation",
+            address: {
+              "@type": "PostalAddress",
+              streetAddress: "800 N King Street, Suite 304",
+              addressLocality: "Wilmington",
+              addressRegion: "DE",
+              postalCode: "19801",
+              addressCountry: "US",
+            },
+          },
+          description:
+            "Private dashboard page where users manage saved jobs, review AI match scores, and apply to opportunities within Talk2Hire.",
+          featureList: [
+            "View saved job listings",
+            "AI-powered job match scoring",
+            "Filter by remote or job type",
+            "Search saved jobs",
+            "Quick apply functionality",
+          ],
+        })}
+      </script>
+
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Cabinet+Grotesk:wght@400;500;700;800;900&family=Satoshi:wght@400;500;600;700&display=swap');
         * { box-sizing: border-box; }

@@ -467,16 +467,78 @@ const CompanyDetail = () => {
 
   return (
     <>
-      <style>{FONT_IMPORT}</style>
+      {/* Basic SEO */}
+      <title>
+        {company.name} Careers & Open Jobs | Talk2Hire Careers Portal
+      </title>
 
-      {/*
-        FIX 3 ─ key={id} on the root element.
-        Forces a full React unmount + remount when the company
-        ID changes. Without this, React reuses the same component
-        instance; Framer Motion's `initial` animations have already
-        played and won't replay, leaving the page visually empty
-        until a hard reload clears the animation state.
-      */}
+      <meta
+        name="description"
+        content={`${company.name} is hiring ${company.openRoles} roles in ${company.location}. Explore careers, company culture, tech stack, and open opportunities on Talk2Hire.`}
+      />
+
+      <link
+        rel="canonical"
+        href={`https://talk2hire.com/companies/${company.id}`}
+      />
+
+      {/* Open Graph */}
+      <meta
+        property="og:title"
+        content={`${company.name} Careers | Talk2Hire`}
+      />
+      <meta
+        property="og:description"
+        content={`${company.tagline} • ${company.openRoles} open roles.`}
+      />
+      <meta
+        property="og:url"
+        content={`https://talk2hire.com/companies/${company.id}`}
+      />
+      <meta property="og:type" content="website" />
+
+      {/* Twitter */}
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta name="twitter:title" content={`${company.name} Jobs | Talk2Hire`} />
+      <meta
+        name="twitter:description"
+        content={`${company.description.slice(0, 160)}`}
+      />
+
+      {/* Structured Data */}
+      <script type="application/ld+json">
+        {JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "Organization",
+          name: company.name,
+          url: `https://talk2hire.com/companies/${company.id}`,
+          logo: `https://talk2hire.com/talk2hirelogo.jpeg`,
+          description: company.description,
+          foundingDate: company.founded,
+          numberOfEmployees: company.size,
+          sameAs: [
+            `https://twitter.com/${company.twitter}`,
+            `https://linkedin.com/company/${company.linkedin}`,
+            `https://github.com/${company.github}`,
+          ],
+        })}
+      </script>
+
+      {/* Job List Structured Data */}
+      <script type="application/ld+json">
+        {JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "ItemList",
+          itemListElement: company.jobs.map((job, index) => ({
+            "@type": "ListItem",
+            position: index + 1,
+            url: `https://talk2hire.com/jobs/${job.id}`,
+          })),
+        })}
+      </script>
+
+      <style>{FONT_IMPORT}</style>
+      {/* Main page starts from here */}
       <div
         key={id}
         className="min-h-screen bg-slate-50"

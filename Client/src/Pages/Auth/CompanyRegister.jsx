@@ -106,6 +106,48 @@ const CompanyRegister = () => {
 
   return (
     <>
+      {/* Basic SEO */}
+      <title>Register Your Company | Talk2Hire Business Portal</title>
+
+      <meta
+        name="description"
+        content="Create your company account on Talk2Hire to conduct AI-powered interviews, manage candidates, and streamline your hiring process."
+      />
+
+      <meta
+        name="keywords"
+        content="company registration, recruiter signup, business hiring platform, AI interview software, Talk2Hire employer account"
+      />
+
+      <meta name="robots" content="index, follow" />
+
+      <link rel="canonical" href="https://talk2hire.com/signup/company" />
+
+      {/* Open Graph */}
+      <meta property="og:title" content="Register Your Company | Talk2Hire" />
+      <meta
+        property="og:description"
+        content="Sign up your company on Talk2Hire and start conducting AI-powered interviews today."
+      />
+      <meta property="og:type" content="website" />
+      <meta property="og:url" content="https://talk2hire.com/signup/company" />
+      <meta
+        property="og:image"
+        content="https://talk2hire.com/talk2hirelogo.jpeg"
+      />
+
+      {/* Twitter */}
+      <meta name="twitter:card" content="summary" />
+      <meta name="twitter:title" content="Company Registration | Talk2Hire" />
+      <meta
+        name="twitter:description"
+        content="Create your company account and start hiring smarter with Talk2Hire."
+      />
+      <meta
+        name="twitter:image"
+        content="https://talk2hire.com/talk2hirelogo.jpeg"
+      />
+
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700&family=DM+Sans:wght@300;400;500&display=swap');
 

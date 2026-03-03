@@ -657,6 +657,28 @@ const AppliedJobs = () => {
 
   return (
     <>
+      {/* Basic SEO */}
+      <title>Job Tracker Dashboard | Talk2Hire</title>
+
+      <meta
+        name="description"
+        content="Track and manage your job applications inside your Talk2Hire dashboard. Monitor interview stages, offers, and application progress in one place."
+      />
+
+      {/* Prevent indexing */}
+      <meta name="robots" content="noindex, nofollow, noarchive" />
+
+      <link rel="canonical" href="https://talk2hire.com/applications" />
+
+      {/* Open Graph (Optional but good for internal sharing) */}
+      <meta property="og:title" content="Job Tracker Dashboard | Talk2Hire" />
+      <meta
+        property="og:description"
+        content="Manage and track your job applications with status updates, notes, and progress insights."
+      />
+      <meta property="og:type" content="website" />
+      <meta property="og:url" content="https://talk2hire.com/applications" />
+
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,700;0,9..144,900;1,9..144,400&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
         * { box-sizing: border-box; }

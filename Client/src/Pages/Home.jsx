@@ -1321,22 +1321,102 @@ const SectionFallback = () => (
    HOME PAGE  — Nav rendered by Layout, not here
 ═══════════════════════════════════════════════ */
 export const HomePage = () => (
-  <div className="home-root min-h-screen bg-white">
-    <style>{TOKENS}</style>
-    <HeroSection />
-    <Suspense fallback={<SectionFallback />}>
-      <LazyFeatures />
-    </Suspense>
-    <Suspense fallback={<SectionFallback />}>
-      <LazyTrustedSlider />
-    </Suspense>
-    <Suspense fallback={<SectionFallback />}>
-      <LazyTestimonialsSlider />
-    </Suspense>
-    <Suspense fallback={<SectionFallback />}>
-      <LazyCTABanner />
-    </Suspense>
-  </div>
+  <>
+    {/* Primary SEO */}
+    <title>Talk2Hire | AI-Powered Online Interview & Hiring Platform</title>
+
+    <meta
+      name="description"
+      content="Talk2Hire helps professionals land better jobs with AI-powered interview coaching, smart job matching, real-time salary insights, and one-click applications."
+    />
+
+    <meta
+      name="keywords"
+      content="AI interview coaching, job search platform, interview preparation, mock interviews, hiring platform, salary insights, career growth"
+    />
+
+    <meta name="author" content="Talk2Hire" />
+    <meta name="robots" content="index, follow" />
+
+    <link rel="canonical" href="https://talk2hire.com/" />
+
+    {/* Open Graph (Facebook / LinkedIn) */}
+    <meta property="og:type" content="website" />
+    <meta
+      property="og:title"
+      content="Talk2Hire – AI Interview Coaching & Smart Job Search"
+    />
+    <meta
+      property="og:description"
+      content="Practice interviews with AI, get matched to verified jobs, and land offers faster."
+    />
+    <meta property="og:url" content="https://talk2hire.com/" />
+    <meta property="og:site_name" content="Talk2Hire" />
+    <meta property="og:image" content="https://talk2hire.com/homepage.jpeg" />
+
+    {/* Twitter Card */}
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="Talk2Hire – AI Interview Coaching Platform"
+    />
+    <meta
+      name="twitter:description"
+      content="Discover jobs, practice with AI interview coaching, and land offers faster."
+    />
+    <meta name="twitter:image" content="https://talk2hire.com/homepage.jpeg" />
+
+    {/* Structured Data */}
+    {/* Update the logo */}
+    <script type="application/ld+json">
+      {JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        name: "Talk2Hire",
+        url: "https://talk2hire.com/",
+        logo: "https://talk2hire.com/talk2hirelogo.jpeg",
+        sameAs: [
+          "https://www.linkedin.com/company/quantumhash-corporation/",
+          "https://x.com/QuantumhashCrp",
+          "https://www.instagram.com/quantumhash_corporation/",
+          "https://www.facebook.com/profile.php?id=61582410893482",
+          "https://www.youtube.com/@QuantumHashCorporation",
+          "https://github.com/Quantumhash-Corporation",
+        ],
+      })}
+    </script>
+
+    <script type="application/ld+json">
+      {JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        name: "Talk2Hire",
+        url: "https://talk2hire.com/",
+        potentialAction: {
+          "@type": "SearchAction",
+          target: "https://talk2hire.com/jobs?q={search_term_string}",
+          "query-input": "required name=search_term_string",
+        },
+      })}
+    </script>
+    {/* Main Components */}
+    <div className="home-root min-h-screen bg-white">
+      <style>{TOKENS}</style>
+      <HeroSection />
+      <Suspense fallback={<SectionFallback />}>
+        <LazyFeatures />
+      </Suspense>
+      <Suspense fallback={<SectionFallback />}>
+        <LazyTrustedSlider />
+      </Suspense>
+      <Suspense fallback={<SectionFallback />}>
+        <LazyTestimonialsSlider />
+      </Suspense>
+      <Suspense fallback={<SectionFallback />}>
+        <LazyCTABanner />
+      </Suspense>
+    </div>
+  </>
 );
 
 export default HomePage;

@@ -38,21 +38,20 @@ export default function CompanyNavbar() {
             onClick={() => navigate("/company/dashboard")}
             className="flex items-center gap-2.5 group"
           >
-            <div
-              className="w-9 h-9 rounded-xl flex items-center justify-center shadow-md group-hover:shadow-lg transition-shadow"
-              style={{
-                background: "linear-gradient(135deg, #6366f1, #4f46e5)",
-              }}
-            >
-              <Building2 size={18} className="text-white" />
-            </div>
-            <div className="flex flex-col items-start leading-none">
-              <span className="font-bold text-gray-900 tracking-tight  taxt-lg">
-                Talk2Hire
-              </span>
-              <span className="text-[10px] text-indigo-500 font-medium tracking-wide">
-                Business Portal
-              </span>
+            <div className="flex items-center gap-2 leading-none">
+              <img
+                src="/talk2hirelogo.jpeg"
+                alt="Talk2Hire"
+                className="h-12 w-12 rounded-full"
+              />
+              <div>
+                <span className="font-bold text-(--nav-ink) text-[15px] tracking-tight block">
+                  Talk2Hire
+                </span>
+                <span className="text-[10px] text-(--nav-amber) font-semibold tracking-wide">
+                  Business Portal
+                </span>
+              </div>
             </div>
           </button>
 

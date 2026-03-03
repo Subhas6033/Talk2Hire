@@ -591,200 +591,228 @@ const CompanyJob = () => {
   } = useJobs();
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* ── Toast Notifications ── */}
-      <div className="fixed top-4 right-4 z-50 flex flex-col gap-2">
-        {successMessage && (
-          <div className="flex items-center gap-2 px-4 py-3 bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm rounded-xl shadow-md">
-            <CheckCircle size={15} /> {successMessage}
-          </div>
-        )}
-        {error && (
-          <div className="flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl shadow-md">
-            <AlertCircle size={15} /> {error}
-          </div>
-        )}
-      </div>
+    <>
+      {/* Basic SEO */}
+      <title>Manage Job Posts | Talk2Hire Business Portal</title>
 
-      {/* ── Header ── */}
-      <div className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-6 py-6">
-          <div className="flex items-center justify-between flex-wrap gap-4">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">Job Posts</h1>
-              <p className="text-sm text-gray-400 mt-0.5">
-                Manage your open positions and track applicants
-              </p>
+      <meta
+        name="description"
+        content="Create, edit, and manage your company job postings, track applicants, and control listing status inside the Talk2Hire employer dashboard."
+      />
+
+      {/* Critical: Prevent indexing */}
+      <meta name="robots" content="noindex, nofollow, noarchive, nosnippet" />
+
+      <link rel="canonical" href="https://talk2hire.com/company/jobs" />
+
+      {/* Optional Open Graph (internal sharing only) */}
+      <meta
+        property="og:title"
+        content="Manage Job Posts | Talk2Hire Business Portal"
+      />
+      <meta
+        property="og:description"
+        content="Post new roles, update job listings, and manage applicants."
+      />
+      <meta property="og:type" content="website" />
+      <meta property="og:url" content="https://talk2hire.com/company/jobs" />
+
+      {/* Main components starts from here */}
+      <div className="min-h-screen bg-gray-50">
+        {/* ── Toast Notifications ── */}
+        <div className="fixed top-4 right-4 z-50 flex flex-col gap-2">
+          {successMessage && (
+            <div className="flex items-center gap-2 px-4 py-3 bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm rounded-xl shadow-md">
+              <CheckCircle size={15} /> {successMessage}
             </div>
-            <button
-              onClick={openCreate}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-md hover:shadow-lg transition-all"
-              style={{
-                background: "linear-gradient(135deg, #6366f1, #4f46e5)",
-              }}
-            >
-              <Plus size={16} /> Post New Job
-            </button>
-          </div>
-
-          {/* Status tabs */}
-          <div className="flex items-center gap-1 mt-5">
-            {["all", "active", "closed", "draft"].map((s) => (
-              <button
-                key={s}
-                onClick={() => setFilterStatus(s)}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium capitalize transition-all ${
-                  filterStatus === s
-                    ? "bg-indigo-50 text-indigo-600"
-                    : "text-gray-500 hover:text-gray-800 hover:bg-gray-100"
-                }`}
-              >
-                {s === "all"
-                  ? "All Jobs"
-                  : s.charAt(0).toUpperCase() + s.slice(1)}
-                <span
-                  className={`text-[11px] px-1.5 py-0.5 rounded-full font-semibold ${
-                    filterStatus === s
-                      ? "bg-indigo-100 text-indigo-600"
-                      : "bg-gray-100 text-gray-500"
-                  }`}
-                >
-                  {counts[s]}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-7xl mx-auto px-6 py-6">
-        {/* ── Search + Filter ── */}
-        <div className="flex items-center gap-3 mb-6 flex-wrap">
-          <div className="relative flex-1 min-w-55">
-            <Search
-              size={15}
-              className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400"
-            />
-            <input
-              className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm bg-white outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 transition-all"
-              placeholder="Search jobs..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-          <div className="relative">
-            <Filter
-              size={14}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-            />
-            <select
-              className="pl-8 pr-8 py-2.5 rounded-xl border border-gray-200 text-sm bg-white outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 transition-all appearance-none cursor-pointer text-gray-600"
-              value={filterDept}
-              onChange={(e) => setFilterDept(e.target.value)}
-            >
-              <option value="all">All Departments</option>
-              {uniqueDepts.map((d) => (
-                <option key={d}>{d}</option>
-              ))}
-            </select>
-            <ChevronDown
-              size={13}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
-            />
-          </div>
+          )}
+          {error && (
+            <div className="flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl shadow-md">
+              <AlertCircle size={15} /> {error}
+            </div>
+          )}
         </div>
 
-        {/* ── Loading skeleton ── */}
-        {isFetching && jobs.length === 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-            {[...Array(3)].map((_, i) => (
-              <div
-                key={i}
-                className="bg-white rounded-2xl border border-gray-200 h-64 animate-pulse"
-              >
-                <div className="h-1 bg-gray-200 rounded-t-2xl" />
-                <div className="p-5 space-y-3">
-                  <div className="h-4 bg-gray-100 rounded w-3/4" />
-                  <div className="h-3 bg-gray-100 rounded w-1/2" />
-                  <div className="h-3 bg-gray-100 rounded w-2/3" />
-                </div>
+        {/* ── Header ── */}
+        <div className="bg-white border-b border-gray-200">
+          <div className="max-w-7xl mx-auto px-6 py-6">
+            <div className="flex items-center justify-between flex-wrap gap-4">
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">Job Posts</h1>
+                <p className="text-sm text-gray-400 mt-0.5">
+                  Manage your open positions and track applicants
+                </p>
               </div>
-            ))}
-          </div>
-        )}
-
-        {/* ── Jobs Grid ── */}
-        {!isFetching || jobs.length > 0 ? (
-          jobs.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-              {jobs.map((job) => (
-                <JobCard
-                  key={job.id}
-                  job={job}
-                  onEdit={openEdit}
-                  onDelete={handleDelete}
-                  onToggleStatus={handleToggleStatus}
-                  isDeleting={isDeleting(job.id)}
-                  isToggling={isToggling(job.id)}
-                />
-              ))}
               <button
                 onClick={openCreate}
-                className="bg-white rounded-2xl border-2 border-dashed border-gray-200 hover:border-indigo-300 hover:bg-indigo-50/30 transition-all flex flex-col items-center justify-center gap-3 p-8 min-h-50 group"
-              >
-                <div className="w-12 h-12 rounded-2xl bg-gray-100 group-hover:bg-indigo-100 flex items-center justify-center transition-colors">
-                  <Plus
-                    size={22}
-                    className="text-gray-400 group-hover:text-indigo-500 transition-colors"
-                  />
-                </div>
-                <div className="text-center">
-                  <p className="text-sm font-semibold text-gray-500 group-hover:text-indigo-600 transition-colors">
-                    Post New Job
-                  </p>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    Click to create a new listing
-                  </p>
-                </div>
-              </button>
-            </div>
-          ) : (
-            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col items-center justify-center py-20 text-center">
-              <div className="w-16 h-16 rounded-2xl bg-indigo-50 flex items-center justify-center mb-4">
-                <Briefcase size={28} className="text-indigo-300" />
-              </div>
-              <h3 className="text-base font-bold text-gray-700 mb-1">
-                No jobs found
-              </h3>
-              <p className="text-sm text-gray-400 mb-6 max-w-xs">
-                {search || filterStatus !== "all" || filterDept !== "all"
-                  ? "Try adjusting your filters or search terms."
-                  : "You haven't posted any jobs yet. Create your first listing!"}
-              </p>
-              <button
-                onClick={openCreate}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-md"
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-md hover:shadow-lg transition-all"
                 style={{
                   background: "linear-gradient(135deg, #6366f1, #4f46e5)",
                 }}
               >
-                <Plus size={15} /> Post Your First Job
+                <Plus size={16} /> Post New Job
               </button>
             </div>
-          )
-        ) : null}
-      </div>
 
-      {/* ── Modal ── */}
-      {modal && (
-        <JobFormModal
-          job={modal === "create" ? null : modal}
-          onClose={closeModal}
-          onSave={handleSave}
-          isSaving={isSaving}
-        />
-      )}
-    </div>
+            {/* Status tabs */}
+            <div className="flex items-center gap-1 mt-5">
+              {["all", "active", "closed", "draft"].map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setFilterStatus(s)}
+                  className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium capitalize transition-all ${
+                    filterStatus === s
+                      ? "bg-indigo-50 text-indigo-600"
+                      : "text-gray-500 hover:text-gray-800 hover:bg-gray-100"
+                  }`}
+                >
+                  {s === "all"
+                    ? "All Jobs"
+                    : s.charAt(0).toUpperCase() + s.slice(1)}
+                  <span
+                    className={`text-[11px] px-1.5 py-0.5 rounded-full font-semibold ${
+                      filterStatus === s
+                        ? "bg-indigo-100 text-indigo-600"
+                        : "bg-gray-100 text-gray-500"
+                    }`}
+                  >
+                    {counts[s]}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="max-w-7xl mx-auto px-6 py-6">
+          {/* ── Search + Filter ── */}
+          <div className="flex items-center gap-3 mb-6 flex-wrap">
+            <div className="relative flex-1 min-w-55">
+              <Search
+                size={15}
+                className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400"
+              />
+              <input
+                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm bg-white outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 transition-all"
+                placeholder="Search jobs..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <div className="relative">
+              <Filter
+                size={14}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+              />
+              <select
+                className="pl-8 pr-8 py-2.5 rounded-xl border border-gray-200 text-sm bg-white outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 transition-all appearance-none cursor-pointer text-gray-600"
+                value={filterDept}
+                onChange={(e) => setFilterDept(e.target.value)}
+              >
+                <option value="all">All Departments</option>
+                {uniqueDepts.map((d) => (
+                  <option key={d}>{d}</option>
+                ))}
+              </select>
+              <ChevronDown
+                size={13}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+              />
+            </div>
+          </div>
+
+          {/* ── Loading skeleton ── */}
+          {isFetching && jobs.length === 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+              {[...Array(3)].map((_, i) => (
+                <div
+                  key={i}
+                  className="bg-white rounded-2xl border border-gray-200 h-64 animate-pulse"
+                >
+                  <div className="h-1 bg-gray-200 rounded-t-2xl" />
+                  <div className="p-5 space-y-3">
+                    <div className="h-4 bg-gray-100 rounded w-3/4" />
+                    <div className="h-3 bg-gray-100 rounded w-1/2" />
+                    <div className="h-3 bg-gray-100 rounded w-2/3" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ── Jobs Grid ── */}
+          {!isFetching || jobs.length > 0 ? (
+            jobs.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                {jobs.map((job) => (
+                  <JobCard
+                    key={job.id}
+                    job={job}
+                    onEdit={openEdit}
+                    onDelete={handleDelete}
+                    onToggleStatus={handleToggleStatus}
+                    isDeleting={isDeleting(job.id)}
+                    isToggling={isToggling(job.id)}
+                  />
+                ))}
+                <button
+                  onClick={openCreate}
+                  className="bg-white rounded-2xl border-2 border-dashed border-gray-200 hover:border-indigo-300 hover:bg-indigo-50/30 transition-all flex flex-col items-center justify-center gap-3 p-8 min-h-50 group"
+                >
+                  <div className="w-12 h-12 rounded-2xl bg-gray-100 group-hover:bg-indigo-100 flex items-center justify-center transition-colors">
+                    <Plus
+                      size={22}
+                      className="text-gray-400 group-hover:text-indigo-500 transition-colors"
+                    />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-semibold text-gray-500 group-hover:text-indigo-600 transition-colors">
+                      Post New Job
+                    </p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      Click to create a new listing
+                    </p>
+                  </div>
+                </button>
+              </div>
+            ) : (
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col items-center justify-center py-20 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-indigo-50 flex items-center justify-center mb-4">
+                  <Briefcase size={28} className="text-indigo-300" />
+                </div>
+                <h3 className="text-base font-bold text-gray-700 mb-1">
+                  No jobs found
+                </h3>
+                <p className="text-sm text-gray-400 mb-6 max-w-xs">
+                  {search || filterStatus !== "all" || filterDept !== "all"
+                    ? "Try adjusting your filters or search terms."
+                    : "You haven't posted any jobs yet. Create your first listing!"}
+                </p>
+                <button
+                  onClick={openCreate}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white shadow-md"
+                  style={{
+                    background: "linear-gradient(135deg, #6366f1, #4f46e5)",
+                  }}
+                >
+                  <Plus size={15} /> Post Your First Job
+                </button>
+              </div>
+            )
+          ) : null}
+        </div>
+
+        {/* ── Modal ── */}
+        {modal && (
+          <JobFormModal
+            job={modal === "create" ? null : modal}
+            onClose={closeModal}
+            onSave={handleSave}
+            isSaving={isSaving}
+          />
+        )}
+      </div>
+    </>
   );
 };
 

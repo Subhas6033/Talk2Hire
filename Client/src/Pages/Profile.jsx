@@ -252,11 +252,87 @@ const ProfilePage = () => {
 
   return (
     <>
-      <title>QuantamHash Corporation | Profile</title>
+      {/* Title */}
+      <title>My Profile | Talk2Hire Careers Portal</title>
+
+      {/* Description */}
       <meta
         name="description"
-        content="Profile page of QuantamHash Corporation"
+        content="Manage your Talk2Hire account, update your resume, track interview performance, and monitor your AI interview progress."
       />
+
+      {/* Private Dashboard Page */}
+      <meta name="robots" content="noindex, nofollow, noarchive" />
+
+      {/* Canonical */}
+      <link rel="canonical" href="https://talk2hire.com/profile" />
+
+      {/* Theme Color */}
+      <meta name="theme-color" content="#7C3AED" />
+
+      {/* Open Graph */}
+      <meta property="og:type" content="profile" />
+      <meta property="og:site_name" content="Talk2Hire" />
+      <meta property="og:title" content="My Profile | Talk2Hire" />
+      <meta
+        property="og:description"
+        content="Access your interview statistics, update resume, manage password, and review previous AI interviews."
+      />
+      <meta property="og:url" content="https://talk2hire.com/profile" />
+      <meta
+        property="og:image"
+        content="https://talk2hire.com/talk2hirelogo.jpeg"
+      />
+
+      {/* Twitter */}
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta name="twitter:title" content="My Profile | Talk2Hire" />
+      <meta
+        name="twitter:description"
+        content="Track performance and manage your AI interview journey."
+      />
+      <meta
+        name="twitter:image"
+        content="https://talk2hire.com/talk2hirelogo.jpeg"
+      />
+
+      {/* Structured Data */}
+      <script type="application/ld+json">
+        {JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "WebApplication",
+          name: "Talk2Hire User Profile",
+          url: "https://talk2hire.com/profile",
+          applicationCategory: "BusinessApplication",
+          operatingSystem: "Web",
+          isPartOf: {
+            "@type": "WebApplication",
+            name: "Talk2Hire",
+            url: "https://talk2hire.com/",
+          },
+          publisher: {
+            "@type": "Organization",
+            name: "QuantamHash Corporation",
+            address: {
+              "@type": "PostalAddress",
+              streetAddress: "800 N King Street, Suite 304",
+              addressLocality: "Wilmington",
+              addressRegion: "DE",
+              postalCode: "19801",
+              addressCountry: "US",
+            },
+          },
+          description:
+            "Private user dashboard for managing interview performance, resumes, and account settings within Talk2Hire.",
+          featureList: [
+            "View interview statistics",
+            "Upload and manage resume",
+            "Update password",
+            "Track AI interview scores",
+            "Review previous interviews",
+          ],
+        })}
+      </script>
 
       <div
         className="min-h-screen"

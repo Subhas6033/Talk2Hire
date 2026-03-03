@@ -12,7 +12,7 @@ import streamStore from "../Hooks/streamSingleton";
 let _globalSocketInitialized = false;
 let _globalClientReadyEmitted = false;
 
-// ── Minimal style block: ONLY keyframes + font import (impossible in Tailwind) ──
+// ── Minimal style block: ONLY keyframes + font import  ──
 const STYLES = `
   @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&family=Lora:wght@400;500;600&display=swap');
 
@@ -340,49 +340,56 @@ const InterviewLive = () => {
     });
   }, []); // eslint-disable-line
 
-  const setupMobilePeerConnection = useCallback(() => {
-    if (mobilePcRef.current) {
-      const s = mobilePcRef.current.connectionState;
-      if (s === "failed" || s === "closed" || s === "disconnected") {
-        try {
-          mobilePcRef.current.close();
-        } catch (_) {}
-        mobilePcRef.current = null;
-      } else return mobilePcRef.current;
-    }
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-      ],
-    });
-    mobilePcRef.current = pc;
-    pc.onicecandidate = ({ candidate }) => {
-      if (candidate && interview.socketRef.current?.connected)
-        interview.socketRef.current.emit(
-          "mobile_webrtc_ice_candidate_desktop",
-          { candidate },
-        );
-    };
-    pc.ontrack = (event) => {
-      if (event.track.kind !== "video") return;
-      const el = mobileVideoRef.current;
-      if (el) {
-        const rs = new MediaStream([event.track]);
-        el.srcObject = rs;
-        el.muted = true;
-        el.play().catch(() => {});
-        pendingMobileStreamRef.current = rs;
+  const setupMobilePeerConnection = useCallback(
+    (identity) => {
+      if (mobilePcRef.current) {
+        const s = mobilePcRef.current.connectionState;
+        if (s === "failed" || s === "closed" || s === "disconnected") {
+          try {
+            mobilePcRef.current.close();
+          } catch (_) {}
+          mobilePcRef.current = null;
+        } else return mobilePcRef.current;
       }
-      setMobileTrackAttached(true);
-      setMobileCameraConnected(true);
-    };
-    pc.onconnectionstatechange = () => {
-      if (["disconnected", "failed", "closed"].includes(pc.connectionState))
-        setMobileTrackAttached(false);
-    };
-    return pc;
-  }, [interview.socketRef]);
+      const pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+        ],
+      });
+      mobilePcRef.current = pc;
+
+      pc.onicecandidate = ({ candidate }) => {
+        if (candidate && interview.socketRef.current?.connected)
+          interview.socketRef.current.emit(
+            "mobile_webrtc_ice_candidate_desktop",
+            { candidate, identity },
+          );
+      };
+
+      pc.ontrack = (event) => {
+        if (event.track.kind !== "video") return;
+        const el = mobileVideoRef.current;
+        if (el) {
+          const rs = new MediaStream([event.track]);
+          el.srcObject = rs;
+          el.muted = true;
+          el.play().catch(() => {});
+          pendingMobileStreamRef.current = rs;
+        }
+        setMobileTrackAttached(true);
+        setMobileCameraConnected(true);
+      };
+
+      pc.onconnectionstatechange = () => {
+        if (["disconnected", "failed", "closed"].includes(pc.connectionState))
+          setMobileTrackAttached(false);
+      };
+
+      return pc;
+    },
+    [interview.socketRef],
+  );
 
   const attachScreenVideo = useCallback(() => {
     const vid = screenVideoRef.current;
@@ -454,7 +461,7 @@ const InterviewLive = () => {
         interview.socketRef.current = socket;
 
         socket.on("mobile_webrtc_offer_relay", async ({ offer, identity }) => {
-          const pc = setupMobilePeerConnection();
+          const pc = setupMobilePeerConnection(identity);
           try {
             await pc.setRemoteDescription(new RTCSessionDescription(offer));
             const answer = await pc.createAnswer();
@@ -609,10 +616,11 @@ const InterviewLive = () => {
         await startVideoRecording();
         const activeScreen =
           streamStore.screenShareStream ??
-          streamsRef.current?.screenShareStream;
+          streamsRef.current?.screenShareStream ??
+          null;
         if (activeScreen?.active)
           await screenRecording.startRecording(activeScreen);
-        await serverRecording.start();
+        await serverRecording.start(activeScreen);
         if (pendingMobileStreamRef.current) {
           serverRecording
             .startSecondary(pendingMobileStreamRef.current)
@@ -700,6 +708,83 @@ const InterviewLive = () => {
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <>
+      {/* Basic SEO */}
+      <title>Live AI Interview | Talk2Hire</title>
+
+      <meta
+        name="description"
+        content="Attend your secure AI-powered live interview on Talk2Hire. Real-time voice interaction, smart evaluation, proctoring, screen recording, and instant AI feedback."
+      />
+
+      {/* This page should not be indexed */}
+      <meta name="robots" content="noindex, nofollow" />
+      <link rel="canonical" href="https://talk2hire.com/interview/live" />
+      <meta name="theme-color" content="#2563eb" />
+
+      {/* Open Graph */}
+      <meta property="og:type" content="website" />
+      <meta property="og:site_name" content="Talk2Hire" />
+      <meta property="og:title" content="Live AI Interview | Talk2Hire" />
+      <meta
+        property="og:description"
+        content="Join your AI-powered live interview session with real-time monitoring, voice interaction, and automated evaluation."
+      />
+      <meta property="og:url" content="https://talk2hire.com/interview/live" />
+      <meta
+        property="og:image"
+        content="https://talk2hire.com/talk2hirelogo.jpeg"
+      />
+      {/* Twitter */}
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta name="twitter:title" content="Live AI Interview | Talk2Hire" />
+      <meta
+        name="twitter:description"
+        content="Secure AI-driven live interviews with smart evaluation and proctoring."
+      />
+      <meta
+        name="twitter:image"
+        content="https://talk2hire.com/talk2hirelogo.jpeg"
+      />
+      {/* Structured Data */}
+      <script type="application/ld+json">
+        {JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "WebApplication",
+          name: "Talk2Hire Live Interview",
+          url: "https://talk2hire.com/interview/live",
+          applicationCategory: "BusinessApplication",
+          operatingSystem: "Web",
+          browserRequirements: "Requires modern browser with WebRTC support",
+          isPartOf: {
+            "@type": "SoftwareApplication",
+            name: "Talk2Hire",
+            applicationCategory: "BusinessApplication",
+          },
+          publisher: {
+            "@type": "Organization",
+            name: "QuantamHash Corporation",
+            address: {
+              "@type": "PostalAddress",
+              streetAddress: "800 N King Street, Suite 304",
+              addressLocality: "Wilmington",
+              addressRegion: "DE",
+              postalCode: "19801",
+              addressCountry: "US",
+            },
+          },
+          description:
+            "AI-powered live interview session with real-time voice interaction, facial monitoring, mobile camera integration, screen recording, and automated evaluation.",
+          featureList: [
+            "Real-time AI interviewer",
+            "Voice-based question answering",
+            "Live transcript generation",
+            "Facial detection monitoring",
+            "Secondary mobile camera integration",
+            "Screen recording",
+            "Automated AI evaluation",
+          ],
+        })}
+      </script>
       <style>{STYLES}</style>
 
       {/* ── Page root ── */}
