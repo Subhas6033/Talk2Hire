@@ -15,6 +15,7 @@ const {
   deleteFileFromFTP,
 } = require("../Upload/uploadOnFTP.js");
 const crypto = require("node:crypto");
+const mammoth = require("mammoth");
 
 const generateRefreshAndAccessTokens = async (user) => {
   const refreshToken = jwt.sign(
@@ -135,6 +136,7 @@ async function extractResumeForTempRegistration({
 }) {
   try {
     let extractedText = "";
+
     if (mimeType === "application/pdf") {
       const ocrResponse = await fetch("https://api.mistral.ai/v1/ocr", {
         method: "POST",
@@ -151,27 +153,41 @@ async function extractResumeForTempRegistration({
       const ocrData = await ocrResponse.json();
       extractedText =
         ocrData.pages?.map((p) => p.markdown || "").join("\n\n") || "";
+    } else if (
+      mimeType ===
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+      mimeType === "application/msword" ||
+      originalFileName?.toLowerCase().endsWith(".docx") ||
+      originalFileName?.toLowerCase().endsWith(".doc")
+    ) {
+      // Fetch the file from FTP and extract text using mammoth
+      const fileResponse = await fetch(ftpUrl);
+      const arrayBuffer = await fileResponse.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      const result = await mammoth.extractRawText({ buffer });
+      extractedText = result.value || "";
     }
+
     extractedText = extractedText.replace(/\s+/g, " ").trim();
 
-    const emailResponse = await mistral.chat.complete({
-      model: "mistral-small-latest",
-      messages: [
-        {
-          role: "system",
-          content: `Extract ONLY the email address from the resume text. Return just the email, nothing else. If no email found, return "null".`,
-        },
-        {
-          role: "user",
-          content: `Extract email from: ${extractedText.slice(0, 3000)}`,
-        },
-      ],
-    });
+    // Normalize OCR spacing issues around email symbols
+    let cleanedText = extractedText
+      .replace(/\s*@\s*/g, "@")
+      .replace(/\s*\.\s*/g, ".")
+      .replace(/\s+/g, " ");
 
-    const email = emailResponse.choices[0].message.content.trim().toLowerCase();
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    const extractedEmail =
-      email === "null" || !emailRegex.test(email) ? null : email;
+    // Split on common non-email separators to isolate email candidates
+    const tokens = cleanedText.split(/[\s,;|/\\()\[\]{}]+/);
+
+    let extractedEmail = null;
+
+    for (const token of tokens) {
+      const match = token.match(/([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i);
+      if (match) {
+        extractedEmail = match[1].toLowerCase();
+        break;
+      }
+    }
 
     if (!extractedEmail) {
       await pool.execute(
@@ -314,7 +330,6 @@ const getExtractionStatus = asyncHandler(async (req, res) => {
   );
 });
 
-// ─── FIX 1: Pass role to token generator ─────────────────────────────────────
 const completeRegistration = asyncHandler(async (req, res) => {
   const { sessionId, fullName, email, mobile, location, skills } = req.body;
 
@@ -492,7 +507,6 @@ const checkResumeStatus = asyncHandler(async (req, res) => {
   );
 });
 
-// ─── FIX 2: Pass role to token generator ─────────────────────────────────────
 const loginUser = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 

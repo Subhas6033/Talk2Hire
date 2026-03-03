@@ -7,6 +7,16 @@ const SOCKET_URL = import.meta.env.VITE_WS_URL;
 const ICE_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
+  {
+    urls: "turn:openrelay.metered.ca:80",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+  {
+    urls: "turn:openrelay.metered.ca:443",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
 ];
 
 const Dot = ({ active, color = "green" }) => {
@@ -272,9 +282,12 @@ const MobileCameraPage = () => {
     });
     socketRef.current = socket;
 
+    let webRTCStarted = false;
+
     socket.on("connect", async () => {
       if (!mountedRef.current) return;
       setSocketConnected(true);
+
       socket.emit("secondary_camera_connected", {
         interviewId: sessionId,
         userId,
@@ -282,14 +295,27 @@ const MobileCameraPage = () => {
         streamType: "webrtc",
       });
 
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((resolve) => {
+        socket.once("secondary_camera_ready", resolve);
+        // Safety fallback — proceed anyway after 8s if desktop never confirms
+        setTimeout(resolve, 8000);
+      });
+
       if (!mountedRef.current) return;
+      if (webRTCStarted) return;
+      webRTCStarted = true;
+
       await startWebRTC(socket);
+    });
+
+    socket.on("secondary_camera_ready", () => {
+      if (!webRTCStarted || !mountedRef.current) return;
     });
 
     socket.on("disconnect", (reason) => {
       if (!mountedRef.current) return;
       setSocketConnected(false);
+      webRTCStarted = false;
       if (reason !== "io client disconnect") {
         setPhase("error");
         setError("Server disconnected unexpectedly. Trying to reconnect…");
