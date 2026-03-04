@@ -412,7 +412,10 @@ export class WebRTCInterviewClient {
   }
 
   _enqueueTTSChunk(base64Audio) {
-    this._ttsQueue.push(base64Audio);
+    this._ttsQueue.push({
+      audio: base64Audio,
+      timestamp: Date.now(), // Track when chunk arrived
+    });
     if (!this._ttsPlaying) this._playNextTTSChunk();
   }
 
@@ -423,7 +426,7 @@ export class WebRTCInterviewClient {
     }
     this._ttsPlaying = true;
 
-    const base64 = this._ttsQueue.shift();
+    const { audio: base64, timestamp } = this._ttsQueue.shift();
     const binary = atob(base64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -434,6 +437,14 @@ export class WebRTCInterviewClient {
       const source = ctx.createBufferSource();
       source.buffer = buffer;
       source.connect(ctx.destination);
+
+      // Log playback timing for debugging audio-video sync
+      const now = Date.now();
+      const delay = now - timestamp;
+      if (delay > 100) {
+        console.warn(`⚠️ TTS chunk delayed by ${delay}ms (queued: ${this._ttsQueue.length} chunks)`);
+      }
+
       source.onended = () => this._playNextTTSChunk();
       source.start();
       this._cb("onTTSChunk", base64);
@@ -679,9 +690,10 @@ export class MobileWebRTCClient {
   }
 
   _startFrameRelay() {
+    // FIX: Optimized frame rate and quality for better video
     const canvas = document.createElement("canvas");
-    canvas.width = 320;
-    canvas.height = 240;
+    canvas.width = 640; // Increased from 320
+    canvas.height = 480; // Increased from 240
     const ctx = canvas.getContext("2d");
 
     const video = document.createElement("video");
@@ -692,10 +704,10 @@ export class MobileWebRTCClient {
 
     this._frameTimer = setInterval(() => {
       if (video.readyState < 2) return;
-      ctx.drawImage(video, 0, 0, 320, 240);
-      const frame = canvas.toDataURL("image/jpeg", 0.5).split(",")[1];
+      ctx.drawImage(video, 0, 0, 640, 480);
+      const frame = canvas.toDataURL("image/jpeg", 0.65).split(",")[1];
       this.socket.emit("mobile_camera_frame", { frame, timestamp: Date.now() });
-    }, 500);
+    }, 100); // Changed from 500ms (2 fps) to 100ms (10 fps)
   }
 
   async disconnect() {

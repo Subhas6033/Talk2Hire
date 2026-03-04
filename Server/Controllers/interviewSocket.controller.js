@@ -415,7 +415,27 @@ async function handleInterviewSocket(
   console.log(`🖥️ Desktop socket: ${socket.id}`);
 
   if (session.pendingMobileOffer) {
+    const { offer, identity } = session.pendingMobileOffer;
     session.pendingMobileOffer = null;
+
+    // Forward pending offer to desktop immediately
+    io.to(socket.id).emit("mobile_webrtc_offer_relay", {
+      offer,
+      identity,
+    });
+    console.log(
+      `🔄 [FIX] Forwarding pending mobile offer (${identity}) to desktop`,
+    );
+
+    // Forward pending ICE candidates
+    if (session.pendingMobileIceCandidates?.length > 0) {
+      session.pendingMobileIceCandidates.forEach((candidate) => {
+        io.to(socket.id).emit("mobile_webrtc_ice_from_mobile", { candidate });
+      });
+      console.log(
+        `🔄 [FIX] Forwarded ${session.pendingMobileIceCandidates.length} pending ICE candidates`,
+      );
+    }
     session.pendingMobileIceCandidates = [];
 
     if (session.mobileSocketId) {

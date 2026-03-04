@@ -4,6 +4,9 @@ import { io } from "socket.io-client";
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
+// ── FIX 1: Use a reliable public TURN service (or your own).
+// STUN alone fails when either peer is behind symmetric NAT (common on VPS/Cloudflare).
+// openrelay.metered.ca is fine for dev; for production add your own coturn server.
 const ICE_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
@@ -14,6 +17,12 @@ const ICE_SERVERS = [
   },
   {
     urls: "turn:openrelay.metered.ca:443",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+  {
+    // TLS TURN — works even when port 80 is blocked
+    urls: "turns:openrelay.metered.ca:443",
     username: "openrelayproject",
     credential: "openrelayproject",
   },
@@ -86,6 +95,8 @@ const MobileCameraPage = () => {
   const videoElRef = useRef(null);
   const mountedRef = useRef(true);
   const frameTimerRef = useRef(null);
+  // ── FIX 2: Track whether WebRTC was already started so we never double-call
+  const webRTCStartedRef = useRef(false);
 
   const teardown = useCallback(async () => {
     if (frameTimerRef.current) {
@@ -106,6 +117,7 @@ const MobileCameraPage = () => {
       socketRef.current.disconnect();
       socketRef.current = null;
     }
+    webRTCStartedRef.current = false;
   }, []);
 
   useEffect(() => {
@@ -140,9 +152,10 @@ const MobileCameraPage = () => {
   }, []);
 
   const startFrameRelay = useCallback((stream) => {
+    // FIX: Improved frame rate and quality for better video
     const canvas = document.createElement("canvas");
-    canvas.width = 320;
-    canvas.height = 240;
+    canvas.width = 640; // Increased from 320
+    canvas.height = 480; // Increased from 240
     const ctx = canvas.getContext("2d");
     const vid = document.createElement("video");
     vid.autoplay = true;
@@ -150,20 +163,29 @@ const MobileCameraPage = () => {
     vid.muted = true;
     vid.srcObject = stream;
 
+    // Target 10 fps instead of 2 fps for smoother video
     frameTimerRef.current = setInterval(() => {
       if (vid.readyState < 2) return;
-      ctx.drawImage(vid, 0, 0, 320, 240);
-      const frame = canvas.toDataURL("image/jpeg", 0.5).split(",")[1];
+      ctx.drawImage(vid, 0, 0, 640, 480);
+      // Increase JPEG quality from 0.5 to 0.65 for better clarity
+      const frame = canvas.toDataURL("image/jpeg", 0.65).split(",")[1];
       socketRef.current?.emit("mobile_camera_frame", {
         frame,
         timestamp: Date.now(),
       });
-    }, 500);
+    }, 100); // Changed from 500ms (2 fps) to 100ms (10 fps)
   }, []);
 
   const startWebRTC = useCallback(
     async (socket) => {
       if (!mountedRef.current) return;
+      // ── FIX 2 (cont): Hard guard — never start twice on same socket
+      if (webRTCStartedRef.current) {
+        console.warn("⚠️ startWebRTC called again — ignoring duplicate");
+        return;
+      }
+      webRTCStartedRef.current = true;
+
       try {
         setPhase("camera");
 
@@ -202,14 +224,29 @@ const MobileCameraPage = () => {
 
         pc.onicecandidate = ({ candidate }) => {
           if (candidate && socket?.connected) {
+            console.log("📱 Sending ICE candidate to server");
             socket.emit("mobile_webrtc_ice_candidate", { candidate });
+          }
+        };
+
+        // ── FIX 3: Log ICE gathering state to help diagnose TURN failures
+        pc.onicegatheringstatechange = () => {
+          console.log("📱 ICE gathering state:", pc.iceGatheringState);
+        };
+
+        pc.oniceconnectionstatechange = () => {
+          console.log("📱 ICE connection state:", pc.iceConnectionState);
+          if (pc.iceConnectionState === "failed") {
+            console.error("❌ ICE failed — TURN servers may be unreachable");
+            // Attempt ICE restart
+            pc.restartIce?.();
           }
         };
 
         pc.onconnectionstatechange = () => {
           if (!mountedRef.current) return;
           const state = pc.connectionState;
-          console.log("📱 WebRTC state:", state);
+          console.log("📱 WebRTC connection state:", state);
           if (state === "connected") {
             setPeerConnected(true);
             setTrackPublished(true);
@@ -218,33 +255,55 @@ const MobileCameraPage = () => {
           if (state === "failed" || state === "disconnected") {
             setPeerConnected(false);
             setTrackPublished(false);
+            // ── FIX 4: Auto-recover on transient disconnects
+            if (state === "failed") {
+              console.warn(
+                "⚠️ Peer connection failed — will retry on next socket reconnect",
+              );
+              webRTCStartedRef.current = false;
+            }
           }
         };
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
+        console.log("📱 Sending WebRTC offer, identity=mobile_" + userId);
 
         socket.emit("mobile_webrtc_offer", {
           offer: pc.localDescription,
           identity: `mobile_${userId}`,
         });
 
-        const handleAnswer = async ({ answer }) => {
-          socket.off("mobile_webrtc_answer_from_server", handleAnswer);
-          if (!mountedRef.current) return;
-          try {
-            await pc.setRemoteDescription(new RTCSessionDescription(answer));
-            console.log("📱 Remote description set — WebRTC handshake done");
-          } catch (err) {
-            console.error("❌ setRemoteDescription:", err.message);
-          }
-        };
-        socket.on("mobile_webrtc_answer_from_server", handleAnswer);
+        // ── FIX 5: Use socket.once with a generous timeout; don't leave dangling listeners
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            socket.off("mobile_webrtc_answer_from_server", handleAnswer);
+            reject(
+              new Error(
+                "Timed out waiting for WebRTC answer from desktop (30s)",
+              ),
+            );
+          }, 30_000);
 
+          const handleAnswer = async ({ answer }) => {
+            clearTimeout(timeout);
+            if (!mountedRef.current) return resolve();
+            try {
+              await pc.setRemoteDescription(new RTCSessionDescription(answer));
+              console.log("📱 Remote description set — handshake done");
+              resolve();
+            } catch (err) {
+              reject(err);
+            }
+          };
+          socket.once("mobile_webrtc_answer_from_server", handleAnswer);
+        });
+
+        // ICE candidates from desktop — attach after remote desc is set
         socket.on("mobile_webrtc_ice_from_desktop", async ({ candidate }) => {
-          if (!pc || !candidate) return;
+          if (!pcRef.current || !candidate) return;
           try {
-            await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
           } catch (_) {}
         });
 
@@ -252,13 +311,18 @@ const MobileCameraPage = () => {
       } catch (err) {
         if (!mountedRef.current) return;
         console.error("❌ Mobile WebRTC start failed:", err);
-        let msg = "Unable to access front camera. ";
+        webRTCStartedRef.current = false;
+        let msg = "Unable to start camera stream. ";
         if (err.name === "NotAllowedError")
-          msg += "Please grant camera permission and refresh.";
+          msg =
+            "Camera permission denied. Please allow camera access and retry.";
         else if (err.name === "NotFoundError")
-          msg += "No front camera found on this device.";
+          msg = "No front camera found on this device.";
         else if (err.name === "NotReadableError")
-          msg += "Camera is in use by another app.";
+          msg = "Camera is in use by another app.";
+        else if (err.message?.includes("Timed out"))
+          msg =
+            "Desktop not ready yet — make sure the interview page is open, then retry.";
         else msg += err.message;
         setPhase("error");
         setError(msg);
@@ -271,21 +335,27 @@ const MobileCameraPage = () => {
     if (!sessionId || !userId) return;
     setPhase("connecting");
     setError(null);
+    webRTCStartedRef.current = false;
 
+    // ── FIX 6: Cloudflare WebSocket proxying requires these specific options.
+    // Cloudflare strips the "Upgrade" header for non-Enterprise unless the
+    // subdomain has WebSockets enabled in the dashboard (Network → WebSockets).
+    // The path must also match what your server listens on (default: /socket.io/).
     const socket = io(SOCKET_URL, {
       query: { interviewId: sessionId, userId, type: "settings" },
       transports: ["websocket"],
+      upgrade: false, // don't fall back to polling; fail fast instead
       reconnection: true,
       reconnectionAttempts: 10,
-      reconnectionDelay: 1000,
-      timeout: 20_000,
+      reconnectionDelay: 1500,
+      reconnectionDelayMax: 8000,
+      timeout: 25_000,
     });
     socketRef.current = socket;
 
-    let webRTCStarted = false;
-
-    socket.on("connect", async () => {
+    socket.on("connect", () => {
       if (!mountedRef.current) return;
+      console.log("📱 Socket connected:", socket.id);
       setSocketConnected(true);
 
       socket.emit("secondary_camera_connected", {
@@ -295,38 +365,54 @@ const MobileCameraPage = () => {
         streamType: "webrtc",
       });
 
-      await new Promise((resolve) => {
-        socket.once("secondary_camera_ready", resolve);
-        // Safety fallback — proceed anyway after 8s if desktop never confirms
-        setTimeout(resolve, 8000);
+      // ── FIX 7: Don't start WebRTC immediately on connect.
+      // Wait for secondary_camera_ready which confirms the desktop socket is
+      // joined to the room. Without this the server has no desktopSocketId to
+      // relay the offer to, and the offer gets stored as pendingMobileOffer
+      // but the server's handleInterviewSocket clears it WITHOUT forwarding it.
+      // The 12s fallback covers the case where the desktop is already connected.
+      let readyReceived = false;
+      const readyTimeout = setTimeout(async () => {
+        if (!readyReceived && !webRTCStartedRef.current && mountedRef.current) {
+          console.warn(
+            "⚠️ secondary_camera_ready timeout — starting WebRTC anyway",
+          );
+          await startWebRTC(socket);
+        }
+      }, 12_000);
+
+      socket.once("secondary_camera_ready", async () => {
+        clearTimeout(readyTimeout);
+        readyReceived = true;
+        console.log("✅ secondary_camera_ready received — starting WebRTC");
+        if (!webRTCStartedRef.current && mountedRef.current) {
+          await startWebRTC(socket);
+        }
       });
-
-      if (!mountedRef.current) return;
-      if (webRTCStarted) return;
-      webRTCStarted = true;
-
-      await startWebRTC(socket);
-    });
-
-    socket.on("secondary_camera_ready", () => {
-      if (!webRTCStarted || !mountedRef.current) return;
     });
 
     socket.on("disconnect", (reason) => {
       if (!mountedRef.current) return;
+      console.warn("📱 Socket disconnected:", reason);
       setSocketConnected(false);
-      webRTCStarted = false;
+      webRTCStartedRef.current = false;
       if (reason !== "io client disconnect") {
         setPhase("error");
-        setError("Server disconnected unexpectedly. Trying to reconnect…");
+        setError("Server disconnected. Trying to reconnect…");
       }
     });
 
     socket.on("connect_error", (err) => {
       if (!mountedRef.current) return;
-      console.error("❌ Mobile socket connect_error:", err.message);
+      console.error("❌ Socket connect_error:", err.message);
+      // ── FIX 8: Specific Cloudflare/proxy error hints
+      const cfHint = err.message?.includes("websocket")
+        ? " (Check: Cloudflare WebSockets must be ON in your dashboard under Network → WebSockets)"
+        : "";
       setPhase("error");
-      setError("Could not reach the server. Check your connection and retry.");
+      setError(
+        `Could not reach the server.${cfHint} Check your connection and retry.`,
+      );
     });
   }, [sessionId, userId, startWebRTC]);
 
@@ -416,93 +502,10 @@ const MobileCameraPage = () => {
 
   return (
     <>
-      {/* Basic SEO */}
       <title>Secondary Camera | Talk2Hire</title>
-
-      <meta
-        name="description"
-        content="Connect your mobile device as a secure secondary camera for your Talk2Hire AI interview session. Real-time WebRTC streaming with live monitoring."
-      />
-
-      {/* Private Utility page */}
       <meta name="robots" content="noindex, nofollow" />
-
-      <link
-        rel="canonical"
-        href="https://talk2hire.com/interview/mobile-camera"
-      />
-
       <meta name="theme-color" content="#7C3AED" />
 
-      {/* Open Graph */}
-      <meta property="og:type" content="website" />
-      <meta property="og:site_name" content="Talk2Hire" />
-      <meta property="og:title" content="Secondary Camera | Talk2Hire" />
-      <meta
-        property="og:description"
-        content="Securely connect your mobile phone as a secondary camera during your AI-powered interview session."
-      />
-      <meta
-        property="og:url"
-        content="https://talk2hire.com/interview/mobile-camera"
-      />
-      <meta
-        property="og:image"
-        content="https://talk2hire.com/talk2hirelogo.jpeg"
-      />
-
-      {/* Twitter */}
-      <meta name="twitter:card" content="summary_large_image" />
-      <meta name="twitter:title" content="Secondary Camera | Talk2Hire" />
-      <meta
-        name="twitter:description"
-        content="Use your phone as a secondary camera for secure AI interviews."
-      />
-      <meta
-        name="twitter:image"
-        content="https://talk2hire.com/talk2hirelogo.jpeg"
-      />
-
-      {/* Structured Data */}
-      <script type="application/ld+json">
-        {JSON.stringify({
-          "@context": "https://schema.org",
-          "@type": "WebApplication",
-          name: "Talk2Hire Secondary Camera",
-          url: "https://talk2hire.com/interview/mobile-camera",
-          applicationCategory: "BusinessApplication",
-          operatingSystem: "Web",
-          browserRequirements:
-            "Requires camera permission and WebRTC-enabled browser",
-          isPartOf: {
-            "@type": "WebApplication",
-            name: "Talk2Hire",
-            url: "https://talk2hire.com/",
-          },
-          publisher: {
-            "@type": "Organization",
-            name: "QuantamHash Corporation",
-            address: {
-              "@type": "PostalAddress",
-              streetAddress: "800 N King Street, Suite 304",
-              addressLocality: "Wilmington",
-              addressRegion: "DE",
-              postalCode: "19801",
-              addressCountry: "US",
-            },
-          },
-          description:
-            "Mobile WebRTC secondary camera system used during AI-powered interviews for real-time monitoring, proctoring, and enhanced security.",
-          featureList: [
-            "WebRTC peer-to-peer streaming",
-            "Secure secondary camera connection",
-            "Live mobile video feed",
-            "Hardware zoom optimization",
-            "Real-time interview monitoring",
-          ],
-        })}
-      </script>
-      {/* Main Components */}
       <div
         className="min-h-screen flex flex-col items-center justify-center p-4 bg-gray-50"
         style={{
@@ -564,7 +567,6 @@ const MobileCameraPage = () => {
 
           {/* Video Card */}
           <div className="relative bg-white rounded-2xl overflow-hidden border border-gray-200 shadow-sm">
-            {/* Progress bar */}
             <div className="h-0.5 w-full bg-gray-100">
               <div
                 className={`h-full ${cfg.bar} transition-all duration-700 ${
@@ -581,8 +583,6 @@ const MobileCameraPage = () => {
                 className="w-full h-full object-cover bg-gray-900"
                 style={{ transform: "scaleX(-1)" }}
               />
-
-              {/* Camera loading overlay */}
               {!cameraReady && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50/95 gap-3">
                   {isError ? (
@@ -607,8 +607,6 @@ const MobileCameraPage = () => {
                   </p>
                 </div>
               )}
-
-              {/* Live badge */}
               {isLive && (
                 <div className="absolute top-3 left-3 flex items-center gap-1.5">
                   <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500 rounded-md shadow-sm">
@@ -626,8 +624,6 @@ const MobileCameraPage = () => {
                   )}
                 </div>
               )}
-
-              {/* P2P connecting badge */}
               {isLoading && cameraReady && (
                 <div className="absolute top-3 left-3">
                   <div className="flex items-center gap-1.5 px-2.5 py-1 bg-violet-500 rounded-md shadow-sm">
