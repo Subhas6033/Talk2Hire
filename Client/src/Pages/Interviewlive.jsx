@@ -330,23 +330,16 @@ const InterviewLive = () => {
 
   const setupMobilePeerConnection = useCallback(
     (identity) => {
+      // Always close any existing PC when a new offer arrives — this handles
+      // mobile retries where the old PC may be connected but its track was
+      // never rendered (e.g. ontrack fired before video ref was ready and the
+      // poll cleaned up, or the first ICE round failed silently).
+      // Reusing a connected PC skips ontrack entirely for the new offer's track.
       if (mobilePcRef.current) {
-        const s = mobilePcRef.current.connectionState;
-        // BUG FIX 5: also close PCs stuck in "new" or "connecting" on a retry —
-        // calling setRemoteDescription on a stale connecting PC throws a signaling
-        // state error and silently drops the retry offer.
-        if (
-          s === "failed" ||
-          s === "closed" ||
-          s === "disconnected" ||
-          s === "new" ||
-          s === "connecting"
-        ) {
-          try {
-            mobilePcRef.current.close();
-          } catch (_) {}
-          mobilePcRef.current = null;
-        } else return mobilePcRef.current;
+        try {
+          mobilePcRef.current.close();
+        } catch (_) {}
+        mobilePcRef.current = null;
       }
 
       const MOBILE_ICE_SERVERS = [
