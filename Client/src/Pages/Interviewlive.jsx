@@ -388,54 +388,32 @@ const InterviewLive = () => {
       pc.ontrack = (event) => {
         if (event.track.kind !== "video") return;
         const rs = new MediaStream([event.track]);
+        // Store the live stream so the video element can be re-attached
+        // after any React re-render that resets srcObject
         pendingMobileStreamRef.current = rs;
 
-        const attachToVideoEl = (el) => {
-          if (!el) return false;
+        const attachStream = (el) => {
           el.srcObject = rs;
           el.muted = true;
-          // Wait for metadata before calling play() to avoid black screen
-          const tryPlay = () => {
+          const tryPlay = () =>
             el.play().catch((e) => {
               if (e.name === "AbortError")
                 setTimeout(() => el.play().catch(() => {}), 100);
             });
-          };
-          if (el.readyState >= 1) {
-            tryPlay();
-          } else {
-            el.addEventListener("loadedmetadata", tryPlay, { once: true });
-          }
-          return true;
+          // readyState >= 1 means HAVE_METADATA — safe to play immediately
+          if (el.readyState >= 1) tryPlay();
+          else el.addEventListener("loadedmetadata", tryPlay, { once: true });
         };
 
-        if (attachToVideoEl(mobileVideoRef.current)) {
-          // Clean up fallback canvas now that WebRTC video is live
+        const el = mobileVideoRef.current;
+        if (el) {
+          attachStream(el);
           mobilePcRef._removeFallbackCanvas?.();
           setMobileTrackAttached(true);
           setMobileCameraConnected(true);
-        } else {
-          // Video ref not mounted yet — poll until it is
-          let attempts = 0;
-          const poll = setInterval(() => {
-            attempts++;
-            if (attachToVideoEl(mobileVideoRef.current)) {
-              clearInterval(poll);
-              mobilePcRef._removeFallbackCanvas?.();
-              setMobileTrackAttached(true);
-              setMobileCameraConnected(true);
-            } else if (attempts >= 50) {
-              clearInterval(poll);
-              // Still set connected so UI doesn't stay on "waiting" forever
-              setMobileCameraConnected(true);
-            }
-          }, 100);
         }
 
-        // When the track ends, clear the attached state
-        event.track.onended = () => {
-          setMobileTrackAttached(false);
-        };
+        event.track.onended = () => setMobileTrackAttached(false);
       };
 
       pc.onconnectionstatechange = () => {
@@ -585,6 +563,7 @@ const InterviewLive = () => {
         let _frameCvs = null;
         let _frameCtx = null;
         let _frameImg = null;
+        let _frameConnectedSet = false;
         socket.on("mobile_camera_frame", ({ frame }) => {
           // Skip if WebRTC track already delivering video
           if (!frame || mobilePcRef.current?.connectionState === "connected")
@@ -592,11 +571,11 @@ const InterviewLive = () => {
           const el = mobileVideoRef.current;
           if (!el) return;
 
-          // Lazy-init canvas overlay (drawn into a canvas placed over the video)
+          // Lazy-init canvas overlay — z-index 2 sits above the video (z-index 1)
           if (!_frameCvs) {
             _frameCvs = document.createElement("canvas");
             _frameCvs.style.cssText =
-              "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);";
+              "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);z-index:2;";
             el.parentElement?.appendChild(_frameCvs);
           }
 
@@ -604,13 +583,19 @@ const InterviewLive = () => {
             _frameImg = new Image();
             _frameImg.onload = () => {
               if (!_frameCvs) return;
-              _frameCvs.width = _frameImg.naturalWidth;
-              _frameCvs.height = _frameImg.naturalHeight;
+              // Only resize canvas when dimensions change — avoids unnecessary clears
+              if (_frameCvs.width !== _frameImg.naturalWidth)
+                _frameCvs.width = _frameImg.naturalWidth;
+              if (_frameCvs.height !== _frameImg.naturalHeight)
+                _frameCvs.height = _frameImg.naturalHeight;
               if (!_frameCtx) _frameCtx = _frameCvs.getContext("2d");
               _frameCtx?.drawImage(_frameImg, 0, 0);
-              // Show canvas, hide video element while on fallback frames
               _frameCvs.style.display = "block";
-              setMobileCameraConnected(true);
+              // Only call setState once, not on every frame
+              if (!_frameConnectedSet) {
+                _frameConnectedSet = true;
+                setMobileCameraConnected(true);
+              }
             };
           }
 
@@ -624,6 +609,7 @@ const InterviewLive = () => {
             _frameCvs = null;
             _frameCtx = null;
             _frameImg = null;
+            _frameConnectedSet = false;
           }
         };
         // Expose cleanup so ontrack can call it after attaching the stream
@@ -680,7 +666,7 @@ const InterviewLive = () => {
         socket.on("connect_error", (e) =>
           console.error("[SOCKET] connect_error:", e.message),
         );
-        socket.on("error", () => interview.setStatus("error"));
+        socket.on("error", (e) => console.error("[SOCKET] error event:", e));
 
         interview.setStatus("live");
         interview.setServerReady(true);
@@ -778,6 +764,28 @@ const InterviewLive = () => {
       .startSecondary(pendingMobileStreamRef.current)
       .catch(console.error);
     pendingMobileStreamRef.current = null;
+  }, [mobileTrackAttached]); // eslint-disable-line
+
+  // Guard: if the video element loses its srcObject after a React re-render
+  // (reconciliation can reset DOM attributes), re-attach the live stream.
+  // Only runs when mobileTrackAttached is true — avoids overhead on every render.
+  useEffect(() => {
+    if (!mobileTrackAttached) return;
+    const el = mobileVideoRef.current;
+    const stream = pendingMobileStreamRef.current;
+    if (!el || !stream?.active) return;
+    if (!el.srcObject || el.srcObject !== stream) {
+      console.log("[MOBILE-VIDEO] Re-attaching stream after re-render");
+      el.srcObject = stream;
+      el.muted = true;
+      const tryPlay = () =>
+        el.play().catch((e) => {
+          if (e.name === "AbortError")
+            setTimeout(() => el.play().catch(() => {}), 100);
+        });
+      if (el.readyState >= 1) tryPlay();
+      else el.addEventListener("loadedmetadata", tryPlay, { once: true });
+    }
   }, [mobileTrackAttached]); // eslint-disable-line
 
   useEffect(() => {
@@ -1208,11 +1216,14 @@ const InterviewLive = () => {
                     id="secondary-camera-video"
                     ref={mobileVideoRef}
                     autoPlay
+                    muted
                     playsInline
-                    className="w-full h-full object-cover transition-opacity duration-300"
+                    className="w-full h-full object-cover"
                     style={{
                       transform: "scaleX(-1)",
                       opacity: mobileTrackAttached ? 1 : 0,
+                      position: "relative",
+                      zIndex: 1,
                     }}
                   />
                   {!mobileCameraConnected && (
