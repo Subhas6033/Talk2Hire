@@ -139,7 +139,11 @@ function createRecorderSession(interviewId, videoType) {
     return recorder?.state ?? "inactive";
   }
 
-  return { start, stop, getState };
+  function wasStarted() {
+    return sessionStarted;
+  }
+
+  return { start, stop, getState, wasStarted };
 }
 
 const useServerRecording = (
@@ -237,9 +241,9 @@ const useServerRecording = (
     await Promise.allSettled(jobs);
 
     const videoTypes = [];
-    if (primaryRef.current) videoTypes.push("primary_camera");
-    if (secondaryRef.current) videoTypes.push("secondary_camera");
-    if (screenRef.current) videoTypes.push("screen_recording");
+    if (primaryRef.current?.wasStarted()) videoTypes.push("primary_camera");
+    if (secondaryRef.current?.wasStarted()) videoTypes.push("secondary_camera");
+    if (screenRef.current?.wasStarted()) videoTypes.push("screen_recording");
 
     await Promise.allSettled(
       videoTypes.map((videoType) =>

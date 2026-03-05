@@ -14,6 +14,7 @@ import {
   setCurrentQuestion,
   receiveNextQuestion,
   setUserText,
+  receivePartialTranscript,
   setIdlePrompt,
   startRecording,
   updateRecordingDuration,
@@ -213,12 +214,14 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const handleInterimTranscript = useCallback(
     (data) => {
-      if (data.text?.trim()) {
-        dispatch(setUserText(data.text));
+      if (data?.text?.trim()) {
+        dispatch(receivePartialTranscript(data.text));
       }
     },
     [dispatch],
   );
+
+  const remoteAudioElRef = useRef(null);
 
   // ── WebRTC ────────────────────────────────────────────────────────────────
   const setupWebRTCPeerConnection = useCallback(() => {
@@ -286,11 +289,17 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
     pc.ontrack = (event) => {
       if (event.track.kind === "audio") {
+        // Remove any previous floating audio element before creating a new one
+        if (remoteAudioElRef.current) {
+          remoteAudioElRef.current.srcObject = null;
+          remoteAudioElRef.current.remove();
+        }
         const el = document.createElement("audio");
         el.autoplay = true;
         el.style.display = "none";
         el.srcObject = new MediaStream([event.track]);
         document.body.appendChild(el);
+        remoteAudioElRef.current = el;
       }
     };
 
@@ -555,10 +564,15 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }
     if (micProcessorRef.current) {
       try {
-        micProcessorRef.current.port.onmessage = null; // stop message handler
+        micProcessorRef.current.port.onmessage = null;
         micProcessorRef.current.disconnect();
       } catch (_) {}
       micProcessorRef.current = null;
+    }
+    if (remoteAudioElRef.current) {
+      remoteAudioElRef.current.srcObject = null;
+      remoteAudioElRef.current.remove();
+      remoteAudioElRef.current = null;
     }
     localMicTrackRef.current = null;
     localCameraTrackRef.current = null;

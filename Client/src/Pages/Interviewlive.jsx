@@ -382,6 +382,7 @@ const InterviewLive = () => {
       ];
       const pc = new RTCPeerConnection({ iceServers: MOBILE_ICE_SERVERS });
       mobilePcRef.current = pc;
+      mobilePcRef._pendingIce = []; // fresh buffer for this PC
 
       pc.onicecandidate = ({ candidate }) => {
         if (candidate && interview.socketRef.current?.connected)
@@ -393,19 +394,62 @@ const InterviewLive = () => {
 
       pc.ontrack = (event) => {
         if (event.track.kind !== "video") return;
-        const el = mobileVideoRef.current;
-        if (el) {
-          const rs = new MediaStream([event.track]);
+        const rs = new MediaStream([event.track]);
+        pendingMobileStreamRef.current = rs;
+
+        const attachToVideoEl = (el) => {
+          if (!el) return false;
           el.srcObject = rs;
           el.muted = true;
-          el.play().catch(() => {});
-          pendingMobileStreamRef.current = rs;
+          // Wait for metadata before calling play() to avoid black screen
+          const tryPlay = () => {
+            el.play().catch((e) => {
+              if (e.name === "AbortError")
+                setTimeout(() => el.play().catch(() => {}), 100);
+            });
+          };
+          if (el.readyState >= 1) {
+            tryPlay();
+          } else {
+            el.addEventListener("loadedmetadata", tryPlay, { once: true });
+          }
+          return true;
+        };
+
+        if (attachToVideoEl(mobileVideoRef.current)) {
+          // Clean up fallback canvas now that WebRTC video is live
+          mobilePcRef._removeFallbackCanvas?.();
+          setMobileTrackAttached(true);
+          setMobileCameraConnected(true);
+        } else {
+          // Video ref not mounted yet — poll until it is
+          let attempts = 0;
+          const poll = setInterval(() => {
+            attempts++;
+            if (attachToVideoEl(mobileVideoRef.current)) {
+              clearInterval(poll);
+              mobilePcRef._removeFallbackCanvas?.();
+              setMobileTrackAttached(true);
+              setMobileCameraConnected(true);
+            } else if (attempts >= 50) {
+              clearInterval(poll);
+              // Still set connected so UI doesn't stay on "waiting" forever
+              setMobileCameraConnected(true);
+            }
+          }, 100);
         }
-        setMobileTrackAttached(true);
-        setMobileCameraConnected(true);
+
+        // When the track ends, clear the attached state
+        event.track.onended = () => {
+          setMobileTrackAttached(false);
+        };
       };
 
       pc.onconnectionstatechange = () => {
+        if (pc.connectionState === "connected") {
+          // Tell the server WebRTC is truly live so it stops relaying JPEG frames
+          interview.socketRef.current?.emit("mobile_webrtc_connected");
+        }
         if (["disconnected", "failed", "closed"].includes(pc.connectionState))
           setMobileTrackAttached(false);
       };
@@ -486,8 +530,18 @@ const InterviewLive = () => {
 
         socket.on("mobile_webrtc_offer_relay", async ({ offer, identity }) => {
           const pc = setupMobilePeerConnection(identity);
+          // Do NOT clear _pendingIce here — candidates may have already arrived
+          // and been buffered before this offer handler ran.
+          if (!mobilePcRef._pendingIce) mobilePcRef._pendingIce = [];
           try {
             await pc.setRemoteDescription(new RTCSessionDescription(offer));
+            // Drain all ICE candidates buffered before or during setRemoteDescription
+            const buffered = mobilePcRef._pendingIce.splice(0);
+            for (const c of buffered) {
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(c));
+              } catch (_) {}
+            }
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
             socket.emit("mobile_webrtc_answer", {
@@ -503,7 +557,14 @@ const InterviewLive = () => {
           const pc = mobilePcRef.current;
           if (!pc || !candidate) return;
           try {
-            await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            // Only add ICE candidate if remote description is already set;
+            // otherwise buffer it — setRemoteDescription hasn't been called yet.
+            if (pc.remoteDescription) {
+              await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            } else {
+              if (!mobilePcRef._pendingIce) mobilePcRef._pendingIce = [];
+              mobilePcRef._pendingIce.push(candidate);
+            }
           } catch (_) {}
         });
 
@@ -524,6 +585,56 @@ const InterviewLive = () => {
         socket.on("secondary_camera_status", (d) => {
           if (d?.connected) setMobileCameraConnected(true);
         });
+
+        // Fallback: render JPEG frames from socket while WebRTC is negotiating.
+        // Once WebRTC track is attached (mobileTrackAttached), these frames are
+        // ignored so there is no double-rendering or flicker.
+        let _frameCvs = null;
+        let _frameCtx = null;
+        let _frameImg = null;
+        socket.on("mobile_camera_frame", ({ frame }) => {
+          // Skip if WebRTC track already delivering video
+          if (!frame || mobilePcRef.current?.connectionState === "connected")
+            return;
+          const el = mobileVideoRef.current;
+          if (!el) return;
+
+          // Lazy-init canvas overlay (drawn into a canvas placed over the video)
+          if (!_frameCvs) {
+            _frameCvs = document.createElement("canvas");
+            _frameCvs.style.cssText =
+              "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);";
+            el.parentElement?.appendChild(_frameCvs);
+          }
+
+          if (!_frameImg) {
+            _frameImg = new Image();
+            _frameImg.onload = () => {
+              if (!_frameCvs) return;
+              _frameCvs.width = _frameImg.naturalWidth;
+              _frameCvs.height = _frameImg.naturalHeight;
+              if (!_frameCtx) _frameCtx = _frameCvs.getContext("2d");
+              _frameCtx?.drawImage(_frameImg, 0, 0);
+              // Show canvas, hide video element while on fallback frames
+              _frameCvs.style.display = "block";
+              setMobileCameraConnected(true);
+            };
+          }
+
+          _frameImg.src = `data:image/jpeg;base64,${frame}`;
+        });
+
+        // When WebRTC connects, remove the fallback canvas so the video shows through
+        const _removeFallbackCanvas = () => {
+          if (_frameCvs) {
+            _frameCvs.remove();
+            _frameCvs = null;
+            _frameCtx = null;
+            _frameImg = null;
+          }
+        };
+        // Expose cleanup so ontrack can call it after attaching the stream
+        mobilePcRef._removeFallbackCanvas = _removeFallbackCanvas;
         socket.on("question", (d) => interview.handleQuestion(d));
         socket.on("next_question", (d) => interview.handleNextQuestion(d));
         socket.on("tts_audio", (d) => {

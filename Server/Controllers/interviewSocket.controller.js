@@ -379,13 +379,6 @@ async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
     });
   }
 
-  socket.on("request_secondary_camera_status", () => {
-    io.to(`interview_${interviewId}`).emit("secondary_camera_status", {
-      connected: session.secondaryCameraConnected,
-      metadata: session.secondaryCameraMetadata ?? null,
-    });
-  });
-
   socket.on("secondary_camera_connected", (data) => {
     session.secondaryCameraConnected = true;
     session.secondaryCameraMetadata = {
@@ -510,8 +503,9 @@ async function handleInterviewSocket(
   }
 
   socket.on("mobile_webrtc_answer", ({ answer, identity }) => {
-    session.webrtcEstablished = true;
-    console.log(`✅ Mobile WebRTC established for interview ${interviewId}`);
+    // Do NOT set webrtcEstablished here — the ICE handshake hasn't completed yet.
+    // webrtcEstablished is set when the desktop emits "mobile_webrtc_connected".
+    console.log(`📡 Desktop sent WebRTC answer for interview ${interviewId}`);
 
     if (session.mobileSocketId) {
       io.to(session.mobileSocketId).emit("mobile_webrtc_answer_from_server", {
@@ -519,6 +513,23 @@ async function handleInterviewSocket(
         identity,
       });
     }
+  });
+
+  // Desktop emits this once the WebRTC peer connection state becomes "connected"
+  // so the server knows to stop relaying fallback JPEG frames.
+  socket.on("mobile_webrtc_connected", () => {
+    session.webrtcEstablished = true;
+    console.log(
+      `✅ Mobile WebRTC fully established for interview ${interviewId}`,
+    );
+  });
+
+  // Desktop requests the current mobile camera connection status (e.g. on page load)
+  socket.on("request_secondary_camera_status", () => {
+    socket.emit("secondary_camera_status", {
+      connected: session.secondaryCameraConnected,
+      metadata: session.secondaryCameraMetadata ?? null,
+    });
   });
 
   socket.on("mobile_webrtc_ice_candidate_desktop", ({ candidate }) => {
@@ -1298,24 +1309,6 @@ async function handleInterviewSocket(
 
   socket.on("audio_chunk", () => {});
   socket.on("audio_recording_stop", () => {});
-
-  socket.on("mobile_camera_frame", (data, ack) => {
-    session.lastMobileFrame = {
-      frame: data.frame,
-      timestamp: data.timestamp ?? Date.now(),
-      frameNum: data.frameNum,
-    };
-
-    if (session.desktopSocketId && !session.webrtcEstablished) {
-      socket.to(`interview_${interviewId}`).emit("mobile_camera_frame", {
-        frame: data.frame,
-        timestamp: data.timestamp ?? Date.now(),
-        frameNum: data.frameNum,
-      });
-    }
-
-    if (typeof ack === "function") ack();
-  });
 
   socket.on("disconnect", () => {
     console.log(`🖥️ Desktop disconnected: ${socket.id}`);
