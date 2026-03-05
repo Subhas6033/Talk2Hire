@@ -217,22 +217,6 @@ const MobileCameraPage = () => {
     }
   }, []);
 
-  const processBufferedCandidates = useCallback(async (pc) => {
-    if (iceCandidatesRef.current.length === 0) return;
-
-    console.log(
-      `📱 Processing ${iceCandidatesRef.current.length} buffered ICE candidates`,
-    );
-    for (const candidate of iceCandidatesRef.current) {
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (err) {
-        console.warn("⚠️ Failed to add buffered candidate:", err.message);
-      }
-    }
-    iceCandidatesRef.current = [];
-  }, []);
-
   const startFrameRelay = useCallback((stream) => {
     if (frameTimerRef.current) return;
 
@@ -368,7 +352,6 @@ const MobileCameraPage = () => {
           if (state === "connected") {
             setPeerConnected(true);
             setConnectionQuality("good");
-            processBufferedCandidates(pc);
           } else if (state === "failed") {
             console.error("❌ ICE failed - attempting recovery");
             setConnectionQuality("poor");
@@ -400,7 +383,18 @@ const MobileCameraPage = () => {
             }
           }
 
-          if (state === "failed" || state === "disconnected") {
+          if (state === "failed") {
+            setPeerConnected(false);
+            setTrackPublished(false);
+            webRTCStartedRef.current = false;
+            console.error("❌ PC failed — restarting ICE");
+            if (reconnectAttemptsRef.current < 3) {
+              reconnectAttemptsRef.current++;
+              pc.restartIce();
+            }
+          }
+
+          if (state === "disconnected") {
             setPeerConnected(false);
             setTrackPublished(false);
             webRTCStartedRef.current = false;
@@ -465,7 +459,7 @@ const MobileCameraPage = () => {
         setError(errorMsg);
       }
     },
-    [applyHardwareZoomOut, startFrameRelay, userId, processBufferedCandidates],
+    [applyHardwareZoomOut, startFrameRelay, userId],
   );
 
   const connectSocket = useCallback(() => {
@@ -556,32 +550,40 @@ const MobileCameraPage = () => {
           answerTimeoutRef.current = null;
         }
 
-        if (!pcRef.current) {
+        const pc = pcRef.current;
+        if (!pc) {
           console.warn("⚠️ Received answer but no peer connection");
           return;
         }
 
-        await pcRef.current.setRemoteDescription(
-          new RTCSessionDescription(answer),
-        );
+        await pc.setRemoteDescription(new RTCSessionDescription(answer));
         console.log("📱 Remote description set");
 
-        // Process any buffered ICE candidates
-        await processBufferedCandidates(pcRef.current);
+        // Atomically drain all candidates buffered before setRemoteDescription
+        const buffered = iceCandidatesRef.current.splice(0);
+        for (const c of buffered) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(c));
+          } catch (_) {}
+        }
+        console.log(`📱 Drained ${buffered.length} buffered ICE candidates`);
       } catch (err) {
         console.error("❌ Failed to set remote description:", err.message);
       }
     });
 
     socket.on("mobile_webrtc_ice_from_desktop", async ({ candidate }) => {
-      if (!pcRef.current) {
-        // Buffer candidates if peer connection not ready
+      if (!candidate) return;
+      const pc = pcRef.current;
+      // Buffer if PC not created yet OR remoteDescription not set yet.
+      // Adding ICE before setRemoteDescription silently fails in most browsers
+      // and is the primary reason connectionState never reaches "connected".
+      if (!pc || !pc.remoteDescription) {
         iceCandidatesRef.current.push(candidate);
         return;
       }
-
       try {
-        await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
       } catch (err) {
         console.warn("⚠️ Failed to add ICE candidate:", err.message);
       }
@@ -614,7 +616,7 @@ const MobileCameraPage = () => {
         setError("Cannot reach server. Please check your internet connection.");
       }
     });
-  }, [sessionId, userId, startWebRTC, processBufferedCandidates]);
+  }, [sessionId, userId, startWebRTC]);
 
   useEffect(() => {
     if (sessionId && userId) {
