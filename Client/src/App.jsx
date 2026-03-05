@@ -42,19 +42,9 @@ const App = () => {
   const location = useLocation();
   const streamsRef = useStreams();
 
-  // Both slices initialize hydrated: true from localStorage, so this is
-  // immediately true on first render. It only becomes false if a slice
-  // explicitly resets it (which we no longer do on pending).
   const hydrated = useSelector(
     (state) => state.auth.hydrated && state.company.hydrated,
   );
-
-  useEffect(() => {
-    console.log("🔍 App mounted - StreamContext available:", {
-      hasContext: !!streamsRef,
-      hasCurrentValue: !!streamsRef?.current,
-    });
-  }, []);
 
   useEffect(() => {
     const shouldShowOnboarding = sessionStorage.getItem("showOnboarding");
@@ -71,9 +61,6 @@ const App = () => {
     setShowOnboarding(false);
   };
 
-  // Block the entire app until both auth slices have resolved.
-  // Since both start as hydrated: true from localStorage this is nearly
-  // instant on first paint — no black screen flash.
   if (!hydrated) {
     return <Loader label="Setting up your session" />;
   }

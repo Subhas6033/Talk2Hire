@@ -501,6 +501,32 @@ const MobileCameraPage = () => {
       setSocketConnected(true);
       reconnectAttemptsRef.current = 0;
 
+      // BUG FIX 3: Remove any listener registered from a previous connect cycle
+      // before re-adding — otherwise every reconnect piles up another handler
+      // and secondary_camera_ready triggers startWebRTC multiple times, causing
+      // multiple simultaneous RTCPeerConnections with only one mobilePcRef slot.
+      socket.off("secondary_camera_ready");
+
+      // BUG FIX 2: Register the secondary_camera_ready listener BEFORE emitting
+      // secondary_camera_connected. On a fast network the server's response can
+      // arrive before the listener is registered, silently dropping the event
+      // (which is why it only worked after the 15s fallback timeout).
+      const handleSecondaryReady = async () => {
+        if (!webRTCStartedRef.current && mountedRef.current) {
+          console.log("✅ secondary_camera_ready received");
+          if (readyTimeoutRef.current) {
+            clearTimeout(readyTimeoutRef.current);
+            readyTimeoutRef.current = null;
+          }
+          if (answerTimeoutRef.current) {
+            clearTimeout(answerTimeoutRef.current);
+          }
+          await startWebRTC(socket);
+        }
+      };
+
+      socket.on("secondary_camera_ready", handleSecondaryReady);
+
       socket.emit("secondary_camera_connected", {
         interviewId: sessionId,
         userId,
@@ -512,34 +538,13 @@ const MobileCameraPage = () => {
         },
       });
 
-      // Handle secondary camera ready event
-      const handleSecondaryReady = async () => {
-        if (!webRTCStartedRef.current && mountedRef.current) {
-          console.log("✅ secondary_camera_ready received");
-          if (answerTimeoutRef.current) {
-            clearTimeout(answerTimeoutRef.current);
-          }
-          await startWebRTC(socket);
-        }
-      };
-
-      socket.on("secondary_camera_ready", handleSecondaryReady);
-
-      // Fallback timeout
+      // Fallback timeout in case secondary_camera_ready is never received
       readyTimeoutRef.current = setTimeout(async () => {
         if (!webRTCStartedRef.current && mountedRef.current) {
           console.warn("⚠️ Ready timeout - starting WebRTC anyway");
           await startWebRTC(socket);
         }
       }, READY_TIMEOUT);
-
-      // Clean up timeout on first ready
-      socket.once("secondary_camera_ready", () => {
-        if (readyTimeoutRef.current) {
-          clearTimeout(readyTimeoutRef.current);
-          readyTimeoutRef.current = null;
-        }
-      });
     });
 
     socket.on("mobile_webrtc_answer_from_server", async ({ answer }) => {

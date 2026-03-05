@@ -22,8 +22,6 @@ const CameraCheck = ({
     setError(null);
 
     try {
-      console.log(`📹 Requesting ${facingMode} camera...`);
-
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: facingMode,
@@ -32,17 +30,6 @@ const CameraCheck = ({
         },
         audio: false,
       });
-
-      console.log(` ${facingMode} camera access granted:`, {
-        streamId: mediaStream.id,
-        active: mediaStream.active,
-        tracks: mediaStream.getTracks().map((t) => ({
-          kind: t.kind,
-          readyState: t.readyState,
-          enabled: t.enabled,
-        })),
-      });
-
       // Store in both state and ref
       setStream(mediaStream);
       streamRef.current = mediaStream;
@@ -58,8 +45,6 @@ const CameraCheck = ({
           });
         };
       }
-
-      console.log(` ${facingMode} camera stream ready for handoff`);
     } catch (err) {
       console.error(`❌ ${facingMode} camera access error:`, err);
 
@@ -82,28 +67,11 @@ const CameraCheck = ({
 
   const handleContinue = () => {
     if (stream) {
-      console.log(`🎥 HANDOFF STARTING for ${facingMode} camera:`, {
-        streamId: stream.id,
-        active: stream.active,
-        tracks: stream.getTracks().map((t) => ({
-          kind: t.kind,
-          readyState: t.readyState,
-          enabled: t.enabled,
-        })),
-      });
-
       //  CRITICAL: Set handoff flag BEFORE calling onSuccess
       streamHandedOffRef.current = true;
 
-      console.log(` Handoff flag set to TRUE for ${facingMode} camera`);
-      console.log(`📤 Passing stream to parent component...`);
-
       // Pass stream to parent
       onSuccess(stream);
-
-      console.log(
-        ` Stream handed off successfully - will NOT be cleaned up on unmount`,
-      );
 
       // Don't close modal or stop stream here - parent will handle it
     } else {
@@ -112,22 +80,14 @@ const CameraCheck = ({
   };
 
   const handleClose = () => {
-    console.log(`🚪 Modal closing for ${facingMode} camera:`, {
-      hasStream: !!streamRef.current,
-      handedOff: streamHandedOffRef.current,
-    });
-
     // Only stop stream if it wasn't handed off to parent
     if (streamRef.current && !streamHandedOffRef.current) {
-      console.log(`🛑 Stopping ${facingMode} camera stream (not handed off)`);
       streamRef.current.getTracks().forEach((track) => {
         track.stop();
-        console.log(`  - Stopped ${track.kind} track:`, track.label);
       });
       setStream(null);
       streamRef.current = null;
     } else if (streamHandedOffRef.current) {
-      console.log(` Stream was handed off to parent, NOT stopping`);
     }
 
     setError(null);
@@ -144,20 +104,12 @@ const CameraCheck = ({
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      console.log(`🧹 CameraCheck cleanup for ${facingMode} camera:`, {
-        hasStream: !!streamRef.current,
-        handedOff: streamHandedOffRef.current,
-      });
-
       // Only cleanup if stream wasn't handed off
       if (streamRef.current && !streamHandedOffRef.current) {
-        console.log(`🛑 Cleanup: Stopping ${facingMode} camera stream`);
         streamRef.current.getTracks().forEach((track) => {
           track.stop();
-          console.log(`  - Stopped ${track.kind} track:`, track.label);
         });
       } else if (streamHandedOffRef.current) {
-        console.log(` Cleanup: Stream was handed off, not stopping`);
       }
     };
   }, [facingMode]);

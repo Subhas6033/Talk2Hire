@@ -403,13 +403,6 @@ async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
       connected: true,
       metadata: session.secondaryCameraMetadata,
     });
-
-    if (session.desktopSocketId) {
-      io.to(session.desktopSocketId).emit("secondary_camera_ready", {
-        connected: true,
-        timestamp: Date.now(),
-      });
-    }
   });
 
   socket.on("mobile_webrtc_offer", ({ offer, identity }) => {
@@ -1340,6 +1333,23 @@ async function handleInterviewSocket(
 
     isProcessing = false;
     isListeningActive = false;
+
+    // Abort any in-flight TTS Deepgram stream so it stops consuming bandwidth
+    // and CPU after the client has disconnected.
+    const ttsInst = ttsInstanceCache.get(interviewId);
+    if (ttsInst) {
+      try {
+        ttsInst.abort();
+      } catch (_) {}
+    }
+
+    // Put STT into standby so it stops forwarding audio to Deepgram
+    const sttCached = sttConnectionCache.get(interviewId);
+    if (sttCached?.conn) {
+      try {
+        sttCached.conn.enterStandby();
+      } catch (_) {}
+    }
   });
 
   socket.on("error", (e) => console.error("❌ socket error:", e));

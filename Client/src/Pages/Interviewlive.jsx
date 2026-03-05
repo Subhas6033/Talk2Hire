@@ -332,19 +332,55 @@ const InterviewLive = () => {
     (identity) => {
       if (mobilePcRef.current) {
         const s = mobilePcRef.current.connectionState;
-        if (s === "failed" || s === "closed" || s === "disconnected") {
+        // BUG FIX 5: also close PCs stuck in "new" or "connecting" on a retry —
+        // calling setRemoteDescription on a stale connecting PC throws a signaling
+        // state error and silently drops the retry offer.
+        if (
+          s === "failed" ||
+          s === "closed" ||
+          s === "disconnected" ||
+          s === "new" ||
+          s === "connecting"
+        ) {
           try {
             mobilePcRef.current.close();
           } catch (_) {}
           mobilePcRef.current = null;
         } else return mobilePcRef.current;
       }
-      const pc = new RTCPeerConnection({
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-        ],
-      });
+
+      const MOBILE_ICE_SERVERS = [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+        { urls: "stun:stun3.l.google.com:19302" },
+        { urls: "stun:stun4.l.google.com:19302" },
+        {
+          urls: "turn:openrelay.metered.ca:80",
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        },
+        {
+          urls: "turn:openrelay.metered.ca:443",
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        },
+        {
+          urls: "turns:openrelay.metered.ca:443",
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        },
+        ...(import.meta.env?.VITE_TURN_URL
+          ? [
+              {
+                urls: import.meta.env.VITE_TURN_URL,
+                username: import.meta.env.VITE_TURN_USERNAME || "",
+                credential: import.meta.env.VITE_TURN_CREDENTIAL || "",
+              },
+            ]
+          : []),
+      ];
+      const pc = new RTCPeerConnection({ iceServers: MOBILE_ICE_SERVERS });
       mobilePcRef.current = pc;
 
       pc.onicecandidate = ({ candidate }) => {

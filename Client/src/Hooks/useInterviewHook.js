@@ -107,7 +107,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       audioCtxRef.current = ctx;
       if (ctx.state === "suspended") await ctx.resume();
       await audioRecording.setAudioContext(ctx);
-      console.log("✅ AudioContext ready:", ctx.state, ctx.sampleRate + "Hz");
       return ctx;
     } catch (err) {
       console.error("❌ ensureAudioContext FAILED:", err.message);
@@ -132,24 +131,11 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     getStats: getTTSStats,
   } = useTTS({
     onPlayStart: () => {
-      console.log("🔊 TTS playback started");
       dispatch(setIsPlaying(true));
       dispatch(disableListening());
-      // Sync refs immediately — don't wait for the useEffect re-render cycle
-      isListeningRef.current = false;
-      canListenRef.current = false;
     },
     onPlayEnd: () => {
-      console.log("🔊 TTS playback ended → opening mic");
       dispatch(setIsPlaying(false));
-      // CRITICAL FIX: open the mic THE INSTANT audio finishes — no server
-      // round-trip, no render cycle, no Redux async flush.
-      // The server's STT gate opened ~80ms after TTS stream ended (pre-warm),
-      // which is always well before audio finishes playing on the client, so
-      // audio chunks sent now go straight into a ready Deepgram connection.
-      isListeningRef.current = true;
-      canListenRef.current = true;
-      dispatch(enableListening());
     },
   });
 
@@ -162,7 +148,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
             ? data.audio
             : null;
       if (base64?.length) {
-        console.log(`🔊 Received TTS chunk (${base64.length} chars)`);
         enqueueTTSChunk(base64);
       }
     },
@@ -171,7 +156,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const handleTtsEnd = useCallback(
     (onDone) => {
-      console.log("🔊 TTS stream ended");
       dispatch(setTtsStreamActive(false));
       flushTTS(onDone);
     },
@@ -183,7 +167,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     (payload) => {
       const text =
         typeof payload === "string" ? payload : payload?.question || "";
-      console.log(`❓ Question received: "${text.substring(0, 50)}..."`);
       resetTTS();
       dispatch(setCurrentQuestion(text));
       dispatch(setTtsStreamActive(true));
@@ -194,9 +177,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const handleNextQuestion = useCallback(
     (payload) => {
-      console.log(
-        `❓ Next question: "${payload?.question?.substring(0, 50)}..."`,
-      );
       resetTTS();
       dispatch(receiveNextQuestion(payload));
       dispatch(setTtsStreamActive(true));
@@ -207,7 +187,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const handleIdlePrompt = useCallback(
     ({ text }) => {
-      console.log(`⏱️ Idle prompt: "${text}"`);
       resetTTS();
       dispatch(setIdlePrompt(text));
       dispatch(setTtsStreamActive(true));
@@ -218,7 +197,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const handleTranscriptReceived = useCallback(
     ({ text }) => {
-      console.log(`📝 Final transcript: "${text.substring(0, 50)}..."`);
       dispatch(setUserText(text));
       dispatch(disableListening());
     },
@@ -227,7 +205,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const handleInterviewComplete = useCallback(
     (data) => {
-      console.log("✅ Interview complete");
       dispatch(completeInterview({ totalQuestions: data.totalQuestions }));
       dispatch(setMicStreamingActive(false));
     },
@@ -237,7 +214,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const handleInterimTranscript = useCallback(
     (data) => {
       if (data.text?.trim()) {
-        console.log(`📝 Interim: "${data.text}"`);
         dispatch(setUserText(data.text));
       }
     },
@@ -273,10 +249,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         username: import.meta.env.VITE_TURN_USERNAME || "",
         credential: import.meta.env.VITE_TURN_CREDENTIAL || "",
       });
-      console.log(
-        "[WebRTC] TURN server configured:",
-        import.meta.env.VITE_TURN_URL,
-      );
     }
 
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
@@ -339,7 +311,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       const pc = setupWebRTCPeerConnection();
       localCameraTrackRef.current = videoTrack;
       pc.addTrack(videoTrack, camStream);
-      console.log("[WebRTC] Camera track added");
     },
     [setupWebRTCPeerConnection],
   );
@@ -361,7 +332,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
           ? new MediaStream([track])
           : micStreamOrTrack;
       pc.addTrack(track, stream);
-      console.log("[WebRTC] Mic track added");
     },
     [setupWebRTCPeerConnection],
   );
@@ -370,7 +340,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const startMicStreaming = useCallback(
     async (existingStream = null) => {
       if (localMicTrackRef.current) {
-        console.log("[MIC] Already streaming");
         return;
       }
       try {
@@ -458,7 +427,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         }
 
         dispatch(setMicStreamingActive(true));
-        console.log("[MIC] Streaming active at", ctx.sampleRate + "Hz");
       } catch (err) {
         console.error("[MIC] startMicStreaming failed:", err.message);
       }
@@ -485,7 +453,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
           return;
         }
         dispatch(setHasStarted(true));
-        console.log("[START] Interview started");
       } catch (err) {
         console.error("[START] autoStartInterview failed:", err.message);
         hasStartedRef.current = false;
@@ -509,7 +476,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       await pcRef.current.setRemoteDescription(
         new RTCSessionDescription(answer),
       );
-      console.log("[WebRTC] Remote description set");
     } catch (err) {
       remoteDescriptionSetRef.current = false;
       console.error("[WebRTC] setRemoteDescription failed:", err.message);
@@ -529,16 +495,57 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const enableListeningImmediate = useCallback(() => {
     isListeningRef.current = true;
     canListenRef.current = true;
-    console.log("[MIC] Listening enabled");
     dispatch(enableListening());
   }, [dispatch]);
 
   const disableListeningImmediate = useCallback(() => {
     isListeningRef.current = false;
     canListenRef.current = false;
-    console.log("[MIC] Listening disabled");
     dispatch(disableListening());
   }, [dispatch]);
+
+  // ── Hard stop — called on interview end ─────────────────────────────────
+  // Immediately kills TTS playback, mic audio streaming, and the AudioContext
+  // so nothing continues after the user ends the interview.
+  const stopEverything = useCallback(() => {
+    // 1. Kill TTS immediately — stops all active Web Audio sources, clears
+    //    pending decode queue and scheduled buffers.
+    resetTTS();
+
+    // 2. Stop mic worklet from sending any more audio chunks
+    isListeningRef.current = false;
+    canListenRef.current = false;
+    micStreamingActiveRef.current = false;
+    dispatch(disableListening());
+    dispatch(setMicStreamingActive(false));
+
+    // 3. Stop the mic worklet node itself
+    if (micProcessorRef.current) {
+      try {
+        micProcessorRef.current.port.onmessage = null;
+        micProcessorRef.current.disconnect();
+      } catch (_) {}
+      micProcessorRef.current = null;
+    }
+
+    // 4. Stop all mic media tracks so the browser camera/mic indicator clears
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach((t) => {
+        try {
+          t.stop();
+        } catch (_) {}
+      });
+      micStreamRef.current = null;
+    }
+
+    // 5. Close the AudioContext — stops all Web Audio processing
+    if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
+      audioCtxRef.current.close().catch(() => {});
+      audioCtxRef.current = null;
+    }
+
+    console.log("🛑 stopEverything: TTS, mic, and audio context stopped");
+  }, [resetTTS, dispatch]); // eslint-disable-line
 
   // ── Cleanup ───────────────────────────────────────────────────────────────
   const cleanupWebRTC = useCallback(() => {
@@ -607,5 +614,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     setMicStreamingActive: (v) => dispatch(setMicStreamingActive(v)),
     initializeInterview: (d) => dispatch(initializeInterview(d)),
     cleanupWebRTC,
+    stopEverything,
   };
 };
