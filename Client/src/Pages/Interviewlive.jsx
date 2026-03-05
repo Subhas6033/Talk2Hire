@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useInterview } from "../Hooks/useInterviewHook";
-import useVideoRecording from "../Hooks/useVideoRecordingHook";
+// useVideoRecording REMOVED — useServerRecording handles all video via HTTP POST.
+// socket-based video_chunk was a server no-op and blocked mic audio on the TCP socket.
 import useHolisticDetection from "../Hooks/useHolisticDetectionHook";
 import useScreenRecording from "../Hooks/useScreenRecording";
 import useServerRecording from "../Hooks/useServerRecording";
@@ -230,18 +231,6 @@ const InterviewLive = () => {
     primaryCameraStream,
   );
 
-  const {
-    isRecording: isVideoRecording,
-    startRecording: startVideoRecording,
-    stopRecording: stopVideoRecording,
-  } = useVideoRecording(
-    sessionData?.interviewId,
-    sessionData?.userId,
-    primaryCameraStream,
-    interview.socketRef,
-    preWarmSessionIds.primaryCameraId,
-  );
-
   const audioRecording = interview.audioRecording;
   const screenRecording = useScreenRecording(
     sessionData?.interviewId,
@@ -257,6 +246,10 @@ const InterviewLive = () => {
       streamsRef.current?.screenShareStream ??
       null,
   );
+  // Derived from serverRecording — replaces the old useVideoRecording state.
+  // Must be after useServerRecording() call above.
+  const isVideoRecording = serverRecording.isRecording;
+
   const serverRecordingStoppedRef = useRef(false);
 
   const videoRef = useRef(null);
@@ -314,7 +307,7 @@ const InterviewLive = () => {
 
   const cleanupAllRecordings = useCallback(async () => {
     const jobs = [];
-    if (isVideoRecording) jobs.push(stopVideoRecording().catch(console.error));
+    // stopVideoRecording() removed — serverRecording.stop() handles primary_camera
     if (audioRecording?.isRecording) {
       try {
         audioRecording.stopRecording();
@@ -324,12 +317,7 @@ const InterviewLive = () => {
       jobs.push(screenRecording.stopRecording().catch(console.error));
     jobs.push(stopServerRecordingOnce());
     await Promise.allSettled(jobs);
-  }, [
-    isVideoRecording,
-    audioRecording,
-    screenRecording,
-    stopServerRecordingOnce,
-  ]); // eslint-disable-line
+  }, [audioRecording, screenRecording, stopServerRecordingOnce]); // eslint-disable-line
 
   useEffect(() => {
     if (!videoRef.current || !primaryCameraStream) return;
@@ -605,15 +593,15 @@ const InterviewLive = () => {
       interview.isInitializing ||
       !interview.serverReady ||
       !interview.hasStarted ||
-      !primaryCameraStream ||
-      isVideoRecording
+      !primaryCameraStream
+      // isVideoRecording guard removed — serverRecording.isRecording drives the indicator
     )
       return;
     recordingsStartedRef.current = true;
     (async () => {
       try {
         await audioRecording.startRecording(preWarmSessionIds.audioId);
-        await startVideoRecording();
+        // startVideoRecording() removed — serverRecording.start() covers primary_camera
         const activeScreen =
           streamStore.screenShareStream ??
           streamsRef.current?.screenShareStream ??
@@ -640,7 +628,7 @@ const InterviewLive = () => {
     interview.isInitializing,
     interview.serverReady,
     interview.hasStarted,
-    isVideoRecording,
+    // isVideoRecording removed from deps — was causing unnecessary re-runs
   ]); // eslint-disable-line
 
   useEffect(() => {
@@ -656,6 +644,28 @@ const InterviewLive = () => {
     if (evaluationStatus === "complete" && evaluationResults)
       setTimeout(() => navigate("/dashboard"), 2000);
   }, [evaluationStatus, evaluationResults, navigate]);
+
+  // Add this near the top of your InterviewLive component
+  useEffect(() => {
+    // Force audio context to start on any user interaction
+    const startAudio = () => {
+      if (interview.audioCtxRef?.current?.state === "suspended") {
+        interview.audioCtxRef.current.resume().then(() => {
+          console.log("✅ AudioContext resumed by user gesture");
+        });
+      }
+    };
+
+    document.addEventListener("click", startAudio);
+    document.addEventListener("keydown", startAudio);
+    document.addEventListener("touchstart", startAudio);
+
+    return () => {
+      document.removeEventListener("click", startAudio);
+      document.removeEventListener("keydown", startAudio);
+      document.removeEventListener("touchstart", startAudio);
+    };
+  }, [interview.audioCtxRef]);
 
   const handleEndInterview = async () => {
     if (!confirm("Are you sure you want to end the interview?")) return;
@@ -900,7 +910,6 @@ const InterviewLive = () => {
                     />
                   </div>
                 </div>
-
                 {/* Face violation banner */}
                 {faceViolationWarning && (
                   <div className="anim-slidedown flex items-center gap-2 px-5 py-2.5 bg-red-50 border-b border-red-200">
@@ -912,7 +921,6 @@ const InterviewLive = () => {
                     </p>
                   </div>
                 )}
-
                 {/* Evaluation banner */}
                 {evaluationStatus === "started" && (
                   <div className="anim-slidedown flex items-center gap-2.5 px-5 py-2.5 bg-blue-50 border-b border-blue-200">
@@ -922,7 +930,6 @@ const InterviewLive = () => {
                     </p>
                   </div>
                 )}
-
                 {/* Question body */}
                 <div className="flex-1 flex flex-col justify-center gap-5 px-7 py-8">
                   {interview.currentQuestion ? (
@@ -977,7 +984,6 @@ const InterviewLive = () => {
                     </div>
                   )}
                 </div>
-
                 {/* User answer */}
                 {interview.userText && (
                   <div className="anim-fadeup border-t border-[#F0EDE8] bg-[#FAFAF9] px-6 py-4">
@@ -999,7 +1005,6 @@ const InterviewLive = () => {
                     </div>
                   </div>
                 )}
-
                 {/* Card footer */}
                 <div className="flex items-center justify-between border-t border-[#F0EDE8] px-5 py-3">
                   <div className="flex items-center gap-2">

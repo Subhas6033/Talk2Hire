@@ -8,7 +8,7 @@ const NotFoundPage = () => {
 
   return (
     <>
-      <title>QuantamHash Corporation | Not Found</title>
+      <title>Talk2Hire | Not Found</title>
 
       <div
         className="

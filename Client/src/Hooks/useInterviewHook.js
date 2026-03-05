@@ -51,6 +51,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const audioCtxRef = useRef(null);
   const audioCtxInitRef = useRef(false);
   const recordingTimerRef = useRef(null);
+  const audioChunkCountRef = useRef(0);
 
   const audioRecording = useAudioRecording(socketRef, interviewId, userId);
 
@@ -62,7 +63,6 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const remoteDescriptionSetRef = useRef(false);
 
   // Refs that mirror Redux state for use inside onaudioprocess
-  // (onaudioprocess closure can't read Redux state directly)
   const isListeningRef = useRef(false);
   const canListenRef = useRef(false);
   const hasStartedRef = useRef(false);
@@ -107,10 +107,10 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       audioCtxRef.current = ctx;
       if (ctx.state === "suspended") await ctx.resume();
       await audioRecording.setAudioContext(ctx);
-      console.log("AudioContext ready:", ctx.state, ctx.sampleRate + "Hz");
+      console.log("✅ AudioContext ready:", ctx.state, ctx.sampleRate + "Hz");
       return ctx;
     } catch (err) {
-      console.error("ensureAudioContext FAILED:", err.message);
+      console.error("❌ ensureAudioContext FAILED:", err.message);
       throw err;
     }
   }, [audioRecording]);
@@ -125,13 +125,31 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   }, []); // eslint-disable-line
 
   // ── TTS ──────────────────────────────────────────────────────────────────
-  const { enqueueTTSChunk, flushTTS, resetTTS } = useTTS({
+  const {
+    enqueueTTSChunk,
+    flushTTS,
+    resetTTS,
+    getStats: getTTSStats,
+  } = useTTS({
     onPlayStart: () => {
+      console.log("🔊 TTS playback started");
       dispatch(setIsPlaying(true));
       dispatch(disableListening());
+      // Sync refs immediately — don't wait for the useEffect re-render cycle
+      isListeningRef.current = false;
+      canListenRef.current = false;
     },
     onPlayEnd: () => {
+      console.log("🔊 TTS playback ended → opening mic");
       dispatch(setIsPlaying(false));
+      // CRITICAL FIX: open the mic THE INSTANT audio finishes — no server
+      // round-trip, no render cycle, no Redux async flush.
+      // The server's STT gate opened ~80ms after TTS stream ended (pre-warm),
+      // which is always well before audio finishes playing on the client, so
+      // audio chunks sent now go straight into a ready Deepgram connection.
+      isListeningRef.current = true;
+      canListenRef.current = true;
+      dispatch(enableListening());
     },
   });
 
@@ -143,13 +161,17 @@ export const useInterview = (interviewId, userId, cameraStream) => {
           : typeof data?.audio === "string"
             ? data.audio
             : null;
-      if (base64?.length) enqueueTTSChunk(base64);
+      if (base64?.length) {
+        console.log(`🔊 Received TTS chunk (${base64.length} chars)`);
+        enqueueTTSChunk(base64);
+      }
     },
     [enqueueTTSChunk],
   );
 
   const handleTtsEnd = useCallback(
     (onDone) => {
+      console.log("🔊 TTS stream ended");
       dispatch(setTtsStreamActive(false));
       flushTTS(onDone);
     },
@@ -161,6 +183,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     (payload) => {
       const text =
         typeof payload === "string" ? payload : payload?.question || "";
+      console.log(`❓ Question received: "${text.substring(0, 50)}..."`);
       resetTTS();
       dispatch(setCurrentQuestion(text));
       dispatch(setTtsStreamActive(true));
@@ -171,6 +194,9 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const handleNextQuestion = useCallback(
     (payload) => {
+      console.log(
+        `❓ Next question: "${payload?.question?.substring(0, 50)}..."`,
+      );
       resetTTS();
       dispatch(receiveNextQuestion(payload));
       dispatch(setTtsStreamActive(true));
@@ -181,6 +207,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const handleIdlePrompt = useCallback(
     ({ text }) => {
+      console.log(`⏱️ Idle prompt: "${text}"`);
       resetTTS();
       dispatch(setIdlePrompt(text));
       dispatch(setTtsStreamActive(true));
@@ -191,6 +218,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const handleTranscriptReceived = useCallback(
     ({ text }) => {
+      console.log(`📝 Final transcript: "${text.substring(0, 50)}..."`);
       dispatch(setUserText(text));
       dispatch(disableListening());
     },
@@ -199,6 +227,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
   const handleInterviewComplete = useCallback(
     (data) => {
+      console.log("✅ Interview complete");
       dispatch(completeInterview({ totalQuestions: data.totalQuestions }));
       dispatch(setMicStreamingActive(false));
     },
@@ -206,7 +235,12 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   );
 
   const handleInterimTranscript = useCallback(
-    (data) => dispatch(setUserText(data.text)),
+    (data) => {
+      if (data.text?.trim()) {
+        console.log(`📝 Interim: "${data.text}"`);
+        dispatch(setUserText(data.text));
+      }
+    },
     [dispatch],
   );
 
@@ -251,47 +285,23 @@ export const useInterview = (interviewId, userId, cameraStream) => {
 
     pc.onicecandidate = ({ candidate }) => {
       if (candidate) {
-        console.log(
-          "[WebRTC] Local ICE candidate:",
-          candidate.type,
-          candidate.protocol,
-          candidate.address,
-        );
         if (socketRef.current?.connected) {
           socketRef.current.emit("webrtc_ice_candidate", { candidate });
         }
-      } else {
-        console.log("[WebRTC] ICE gathering complete");
       }
-    };
-
-    pc.onicegatheringstatechange = () => {
-      console.log("[WebRTC] ICE gathering state:", pc.iceGatheringState);
     };
 
     pc.oniceconnectionstatechange = () => {
-      console.log("[WebRTC] ICE connection state:", pc.iceConnectionState);
       if (pc.iceConnectionState === "failed") {
-        console.error("[WebRTC] ICE failed — check VITE_TURN_URL in .env");
+        console.error("[WebRTC] ICE failed — attempting restart");
         pc.restartIce?.();
       }
-    };
-
-    pc.onconnectionstatechange = () => {
-      console.log("[WebRTC] Connection state:", pc.connectionState);
     };
 
     pc.onnegotiationneeded = async () => {
       try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        console.log(
-          "[WebRTC] Sending offer, tracks:",
-          pc
-            .getSenders()
-            .map((s) => s.track?.kind)
-            .join(", "),
-        );
         socketRef.current?.emit("webrtc_offer", {
           offer: pc.localDescription,
           interviewId,
@@ -324,13 +334,12 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         return;
       }
       if (localCameraTrackRef.current) {
-        console.log("[CAM] Camera track already published");
         return;
       }
       const pc = setupWebRTCPeerConnection();
       localCameraTrackRef.current = videoTrack;
       pc.addTrack(videoTrack, camStream);
-      console.log("[WebRTC] Camera track added to peer connection");
+      console.log("[WebRTC] Camera track added");
     },
     [setupWebRTCPeerConnection],
   );
@@ -352,7 +361,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
           ? new MediaStream([track])
           : micStreamOrTrack;
       pc.addTrack(track, stream);
-      console.log("[WebRTC] Mic track added to peer connection");
+      console.log("[WebRTC] Mic track added");
     },
     [setupWebRTCPeerConnection],
   );
@@ -385,25 +394,64 @@ export const useInterview = (interviewId, userId, cameraStream) => {
         await publishMicToWebRTC(stream);
 
         const ctx = await ensureAudioContext();
+
+        // ── AudioWorklet mic processor ────────────────────────────────────
+        // Runs on a dedicated audio thread — never blocked by React renders,
+        // TTS decode, or any main-thread work. Fixed 256-sample buffer gives
+        // ~5ms latency vs up to 170ms jitter with ScriptProcessorNode.
+        const workletCode = `
+          class MicProcessor extends AudioWorkletProcessor {
+            constructor() {
+              super();
+              this._buf = [];
+              this._TARGET = 256;
+            }
+            process(inputs) {
+              const ch = inputs[0]?.[0];
+              if (!ch) return true;
+              for (let i = 0; i < ch.length; i++) this._buf.push(ch[i]);
+              while (this._buf.length >= this._TARGET) {
+                const frame = new Float32Array(this._buf.splice(0, this._TARGET));
+                this.port.postMessage(frame, [frame.buffer]);
+              }
+              return true;
+            }
+          }
+          registerProcessor('mic-processor', MicProcessor);
+        `;
+        const blob = new Blob([workletCode], {
+          type: "application/javascript",
+        });
+        const blobURL = URL.createObjectURL(blob);
+        await ctx.audioWorklet.addModule(blobURL);
+        URL.revokeObjectURL(blobURL);
+
         const source = ctx.createMediaStreamSource(stream);
-        const processor = ctx.createScriptProcessor(1024, 1, 1);
-        micProcessorRef.current = processor;
-        source.connect(processor);
-        processor.connect(ctx.destination);
-        processor.onaudioprocess = (e) => {
+        const workletNode = new AudioWorkletNode(ctx, "mic-processor");
+        micProcessorRef.current = workletNode;
+
+        workletNode.port.onmessage = (e) => {
           if (!micStreamingActiveRef.current) return;
           if (!isListeningRef.current) return;
           if (!canListenRef.current) return;
           if (!socketRef.current?.connected) return;
 
-          const input = e.inputBuffer.getChannelData(0);
+          const input = e.data; // Float32Array, 256 samples
 
-          // Skip dead-mic frames only (all zeros / hardware muted)
+          // Skip dead-mic frames
           if (getRMS(input) < 0.0001) return;
 
-          // Pass raw PCM16 to Deepgram — let its VAD decide what is speech
           socketRef.current.emit("user_audio_chunk", toPCM16(input).buffer);
+
+          audioChunkCountRef.current++;
+          if (audioChunkCountRef.current % 100 === 0) {
+            console.log(`🎤 Sent ${audioChunkCountRef.current} audio chunks`);
+          }
         };
+
+        // Connect source → worklet (NOT to destination — avoids mic echo)
+        source.connect(workletNode);
+        // ─────────────────────────────────────────────────────────────────
 
         if (audioRecording.connectMicrophoneAudio) {
           await audioRecording.connectMicrophoneAudio(stream);
@@ -451,13 +499,9 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const handleWebRTCAnswer = useCallback(async ({ answer }) => {
     if (!pcRef.current) return;
     if (remoteDescriptionSetRef.current) {
-      console.warn("[WebRTC] Duplicate answer — ignoring");
       return;
     }
     if (pcRef.current.signalingState !== "have-local-offer") {
-      console.warn(
-        `[WebRTC] Ignoring answer — signalingState: ${pcRef.current.signalingState}`,
-      );
       return;
     }
     try {
@@ -492,6 +536,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
   const disableListeningImmediate = useCallback(() => {
     isListeningRef.current = false;
     canListenRef.current = false;
+    console.log("[MIC] Listening disabled");
     dispatch(disableListening());
   }, [dispatch]);
 
@@ -503,6 +548,7 @@ export const useInterview = (interviewId, userId, cameraStream) => {
     }
     if (micProcessorRef.current) {
       try {
+        micProcessorRef.current.port.onmessage = null; // stop message handler
         micProcessorRef.current.disconnect();
       } catch (_) {}
       micProcessorRef.current = null;
@@ -518,6 +564,19 @@ export const useInterview = (interviewId, userId, cameraStream) => {
       cleanupWebRTC();
     };
   }, [resetTTS, cleanupWebRTC]);
+
+  // Log TTS stats periodically
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (getTTSStats) {
+        const stats = getTTSStats();
+        if (stats.isPlaying || stats.queueLength > 0) {
+          console.log("📊 TTS Stats:", stats);
+        }
+      }
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [getTTSStats]);
 
   // ── Public API ────────────────────────────────────────────────────────────
   return {

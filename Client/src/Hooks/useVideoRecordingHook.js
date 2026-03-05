@@ -38,7 +38,12 @@ const useVideoRecording = (
   preWarmVideoId = null,
 ) => {
   const [isRecording, setIsRecording] = useState(false);
-  const [recordedChunks, setRecordedChunks] = useState([]);
+  // FIX: recordedChunks was accumulating every MediaRecorder blob in React state,
+  // causing an ever-growing array spread ([...prev, chunk]) on every 5-second
+  // dataavailable event. Over a 30-minute interview this means 360 chunks being
+  // copied per state update → increasingly slow renders. The ref holds chunks for
+  // any caller that needs them without triggering re-renders.
+  const recordedChunksRef = useRef([]);
 
   const mediaRecorderRef = useRef(null);
   const chunkCountRef = useRef(0);
@@ -110,6 +115,8 @@ const useVideoRecording = (
         if (!event.data || event.data.size === 0) return;
         chunkCountRef.current++;
         const chunkNum = chunkCountRef.current;
+        // Store in ref (no re-render)
+        recordedChunksRef.current.push(event.data);
         const reader = new FileReader();
         reader.onloadend = () => {
           if (socketRef.current?.connected && videoSessionReadyRef.current) {
@@ -123,7 +130,6 @@ const useVideoRecording = (
           }
         };
         reader.readAsDataURL(event.data);
-        setRecordedChunks((prev) => [...prev, event.data]);
       };
 
       mediaRecorder.onstart = () => {
@@ -251,6 +257,7 @@ const useVideoRecording = (
     isRequestingSessionRef.current = false;
     hasStoppedRef.current = false;
     isRecordingRef.current = false;
+    recordedChunksRef.current = [];
     setIsRecording(false);
   }, [socketRef]);
 
@@ -258,7 +265,10 @@ const useVideoRecording = (
 
   return {
     isRecording,
-    recordedChunks,
+    // Expose getter so callers can still read chunks without driving re-renders
+    get recordedChunks() {
+      return recordedChunksRef.current;
+    },
     startRecording,
     stopRecording,
     cleanup,

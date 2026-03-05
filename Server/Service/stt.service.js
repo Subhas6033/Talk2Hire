@@ -1,41 +1,24 @@
 const WS = require("ws");
 
 const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY;
+if (!DEEPGRAM_API_KEY) {
+  console.error("❌ DEEPGRAM_API_KEY is not set in environment variables");
+}
+
 const STT_SAMPLE_RATE = 48000;
-
-// How long Deepgram waits in silence before firing onIdle on the server
-const IDLE_TIMEOUT_MS = 12000;
-
-// Deepgram connection params
-// utterance_end_ms: fires UtteranceEnd after this many ms of silence
-const UTTERANCE_END_MS = 1500;
-
-// KeepAlive ping to prevent Deepgram closing an idle connection
+const IDLE_TIMEOUT_MS = 8000;
+// FIX: reduced from 800 → 500 ms — still reliable for natural speech pauses
+// but cuts 300ms from every response turn-around.
+const UTTERANCE_END_MS = 500;
 const KEEPALIVE_INTERVAL_MS = 3_000;
+const ACTIVATE_DELAY_MS = 400;
+const FLUSH_CHUNK_SIZE = 960;
+const FLUSH_CHUNK_COUNT = 8;
+const FLUSH_INTERVAL_MS = 10;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_DELAY_MS = 1000;
+const MAX_QUEUE_SIZE = 1000;
 
-// How long after the silence-flush completes before we open the gate.
-// Deepgram needs ~1500ms to settle its VAD after receiving silence chunks.
-const ACTIVATE_DELAY_MS = 1500;
-
-// Silence-flush parameters — drip small chunks so Deepgram VAD reads them
-// as ambient silence rather than a speech burst.
-const FLUSH_CHUNK_SIZE = 960; // 10ms of silence at 48kHz (960 samples × 2 bytes)
-const FLUSH_CHUNK_COUNT = 30; // 30 × 10ms = 300ms total flush
-const FLUSH_INTERVAL_MS = 10; // one chunk every 10ms
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Deepgram streaming URL — using nova-3 (latest model as of 2025) with full
-// VAD feature set. Deepgram handles ALL silence detection server-side:
-//   model=nova-3             → Best accuracy, lowest WER
-//   smart_format=true        → Punctuation, capitalisation, numerals
-//   interim_results=true     → Low-latency partial transcripts for live UI
-//   utterance_end_ms=1500    → Emit UtteranceEnd after 1500ms silence
-//   vad_events=true          → SpeechStarted / UtteranceEnd events
-//   endpointing=300          → speech_final after 300ms pause (fast response)
-//   encoding=linear16        → matches toPCM16() on the client
-//   sample_rate=48000        → matches browser AudioContext sample rate
-//   channels=1               → mono mic input
-// ─────────────────────────────────────────────────────────────────────────────
 const STT_URL =
   `wss://api.deepgram.com/v1/listen` +
   `?model=nova-3` +
@@ -47,7 +30,8 @@ const STT_URL =
   `&endpointing=300` +
   `&encoding=linear16` +
   `&sample_rate=${STT_SAMPLE_RATE}` +
-  `&channels=1`;
+  `&channels=1` +
+  `&no_delay=true`;
 
 function createSTTSession() {
   function startLiveTranscription({
@@ -59,10 +43,16 @@ function createSTTSession() {
   }) {
     let wsReady = false;
     let wsReadyResolve = null;
-    const wsReadyPromise = new Promise((res) => {
+    let wsReadyReject = null;
+    const wsReadyPromise = new Promise((res, rej) => {
       wsReadyResolve = res;
+      wsReadyReject = rej;
     });
+
     const connectionId = Symbol("STT_CONN");
+    let reconnectAttempts = 0;
+    let reconnectTimer = null;
+    let isClosing = false;
 
     let idlePaused = true;
     let idleTimer = null;
@@ -71,17 +61,15 @@ function createSTTSession() {
     let keepAliveTimer = null;
     let activateTimer = null;
     let flushIntervalRef = null;
+    let messageQueue = [];
+    let mountedRef = { current: true };
 
-    // standby=true  → during TTS playback — audio and events both dropped
-    // standby=false → during listening window — audio flows, events processed
     let standby = true;
-
-    // gateOpen=false → settle window after silence-flush — events dropped
-    // gateOpen=true  → fully open, all Deepgram events processed normally
     let gateOpen = false;
-
-    // Accumulates partial is_final results until speech_final or UtteranceEnd
     let partialFinals = [];
+    let lastSpeechTime = null;
+    let connectionHealthy = true;
+    let pingInterval = null;
 
     const clearIdleTimer = () => {
       if (idleTimer) {
@@ -95,14 +83,24 @@ function createSTTSession() {
         clearInterval(keepAliveTimer);
         keepAliveTimer = null;
       }
+      if (pingInterval) {
+        clearInterval(pingInterval);
+        pingInterval = null;
+      }
     };
 
     const scheduleIdle = () => {
       clearIdleTimer();
       if (idlePaused) return;
       if (!gateOpen) return;
+
       idleTimer = setTimeout(() => {
-        if (!idlePaused && !hasTranscript && gateOpen) {
+        if (!idlePaused && !hasTranscript && gateOpen && connectionHealthy) {
+          const now = Date.now();
+          if (lastSpeechTime && now - lastSpeechTime < IDLE_TIMEOUT_MS) {
+            scheduleIdle();
+            return;
+          }
           console.log(`⏱️ STT idle after ${IDLE_TIMEOUT_MS}ms`);
           onIdle?.();
         }
@@ -113,153 +111,244 @@ function createSTTSession() {
       const text = partialFinals.join(" ").trim();
       partialFinals = [];
       if (!text) return false;
-      console.log(`🗣️ Transcript flushed (${reason}): "${text}"`);
+
+      console.log(
+        `🗣️ Transcript flushed (${reason}): "${text.substring(0, 50)}${text.length > 50 ? "..." : ""}"`,
+      );
       hasTranscript = true;
+      lastSpeechTime = Date.now();
       clearIdleTimer();
       onTranscript?.(text);
       return true;
     };
 
-    // ── Open WebSocket to Deepgram ──────────────────────────────────────────
-    const conn = new WS(STT_URL, {
-      headers: {
-        Authorization: `Token ${DEEPGRAM_API_KEY}`,
-      },
-    });
-
-    conn.on("open", () => {
-      wsReady = true;
-      wsReadyResolve?.();
-      console.log(`🎙️ Deepgram STT open`);
-
-      // Send KeepAlive every 3s so Deepgram doesn't close an idle connection
-      keepAliveTimer = setInterval(() => {
-        if (wsReady && conn.readyState === WS.OPEN) {
+    const processMessageQueue = () => {
+      if (messageQueue.length > 0 && conn?.readyState === WS.OPEN) {
+        console.log(`📨 Processing ${messageQueue.length} queued messages`);
+        while (messageQueue.length > 0) {
+          const msg = messageQueue.shift();
           try {
-            conn.send(JSON.stringify({ type: "KeepAlive" }));
-          } catch (e) {
-            console.warn("⚠️ STT keepAlive failed:", e.message);
+            conn.send(msg);
+          } catch (err) {
+            console.warn("⚠️ Failed to send queued message:", err.message);
           }
         }
-      }, KEEPALIVE_INTERVAL_MS);
-    });
-
-    conn.on("error", (err) => {
-      console.error("❌ Deepgram STT error:", err.message);
-      onError?.(err);
-    });
-
-    conn.on("close", (code, reason) => {
-      console.warn(
-        `⚠️ Deepgram STT closed — code=${code} reason=${reason?.toString()}`,
-      );
-      clearIdleTimer();
-      stopKeepAlive();
-      if (activateTimer) {
-        clearTimeout(activateTimer);
-        activateTimer = null;
       }
-      wsReady = false;
-      onClose?.(connectionId);
-    });
+    };
 
-    // ── Handle messages from Deepgram ───────────────────────────────────────
-    conn.on("message", (raw) => {
-      let data;
-      try {
-        data = JSON.parse(raw.toString());
-      } catch {
-        return;
-      }
-
-      const type = data?.type;
-      console.log(`📨 STT message type: ${type}`);
-
-      // Drop everything while TTS is playing (standby mode)
-      if (standby) {
-        console.log(`🔇 STT standby — ignoring: ${type}`);
-        return;
-      }
-
-      // Drop events during the post-flush settle window (gate not open yet)
-      if (!gateOpen) {
-        console.log(`🔇 STT gate not open — ignoring: ${type}`);
-        return;
-      }
-
-      if (type === "SpeechStarted") {
-        // User has started speaking — cancel any pending idle timer
-        console.log("🗣️ SpeechStarted detected");
-        clearIdleTimer();
-        return;
-      }
-
-      if (type === "UtteranceEnd") {
-        // Deepgram detected end of utterance after utterance_end_ms silence
-        console.log(
-          `🔚 UtteranceEnd — hasTranscript=${hasTranscript} partials=${partialFinals.length}`,
-        );
-        if (!hasTranscript) {
-          const flushed = flushPartials("UtteranceEnd");
-          if (!flushed) scheduleIdle();
+    const startHealthCheck = () => {
+      pingInterval = setInterval(() => {
+        if (conn?.readyState === WS.OPEN) {
+          connectionHealthy = true;
+          // Send ping to check connection
+          try {
+            if (conn.ping) conn.ping();
+          } catch (e) {
+            connectionHealthy = false;
+          }
+        } else {
+          connectionHealthy = false;
         }
-        return;
-      }
+      }, 5000);
+    };
 
-      if (type === "Results") {
-        const alt = data?.channel?.alternatives?.[0];
-        const text = alt?.transcript?.trim() ?? "";
-        const isFinal = data?.is_final ?? false;
-        const speech = data?.speech_final ?? false;
+    const createConnection = () => {
+      if (isClosing) return null;
 
-        console.log(
-          `📝 Results: "${text}" | is_final=${isFinal} | speech_final=${speech}`,
+      const conn = new WS(STT_URL, {
+        headers: {
+          Authorization: `Token ${DEEPGRAM_API_KEY}`,
+        },
+        handshakeTimeout: 10000,
+      });
+
+      conn.on("open", () => {
+        if (isClosing || !mountedRef.current) {
+          conn.close();
+          return;
+        }
+
+        wsReady = true;
+        connectionHealthy = true;
+        reconnectAttempts = 0;
+        wsReadyResolve?.();
+        console.log(`🎙️ Deepgram STT open (ID: ${connectionId.toString()})`);
+
+        processMessageQueue();
+
+        keepAliveTimer = setInterval(() => {
+          if (wsReady && conn.readyState === WS.OPEN) {
+            try {
+              conn.send(JSON.stringify({ type: "KeepAlive" }));
+            } catch (e) {
+              console.warn("⚠️ STT keepAlive failed:", e.message);
+            }
+          }
+        }, KEEPALIVE_INTERVAL_MS);
+
+        startHealthCheck();
+      });
+
+      conn.on("error", (err) => {
+        console.error(
+          `❌ Deepgram STT error (${connectionId.toString()}):`,
+          err.message,
         );
 
-        if (!isFinal) {
-          // Interim result — update live UI, reset idle timer
-          if (text) {
-            scheduleIdle();
-            onInterim?.(text);
+        if (
+          !isClosing &&
+          mountedRef.current &&
+          reconnectAttempts < MAX_RECONNECT_ATTEMPTS
+        ) {
+          reconnectAttempts++;
+          console.log(
+            `🔄 Reconnecting STT (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`,
+          );
+
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(() => {
+            if (!isClosing && mountedRef.current) {
+              conn = createConnection();
+            }
+          }, RECONNECT_DELAY_MS * reconnectAttempts);
+        } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+          onError?.(
+            new Error(
+              `STT connection failed after ${MAX_RECONNECT_ATTEMPTS} attempts`,
+            ),
+          );
+        }
+      });
+
+      conn.on("close", (code, reason) => {
+        const reasonStr = reason?.toString() || "unknown";
+        console.warn(
+          `⚠️ Deepgram STT closed — code=${code} reason=${reasonStr} (${connectionId.toString()})`,
+        );
+
+        wsReady = false;
+        connectionHealthy = false;
+        clearIdleTimer();
+        stopKeepAlive();
+
+        if (activateTimer) {
+          clearTimeout(activateTimer);
+          activateTimer = null;
+        }
+
+        if (flushIntervalRef) {
+          clearInterval(flushIntervalRef);
+          flushIntervalRef = null;
+        }
+
+        if (isClosing || !mountedRef.current) {
+          onClose?.(connectionId);
+          return;
+        }
+
+        if (
+          code !== 1000 &&
+          code !== 1001 &&
+          reconnectAttempts < MAX_RECONNECT_ATTEMPTS
+        ) {
+          reconnectAttempts++;
+          console.log(
+            `🔄 Reconnecting STT (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`,
+          );
+
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(() => {
+            if (!isClosing && mountedRef.current) {
+              conn = createConnection();
+            }
+          }, RECONNECT_DELAY_MS * reconnectAttempts);
+        } else {
+          onClose?.(connectionId);
+        }
+      });
+
+      conn.on("message", (raw) => {
+        let data;
+        try {
+          data = JSON.parse(raw.toString());
+        } catch (err) {
+          console.warn("⚠️ Failed to parse STT message:", err.message);
+          return;
+        }
+
+        const type = data?.type;
+
+        if (standby) return;
+        if (!gateOpen) return;
+
+        if (type === "SpeechStarted") {
+          console.log("🗣️ SpeechStarted detected");
+          lastSpeechTime = Date.now();
+          clearIdleTimer();
+          return;
+        }
+
+        if (type === "UtteranceEnd") {
+          console.log(`🔚 UtteranceEnd — partials=${partialFinals.length}`);
+          if (!hasTranscript) {
+            const flushed = flushPartials("UtteranceEnd");
+            if (!flushed) scheduleIdle();
           }
           return;
         }
 
-        // is_final=true — accumulate into partials
-        if (text) {
-          partialFinals.push(text);
-          if (!speech) scheduleIdle();
-        }
+        if (type === "Results") {
+          const alt = data?.channel?.alternatives?.[0];
+          const text = alt?.transcript?.trim() ?? "";
+          const isFinal = data?.is_final ?? false;
+          const speech = data?.speech_final ?? false;
+          const confidence = alt?.confidence ?? 0;
 
-        // speech_final=true — natural speech endpoint detected, flush now
-        if (speech) {
-          const flushed = flushPartials("speech_final");
-          if (!flushed && !hasTranscript) {
-            scheduleIdle();
+          if (text && confidence > 0.3) {
+            if (!isFinal) {
+              if (text) {
+                scheduleIdle();
+                onInterim?.(text);
+              }
+              return;
+            }
+
+            if (text) {
+              partialFinals.push(text);
+              if (!speech) scheduleIdle();
+            }
+
+            if (speech) {
+              const flushed = flushPartials("speech_final");
+              if (!flushed && !hasTranscript) {
+                scheduleIdle();
+              }
+            }
           }
+          return;
         }
+      });
 
-        return;
-      }
+      return conn;
+    };
 
-      if (!["Metadata"].includes(type)) {
-        console.log(
-          `📨 STT unexpected message type: ${type}`,
-          JSON.stringify(data).slice(0, 100),
-        );
-      }
-    });
+    let conn = createConnection();
 
-    // ── Public interface ────────────────────────────────────────────────────
     return {
       connectionId,
 
-      // Send a PCM16 audio buffer to Deepgram
       send(buf) {
         if (standby) return;
 
-        if (!wsReady || conn.readyState !== WS.OPEN) {
-          console.warn(`⚠️ STT not ready — audio dropped`);
+        // While the silence-flush primes Deepgram, queue mic audio instead of
+        // forwarding it. Real speech that arrives during the ~480ms activation
+        // window would otherwise confuse Deepgram before it's ready.
+        if (!gateOpen) return;
+
+        if (!wsReady || conn?.readyState !== WS.OPEN) {
+          if (messageQueue.length < MAX_QUEUE_SIZE) {
+            messageQueue.push(buf);
+          }
           return;
         }
 
@@ -276,9 +365,9 @@ function createSTTSession() {
         }
 
         audioChunkCount++;
-        if (audioChunkCount % 100 === 0) {
+        if (audioChunkCount % 500 === 0) {
           console.log(
-            `🎙️ STT: ${audioChunkCount} chunks sent | last size=${toSend.length}b`,
+            `🎙️ STT: ${audioChunkCount} chunks sent | queue=${messageQueue.length}`,
           );
         }
 
@@ -286,33 +375,39 @@ function createSTTSession() {
           conn.send(toSend);
         } catch (e) {
           console.error("❌ STT send error:", e.message);
+          if (messageQueue.length < MAX_QUEUE_SIZE) {
+            messageQueue.push(toSend);
+          }
         }
       },
 
-      // Called when TTS starts playing — mute Deepgram to ignore speaker bleed
       enterStandby() {
         standby = true;
         gateOpen = false;
         idlePaused = true;
         clearIdleTimer();
+
         if (activateTimer) {
           clearTimeout(activateTimer);
           activateTimer = null;
         }
+
         if (flushIntervalRef) {
           clearInterval(flushIntervalRef);
           flushIntervalRef = null;
         }
+
         hasTranscript = false;
         audioChunkCount = 0;
         partialFinals = [];
+        messageQueue = [];
+        lastSpeechTime = null;
+
         console.log(`💤 STT entering standby (TTS playing)`);
       },
 
-      // Called when TTS fetch completes — drip silence to prime Deepgram VAD,
-      // then open the gate after the settle window (ACTIVATE_DELAY_MS).
       activate() {
-        if (!wsReady || conn.readyState !== WS.OPEN) {
+        if (!wsReady || conn?.readyState !== WS.OPEN) {
           console.warn("⚠️ STT activate called but connection not ready");
           standby = false;
           gateOpen = true;
@@ -322,40 +417,38 @@ function createSTTSession() {
         hasTranscript = false;
         audioChunkCount = 0;
         partialFinals = [];
+        lastSpeechTime = null;
 
-        // standby=false lets silence chunks flow through to Deepgram,
-        // gateOpen=false still blocks event callbacks until settled.
         standby = false;
-        gateOpen = false;
+        gateOpen = false; // stays false until silence flush completes
 
         if (activateTimer) clearTimeout(activateTimer);
+        if (flushIntervalRef) clearInterval(flushIntervalRef);
 
-        // Drip 300ms of silence in 10ms chunks.
-        // Sending a large silence buffer at once triggers Deepgram's VAD
-        // as if it were speech. Small chunks train the VAD as ambient silence.
         const silenceChunk = Buffer.alloc(FLUSH_CHUNK_SIZE, 0);
         let chunksSent = 0;
+
         console.log(
-          `✅ STT activating — dripping ${FLUSH_CHUNK_COUNT} silence chunks over ` +
-            `${FLUSH_CHUNK_COUNT * FLUSH_INTERVAL_MS}ms, ` +
-            `gate opens ${ACTIVATE_DELAY_MS}ms after last chunk`,
+          `✅ STT activating — dripping ${FLUSH_CHUNK_COUNT} silence chunks then opening gate`,
         );
 
         const flushInterval = setInterval(() => {
           if (chunksSent >= FLUSH_CHUNK_COUNT) {
             clearInterval(flushInterval);
             flushIntervalRef = null;
-            activateTimer = setTimeout(() => {
-              activateTimer = null;
-              gateOpen = true;
-              console.log(`🎙️ STT active — ready for speech`);
-            }, ACTIVATE_DELAY_MS);
+
+            // Open gate immediately — server's STT_GATE_DELAY_MS already
+            // ensures the client mic won't open until this is done.
+            gateOpen = true;
+            console.log(`🎙️ STT active — gate open, ready for speech`);
             return;
           }
-          if (!wsReady || conn.readyState !== WS.OPEN) {
+
+          if (!wsReady || conn?.readyState !== WS.OPEN) {
             clearInterval(flushInterval);
             return;
           }
+
           try {
             conn.send(silenceChunk);
             chunksSent++;
@@ -364,33 +457,48 @@ function createSTTSession() {
             console.error("❌ STT silence chunk failed:", e.message);
           }
         }, FLUSH_INTERVAL_MS);
+
         flushIntervalRef = flushInterval;
       },
 
-      // Cleanly close the Deepgram connection
       finish() {
+        isClosing = true;
+        mountedRef.current = false;
+
         clearIdleTimer();
         stopKeepAlive();
+
         if (activateTimer) {
           clearTimeout(activateTimer);
           activateTimer = null;
         }
+
         if (flushIntervalRef) {
           clearInterval(flushIntervalRef);
           flushIntervalRef = null;
         }
+
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
+
         try {
-          if (conn.readyState === WS.OPEN) {
+          if (conn?.readyState === WS.OPEN) {
             conn.send(JSON.stringify({ type: "CloseStream" }));
             setTimeout(() => {
               try {
-                conn.close();
+                conn.close(1000, "Normal closure");
               } catch (_) {}
             }, 500);
+          } else if (conn) {
+            conn.close();
           }
         } catch (_) {}
+
         wsReady = false;
-        console.log(`✅ STT connection finished`);
+        messageQueue = [];
+        console.log(`✅ STT connection finished (${connectionId.toString()})`);
       },
 
       pauseIdleDetection() {
@@ -411,10 +519,25 @@ function createSTTSession() {
         hasTranscript = false;
         audioChunkCount = 0;
         partialFinals = [];
+        messageQueue = [];
+        lastSpeechTime = null;
       },
 
       isConnected() {
-        return wsReady && conn.readyState === WS.OPEN;
+        return wsReady && conn?.readyState === WS.OPEN && connectionHealthy;
+      },
+
+      getStats() {
+        return {
+          connectionId: connectionId.toString(),
+          connected: wsReady && conn?.readyState === WS.OPEN,
+          audioChunks: audioChunkCount,
+          queueLength: messageQueue.length,
+          hasTranscript,
+          gateOpen,
+          standby,
+          reconnectAttempts,
+        };
       },
 
       waitForReady(ms = 8000) {
