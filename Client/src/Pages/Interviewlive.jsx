@@ -260,6 +260,7 @@ const InterviewLive = () => {
   const screenVideoActiveRef = useRef(false);
   const mobilePcRef = useRef(null);
   const pendingMobileStreamRef = useRef(null);
+  const liveMobileStreamRef = useRef(null); // persists after startSecondary nulls pendingMobileStreamRef
 
   const [evaluationStatus, setEvaluationStatus] = useState(null);
   const [evaluationResults, setEvaluationResults] = useState(null);
@@ -386,13 +387,23 @@ const InterviewLive = () => {
       };
 
       pc.ontrack = (event) => {
+        console.log(
+          `[MOBILE-VIDEO] ontrack fired — kind=${event.track.kind} readyState=${event.track.readyState}`,
+        );
         if (event.track.kind !== "video") return;
+
+        // Guard: ignore tracks from stale PCs that were already replaced
+        if (mobilePcRef.current !== pc) {
+          console.warn("[MOBILE-VIDEO] ontrack from stale PC — ignoring");
+          return;
+        }
+
         const rs = new MediaStream([event.track]);
-        // Store the live stream so the video element can be re-attached
-        // after any React re-render that resets srcObject
         pendingMobileStreamRef.current = rs;
+        liveMobileStreamRef.current = rs;
 
         const attachStream = (el) => {
+          console.log("[MOBILE-VIDEO] attaching stream to video element");
           el.srcObject = rs;
           el.muted = true;
           const tryPlay = () =>
@@ -400,20 +411,48 @@ const InterviewLive = () => {
               if (e.name === "AbortError")
                 setTimeout(() => el.play().catch(() => {}), 100);
             });
-          // readyState >= 1 means HAVE_METADATA — safe to play immediately
           if (el.readyState >= 1) tryPlay();
           else el.addEventListener("loadedmetadata", tryPlay, { once: true });
         };
 
-        const el = mobileVideoRef.current;
+        // Try ref first, then fall back to direct DOM query (handles
+        // cases where React hasn't flushed the ref yet)
+        const getVideoEl = () =>
+          mobileVideoRef.current ||
+          document.getElementById("secondary-camera-video");
+
+        const el = getVideoEl();
         if (el) {
           attachStream(el);
           mobilePcRef._removeFallbackCanvas?.();
           setMobileTrackAttached(true);
           setMobileCameraConnected(true);
+        } else {
+          console.log("[MOBILE-VIDEO] ref not ready, polling...");
+          let attempts = 0;
+          const poll = setInterval(() => {
+            attempts++;
+            const el2 = getVideoEl();
+            if (el2) {
+              clearInterval(poll);
+              attachStream(el2);
+              mobilePcRef._removeFallbackCanvas?.();
+              setMobileTrackAttached(true);
+              setMobileCameraConnected(true);
+              console.log(
+                `[MOBILE-VIDEO] attached after ${attempts * 100}ms poll`,
+              );
+            } else if (attempts >= 50) {
+              clearInterval(poll);
+              console.warn("[MOBILE-VIDEO] video ref never appeared after 5s");
+            }
+          }, 100);
         }
 
-        event.track.onended = () => setMobileTrackAttached(false);
+        event.track.onended = () => {
+          console.warn("[MOBILE-VIDEO] track ended");
+          setMobileTrackAttached(false);
+        };
       };
 
       pc.onconnectionstatechange = () => {
@@ -486,17 +525,6 @@ const InterviewLive = () => {
     _globalSocketInitialized = true;
     const socket = preInitializedSocket;
 
-    // ── CRITICAL FIX ────────────────────────────────────────────────────────
-    // Register the offer listener SYNCHRONOUSLY before the async init() loop.
-    // Previously this was inside async init(), which could take up to 10s
-    // waiting for socket.connected. If mobile sent its offer during that wait,
-    // the server forwarded it immediately (desktop socket WAS connected) and
-    // the event was dropped because no listener existed yet.
-    //
-    // We also keep a _pendingOffers queue: any offer that arrives before
-    // setupMobilePeerConnection is available (i.e. before init() finishes
-    // assigning interview.socketRef) is buffered and drained right after.
-    // ────────────────────────────────────────────────────────────────────────
     if (!mobilePcRef._pendingOffers) mobilePcRef._pendingOffers = [];
 
     const handleOfferRelay = async ({ offer, identity }) => {
@@ -618,10 +646,6 @@ const InterviewLive = () => {
         socket.on("secondary_camera_status", (d) => {
           if (d?.connected) setMobileCameraConnected(true);
         });
-
-        // Fallback: render JPEG frames from socket while WebRTC is negotiating.
-        // Once WebRTC track is attached (mobileTrackAttached), these frames are
-        // ignored so there is no double-rendering or flicker.
         let _frameCvs = null;
         let _frameCtx = null;
         let _frameConnectedSet = false;
@@ -830,13 +854,13 @@ const InterviewLive = () => {
     pendingMobileStreamRef.current = null;
   }, [mobileTrackAttached]); // eslint-disable-line
 
-  // Guard: if the video element loses its srcObject after a React re-render
-  // (reconciliation can reset DOM attributes), re-attach the live stream.
-  // Only runs when mobileTrackAttached is true — avoids overhead on every render.
+  // Guard: if the video element loses its srcObject after a React re-render,
+  // re-attach using liveMobileStreamRef (never nulled, unlike pendingMobileStreamRef
+  // which gets consumed by startSecondary()).
   useEffect(() => {
     if (!mobileTrackAttached) return;
     const el = mobileVideoRef.current;
-    const stream = pendingMobileStreamRef.current;
+    const stream = liveMobileStreamRef.current; // ← use the persistent ref
     if (!el || !stream?.active) return;
     if (!el.srcObject || el.srcObject !== stream) {
       console.log("[MOBILE-VIDEO] Re-attaching stream after re-render");
