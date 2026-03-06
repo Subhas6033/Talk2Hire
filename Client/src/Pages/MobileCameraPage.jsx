@@ -415,7 +415,11 @@ const MobileCameraPage = () => {
         const myGeneration = (webRTCGenRef.current =
           (webRTCGenRef.current || 0) + 1);
         socket.emit("mobile_webrtc_offer", {
-          offer: { ...pc.localDescription, _generation: myGeneration },
+          offer: {
+            type: pc.localDescription.type,
+            sdp: pc.localDescription.sdp,
+            _generation: myGeneration,
+          },
           identity: `mobile_${userId}`,
         });
         console.log(`📱 WebRTC offer sent (generation ${myGeneration})`);
@@ -498,7 +502,16 @@ const MobileCameraPage = () => {
       setSocketConnected(true);
       reconnectAttemptsRef.current = 0;
 
+      // BUG FIX 3: Remove any listener registered from a previous connect cycle
+      // before re-adding — otherwise every reconnect piles up another handler
+      // and secondary_camera_ready triggers startWebRTC multiple times, causing
+      // multiple simultaneous RTCPeerConnections with only one mobilePcRef slot.
       socket.off("secondary_camera_ready");
+
+      // BUG FIX 2: Register the secondary_camera_ready listener BEFORE emitting
+      // secondary_camera_connected. On a fast network the server's response can
+      // arrive before the listener is registered, silently dropping the event
+      // (which is why it only worked after the 15s fallback timeout).
       const handleSecondaryReady = async () => {
         if (!webRTCStartedRef.current && mountedRef.current) {
           console.log("✅ secondary_camera_ready received");

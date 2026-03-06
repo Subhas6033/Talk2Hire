@@ -513,7 +513,11 @@ const InterviewLive = () => {
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         socket.emit("mobile_webrtc_answer", {
-          answer: { ...pc.localDescription, _generation: offer._generation },
+          answer: {
+            type: pc.localDescription.type,
+            sdp: pc.localDescription.sdp,
+            _generation: offer._generation,
+          },
           identity,
         });
         setMobileCameraConnected(true);
@@ -565,7 +569,10 @@ const InterviewLive = () => {
                 const answer = await pc.createAnswer();
                 await pc.setLocalDescription(answer);
                 socket.emit("mobile_webrtc_answer", {
-                  answer: pc.localDescription,
+                  answer: {
+                    type: pc.localDescription.type,
+                    sdp: pc.localDescription.sdp,
+                  },
                   identity,
                 });
                 setMobileCameraConnected(true);
