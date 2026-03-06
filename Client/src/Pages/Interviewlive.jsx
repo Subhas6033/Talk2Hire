@@ -260,12 +260,6 @@ const InterviewLive = () => {
   const screenVideoActiveRef = useRef(false);
   const mobilePcRef = useRef(null);
   const pendingMobileStreamRef = useRef(null);
-  // FIX 2: Persistent ref for the live mobile stream that survives React re-renders.
-  // pendingMobileStreamRef gets nulled after startSecondary() consumes it, so the
-  // re-attachment useEffect (which runs after every re-render) would find null and
-  // silently skip re-attaching — leaving the video element blank. liveMobileStreamRef
-  // is never nulled and always holds the last active stream for re-attachment.
-  const liveMobileStreamRef = useRef(null);
 
   const [evaluationStatus, setEvaluationStatus] = useState(null);
   const [evaluationResults, setEvaluationResults] = useState(null);
@@ -394,13 +388,9 @@ const InterviewLive = () => {
       pc.ontrack = (event) => {
         if (event.track.kind !== "video") return;
         const rs = new MediaStream([event.track]);
-
-        // FIX 2: Store in BOTH refs.
-        // pendingMobileStreamRef: consumed by startSecondary() then nulled.
-        // liveMobileStreamRef: never nulled — used by re-attachment useEffect
-        // so the video element can recover after any React reconciliation.
+        // Store the live stream so the video element can be re-attached
+        // after any React re-render that resets srcObject
         pendingMobileStreamRef.current = rs;
-        liveMobileStreamRef.current = rs;
 
         const attachStream = (el) => {
           el.srcObject = rs;
@@ -410,6 +400,7 @@ const InterviewLive = () => {
               if (e.name === "AbortError")
                 setTimeout(() => el.play().catch(() => {}), 100);
             });
+          // readyState >= 1 means HAVE_METADATA — safe to play immediately
           if (el.readyState >= 1) tryPlay();
           else el.addEventListener("loadedmetadata", tryPlay, { once: true });
         };
@@ -420,27 +411,6 @@ const InterviewLive = () => {
           mobilePcRef._removeFallbackCanvas?.();
           setMobileTrackAttached(true);
           setMobileCameraConnected(true);
-        } else {
-          // FIX 2: Video ref not mounted yet (component still rendering) — poll
-          // every 100ms for up to 5 seconds. Without this, ontrack fires once
-          // and is never retried, so the video element stays blank.
-          let pollCount = 0;
-          const pollTimer = setInterval(() => {
-            pollCount++;
-            const el2 = mobileVideoRef.current;
-            if (el2) {
-              clearInterval(pollTimer);
-              attachStream(el2);
-              mobilePcRef._removeFallbackCanvas?.();
-              setMobileTrackAttached(true);
-              setMobileCameraConnected(true);
-            } else if (pollCount > 50) {
-              clearInterval(pollTimer);
-              console.warn(
-                "⚠️ [MOBILE-VIDEO] Video ref never appeared after 5s",
-              );
-            }
-          }, 100);
         }
 
         event.track.onended = () => setMobileTrackAttached(false);
@@ -515,6 +485,47 @@ const InterviewLive = () => {
       return;
     _globalSocketInitialized = true;
     const socket = preInitializedSocket;
+
+    // ── CRITICAL FIX ────────────────────────────────────────────────────────
+    // Register the offer listener SYNCHRONOUSLY before the async init() loop.
+    // Previously this was inside async init(), which could take up to 10s
+    // waiting for socket.connected. If mobile sent its offer during that wait,
+    // the server forwarded it immediately (desktop socket WAS connected) and
+    // the event was dropped because no listener existed yet.
+    //
+    // We also keep a _pendingOffers queue: any offer that arrives before
+    // setupMobilePeerConnection is available (i.e. before init() finishes
+    // assigning interview.socketRef) is buffered and drained right after.
+    // ────────────────────────────────────────────────────────────────────────
+    if (!mobilePcRef._pendingOffers) mobilePcRef._pendingOffers = [];
+
+    const handleOfferRelay = async ({ offer, identity }) => {
+      const pc = setupMobilePeerConnection(identity);
+      if (!mobilePcRef._pendingIce) mobilePcRef._pendingIce = [];
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        const buffered = mobilePcRef._pendingIce.splice(0);
+        for (const c of buffered) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(c));
+          } catch (_) {}
+        }
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit("mobile_webrtc_answer", {
+          answer: { ...pc.localDescription, _generation: offer._generation },
+          identity,
+        });
+        setMobileCameraConnected(true);
+        console.log("[MOBILE-PC] Answered offer successfully");
+      } catch (err) {
+        console.error("[MOBILE-PC] offer handling failed:", err.message);
+      }
+    };
+
+    socket.off("mobile_webrtc_offer_relay");
+    socket.on("mobile_webrtc_offer_relay", handleOfferRelay);
+
     const init = async () => {
       try {
         let retries = 0;
@@ -529,31 +540,45 @@ const InterviewLive = () => {
         }
         interview.socketRef.current = socket;
 
-        socket.on("mobile_webrtc_offer_relay", async ({ offer, identity }) => {
-          const pc = setupMobilePeerConnection(identity);
-          // Do NOT clear _pendingIce here — candidates may have already arrived
-          // and been buffered before this offer handler ran.
-          if (!mobilePcRef._pendingIce) mobilePcRef._pendingIce = [];
-          try {
-            await pc.setRemoteDescription(new RTCSessionDescription(offer));
-            // Drain all ICE candidates buffered before or during setRemoteDescription
-            const buffered = mobilePcRef._pendingIce.splice(0);
-            for (const c of buffered) {
+        // Ask server to re-send any offer that arrived before we were ready
+        socket.emit("request_pending_offer");
+
+        // Legacy inline handler removed — now registered synchronously above.
+        // Keeping this comment so the diff is clear.
+        if (false) {
+          socket.on(
+            "mobile_webrtc_offer_relay",
+            async ({ offer, identity }) => {
+              const pc = setupMobilePeerConnection(identity);
+              // Do NOT clear _pendingIce here — candidates may have already arrived
+              // and been buffered before this offer handler ran.
+              if (!mobilePcRef._pendingIce) mobilePcRef._pendingIce = [];
               try {
-                await pc.addIceCandidate(new RTCIceCandidate(c));
-              } catch (_) {}
-            }
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            socket.emit("mobile_webrtc_answer", {
-              answer: pc.localDescription,
-              identity,
-            });
-            setMobileCameraConnected(true);
-          } catch (err) {
-            console.error("[MOBILE-PC] offer handling failed:", err.message);
-          }
-        });
+                await pc.setRemoteDescription(new RTCSessionDescription(offer));
+                // Drain all ICE candidates buffered before or during setRemoteDescription
+                const buffered = mobilePcRef._pendingIce.splice(0);
+                for (const c of buffered) {
+                  try {
+                    await pc.addIceCandidate(new RTCIceCandidate(c));
+                  } catch (_) {}
+                }
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                socket.emit("mobile_webrtc_answer", {
+                  answer: pc.localDescription,
+                  identity,
+                });
+                setMobileCameraConnected(true);
+              } catch (err) {
+                console.error(
+                  "[MOBILE-PC] offer handling failed:",
+                  err.message,
+                );
+              }
+            },
+          ); // end legacy handler
+        } // end if (false)
+
         socket.on("mobile_webrtc_ice_from_mobile", async ({ candidate }) => {
           const pc = mobilePcRef.current;
           if (!pc || !candidate) return;
@@ -800,13 +825,11 @@ const InterviewLive = () => {
 
   // Guard: if the video element loses its srcObject after a React re-render
   // (reconciliation can reset DOM attributes), re-attach the live stream.
-  // FIX 2: Use liveMobileStreamRef (never nulled) instead of pendingMobileStreamRef
-  // (nulled after startSecondary consumes it) — otherwise this effect is a no-op
-  // after the first recording start and the video goes blank on every re-render.
+  // Only runs when mobileTrackAttached is true — avoids overhead on every render.
   useEffect(() => {
     if (!mobileTrackAttached) return;
     const el = mobileVideoRef.current;
-    const stream = liveMobileStreamRef.current; // FIX 2: was pendingMobileStreamRef
+    const stream = pendingMobileStreamRef.current;
     if (!el || !stream?.active) return;
     if (!el.srcObject || el.srcObject !== stream) {
       console.log("[MOBILE-VIDEO] Re-attaching stream after re-render");

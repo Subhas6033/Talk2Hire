@@ -1,11 +1,11 @@
-const { pool } = require("../Config/database.config");
+const { pool } = require("../Config/database.config.js");
 const {
   uploadFileToFTP,
   downloadFileFromFTP,
-} = require("../Upload/uploadOnFTP");
-const { asyncHandler, APIERR, APIRES } = require("../Utils/index.utils");
-const redis = require("../Config/redis.config");
-const { evaluateInterview } = require("../Service/evaluation.service");
+} = require("../Upload/uploadOnFTP.js");
+const { asyncHandler, APIERR, APIRES } = require("../Utils/index.utils.js");
+const redis = require("../Config/redis.config.js");
+const { evaluateInterview } = require("../Service/evaluation.service.js");
 
 // ── Timing constants ──────────────────────────────────────────────────────────
 const RECORDING_TTL = 60 * 60 * 6;
