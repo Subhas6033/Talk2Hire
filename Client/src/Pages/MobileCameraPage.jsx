@@ -56,7 +56,7 @@ const CAMERA_CONFIG = {
 
 // Timeouts
 const WEBSOCKET_TIMEOUT = 30000;
-const WEBRTC_ANSWER_TIMEOUT = 10000; // 10s — enough for ICE + one network RTT
+const WEBRTC_ANSWER_TIMEOUT = 4000; // 4s — retry faster to avoid desktop answering a stale offer
 const READY_TIMEOUT = 15000;
 
 const Dot = ({ active, color = "green" }) => {

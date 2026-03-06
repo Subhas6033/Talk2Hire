@@ -331,14 +331,43 @@ const InterviewLive = () => {
 
   const setupMobilePeerConnection = useCallback(
     (identity) => {
-      // Always close any existing PC when a new offer arrives — this handles
-      // mobile retries where the old PC may be connected but its track was
-      // never rendered (e.g. ontrack fired before video ref was ready and the
-      // poll cleaned up, or the first ICE round failed silently).
-      // Reusing a connected PC skips ontrack entirely for the new offer's track.
-      if (mobilePcRef.current) {
+      // If an existing PC is already connected AND has a live video track,
+      // keep it — destroying it would kill the active stream. The new offer
+      // from mobile is a retry that arrived late; our current connection is fine.
+      const existing = mobilePcRef.current;
+      if (existing && existing.connectionState === "connected") {
+        const hasLiveTrack = existing
+          .getReceivers()
+          .some(
+            (r) => r.track?.kind === "video" && r.track?.readyState === "live",
+          );
+        if (hasLiveTrack) {
+          console.log(
+            "[MOBILE-PC] Ignoring new offer — existing PC is connected with live track",
+          );
+          // Re-attach the stream in case the video element lost it
+          const stream = liveMobileStreamRef.current;
+          const el =
+            mobileVideoRef.current ||
+            document.getElementById("secondary-camera-video");
+          if (
+            stream?.active &&
+            el &&
+            (!el.srcObject || el.srcObject !== stream)
+          ) {
+            el.srcObject = stream;
+            el.muted = true;
+            el.play().catch(() => {});
+            console.log("[MOBILE-VIDEO] Re-attached stream on duplicate offer");
+          }
+          return existing; // reuse the live PC
+        }
+      }
+
+      // Close any existing PC that is NOT connected or has no live track
+      if (existing) {
         try {
-          mobilePcRef.current.close();
+          existing.close();
         } catch (_) {}
         mobilePcRef.current = null;
       }
@@ -525,6 +554,17 @@ const InterviewLive = () => {
     _globalSocketInitialized = true;
     const socket = preInitializedSocket;
 
+    // ── CRITICAL FIX ────────────────────────────────────────────────────────
+    // Register the offer listener SYNCHRONOUSLY before the async init() loop.
+    // Previously this was inside async init(), which could take up to 10s
+    // waiting for socket.connected. If mobile sent its offer during that wait,
+    // the server forwarded it immediately (desktop socket WAS connected) and
+    // the event was dropped because no listener existed yet.
+    //
+    // We also keep a _pendingOffers queue: any offer that arrives before
+    // setupMobilePeerConnection is available (i.e. before init() finishes
+    // assigning interview.socketRef) is buffered and drained right after.
+    // ────────────────────────────────────────────────────────────────────────
     if (!mobilePcRef._pendingOffers) mobilePcRef._pendingOffers = [];
 
     const handleOfferRelay = async ({ offer, identity }) => {
@@ -646,6 +686,10 @@ const InterviewLive = () => {
         socket.on("secondary_camera_status", (d) => {
           if (d?.connected) setMobileCameraConnected(true);
         });
+
+        // Fallback: render JPEG frames from socket while WebRTC is negotiating.
+        // Once WebRTC track is attached (mobileTrackAttached), these frames are
+        // ignored so there is no double-rendering or flicker.
         let _frameCvs = null;
         let _frameCtx = null;
         let _frameConnectedSet = false;
