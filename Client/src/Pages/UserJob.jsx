@@ -555,7 +555,7 @@ const UserJob = () => {
       <meta property="og:url" content="https://talk2hire.com/jobs" />
       <meta
         property="og:image"
-        content="https://talk2hire.com/talk2hirelogo.jpeg"
+        content="https://talk2hire.com/talk2hirelogo.png"
       />
 
       {/* Twitter */}
@@ -567,7 +567,7 @@ const UserJob = () => {
       />
       <meta
         name="twitter:image"
-        content="https://talk2hire.com/talk2hirelogo.jpeg"
+        content="https://talk2hire.com/talk2hirelogo.png"
       />
 
       {/* Structured Data */}

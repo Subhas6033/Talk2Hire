@@ -40,7 +40,7 @@ export default function CompanyNavbar() {
           >
             <div className="flex items-center gap-2 leading-none">
               <img
-                src="/talk2hirelogo.jpeg"
+                src="/talk2hirelogo.png"
                 alt="Talk2Hire"
                 className="h-12 w-12 rounded-full"
               />

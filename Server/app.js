@@ -1,4 +1,4 @@
-const dotenv = require("dotenv");
+require("dotenv").config()
 const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
@@ -16,8 +16,6 @@ const companyInterviewRoutes = require("./Admin/routes/interview.routes.js");
 const interviewVideoUpload = require("./Routes/interviewRecording.routes.js");
 const violationsRoutes = require("./Routes/violation.routes.js");
 const applicationRoutes = require("./Admin/routes/application.routes.js");
-
-dotenv.config();
 
 const app = express();
 

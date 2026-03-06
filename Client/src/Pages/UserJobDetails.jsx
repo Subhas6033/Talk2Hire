@@ -666,7 +666,7 @@ const UserJobDetail = () => {
       />
       <meta
         property="og:image"
-        content={job.companyLogo || "https://talk2hire.com/talk2hirelogo.jpeg"}
+        content={job.companyLogo || "https://talk2hire.com/talk2hirelogo.png"}
       />
 
       {/* ========== TWITTER ========== */}
@@ -681,7 +681,7 @@ const UserJobDetail = () => {
       />
       <meta
         name="twitter:image"
-        content={job.companyLogo || "https://talk2hire.com/talk2hirelogo.jpeg"}
+        content={job.companyLogo || "https://talk2hire.com/talk2hirelogo.png"}
       />
 
       {/* ========== GOOGLE JOBS STRUCTURED DATA ========== */}
@@ -708,7 +708,7 @@ const UserJobDetail = () => {
             "@type": "Organization",
             name: job.companyName,
             sameAs: job.companyWebsite || undefined,
-            logo: job.companyLogo || "https://talk2hire.com/talk2hirelogo.jpeg",
+            logo: job.companyLogo || "https://talk2hire.com/talk2hirelogo.png",
           },
 
           jobLocation: job.location

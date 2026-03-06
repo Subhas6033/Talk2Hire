@@ -64,7 +64,7 @@ const ContactPage = () => {
           "@type": "Organization",
           name: "QuantamHash Corporation",
           url: "https://talk2hire.com",
-          logo: "https://talk2hire.com/talk2hirelogo.jpeg",
+          logo: "https://talk2hire.com/talk2hirelogo.png",
           contactPoint: {
             "@type": "ContactPoint",
             telephone: "+91-013456789",

@@ -9,13 +9,17 @@ const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000;
 const CHUNK_TIMEOUT = 30000;
 
-// FIX: Minimum PCM chunk size before flushing to client.
-// Deepgram streams raw PCM16 in small TCP segments (~1-4 KB).
-// Emitting each segment individually causes the client to decode dozens of
-// tiny AudioBuffers, each with its own decode overhead and gap between them.
-// Accumulating to ~8 KB (≈85ms of audio at 48 kHz mono 16-bit) gives the
-// client meaningfully-sized chunks without adding perceptible delay.
-const MIN_CHUNK_BYTES = 8 * 1024; // 8 KB
+// FIX: Reduced from 8 KB to 4 KB.
+//
+// At 48 kHz, mono, 16-bit: 1 KB = ~10.9 ms of audio.
+//   8 KB  ≈ 87 ms  (old) — user waited almost 90ms for first sound
+//   4 KB  ≈ 43 ms  (new) — first audio chunk arrives ~44ms sooner
+//
+// The tradeoff is slightly more socket.emit() calls to the client, but
+// 4 KB per chunk is still large enough to avoid per-packet overhead.
+// For ultra-low-latency you could go to 2 KB (~21ms), but 4 KB is the
+// sweet spot between latency and network efficiency.
+const MIN_CHUNK_BYTES = 4 * 1024; // 4 KB ≈ 43ms at 48kHz mono 16-bit
 
 function createTTSStream() {
   let currentDone = Promise.resolve();
@@ -27,11 +31,15 @@ function createTTSStream() {
       return;
     }
 
+    // Abort any in-flight request immediately so the new one starts without delay
     if (abortController) {
       abortController.abort();
     }
     abortController = new AbortController();
 
+    // FIX: Start the fetch BEFORE awaiting previousDone so the HTTP handshake
+    // to Deepgram begins immediately. The previousDone await only governs when
+    // we resolve resolveDone, not when chunks start flowing via onChunk.
     const fetchPromise = _fetchAudioStreaming(
       text,
       abortController.signal,
@@ -54,21 +62,14 @@ function createTTSStream() {
         console.error("❌ TTS speakStream error:", err.message);
       }
     } finally {
-      onChunk?.(null);
+      onChunk?.(null); // signal stream end
       resolveDone();
       abortController = null;
     }
   }
 
-  // FIX: Stream chunks to the client AS they arrive from Deepgram, instead of
-  // buffering everything first and sending in a batch.
-  //
-  // Old flow:  Deepgram → buffer all → done → emit all chunks → client plays
-  //            Latency = full TTS synthesis time (500ms–2s) before first audio
-  //
-  // New flow:  Deepgram → accumulate MIN_CHUNK_BYTES → emit → client plays
-  //            Latency ≈ time-to-first-byte from Deepgram (~150ms) + buffer fill (~85ms)
-  //            = ~235ms to first audio, regardless of text length
+  // Stream chunks to the client AS they arrive from Deepgram.
+  // Latency = TTFB from Deepgram (~150ms) + buffer fill (~43ms) ≈ ~195ms to first audio.
   async function _fetchAudioStreaming(text, signal, onChunk) {
     const url = new URL(TTS_API_URL);
     url.searchParams.set("model", TTS_MODEL);
@@ -84,7 +85,6 @@ function createTTSStream() {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), CHUNK_TIMEOUT);
 
-        // Combine outer abort + per-request timeout
         signal.addEventListener("abort", () => controller.abort(), {
           once: true,
         });
@@ -123,6 +123,7 @@ function createTTSStream() {
         let accSize = 0;
         let chunkCount = 0;
         let totalBytes = 0;
+        let firstChunkTime = null;
 
         while (true) {
           let done, value;
@@ -142,11 +143,14 @@ function createTTSStream() {
           accSize += chunk.length;
           totalBytes += chunk.length;
 
-          // FIX: Flush accumulated bytes once we hit the minimum chunk size.
-          // This balances latency (small buffer) vs overhead (not emitting
-          // hundreds of tiny 100-byte packets to the client).
           if (accSize >= MIN_CHUNK_BYTES) {
             const merged = Buffer.concat(accumulator);
+            if (firstChunkTime === null) {
+              firstChunkTime = Date.now() - t0;
+              console.log(
+                `⚡ TTS first chunk: ${firstChunkTime}ms (${merged.length} bytes)`,
+              );
+            }
             onChunk?.(merged);
             chunkCount++;
             accumulator = [];
@@ -154,7 +158,7 @@ function createTTSStream() {
           }
         }
 
-        // FIX: Flush any remaining bytes (tail of audio stream)
+        // Flush any remaining tail bytes — these are real audio that must not be dropped
         if (accSize > 0) {
           const merged = Buffer.concat(accumulator);
           onChunk?.(merged);
@@ -163,7 +167,7 @@ function createTTSStream() {
 
         const totalTime = Date.now() - t0;
         console.log(
-          `📊 TTS stream: ${chunkCount} chunks, ${(totalBytes / 1024).toFixed(1)}KB, ${totalTime}ms`,
+          `📊 TTS stream complete: ${chunkCount} chunks, ${(totalBytes / 1024).toFixed(1)}KB, ${totalTime}ms total`,
         );
 
         return;

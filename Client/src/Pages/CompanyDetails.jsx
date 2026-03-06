@@ -512,7 +512,7 @@ const CompanyDetail = () => {
           "@type": "Organization",
           name: company.name,
           url: `https://talk2hire.com/companies/${company.id}`,
-          logo: `https://talk2hire.com/talk2hirelogo.jpeg`,
+          logo: `https://talk2hire.com/talk2hirelogo.png`,
           description: company.description,
           foundingDate: company.founded,
           numberOfEmployees: company.size,

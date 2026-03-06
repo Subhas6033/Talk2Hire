@@ -500,7 +500,7 @@ const RegistrationForm = () => {
       <meta property="og:url" content="https://talk2hire.com/signup" />
       <meta
         property="og:image"
-        content="https://talk2hire.com/talk2hirelogo.jpeg"
+        content="https://talk2hire.com/talk2hirelogo.png"
       />
 
       {/* Twitter */}
@@ -512,7 +512,7 @@ const RegistrationForm = () => {
       />
       <meta
         name="twitter:image"
-        content="https://talk2hire.com/talk2hirelogo.jpeg"
+        content="https://talk2hire.com/talk2hirelogo.png"
       />
 
       <style>{`

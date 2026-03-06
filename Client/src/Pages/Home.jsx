@@ -1374,7 +1374,7 @@ export const HomePage = () => (
         "@type": "Organization",
         name: "Talk2Hire",
         url: "https://talk2hire.com/",
-        logo: "https://talk2hire.com/talk2hirelogo.jpeg",
+        logo: "https://talk2hire.com/talk2hirelogo.png",
         sameAs: [
           "https://www.linkedin.com/company/quantumhash-corporation/",
           "https://x.com/QuantumhashCrp",

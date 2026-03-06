@@ -89,20 +89,15 @@ const Nav = () => {
       >
         <nav className="mx-auto max-w-7xl px-6 h-16 flex items-center justify-between gap-8">
           {/* ── Logo ── */}
-          <Link to="/" className="flex items-center gap-2.5 shrink-0 group">
-            <div className="flex items-center gap-2 leading-none">
-              <img
-                src="/talk2hirelogo.jpeg"
-                alt="Talk2Hire"
-                className="h-12 w-12 rounded-full"
-              />
-              <div>
-                <span className="font-bold text-(--nav-ink) text-[15px] tracking-tight block">
-                  Talk2Hire
-                </span>
-                <span className="text-[10px] text-(--nav-amber) font-semibold tracking-wide">
-                  Careers Portal
-                </span>
+          <Link to="/" className="flex items-center gap-3 shrink-0 group">
+            <div className="flex items-center gap-3 leading-none">
+              <div className="relative">
+                <img
+                  src="/talk2hirelogo.png"
+                  alt="Talk2Hire"
+                  className="h-16 w-auto bg-transparent object-contain transition-transform duration-300 group-hover:scale-105"
+                />
+                <div className="absolute -inset-1 rounded-2xl blur-md opacity-0 transition duration-300" />
               </div>
             </div>
           </Link>

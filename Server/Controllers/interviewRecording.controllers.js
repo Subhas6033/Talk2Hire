@@ -9,9 +9,9 @@ const { evaluateInterview } = require("../Service/evaluation.service");
 
 // ── Timing constants ──────────────────────────────────────────────────────────
 const RECORDING_TTL = 60 * 60 * 6;
-const MERGE_DELAY_MS = 5 * 60 * 1000; // 5 min — total window before merge starts
-const CHUNK_SETTLE_TIMEOUT_MS = 3 * 60 * 1000; // 3 min — max wait for in-flight chunks
-const CHUNK_SETTLE_POLL_MS = 5 * 1000; // 5 sec — polling interval
+const MERGE_DELAY_MS = 5 * 60 * 1000;
+const CHUNK_SETTLE_TIMEOUT_MS = 3 * 60 * 1000;
+const CHUNK_SETTLE_POLL_MS = 5 * 1000;
 
 const VIDEO_TYPES = ["primary_camera", "secondary_camera", "screen_recording"];
 
@@ -26,7 +26,6 @@ const INTERVIEW_COLUMN_MAP = {
 const redisKey = (userId, interviewId, videoType) =>
   `interview:${userId}:${interviewId}:recording:${videoType}`;
 
-// Prevents all three video types from each spawning their own evaluation run
 const evalLockKey = (interviewId) => `interview:${interviewId}:evaluation:lock`;
 
 async function redisGet(key) {
@@ -133,27 +132,9 @@ async function insertChunkRecord(videoId, chunkNumber, chunkSize, ftpPath) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   ── Violation Clip Cutting  (runs AFTER primary_camera merge completes) ──────
-   ─────────────────────────────────────────────────────────────────────────────
-
-   Flow:
-     1. Fetch all violations for the interview that have both start_time and end_time
-     2. For each violation, use ffmpeg to cut the clip from the merged .webm
-     3. Upload each clip to FTP under /public/interview-videos/{interviewId}/violations/
-     4. Store clip_url and clip_ftp_path back in interview_violations row
-
-   Schema requirement — run this migration once:
-     ALTER TABLE interview_violations
-       ADD COLUMN clip_url      VARCHAR(2048) NULL AFTER details,
-       ADD COLUMN clip_ftp_path VARCHAR(2048) NULL AFTER clip_url,
-       ADD COLUMN clip_status   ENUM('pending','processing','completed','failed')
-                                NOT NULL DEFAULT 'pending' AFTER clip_ftp_path;
+   ── Violation Clip Columns Bootstrap ─────────────────────────────────────────
    ─────────────────────────────────────────────────────────────────────────── */
 
-/**
- * Ensures the three clip columns exist on interview_violations.
- * Safe to call on every startup — no-ops if columns already exist.
- */
 async function ensureViolationClipColumns() {
   try {
     const [cols] = await pool.execute(
@@ -189,18 +170,10 @@ async function ensureViolationClipColumns() {
   }
 }
 
-// Run schema bootstrap at module load
 ensureViolationClipColumns();
 
-/**
- * Cut a clip from a local video file using ffmpeg and return the output path.
- *
- * @param {string}      inputPath  - Path to the full merged .webm
- * @param {string}      outputPath - Destination path for the clip
- * @param {number}      startSec   - Start offset in seconds (float OK)
- * @param {number}      durationSec - Duration in seconds (float OK)
- * @returns {Promise<void>}
- */
+/* ── Cut a single violation clip with ffmpeg ─────────────────────────────── */
+
 async function cutVideoClip(inputPath, outputPath, startSec, durationSec) {
   const ffmpeg = require("fluent-ffmpeg");
 
@@ -212,16 +185,13 @@ async function cutVideoClip(inputPath, outputPath, startSec, durationSec) {
             `ffmpeg clip cut timed out (start=${startSec}s dur=${durationSec}s)`,
           ),
         ),
-      5 * 60 * 1000, // 5-minute safety net per clip
+      5 * 60 * 1000,
     );
 
     ffmpeg(inputPath)
       .setStartTime(startSec)
       .setDuration(durationSec)
-      .outputOptions([
-        "-c copy", // no re-encode — fast
-        "-avoid_negative_ts make_zero", // fix timestamps at clip boundary
-      ])
+      .outputOptions(["-c copy", "-avoid_negative_ts make_zero"])
       .on("start", (cmd) => console.log(`✂️  [CLIP] ffmpeg: ${cmd}`))
       .on("end", () => {
         clearTimeout(timeout);
@@ -236,14 +206,8 @@ async function cutVideoClip(inputPath, outputPath, startSec, durationSec) {
   });
 }
 
-/**
- * Cut violation clips from the merged primary_camera video and upload to FTP.
- * Stores clip_url + clip_ftp_path + clip_status on each interview_violations row.
- *
- * @param {string|number} interviewId
- * @param {string}        mergedVideoLocalPath  - Local filesystem path to the merged .webm
- * @param {Date|string}   recordingStartedAt    - When the recording started (used to compute offsets)
- */
+/* ── Cut + upload all violation clips for an interview ───────────────────── */
+
 async function cutAndUploadViolationClips(
   interviewId,
   mergedVideoLocalPath,
@@ -255,7 +219,6 @@ async function cutAndUploadViolationClips(
 
   const startEpoch = new Date(recordingStartedAt).getTime();
 
-  // ── Fetch all closed violations (start_time + end_time both set) ──────────
   let violations = [];
   try {
     const [rows] = await pool.execute(
@@ -295,16 +258,13 @@ async function cutAndUploadViolationClips(
     const violId = viol.id;
     const violType = viol.violation_type;
 
-    // ── Compute offsets relative to recording start ───────────────────────
     const violStartEpoch = new Date(viol.start_time).getTime();
     const violEndEpoch = new Date(viol.end_time).getTime();
 
-    // Add 2-second padding on each side so the clip has context
     const PAD_SEC = 2;
     const rawStartSec = (violStartEpoch - startEpoch) / 1000;
     const rawDurationSec = (violEndEpoch - violStartEpoch) / 1000;
 
-    // Clamp: start must be >= 0, duration must be > 0
     const clipStartSec = Math.max(0, rawStartSec - PAD_SEC);
     const clipDurationSec = rawDurationSec + PAD_SEC * 2;
 
@@ -326,7 +286,6 @@ async function cutAndUploadViolationClips(
     const clipLocalPath = path.join(tempDir, clipFilename);
     const ftpRemotePath = `/public/interview-videos/${interviewId}/violations`;
 
-    // Mark as processing
     await pool
       .execute(
         `UPDATE interview_violations SET clip_status = 'processing' WHERE id = ?`,
@@ -335,7 +294,6 @@ async function cutAndUploadViolationClips(
       .catch(() => {});
 
     try {
-      // ── Cut the clip ───────────────────────────────────────────────────
       await cutVideoClip(
         mergedVideoLocalPath,
         clipLocalPath,
@@ -343,7 +301,6 @@ async function cutAndUploadViolationClips(
         clipDurationSec,
       );
 
-      // ── Verify output ──────────────────────────────────────────────────
       const stat = await fs.stat(clipLocalPath).catch(() => null);
       if (!stat || stat.size === 0) {
         throw new Error(`ffmpeg produced empty clip for violation ${violId}`);
@@ -354,7 +311,6 @@ async function cutAndUploadViolationClips(
           `t=${clipStartSec.toFixed(2)}s dur=${clipDurationSec.toFixed(2)}s → ${(stat.size / 1024).toFixed(1)} KB`,
       );
 
-      // ── Upload to FTP ──────────────────────────────────────────────────
       const clipBuffer = await fs.readFile(clipLocalPath);
       const ftpResult = await withRetry(
         () => uploadFileToFTP(clipBuffer, clipFilename, ftpRemotePath),
@@ -367,7 +323,6 @@ async function cutAndUploadViolationClips(
 
       console.log(`📤 [CLIP] Violation ${violId} uploaded → ${ftpResult.url}`);
 
-      // ── Persist to DB ──────────────────────────────────────────────────
       await pool.execute(
         `UPDATE interview_violations
          SET clip_url      = ?,
@@ -378,7 +333,6 @@ async function cutAndUploadViolationClips(
         [ftpResult.url, ftpResult.remotePath, violId],
       );
 
-      // Clean up local clip file immediately to save disk
       await fs.unlink(clipLocalPath).catch(() => {});
       successCount++;
     } catch (err) {
@@ -395,7 +349,6 @@ async function cutAndUploadViolationClips(
     }
   }
 
-  // Cleanup temp dir
   await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
 
   console.log(
@@ -404,41 +357,14 @@ async function cutAndUploadViolationClips(
   );
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   ── Answer Analysis  (runs DURING the 5-minute merge window) ────────────────
-   ─────────────────────────────────────────────────────────────────────────────
+/* ── Answer Analysis ─────────────────────────────────────────────────────── */
 
-   Flow:
-     t=0   → endRecording() responds to client
-     t=0   → [primary_camera only] runAnswerAnalysisDuringWait() kicks off
-               • acquires a Redis NX lock so secondary/screen don't duplicate it
-               • calls evaluateInterview() — scores every Q&A with AI
-               • persists results to interview_evaluations + question_evaluations
-               • writes a summary row to interview_recording_analysis
-     t≈2m  → analysis typically finishes (well within the 5-min window)
-     t=5m  → finalizeRecording() runs (download chunks → ffmpeg → FTP upload)
-
-   Why a lock?
-     All three video types call endRecording() concurrently.
-     Without the lock all three would run evaluateInterview() simultaneously.
-     Redis SET NX EX guarantees exactly-one execution.
-   ─────────────────────────────────────────────────────────────────────────── */
-
-/**
- * Evaluate every answered question for the interview and persist results.
- * Returns a summary object that can be emitted to the socket or polled via REST.
- *
- * @param {string|number} interviewId
- * @param {string|number} userId
- * @returns {Promise<AnalysisSummary|null>}
- */
 async function runAnswerAnalysisDuringWait(interviewId, userId) {
   const lockKey = evalLockKey(interviewId);
 
-  // Atomic SET NX — only the first caller proceeds; the rest get null back
   let lockAcquired = false;
   try {
-    const result = await redis.set(lockKey, "1", "NX", "EX", 60 * 10); // 10-min TTL
+    const result = await redis.set(lockKey, "1", "NX", "EX", 60 * 10);
     lockAcquired = result === "OK";
   } catch {
     lockAcquired = false;
@@ -456,13 +382,10 @@ async function runAnswerAnalysisDuringWait(interviewId, userId) {
   );
 
   try {
-    // evaluateInterview() handles: fetching Q&A history → per-question AI scoring
-    // → overall summary → persisting to interview_evaluations / question_evaluations
     const evalResult = await evaluateInterview(interviewId);
     const { overallEvaluation, questionEvaluations, totalQuestions } =
       evalResult;
 
-    // ── Write a lightweight summary row for easy REST polling ─────────────
     await pool
       .execute(
         `INSERT INTO interview_recording_analysis
@@ -491,7 +414,6 @@ async function runAnswerAnalysisDuringWait(interviewId, userId) {
         ],
       )
       .catch((err) =>
-        // Table might not exist yet on older deployments — non-fatal
         console.warn(
           `⚠️ [EVAL] interview_recording_analysis upsert skipped: ${err.message}`,
         ),
@@ -526,12 +448,31 @@ async function runAnswerAnalysisDuringWait(interviewId, userId) {
       `❌ [EVAL] Analysis failed for interview ${interviewId}:`,
       err.message,
     );
-    await redisDel(lockKey); // release so a retry is possible
+    await redisDel(lockKey);
     return null;
   }
 }
 
 /* ── Start Recording ─────────────────────────────────────────────────────── */
+//
+// FIX: Race condition that caused 4× duplicate POST /start-recording sessions.
+//
+// Root cause — GET → check → SET has a race window:
+//   All 4 requests (primary_camera, secondary_camera, screen_recording +
+//   React StrictMode double-invoke) arrived within ~370ms of each other.
+//   All 4 hit the GET at the same instant, none saw status:"recording" yet
+//   because no write had completed, so all 4 proceeded to create DB records.
+//
+// Fix — atomic Redis SET NX (set-if-not-exists):
+//   Only the FIRST request wins the NX lock. All subsequent concurrent
+//   requests fail the NX and immediately return the existing state without
+//   touching the DB. No race window — atomicity is guaranteed by Redis.
+//
+//   Lock TTL is 10s:
+//     • Long enough to cover the DB writes below (typically <100ms)
+//     • Short enough that a crashed request unblocks retries quickly
+//   The placeholder is immediately overwritten with the real meta after
+//   the DB work completes, so the TTL has no practical effect on normal flow.
 
 const startRecording = asyncHandler(async (req, res) => {
   const { interviewId, videoType = "primary_camera" } = req.body;
@@ -545,21 +486,46 @@ const startRecording = asyncHandler(async (req, res) => {
     );
 
   const key = redisKey(userId, interviewId, videoType);
-  const existing = await redisGet(key);
-  if (existing) {
-    const parsed = JSON.parse(existing);
-    if (parsed.status === "recording")
-      return res
-        .status(200)
-        .json(
-          new APIRES(
-            200,
-            { status: "recording", videoType },
-            "Already recording",
-          ),
-        );
+
+  // ── Atomic idempotency lock ───────────────────────────────────────────────
+  // SET NX succeeds (returns "OK") only if the key does NOT exist yet.
+  // Any concurrent request that loses the race gets a non-OK result,
+  // reads the current state, and returns it without doing any DB work.
+  const lockPlaceholder = JSON.stringify({
+    status: "starting",
+    userId,
+    interviewId,
+    videoType,
+  });
+
+  const acquired = await redis.set(key, lockPlaceholder, "NX", "EX", 10);
+
+  if (!acquired) {
+    // Key already exists — return its current state to the caller
+    const existing = await redisGet(key);
+    if (existing) {
+      const parsed = JSON.parse(existing);
+      console.log(
+        `ℹ️  start-recording deduped — ${videoType} already ${parsed.status} (interview ${interviewId})`,
+      );
+      return res.status(200).json(
+        new APIRES(
+          200,
+          {
+            status: parsed.status,
+            videoType,
+            videoId: parsed.videoId ?? null,
+          },
+          "Already started",
+        ),
+      );
+    }
+    // Edge case: key disappeared between NX check and GET (expired in <1ms).
+    // Fall through and treat this as a new request — the NX will succeed on
+    // the next attempt or the DB upsert will de-duplicate it.
   }
 
+  // ── We hold the lock — perform DB work ───────────────────────────────────
   const videoId = await ensureVideoRecord(interviewId, userId, videoType);
   const meta = {
     status: "recording",
@@ -569,18 +535,28 @@ const startRecording = asyncHandler(async (req, res) => {
     videoId,
     startedAt: Date.now(),
   };
+
+  // Overwrite the short-TTL placeholder with real meta + full TTL
   await redisSet(key, JSON.stringify(meta), "EX", RECORDING_TTL);
 
   if (videoType === "primary_camera") {
     await pool.execute(
-      `UPDATE interviews SET recording_status = 'recording', updated_at = NOW() WHERE id = ? AND user_id = ?`,
+      `UPDATE interviews
+       SET recording_status = 'recording', updated_at = NOW()
+       WHERE id = ? AND user_id = ?`,
       [interviewId, userId],
     );
   }
 
   await pool.execute(
-    `UPDATE interview_videos SET upload_status = 'uploading', started_at = NOW(), updated_at = NOW() WHERE id = ?`,
+    `UPDATE interview_videos
+     SET upload_status = 'uploading', started_at = NOW(), updated_at = NOW()
+     WHERE id = ?`,
     [videoId],
+  );
+
+  console.log(
+    `✅ Recording started — ${videoType} videoId=${videoId} (interview ${interviewId})`,
   );
 
   res
@@ -674,7 +650,8 @@ const endRecording = asyncHandler(async (req, res) => {
 
   if (!meta) {
     const [rows] = await pool.execute(
-      `SELECT id FROM interview_videos WHERE interview_id = ? AND user_id = ? AND video_type = ?`,
+      `SELECT id FROM interview_videos
+       WHERE interview_id = ? AND user_id = ? AND video_type = ?`,
       [interviewId, userId, videoType],
     );
     if (!rows[0]) throw new APIERR(404, "Recording session not found");
@@ -697,18 +674,21 @@ const endRecording = asyncHandler(async (req, res) => {
   );
 
   await pool.execute(
-    `UPDATE interview_videos SET upload_status = 'merging', updated_at = NOW() WHERE id = ?`,
+    `UPDATE interview_videos
+     SET upload_status = 'merging', updated_at = NOW()
+     WHERE id = ?`,
     [meta.videoId],
   );
 
   if (videoType === "primary_camera") {
     await pool.execute(
-      `UPDATE interviews SET recording_status = 'processing', updated_at = NOW() WHERE id = ? AND user_id = ?`,
+      `UPDATE interviews
+       SET recording_status = 'processing', updated_at = NOW()
+       WHERE id = ? AND user_id = ?`,
       [interviewId, userId],
     );
   }
 
-  // ── Respond immediately — client is never blocked ─────────────────────────
   res
     .status(200)
     .json(
@@ -720,21 +700,9 @@ const endRecording = asyncHandler(async (req, res) => {
     );
 
   // ── Background pipeline (fire-and-forget) ─────────────────────────────────
-  //
-  //   Timeline for each of the 3 video types running in parallel:
-  //
-  //   t=0   → endRecording() called for all three types
-  //   t=0   → [primary_camera only] answer analysis starts (Redis lock ensures once)
-  //   t≈2m  → AI evaluation finishes, scores saved to DB
-  //   t=5m  → MERGE_DELAY_MS elapses → finalizeRecording() runs
-  //              download chunks → ffmpeg concat → FTP upload → DB update
-  //   t=5m+ → [primary_camera only] cutAndUploadViolationClips() runs
-  //              cut violation clips from merged video → FTP upload → DB update
-  //
   (async () => {
     const pipelineStart = Date.now();
     try {
-      // ── STEP 1: Evaluate answers (primary_camera trigger, runs once) ───────
       if (videoType === "primary_camera") {
         const analysisResult = await runAnswerAnalysisDuringWait(
           interviewId,
@@ -749,7 +717,6 @@ const endRecording = asyncHandler(async (req, res) => {
         }
       }
 
-      // ── STEP 2: Wait out the remainder of the 5-minute window ─────────────
       const elapsed = Date.now() - pipelineStart;
       const remainingWait = Math.max(0, MERGE_DELAY_MS - elapsed);
 
@@ -760,7 +727,6 @@ const endRecording = asyncHandler(async (req, res) => {
         await new Promise((r) => setTimeout(r, remainingWait));
       }
 
-      // ── STEP 3: Merge chunks → upload → update DB ─────────────────────────
       console.log(
         `🎬 [PIPELINE] Starting merge for ${videoType} (interview ${interviewId})`,
       );
@@ -771,14 +737,6 @@ const endRecording = asyncHandler(async (req, res) => {
         videoId: meta.videoId,
       });
 
-      // ── STEP 4: [primary_camera only] Cut violation clips ──────────────────
-      //
-      //   We only cut clips from the primary_camera feed because:
-      //     • It has the best view of the candidate's face
-      //     • The violation timestamps (NO_FACE, MULTIPLE_FACES) are derived
-      //       from the front-facing camera holistic detection
-      //     • Avoids running 3× the same clips from 3 different feeds
-      //
       if (videoType === "primary_camera" && finalizeResult?.mergedLocalPath) {
         console.log(
           `✂️  [PIPELINE] Starting violation clip extraction for interview ${interviewId}`,
@@ -792,6 +750,16 @@ const endRecording = asyncHandler(async (req, res) => {
             `❌ [PIPELINE] Violation clipping failed: ${err.message}`,
           ),
         );
+
+        // Clean up the primary_camera tempDir now that clip cutting is done
+        if (finalizeResult.tempDir) {
+          await require("fs")
+            .promises.rm(finalizeResult.tempDir, {
+              recursive: true,
+              force: true,
+            })
+            .catch(() => {});
+        }
       }
     } catch (err) {
       console.error(`❌ [PIPELINE] Failed (${videoType}):`, err.message);
@@ -799,31 +767,29 @@ const endRecording = asyncHandler(async (req, res) => {
   })();
 });
 
-/* ── GET /interviews/:interviewId/analysis  (REST polling endpoint) ──────── */
+/* ── GET /interviews/:interviewId/analysis ───────────────────────────────── */
 
 const getAnalysisResult = asyncHandler(async (req, res) => {
   const { interviewId } = req.params;
   const userId = req.user.id;
 
-  // ── Try lightweight summary table first ───────────────────────────────────
   const [summaryRows] = await pool
     .execute(
       `SELECT * FROM interview_recording_analysis
-     WHERE interview_id = ? AND user_id = ? LIMIT 1`,
+       WHERE interview_id = ? AND user_id = ? LIMIT 1`,
       [interviewId, userId],
     )
     .catch(() => [[]]);
 
   if (summaryRows?.[0]) {
-    // Also attach per-question breakdown
     const [qRows] = await pool
       .execute(
         `SELECT qe.score, qe.feedback, qe.correctness, qe.depth, qe.clarity,
-              iq.question_order, iq.question, iq.answer
-       FROM question_evaluations qe
-       JOIN interview_questions  iq ON qe.question_id = iq.id
-       WHERE qe.interview_id = ?
-       ORDER BY iq.question_order ASC`,
+                iq.question_order, iq.question, iq.answer
+         FROM question_evaluations qe
+         JOIN interview_questions  iq ON qe.question_id = iq.id
+         WHERE qe.interview_id = ?
+         ORDER BY iq.question_order ASC`,
         [interviewId],
       )
       .catch(() => [[]]);
@@ -839,11 +805,10 @@ const getAnalysisResult = asyncHandler(async (req, res) => {
       );
   }
 
-  // ── Fall back to canonical evaluation tables ───────────────────────────────
   const [evalRows] = await pool
     .execute(
       `SELECT overall_score, hire_decision, experience_level, strengths, weaknesses, summary
-     FROM interview_evaluations WHERE interview_id = ? LIMIT 1`,
+       FROM interview_evaluations WHERE interview_id = ? LIMIT 1`,
       [interviewId],
     )
     .catch(() => [[]]);
@@ -863,11 +828,11 @@ const getAnalysisResult = asyncHandler(async (req, res) => {
   const [qRows] = await pool
     .execute(
       `SELECT qe.score, qe.feedback, qe.correctness, qe.depth, qe.clarity,
-            iq.question_order, iq.question, iq.answer
-     FROM question_evaluations qe
-     JOIN interview_questions  iq ON qe.question_id = iq.id
-     WHERE qe.interview_id = ?
-     ORDER BY iq.question_order ASC`,
+              iq.question_order, iq.question, iq.answer
+       FROM question_evaluations qe
+       JOIN interview_questions  iq ON qe.question_id = iq.id
+       WHERE qe.interview_id = ?
+       ORDER BY iq.question_order ASC`,
       [interviewId],
     )
     .catch(() => [[]]);
@@ -883,24 +848,19 @@ const getAnalysisResult = asyncHandler(async (req, res) => {
     );
 });
 
-/* ── GET /interviews/:interviewId/violations  (REST endpoint) ────────────── */
+/* ── GET /interviews/:interviewId/violations ─────────────────────────────── */
 
 const getViolationClips = asyncHandler(async (req, res) => {
   const { interviewId } = req.params;
   const userId = req.user.id;
 
-  // ── Auth: interview must exist AND candidate must match ───────────────────
   const [interviewRows] = await pool.execute(
-    `SELECT id, user_id
-     FROM interviews
-     WHERE id = ?
-     LIMIT 1`,
+    `SELECT id, user_id FROM interviews WHERE id = ? LIMIT 1`,
     [interviewId],
   );
 
   if (!interviewRows?.[0]) throw new APIERR(404, "Interview not found");
 
-  // ── Fetch violations ──────────────────────────────────────────────────────
   const [rows] = await pool.execute(
     `SELECT id, violation_type, start_time, end_time, duration_seconds,
             warning_count, resolved, details, clip_url, clip_ftp_path, clip_status
@@ -939,15 +899,8 @@ const getViolationClips = asyncHandler(async (req, res) => {
   );
 });
 
-/* ── Finalize: merge chunks → upload merged video → update DB ────────────── */
+/* ── Finalize: download chunks → ffmpeg → upload merged video ────────────── */
 
-/**
- * @returns {Promise<{ mergedLocalPath: string|null, recordingStartedAt: Date|null }>}
- *   mergedLocalPath is set if merge succeeded (used for clip cutting).
- *   It points to the temp file — callers must NOT delete tempDir before using it.
- *   The function itself cleans up tempDir ONLY on error; on success tempDir cleanup
- *   is deferred to after clip cutting (see endRecording pipeline).
- */
 async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
   const key = redisKey(userId, interviewId, videoType);
   const fs = require("fs").promises;
@@ -958,7 +911,6 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
 
   const tempDir = `/tmp/merge_${interviewId}_${videoType}_${Date.now()}`;
 
-  // ── Fetch recording started_at for clip offset calculation ───────────────
   let recordingStartedAt = null;
   try {
     const [videoRows] = await pool.execute(
@@ -979,7 +931,9 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     while (Date.now() < pollDeadline) {
       const [rows] = await pool.execute(
         `SELECT chunk_number, temp_ftp_path, chunk_size, upload_status
-         FROM interview_video_chunks WHERE video_id = ? ORDER BY chunk_number ASC`,
+         FROM interview_video_chunks
+         WHERE video_id = ?
+         ORDER BY chunk_number ASC`,
         [videoId],
       );
       const inFlight = rows.filter(
@@ -1018,7 +972,9 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     if (uploadedChunks.length === 0) {
       console.warn(`⚠️ No uploaded chunks for ${videoType} — marking failed`);
       await pool.execute(
-        `UPDATE interview_videos SET upload_status = 'failed', error_message = ?, updated_at = NOW() WHERE id = ?`,
+        `UPDATE interview_videos
+         SET upload_status = 'failed', error_message = ?, updated_at = NOW()
+         WHERE id = ?`,
         [
           failedChunks.length > 0
             ? `All ${failedChunks.length} chunk(s) failed`
@@ -1077,7 +1033,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
       );
     }
 
-    // ── Binary concatenate all chunk buffers ──────────────────────────────
+    // ── Binary concat ─────────────────────────────────────────────────────
     const totalBytes = chunkBuffers.reduce((s, b) => s + b.length, 0);
     const rawWebmPath = path.join(tempDir, `${videoType}_raw.webm`);
     const mergedPath = path.join(tempDir, `${videoType}_merged.webm`);
@@ -1105,7 +1061,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
       `✅ Raw concat done: ${(rawStat.size / 1024 / 1024).toFixed(2)} MB → running FFmpeg re-mux…`,
     );
 
-    // ── FFmpeg re-mux: fix timestamps + write clean container ────────────
+    // ── FFmpeg re-mux ─────────────────────────────────────────────────────
     await new Promise((resolve, reject) => {
       const ffmpegTimeout = setTimeout(
         () =>
@@ -1142,7 +1098,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     if (mergedStat.size < rawStat.size * 0.8) {
       console.warn(
         `⚠️ Merged file (${mergedStat.size}) is <80% of raw (${rawStat.size}) — ` +
-          `possible data loss detected for ${videoType}. Falling back to raw upload.`,
+          `possible data loss for ${videoType}. Falling back to raw upload.`,
       );
       await fs.copyFile(rawWebmPath, mergedPath);
     }
@@ -1173,7 +1129,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
         `${duration}s, ${uploadedChunks.length} chunks merged`,
     );
 
-    // ── Upload merged file to FTP ─────────────────────────────────────────
+    // ── Upload merged file ────────────────────────────────────────────────
     const mergedFilename = `${videoType}_${interviewId}_${Date.now()}.webm`;
     const ftpResult = await withRetry(
       () =>
@@ -1182,7 +1138,11 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
           mergedFilename,
           `/public/interview-videos/${interviewId}`,
         ),
-      { attempts: 4, baseDelayMs: 5000, label: `Upload merged ${videoType}` },
+      {
+        attempts: 4,
+        baseDelayMs: 5000,
+        label: `Upload merged ${videoType}`,
+      },
     );
 
     console.log(`✅ Merged ${videoType} uploaded: ${ftpResult.url}`);
@@ -1215,7 +1175,9 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     if (col) {
       await pool
         .execute(
-          `UPDATE interviews SET \`${col}\` = ?, updated_at = NOW() WHERE id = ? AND user_id = ?`,
+          `UPDATE interviews
+           SET \`${col}\` = ?, updated_at = NOW()
+           WHERE id = ? AND user_id = ?`,
           [ftpResult.url, interviewId, userId],
         )
         .catch((err) =>
@@ -1226,7 +1188,9 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     if (videoType === "primary_camera") {
       await pool
         .execute(
-          `UPDATE interviews SET recording_status = 'completed', updated_at = NOW() WHERE id = ? AND user_id = ?`,
+          `UPDATE interviews
+           SET recording_status = 'completed', updated_at = NOW()
+           WHERE id = ? AND user_id = ?`,
           [interviewId, userId],
         )
         .catch(() => {});
@@ -1244,12 +1208,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
       60 * 30,
     );
 
-    // ── Defer temp dir cleanup to after clip cutting ───────────────────────
-    // For primary_camera we return the mergedPath so violation clips can be
-    // cut from the local file (avoiding a re-download from FTP).
-    // The caller (endRecording pipeline) is responsible for cleaning up tempDir
-    // after cutAndUploadViolationClips() finishes.
-    // For all other types, clean up now.
+    // ── Defer tempDir cleanup for primary_camera (clip cutting needs it) ──
     if (videoType !== "primary_camera") {
       await fs.rm(tempDir, { recursive: true, force: true });
     } else {
@@ -1281,7 +1240,9 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     if (videoType === "primary_camera") {
       await pool
         .execute(
-          `UPDATE interviews SET recording_status = 'failed', updated_at = NOW() WHERE id = ? AND user_id = ?`,
+          `UPDATE interviews
+           SET recording_status = 'failed', updated_at = NOW()
+           WHERE id = ? AND user_id = ?`,
           [interviewId, userId],
         )
         .catch(() => {});
@@ -1293,7 +1254,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
         recursive: true,
         force: true,
       });
-    } catch {}
+    } catch (_) {}
     throw err;
   }
 }
@@ -1319,7 +1280,8 @@ const getRecordingStatus = asyncHandler(async (req, res) => {
 
   const [rows] = await pool.execute(
     `SELECT upload_status, ftp_url, uploaded_chunks, total_chunks
-     FROM interview_videos WHERE interview_id = ? AND user_id = ? AND video_type = ?`,
+     FROM interview_videos
+     WHERE interview_id = ? AND user_id = ? AND video_type = ?`,
     [interviewId, userId, videoType],
   );
   if (!rows[0]) throw new APIERR(404, "Recording not found");
@@ -1347,7 +1309,8 @@ const getRecordingUrls = asyncHandler(async (req, res) => {
 
   const [rows] = await pool.execute(
     `SELECT video_type, ftp_url, upload_status, duration, file_size
-     FROM interview_videos WHERE interview_id = ? AND user_id = ?`,
+     FROM interview_videos
+     WHERE interview_id = ? AND user_id = ?`,
     [interviewId, userId],
   );
 
@@ -1388,8 +1351,8 @@ module.exports = {
   getRecordingStatus,
   getRecordingUrls,
   getAnalysisResult,
-  getViolationClips, // ← new REST endpoint
+  getViolationClips,
   finalizeRecording,
   runAnswerAnalysisDuringWait,
-  cutAndUploadViolationClips, // ← exported for direct use / testing
+  cutAndUploadViolationClips,
 };

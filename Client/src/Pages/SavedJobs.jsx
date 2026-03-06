@@ -814,7 +814,7 @@ const SavedJobs = () => {
       <meta property="og:url" content="https://talk2hire.com/saved" />
       <meta
         property="og:image"
-        content="https://talk2hire.com/talk2hirelogo.jpeg"
+        content="https://talk2hire.com/talk2hirelogo.png"
       />
 
       {/* Twitter */}
@@ -826,7 +826,7 @@ const SavedJobs = () => {
       />
       <meta
         name="twitter:image"
-        content="https://talk2hire.com/talk2hirelogo.jpeg"
+        content="https://talk2hire.com/talk2hirelogo.png"
       />
 
       {/* Structured Data */}

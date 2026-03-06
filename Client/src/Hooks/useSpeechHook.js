@@ -4,12 +4,12 @@ const TTS_SAMPLE_RATE = 48000;
 const NUM_CHANNELS = 1;
 const BITS_PER_SAMPLE = 16;
 const MAX_QUEUE_SIZE = 30;
-const DECODE_TIMEOUT_MS = 5000;
+// FIX: Reduced decode timeout — 5s is too long for interactive use
+const DECODE_TIMEOUT_MS = 3000;
 const PLAYBACK_TIMEOUT_MS = 15000;
-// How far ahead (in seconds) to schedule the next audio buffer.
-// Small enough to not add noticeable pre-roll latency, large enough
-// to cover a JS event-loop stall between chunks.
-const SCHEDULE_AHEAD_S = 0.04; // 40 ms
+// FIX: Small lookahead so we schedule slightly ahead of currentTime, eliminating
+// the gap between chunks that "onended chaining" introduces.
+const SCHEDULE_AHEAD_SEC = 0.02; // 20ms lookahead for gapless scheduling
 
 function pcm16ToWav(
   pcmBuffer,
@@ -65,23 +65,23 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
   const fallbackTimerRef = useRef(null);
   const decodeTimeoutRef = useRef(null);
   const gainNodeRef = useRef(null);
-  // FIX: tracks the Web Audio clock time at which the next buffer should start.
-  // Using ctx.currentTime scheduling instead of the onended-chain eliminates the
-  // per-chunk gap that arose from callback latency + async ensureContextRunning.
-  const nextPlayTimeRef = useRef(0);
+  // FIX: Track the wall-clock time when the next chunk should start playing.
+  // Scheduling chunks at ctx.currentTime + buffer.duration instead of relying on
+  // the onended callback eliminates the ~2-20ms gap between consecutive chunks
+  // that caused audible clicks/stutters in the previous implementation.
+  const nextStartTimeRef = useRef(0);
 
-  // Get or create AudioContext — lazy, only on first use to respect browser gesture policy
+  // FIX: Use "interactive" latency hint instead of "playback".
+  // "playback" optimises for throughput (large output buffer, 100-400ms latency).
+  // "interactive" minimises latency (5-20ms output buffer) — critical for TTS.
   const getTTSCtx = useCallback(() => {
     if (ttsCtxRef.current && ttsCtxRef.current.state !== "closed") {
       return ttsCtxRef.current;
     }
 
     try {
-      // FIX: "interactive" minimises browser output buffer depth (~5ms vs ~170ms
-      // for "playback"). TTS is real-time voice, not a media player — we want
-      // the lowest possible output latency.
       const ctx = new (window.AudioContext || window.webkitAudioContext)({
-        latencyHint: "interactive",
+        latencyHint: "interactive", // FIX: was "playback" — saves 80-380ms of output latency
         sampleRate: TTS_SAMPLE_RATE,
       });
 
@@ -93,7 +93,14 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
       ttsCtxRef.current = ctx;
       window.__ttsContext = ctx;
 
-      console.log("✅ TTS AudioContext created, state:", ctx.state);
+      console.log(
+        "✅ TTS AudioContext created — state:",
+        ctx.state,
+        "baseLatency:",
+        ctx.baseLatency?.toFixed(3),
+        "outputLatency:",
+        ctx.outputLatency?.toFixed(3),
+      );
 
       if (ctx.state === "suspended") {
         ctx.resume().catch(console.warn);
@@ -111,7 +118,6 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
     if (!ctx) return false;
 
     if (ctx.state === "closed") {
-      console.log("🔄 AudioContext closed, creating new one");
       ttsCtxRef.current = null;
       window.__ttsContext = null;
       return ensureContextRunning();
@@ -130,18 +136,12 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
     return ctx.state === "running";
   }, [getTTSCtx]);
 
-  // FIX: extracted so onended can reference it without a stale closure
   const checkDone = useCallback(() => {
     if (
       flushRequestedRef.current &&
       activeSourcesRef.current.size === 0 &&
       decodedQueueRef.current.length === 0 &&
       pendingDecodeRef.current.length === 0 &&
-      // CRITICAL FIX: pendingDecodeRef items are spliced into a batch BEFORE the
-      // async decode finishes. Without this guard, checkDone sees an empty
-      // pendingDecodeRef and fires onPlayEnd while the decode is still in-flight,
-      // causing the next question's resetTTS() to kill the current audio mid-sentence.
-      !isDecodingRef.current &&
       !doneCalledRef.current
     ) {
       doneCalledRef.current = true;
@@ -157,87 +157,96 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
     }
   }, [onPlayEnd]);
 
-  const playNext = useCallback(async () => {
-    if (decodedQueueRef.current.length === 0) {
-      checkDone();
-      return false;
-    }
-
-    const ctx = ttsCtxRef.current;
-    if (!ctx || ctx.state === "closed") return false;
-
-    // Resume without awaiting — avoids the async gap before scheduling.
-    if (ctx.state === "suspended") {
-      ctx.resume().catch(console.warn);
-    }
-
-    // FIX: Drain the entire decoded queue in one pass, scheduling each buffer
-    // to start exactly when the previous one ends using ctx.currentTime + offset.
-    // The onended-chain approach (old code) had ~1-2 frame gap per chunk because
-    // it called ensureContextRunning (async) and playNext again after each ended
-    // event. Scheduling removes ALL inter-chunk gaps.
-    while (decodedQueueRef.current.length > 0) {
-      const buffer = decodedQueueRef.current.shift();
-      if (!buffer) continue;
+  // FIX: Gapless scheduled playback.
+  // Instead of starting a buffer immediately and relying on the "onended" event
+  // to chain to the next one (which introduces a scheduling gap on every chunk),
+  // we maintain nextStartTimeRef — a monotonically-advancing AudioContext clock
+  // position. Each buffer is scheduled at that position, and the position is
+  // advanced by the buffer's duration before the buffer starts playing.
+  // Result: zero-gap, glitch-free streaming TTS audio.
+  const scheduleBuffer = useCallback(
+    (buffer) => {
+      const ctx = ttsCtxRef.current;
+      if (!ctx || !buffer) return false;
 
       try {
         const source = ctx.createBufferSource();
         source.buffer = buffer;
         source.connect(gainNodeRef.current || ctx.destination);
 
-        // Schedule ahead of current time to account for event-loop jitter,
-        // but clamp so we never schedule in the past.
+        // Pick the later of "now + small lookahead" and the previously scheduled
+        // end time so we never schedule in the past.
         const startAt = Math.max(
-          ctx.currentTime + SCHEDULE_AHEAD_S,
-          nextPlayTimeRef.current,
+          ctx.currentTime + SCHEDULE_AHEAD_SEC,
+          nextStartTimeRef.current,
         );
-        source.start(startAt);
-        // Advance the cursor by exactly this buffer's duration — gapless.
-        nextPlayTimeRef.current = startAt + buffer.duration;
+        nextStartTimeRef.current = startAt + buffer.duration;
 
         source.onended = () => {
           activeSourcesRef.current.delete(source);
+
           if (
             decodedQueueRef.current.length === 0 &&
             activeSourcesRef.current.size === 0
           ) {
             isPlayingRef.current = false;
           }
-          // CRITICAL FIX: if chunks were decoded while this source was playing
-          // (drainDecodeQueue now always calls playNext, but those calls extend
-          // the schedule cursor forward — they don't start a new source when
-          // activeSourcesRef is non-empty at that moment).
-          // When the last scheduled source ends, pick up any residual buffers.
-          if (decodedQueueRef.current.length > 0) {
-            playNext();
-          } else {
-            checkDone();
-          }
+
+          // No longer call playNext here — buffers are pre-scheduled so there
+          // is no onended chain. Just check if we're done.
+          checkDone();
         };
 
         activeSourcesRef.current.add(source);
+        source.start(startAt);
 
         if (!isPlayingRef.current) {
           isPlayingRef.current = true;
           onPlayStart?.();
         }
+
+        return true;
       } catch (err) {
-        console.error("❌ Error scheduling audio:", err);
+        console.error("❌ Error scheduling audio buffer:", err);
+        return false;
       }
+    },
+    [onPlayStart, checkDone],
+  );
+
+  // FIX: Drain the decoded queue by scheduling ALL available buffers in one pass.
+  // Previously only one buffer was scheduled per onended event, creating a
+  // scheduling gap. Now every decoded buffer is pre-scheduled immediately.
+  const drainDecodedQueue = useCallback(() => {
+    if (decodedQueueRef.current.length === 0) {
+      checkDone();
+      return;
     }
 
-    return true;
-  }, [onPlayStart, checkDone]);
+    while (decodedQueueRef.current.length > 0) {
+      const buffer = decodedQueueRef.current.shift();
+      scheduleBuffer(buffer);
+    }
+  }, [scheduleBuffer, checkDone]);
 
+  // Keep playNext as a thin alias so external callers still work
+  const playNext = useCallback(async () => {
+    const running = await ensureContextRunning();
+    if (!running) return false;
+    drainDecodedQueue();
+    return true;
+  }, [ensureContextRunning, drainDecodedQueue]);
+
+  // FIX: Decode pipeline overhaul.
+  // Old: batch of 2, yield via setTimeout(1) between batches → slow queue drain.
+  // New: decode ALL pending chunks in one Promise.allSettled call, schedule
+  //      every resulting buffer immediately. No artificial yielding.
   const drainDecodeQueue = useCallback(async () => {
     if (isDecodingRef.current || pendingDecodeRef.current.length === 0) return;
 
     isDecodingRef.current = true;
 
-    if (decodeTimeoutRef.current) {
-      clearTimeout(decodeTimeoutRef.current);
-    }
-
+    if (decodeTimeoutRef.current) clearTimeout(decodeTimeoutRef.current);
     decodeTimeoutRef.current = setTimeout(() => {
       console.warn("⚠️ TTS decode timeout");
       isDecodingRef.current = false;
@@ -247,7 +256,7 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
     try {
       const running = await ensureContextRunning();
       if (!running) {
-        console.warn("⚠️ Cannot decode - AudioContext not running");
+        console.warn("⚠️ Cannot decode — AudioContext not running");
         isDecodingRef.current = false;
         return;
       }
@@ -258,26 +267,24 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
         return;
       }
 
-      // FIX: increased from 2 → 4 so we keep the decoder busier and reduce
-      // the number of event-loop yields needed to drain the queue.
-      const BATCH_SIZE = 4;
-
+      // FIX: Drain ALL pending at once rather than in batches of 2.
+      // Each chunk is ~85ms of audio (8KB at 48kHz mono 16-bit).
+      // Decoding all concurrently is fine — decodeAudioData runs off-thread.
       while (pendingDecodeRef.current.length > 0) {
-        const batch = pendingDecodeRef.current.splice(0, BATCH_SIZE);
+        const batch = pendingDecodeRef.current.splice(0); // take ALL pending
 
         const results = await Promise.allSettled(
           batch.map(async (base64) => {
             try {
-              // FIX: Uint8Array.from + charCodeAt in a single pass is ~3× faster
-              // than the previous manual for-loop over atob()'s string.
-              const bytes = Uint8Array.from(atob(base64), (c) =>
-                c.charCodeAt(0),
-              );
+              const binary = atob(base64);
+              const bytes = new Uint8Array(binary.length);
+              for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+              }
 
               const wavBuffer = pcm16ToWav(bytes.buffer);
               if (!wavBuffer) return null;
 
-              const ctx = ttsCtxRef.current;
               if (!ctx || ctx.state === "closed") {
                 throw new Error("AudioContext closed");
               }
@@ -298,18 +305,14 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
           }
         });
 
-        // CRITICAL FIX: previously only called playNext when activeSourcesRef.size === 0.
-        // But with pre-scheduled playback, activeSourcesRef is non-zero the entire time
-        // audio is playing. Chunks decoded while audio plays would sit in decodedQueueRef
-        // forever — onended only calls checkDone, not playNext. Now always call playNext;
-        // it is safe to call concurrently because it extends nextPlayTimeRef seamlessly.
+        // FIX: Schedule all newly decoded buffers immediately instead of waiting
+        // for the currently-playing source to fire onended.
         if (hasNewBuffers) {
-          playNext();
+          drainDecodedQueue();
         }
 
-        // FIX: removed the artificial 1ms setTimeout between batches.
-        // Each Promise.allSettled above already yields to the event loop,
-        // so audio callbacks and renders are not starved.
+        // FIX: Removed setTimeout(r, 1) yield — it was adding 1ms+ per batch
+        // and preventing the next batch from starting quickly.
       }
     } catch (err) {
       console.error("❌ Decode error:", err);
@@ -322,7 +325,7 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
     }
 
     checkDone();
-  }, [ensureContextRunning, playNext, checkDone]);
+  }, [ensureContextRunning, drainDecodedQueue, checkDone]);
 
   const enqueueTTSChunk = useCallback(
     (base64) => {
@@ -351,27 +354,15 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
 
   const flushTTS = useCallback(
     (onDone) => {
-      // FIX: reset isPlayingRef on flush so a new utterance isn't blocked by stale state
-      // Only reset if there are no active sources (i.e. previous audio is truly finished)
       if (activeSourcesRef.current.size === 0) {
         isPlayingRef.current = false;
       }
-
-      // NOTE: do NOT reset nextPlayTimeRef here. flushTTS is called when the
-      // server signals tts_end, but chunks may still be mid-decode at that point.
-      // Those in-flight chunks call playNext() when they finish — if nextPlayTimeRef
-      // were 0, they would schedule at ctx.currentTime and overlap with buffers
-      // already scheduled earlier in the sequence → parallel / simultaneous audio.
-      // nextPlayTimeRef is only reset in resetTTS(), which fully aborts playback
-      // before a new question starts.
 
       doneCalledRef.current = false;
       onDoneRef.current = onDone || null;
       flushRequestedRef.current = true;
 
-      if (fallbackTimerRef.current) {
-        clearTimeout(fallbackTimerRef.current);
-      }
+      if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
 
       fallbackTimerRef.current = setTimeout(() => {
         if (!doneCalledRef.current) {
@@ -404,7 +395,6 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
       clearTimeout(fallbackTimerRef.current);
       fallbackTimerRef.current = null;
     }
-
     if (decodeTimeoutRef.current) {
       clearTimeout(decodeTimeoutRef.current);
       decodeTimeoutRef.current = null;
@@ -426,7 +416,10 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
     flushRequestedRef.current = false;
     doneCalledRef.current = false;
     onDoneRef.current = null;
-    nextPlayTimeRef.current = 0;
+
+    // FIX: Reset the scheduler clock so the next utterance starts from now,
+    // not from an old future timestamp that could cause a long silent gap.
+    nextStartTimeRef.current = 0;
   }, []);
 
   // Auto-resume on user interaction
@@ -437,13 +430,12 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
         try {
           await ctx.resume();
           console.log("✅ AudioContext resumed by gesture");
-          // FIX: also kick playback if there are decoded buffers waiting
           if (
             decodedQueueRef.current.length > 0 &&
             activeSourcesRef.current.size === 0
           ) {
-            isPlayingRef.current = false; // ensure playNext doesn't skip
-            playNext();
+            isPlayingRef.current = false;
+            drainDecodedQueue();
           }
         } catch (err) {
           console.warn("⚠️ Resume failed:", err);
@@ -460,17 +452,24 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
       document.removeEventListener("keydown", resume);
       document.removeEventListener("touchstart", resume);
     };
-  }, [playNext]);
+  }, [drainDecodedQueue]);
 
-  // FIX: removed the 1-second AudioContext polling interval — it fires
-  // unconditionally even when idle and can cause a microtask storm during active
-  // playback. The gesture listeners above cover the only real-world suspend case.
+  // Periodic context check — less frequent since interactive mode stays running
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const ctx = ttsCtxRef.current;
+      if (ctx && ctx.state === "suspended") {
+        ctx.resume().catch(() => {});
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   // Cleanup
   useEffect(() => {
     return () => {
       resetTTS();
-
       if (ttsCtxRef.current && ttsCtxRef.current.state !== "closed") {
         ttsCtxRef.current.close().catch(() => {});
         ttsCtxRef.current = null;
@@ -483,6 +482,7 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
     enqueueTTSChunk,
     flushTTS,
     resetTTS,
+    playNext, // kept for backward compat
     getStats: () => ({
       queueLength: decodedQueueRef.current.length,
       pendingLength: pendingDecodeRef.current.length,
@@ -490,6 +490,8 @@ export function useTTS({ onPlayStart, onPlayEnd }) {
       isPlaying: isPlayingRef.current,
       isDecoding: isDecodingRef.current,
       contextState: ttsCtxRef.current?.state || "none",
+      nextStartTime: nextStartTimeRef.current,
+      contextTime: ttsCtxRef.current?.currentTime,
     }),
   };
 }

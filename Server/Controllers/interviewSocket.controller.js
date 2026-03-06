@@ -1,4 +1,17 @@
 const { Server } = require("socket.io");
+
+// ── Process-level safety net ──────────────────────────────────────────────────
+// Node 15+ treats unhandledRejection as a fatal error by default, which causes
+// nodemon to restart and drops all active WebSocket connections mid-interview.
+// Log the error but keep the process alive — the socket handlers have their own
+// per-connection error recovery.
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("⚠️  Unhandled Promise Rejection (kept alive):", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("⚠️  Uncaught Exception (kept alive):", err.message, err.stack);
+});
+// ─────────────────────────────────────────────────────────────────────────────
 const { Interview } = require("../Models/interview.models.js");
 const { generateNextQuestionWithAI } = require("../Service/ai.service.js");
 const { createTTSStream } = require("../Service/tts.service.js");
@@ -559,16 +572,20 @@ async function handleInterviewSocket(
   }
 
   if (!firstQuestion) {
-    const q =
-      "Tell me about yourself, your background, and what brings you here today.";
-    await Interview.saveQuestion({
-      interviewId,
-      question: q,
-      questionOrder: 1,
-      technology: null,
-      difficulty: "easy",
-    });
-    firstQuestion = await Interview.getQuestionByOrder(interviewId, 1);
+    try {
+      const q =
+        "Tell me about yourself, your background, and what brings you here today.";
+      await Interview.saveQuestion({
+        interviewId,
+        question: q,
+        questionOrder: 1,
+        technology: null,
+        difficulty: "easy",
+      });
+      firstQuestion = await Interview.getQuestionByOrder(interviewId, 1);
+    } catch (err) {
+      console.error("❌ Failed to create default question:", err.message);
+    }
   }
 
   if (!firstQuestion) {
@@ -620,6 +637,11 @@ async function handleInterviewSocket(
     message: "Server ready",
   });
 
+  // In-flight dedup: prevents two concurrent callers (pre-warm + enableListening)
+  // from each opening a separate Deepgram socket, which caused the first socket's
+  // onError to reject the second caller's promise -> "Microphone connection failed".
+  let _sttConnecting = null;
+
   function ensureSTTConnection() {
     const cached = sttConnectionCache.get(interviewId);
     if (cached?.conn?.isConnected?.()) {
@@ -627,11 +649,14 @@ async function handleInterviewSocket(
       return Promise.resolve(cached.conn);
     }
 
-    return new Promise((resolve, reject) => {
+    if (_sttConnecting) return _sttConnecting;
+
+    _sttConnecting = new Promise((resolve, reject) => {
       let done = false;
       const timer = setTimeout(() => {
         if (!done) {
           done = true;
+          _sttConnecting = null;
           reject(new Error("Deepgram connect timeout"));
         }
       }, 8000);
@@ -663,6 +688,7 @@ async function handleInterviewSocket(
           console.error("❌ Deepgram error:", e);
           if (!done) {
             done = true;
+            _sttConnecting = null;
             clearTimeout(timer);
             reject(e);
           }
@@ -684,6 +710,7 @@ async function handleInterviewSocket(
         .then(() => {
           if (!done) {
             done = true;
+            _sttConnecting = null;
             clearTimeout(timer);
             sttConnectionCache.set(interviewId, {
               conn,
@@ -696,14 +723,17 @@ async function handleInterviewSocket(
         .catch((e) => {
           if (!done) {
             done = true;
+            _sttConnecting = null;
             clearTimeout(timer);
             reject(e);
           }
         });
     });
+
+    return _sttConnecting;
   }
 
-  const enableListening = async () => {
+  const enableListening = async (retryCount = 0) => {
     if (isInterviewEnded || !session.interviewStarted || isListeningActive) {
       return;
     }
@@ -717,6 +747,13 @@ async function handleInterviewSocket(
         console.log("✅ Using existing STT connection");
       } else {
         console.log("🔄 Creating new STT connection");
+        // Clear stale cache + in-flight promise before retry
+        if (cached) {
+          try {
+            cached.conn.finish();
+          } catch (_) {}
+          sttConnectionCache.delete(interviewId);
+        }
         conn = await ensureSTTConnection();
       }
 
@@ -755,18 +792,34 @@ async function handleInterviewSocket(
         startNoTranscriptTimer();
       }
     } catch (err) {
-      console.error(`❌ enableListening failed:`, err);
-      socket.emit("error", {
-        message: "Microphone connection failed. Please refresh.",
-      });
-      isProcessing = false;
+      console.error(
+        `❌ enableListening failed (attempt ${retryCount + 1}):`,
+        err.message,
+      );
 
+      // Clear stale state before retry
+      _sttConnecting = null;
       if (sttConnectionCache.has(interviewId)) {
         try {
           sttConnectionCache.get(interviewId).conn.finish();
         } catch (_) {}
         sttConnectionCache.delete(interviewId);
       }
+
+      // Auto-retry once before surfacing the error to the client
+      if (retryCount < 1) {
+        console.log("🔄 Retrying STT connection in 1.5s...");
+        setTimeout(
+          () => enableListening(retryCount + 1).catch(console.error),
+          1500,
+        );
+        return;
+      }
+
+      socket.emit("error", {
+        message: "Microphone connection failed. Please refresh.",
+      });
+      isProcessing = false;
     }
   };
 

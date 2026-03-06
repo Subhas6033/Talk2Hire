@@ -7,13 +7,10 @@ if (!DEEPGRAM_API_KEY) {
 
 const STT_SAMPLE_RATE = 48000;
 const IDLE_TIMEOUT_MS = 8000;
-// FIX: reduced from 800 → 500 ms — still reliable for natural speech pauses
-// but cuts 300ms from every response turn-around.
 const UTTERANCE_END_MS = 500;
 const KEEPALIVE_INTERVAL_MS = 3_000;
-const ACTIVATE_DELAY_MS = 400;
 const FLUSH_CHUNK_SIZE = 960;
-const FLUSH_CHUNK_COUNT = 8;
+const FLUSH_CHUNK_COUNT = 4;
 const FLUSH_INTERVAL_MS = 10;
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY_MS = 1000;
@@ -25,13 +22,11 @@ const STT_URL =
   `&language=en-US` +
   `&smart_format=true` +
   `&interim_results=true` +
-  `&utterance_end_ms=${UTTERANCE_END_MS}` +
   `&vad_events=true` +
-  `&endpointing=300` +
+  `&endpointing=200` +
   `&encoding=linear16` +
   `&sample_rate=${STT_SAMPLE_RATE}` +
-  `&channels=1` +
-  `&no_delay=true`;
+  `&channels=1`;
 
 function createSTTSession() {
   function startLiveTranscription({
@@ -62,7 +57,7 @@ function createSTTSession() {
     let activateTimer = null;
     let flushIntervalRef = null;
     let messageQueue = [];
-    let mountedRef = { current: true };
+    const mountedRef = { current: true };
 
     let standby = true;
     let gateOpen = false;
@@ -140,7 +135,6 @@ function createSTTSession() {
       pingInterval = setInterval(() => {
         if (conn?.readyState === WS.OPEN) {
           connectionHealthy = true;
-          // Send ping to check connection
           try {
             if (conn.ping) conn.ping();
           } catch (e) {
@@ -152,19 +146,21 @@ function createSTTSession() {
       }, 5000);
     };
 
+    let conn = null;
+    console.log("🔗 Connecting to STT URL:", STT_URL);
     const createConnection = () => {
       if (isClosing) return null;
 
-      const conn = new WS(STT_URL, {
+      const ws = new WS(STT_URL, {
         headers: {
-          Authorization: `Token ${DEEPGRAM_API_KEY}`,
+          Authorization: `Token ${process.env.DEEPGRAM_API_KEY}`,
         },
         handshakeTimeout: 10000,
       });
 
-      conn.on("open", () => {
+      ws.on("open", () => {
         if (isClosing || !mountedRef.current) {
-          conn.close();
+          ws.close();
           return;
         }
 
@@ -177,7 +173,7 @@ function createSTTSession() {
         processMessageQueue();
 
         keepAliveTimer = setInterval(() => {
-          if (wsReady && conn.readyState === WS.OPEN) {
+          if (wsReady && conn?.readyState === WS.OPEN) {
             try {
               conn.send(JSON.stringify({ type: "KeepAlive" }));
             } catch (e) {
@@ -189,7 +185,7 @@ function createSTTSession() {
         startHealthCheck();
       });
 
-      conn.on("error", (err) => {
+      ws.on("error", (err) => {
         console.error(
           `❌ Deepgram STT error (${connectionId.toString()}):`,
           err.message,
@@ -208,7 +204,7 @@ function createSTTSession() {
           if (reconnectTimer) clearTimeout(reconnectTimer);
           reconnectTimer = setTimeout(() => {
             if (!isClosing && mountedRef.current) {
-              conn = createConnection();
+              conn = createConnection(); // ✅ legal — outer `let conn`
             }
           }, RECONNECT_DELAY_MS * reconnectAttempts);
         } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
@@ -220,7 +216,7 @@ function createSTTSession() {
         }
       });
 
-      conn.on("close", (code, reason) => {
+      ws.on("close", (code, reason) => {
         const reasonStr = reason?.toString() || "unknown";
         console.warn(
           `⚠️ Deepgram STT closed — code=${code} reason=${reasonStr} (${connectionId.toString()})`,
@@ -259,7 +255,7 @@ function createSTTSession() {
           if (reconnectTimer) clearTimeout(reconnectTimer);
           reconnectTimer = setTimeout(() => {
             if (!isClosing && mountedRef.current) {
-              conn = createConnection();
+              conn = createConnection(); // ✅ legal — outer `let conn`
             }
           }, RECONNECT_DELAY_MS * reconnectAttempts);
         } else {
@@ -267,7 +263,7 @@ function createSTTSession() {
         }
       });
 
-      conn.on("message", (raw) => {
+      ws.on("message", (raw) => {
         let data;
         try {
           data = JSON.parse(raw.toString());
@@ -329,20 +325,17 @@ function createSTTSession() {
         }
       });
 
-      return conn;
+      return ws;
     };
 
-    let conn = createConnection();
+    // Initial connection — assign to outer `let conn`
+    conn = createConnection();
 
     return {
       connectionId,
 
       send(buf) {
         if (standby) return;
-
-        // While the silence-flush primes Deepgram, queue mic audio instead of
-        // forwarding it. Real speech that arrives during the ~480ms activation
-        // window would otherwise confuse Deepgram before it's ready.
         if (!gateOpen) return;
 
         if (!wsReady || conn?.readyState !== WS.OPEN) {
@@ -391,7 +384,6 @@ function createSTTSession() {
           clearTimeout(activateTimer);
           activateTimer = null;
         }
-
         if (flushIntervalRef) {
           clearInterval(flushIntervalRef);
           flushIntervalRef = null;
@@ -420,7 +412,7 @@ function createSTTSession() {
         lastSpeechTime = null;
 
         standby = false;
-        gateOpen = false; // stays false until silence flush completes
+        gateOpen = false;
 
         if (activateTimer) clearTimeout(activateTimer);
         if (flushIntervalRef) clearInterval(flushIntervalRef);
@@ -436,9 +428,6 @@ function createSTTSession() {
           if (chunksSent >= FLUSH_CHUNK_COUNT) {
             clearInterval(flushInterval);
             flushIntervalRef = null;
-
-            // Open gate immediately — server's STT_GATE_DELAY_MS already
-            // ensures the client mic won't open until this is done.
             gateOpen = true;
             console.log(`🎙️ STT active — gate open, ready for speech`);
             return;
@@ -472,12 +461,10 @@ function createSTTSession() {
           clearTimeout(activateTimer);
           activateTimer = null;
         }
-
         if (flushIntervalRef) {
           clearInterval(flushIntervalRef);
           flushIntervalRef = null;
         }
-
         if (reconnectTimer) {
           clearTimeout(reconnectTimer);
           reconnectTimer = null;

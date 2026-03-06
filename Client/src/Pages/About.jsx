@@ -33,7 +33,7 @@ const AboutPage = () => {
       <meta property="og:url" content="https://talk2hire.com/about" />
       <meta
         property="og:image"
-        content="https://talk2hire.com/talk2hirelogo.jpeg"
+        content="https://talk2hire.com/talk2hirelogo.png"
       />
       {/* Twitter */}
       <meta name="twitter:card" content="summary_large_image" />
@@ -47,7 +47,7 @@ const AboutPage = () => {
       />
       <meta
         name="twitter:image"
-        content="https://talk2hire.com/talk2hirelogo.jpeg"
+        content="https://talk2hire.com/talk2hirelogo.png"
       />
       {/* Structured Data */}
       <script type="application/ld+json">
@@ -56,7 +56,7 @@ const AboutPage = () => {
           "@type": "Organization",
           name: "Talk2Hire",
           url: "https://talk2hire.com/",
-          logo: "https://talk2hire.com/talk2hirelogo.jpeg",
+          logo: "https://talk2hire.com/talk2hirelogo.png",
           description:
             "Talk2Hire is an AI-powered interview preparation platform offering realistic mock interviews, instant scoring, and personalized feedback across multiple domains.",
           sameAs: [

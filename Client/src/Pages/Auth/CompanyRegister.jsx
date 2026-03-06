@@ -133,7 +133,7 @@ const CompanyRegister = () => {
       <meta property="og:url" content="https://talk2hire.com/signup/company" />
       <meta
         property="og:image"
-        content="https://talk2hire.com/talk2hirelogo.jpeg"
+        content="https://talk2hire.com/talk2hirelogo.png"
       />
 
       {/* Twitter */}
@@ -145,7 +145,7 @@ const CompanyRegister = () => {
       />
       <meta
         name="twitter:image"
-        content="https://talk2hire.com/talk2hirelogo.jpeg"
+        content="https://talk2hire.com/talk2hirelogo.png"
       />
 
       <style>{`
