@@ -254,14 +254,18 @@ const InterviewLive = () => {
 
   const videoRef = useRef(null);
   const mobileVideoRef = useRef(null);
-  const mobileCanvasRef = useRef(null); // frame-relay fallback canvas
   const screenVideoRef = useRef(null);
   const recordingsStartedRef = useRef(false);
   const isLeavingRef = useRef(false);
   const screenVideoActiveRef = useRef(false);
   const mobilePcRef = useRef(null);
   const pendingMobileStreamRef = useRef(null);
-  const frameRelayActiveRef = useRef(false);
+  // FIX 2: Persistent ref for the live mobile stream that survives React re-renders.
+  // pendingMobileStreamRef gets nulled after startSecondary() consumes it, so the
+  // re-attachment useEffect (which runs after every re-render) would find null and
+  // silently skip re-attaching — leaving the video element blank. liveMobileStreamRef
+  // is never nulled and always holds the last active stream for re-attachment.
+  const liveMobileStreamRef = useRef(null);
 
   const [evaluationStatus, setEvaluationStatus] = useState(null);
   const [evaluationResults, setEvaluationResults] = useState(null);
@@ -332,22 +336,52 @@ const InterviewLive = () => {
 
   const setupMobilePeerConnection = useCallback(
     (identity) => {
+      // Always close any existing PC when a new offer arrives — this handles
+      // mobile retries where the old PC may be connected but its track was
+      // never rendered (e.g. ontrack fired before video ref was ready and the
+      // poll cleaned up, or the first ICE round failed silently).
+      // Reusing a connected PC skips ontrack entirely for the new offer's track.
       if (mobilePcRef.current) {
-        const s = mobilePcRef.current.connectionState;
-        if (s === "failed" || s === "closed" || s === "disconnected") {
-          try {
-            mobilePcRef.current.close();
-          } catch (_) {}
-          mobilePcRef.current = null;
-        } else return mobilePcRef.current;
+        try {
+          mobilePcRef.current.close();
+        } catch (_) {}
+        mobilePcRef.current = null;
       }
-      const pc = new RTCPeerConnection({
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-        ],
-      });
+
+      const MOBILE_ICE_SERVERS = [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+        { urls: "stun:stun3.l.google.com:19302" },
+        { urls: "stun:stun4.l.google.com:19302" },
+        {
+          urls: "turn:openrelay.metered.ca:80",
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        },
+        {
+          urls: "turn:openrelay.metered.ca:443",
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        },
+        {
+          urls: "turns:openrelay.metered.ca:443",
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        },
+        ...(import.meta.env?.VITE_TURN_URL
+          ? [
+              {
+                urls: import.meta.env.VITE_TURN_URL,
+                username: import.meta.env.VITE_TURN_USERNAME || "",
+                credential: import.meta.env.VITE_TURN_CREDENTIAL || "",
+              },
+            ]
+          : []),
+      ];
+      const pc = new RTCPeerConnection({ iceServers: MOBILE_ICE_SERVERS });
       mobilePcRef.current = pc;
+      mobilePcRef._pendingIce = []; // fresh buffer for this PC
 
       pc.onicecandidate = ({ candidate }) => {
         if (candidate && interview.socketRef.current?.connected)
@@ -359,27 +393,66 @@ const InterviewLive = () => {
 
       pc.ontrack = (event) => {
         if (event.track.kind !== "video") return;
-        const el = mobileVideoRef.current;
-        if (el) {
-          const rs = new MediaStream([event.track]);
+        const rs = new MediaStream([event.track]);
+
+        // FIX 2: Store in BOTH refs.
+        // pendingMobileStreamRef: consumed by startSecondary() then nulled.
+        // liveMobileStreamRef: never nulled — used by re-attachment useEffect
+        // so the video element can recover after any React reconciliation.
+        pendingMobileStreamRef.current = rs;
+        liveMobileStreamRef.current = rs;
+
+        const attachStream = (el) => {
           el.srcObject = rs;
           el.muted = true;
-          el.play().catch(() => {});
-          pendingMobileStreamRef.current = rs;
+          const tryPlay = () =>
+            el.play().catch((e) => {
+              if (e.name === "AbortError")
+                setTimeout(() => el.play().catch(() => {}), 100);
+            });
+          if (el.readyState >= 1) tryPlay();
+          else el.addEventListener("loadedmetadata", tryPlay, { once: true });
+        };
+
+        const el = mobileVideoRef.current;
+        if (el) {
+          attachStream(el);
+          mobilePcRef._removeFallbackCanvas?.();
+          setMobileTrackAttached(true);
+          setMobileCameraConnected(true);
+        } else {
+          // FIX 2: Video ref not mounted yet (component still rendering) — poll
+          // every 100ms for up to 5 seconds. Without this, ontrack fires once
+          // and is never retried, so the video element stays blank.
+          let pollCount = 0;
+          const pollTimer = setInterval(() => {
+            pollCount++;
+            const el2 = mobileVideoRef.current;
+            if (el2) {
+              clearInterval(pollTimer);
+              attachStream(el2);
+              mobilePcRef._removeFallbackCanvas?.();
+              setMobileTrackAttached(true);
+              setMobileCameraConnected(true);
+            } else if (pollCount > 50) {
+              clearInterval(pollTimer);
+              console.warn(
+                "⚠️ [MOBILE-VIDEO] Video ref never appeared after 5s",
+              );
+            }
+          }, 100);
         }
-        // Notify server that the WebRTC video track is actually live so it
-        // disables the socket frame-relay fallback at the right time.
-        interview.socketRef.current?.emit("mobile_webrtc_connected");
-        setMobileTrackAttached(true);
-        setMobileCameraConnected(true);
+
+        event.track.onended = () => setMobileTrackAttached(false);
       };
 
       pc.onconnectionstatechange = () => {
-        if (["disconnected", "failed", "closed"].includes(pc.connectionState)) {
-          setMobileTrackAttached(false);
-          // Re-enable socket frame-relay so mobile frames still reach the UI.
-          interview.socketRef.current?.emit("mobile_webrtc_disconnected");
+        if (pc.connectionState === "connected") {
+          // Tell the server WebRTC is truly live so it stops relaying JPEG frames
+          interview.socketRef.current?.emit("mobile_webrtc_connected");
         }
+        if (["disconnected", "failed", "closed"].includes(pc.connectionState))
+          setMobileTrackAttached(false);
       };
 
       return pc;
@@ -458,8 +531,18 @@ const InterviewLive = () => {
 
         socket.on("mobile_webrtc_offer_relay", async ({ offer, identity }) => {
           const pc = setupMobilePeerConnection(identity);
+          // Do NOT clear _pendingIce here — candidates may have already arrived
+          // and been buffered before this offer handler ran.
+          if (!mobilePcRef._pendingIce) mobilePcRef._pendingIce = [];
           try {
             await pc.setRemoteDescription(new RTCSessionDescription(offer));
+            // Drain all ICE candidates buffered before or during setRemoteDescription
+            const buffered = mobilePcRef._pendingIce.splice(0);
+            for (const c of buffered) {
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(c));
+              } catch (_) {}
+            }
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
             socket.emit("mobile_webrtc_answer", {
@@ -475,7 +558,14 @@ const InterviewLive = () => {
           const pc = mobilePcRef.current;
           if (!pc || !candidate) return;
           try {
-            await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            // Only add ICE candidate if remote description is already set;
+            // otherwise buffer it — setRemoteDescription hasn't been called yet.
+            if (pc.remoteDescription) {
+              await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            } else {
+              if (!mobilePcRef._pendingIce) mobilePcRef._pendingIce = [];
+              mobilePcRef._pendingIce.push(candidate);
+            }
           } catch (_) {}
         });
 
@@ -497,22 +587,65 @@ const InterviewLive = () => {
           if (d?.connected) setMobileCameraConnected(true);
         });
 
-        // Frame-relay fallback: when WebRTC hasn't connected yet, the server
-        // relays JPEG frames from the mobile device via socket.
+        // Fallback: render JPEG frames from socket while WebRTC is negotiating.
+        // Once WebRTC track is attached (mobileTrackAttached), these frames are
+        // ignored so there is no double-rendering or flicker.
+        let _frameCvs = null;
+        let _frameCtx = null;
+        let _frameConnectedSet = false;
         socket.on("mobile_camera_frame", ({ frame }) => {
-          if (!frame || mobileTrackAttached) return; // WebRTC is live, skip
-          frameRelayActiveRef.current = true;
-          setMobileCameraConnected(true);
+          // Skip if WebRTC track already delivering video
+          if (!frame || mobilePcRef.current?.connectionState === "connected")
+            return;
+          const el = mobileVideoRef.current;
+          if (!el) return;
 
-          const img = new Image();
-          img.onload = () => {
-            const canvas = mobileCanvasRef.current;
-            if (!canvas) return;
-            const ctx = canvas.getContext("2d");
-            if (ctx) ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          };
-          img.src = `data:image/jpeg;base64,${frame}`;
+          // Lazy-init canvas overlay — z-index 2 sits above the video (z-index 1)
+          if (!_frameCvs) {
+            _frameCvs = document.createElement("canvas");
+            _frameCvs.style.cssText =
+              "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);z-index:2;";
+            el.parentElement?.appendChild(_frameCvs);
+          }
+          if (!_frameCtx) {
+            _frameCtx = _frameCvs.getContext("2d", { alpha: false });
+          }
+
+          // createImageBitmap decodes off the main thread — no forced reflow,
+          // no layout thrash. Much faster than Image.onload + drawImage.
+          fetch(`data:image/jpeg;base64,${frame}`)
+            .then((r) => r.blob())
+            .then((blob) => createImageBitmap(blob))
+            .then((bmp) => {
+              if (!_frameCvs || !_frameCtx) {
+                bmp.close();
+                return;
+              }
+              if (_frameCvs.width !== bmp.width) _frameCvs.width = bmp.width;
+              if (_frameCvs.height !== bmp.height)
+                _frameCvs.height = bmp.height;
+              _frameCtx.drawImage(bmp, 0, 0);
+              bmp.close();
+              _frameCvs.style.display = "block";
+              if (!_frameConnectedSet) {
+                _frameConnectedSet = true;
+                setMobileCameraConnected(true);
+              }
+            })
+            .catch(() => {});
         });
+
+        // When WebRTC connects, remove the fallback canvas so the video shows through
+        const _removeFallbackCanvas = () => {
+          if (_frameCvs) {
+            _frameCvs.remove();
+            _frameCvs = null;
+            _frameCtx = null;
+            _frameConnectedSet = false;
+          }
+        };
+        // Expose cleanup so ontrack can call it after attaching the stream
+        mobilePcRef._removeFallbackCanvas = _removeFallbackCanvas;
         socket.on("question", (d) => interview.handleQuestion(d));
         socket.on("next_question", (d) => interview.handleNextQuestion(d));
         socket.on("tts_audio", (d) => {
@@ -565,7 +698,7 @@ const InterviewLive = () => {
         socket.on("connect_error", (e) =>
           console.error("[SOCKET] connect_error:", e.message),
         );
-        socket.on("error", () => interview.setStatus("error"));
+        socket.on("error", (e) => console.error("[SOCKET] error event:", e));
 
         interview.setStatus("live");
         interview.setServerReady(true);
@@ -663,6 +796,30 @@ const InterviewLive = () => {
       .startSecondary(pendingMobileStreamRef.current)
       .catch(console.error);
     pendingMobileStreamRef.current = null;
+  }, [mobileTrackAttached]); // eslint-disable-line
+
+  // Guard: if the video element loses its srcObject after a React re-render
+  // (reconciliation can reset DOM attributes), re-attach the live stream.
+  // FIX 2: Use liveMobileStreamRef (never nulled) instead of pendingMobileStreamRef
+  // (nulled after startSecondary consumes it) — otherwise this effect is a no-op
+  // after the first recording start and the video goes blank on every re-render.
+  useEffect(() => {
+    if (!mobileTrackAttached) return;
+    const el = mobileVideoRef.current;
+    const stream = liveMobileStreamRef.current; // FIX 2: was pendingMobileStreamRef
+    if (!el || !stream?.active) return;
+    if (!el.srcObject || el.srcObject !== stream) {
+      console.log("[MOBILE-VIDEO] Re-attaching stream after re-render");
+      el.srcObject = stream;
+      el.muted = true;
+      const tryPlay = () =>
+        el.play().catch((e) => {
+          if (e.name === "AbortError")
+            setTimeout(() => el.play().catch(() => {}), 100);
+        });
+      if (el.readyState >= 1) tryPlay();
+      else el.addEventListener("loadedmetadata", tryPlay, { once: true });
+    }
   }, [mobileTrackAttached]); // eslint-disable-line
 
   useEffect(() => {
@@ -1089,31 +1246,18 @@ const InterviewLive = () => {
                   />
                 </div>
                 <div className="relative aspect-video bg-[#111] overflow-hidden">
-                  {/* WebRTC video track (primary) */}
                   <video
                     id="secondary-camera-video"
                     ref={mobileVideoRef}
                     autoPlay
+                    muted
                     playsInline
-                    className="w-full h-full object-cover transition-opacity duration-300"
+                    className="w-full h-full object-cover"
                     style={{
                       transform: "scaleX(-1)",
                       opacity: mobileTrackAttached ? 1 : 0,
-                      position: "absolute",
-                      inset: 0,
-                    }}
-                  />
-                  {/* Socket frame-relay fallback (shown when WebRTC not yet connected) */}
-                  <canvas
-                    ref={mobileCanvasRef}
-                    width={640}
-                    height={480}
-                    className="w-full h-full object-cover transition-opacity duration-300"
-                    style={{
-                      transform: "scaleX(-1)",
-                      opacity: mobileCameraConnected && !mobileTrackAttached ? 1 : 0,
-                      position: "absolute",
-                      inset: 0,
+                      position: "relative",
+                      zIndex: 1,
                     }}
                   />
                   {!mobileCameraConnected && (
@@ -1127,7 +1271,7 @@ const InterviewLive = () => {
                       </p>
                     </div>
                   )}
-                  {mobileCameraConnected && !mobileTrackAttached && !frameRelayActiveRef.current && (
+                  {mobileCameraConnected && !mobileTrackAttached && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-white/92">
                       <Spinner size={28} color="#16A34A" track="#BBF7D0" />
                       <p className="font-dm text-[10px] text-stone-400 tracking-[0.05em] uppercase m-0">

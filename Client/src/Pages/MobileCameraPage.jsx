@@ -4,16 +4,20 @@ import { io } from "socket.io-client";
 
 const SOCKET_URL = import.meta.env.VITE_WS_URL;
 
-// FIX: Trimmed from 8+ servers down to 2 STUN + 1 TURN.
-// More STUN servers does NOT improve connectivity — ICE tries every server
-// and waits for responses from all of them before settling on a pair.
-// Extra servers = longer gathering phase = slower connection establishment.
-// Google's stun.l.google.com is the most reliable, stun1 is the fallback.
+// Enhanced ICE servers with better fallback options
 const ICE_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
+  { urls: "stun:stun2.l.google.com:19302" },
+  { urls: "stun:stun3.l.google.com:19302" },
+  { urls: "stun:stun4.l.google.com:19302" },
   {
     urls: "turn:openrelay.metered.ca:80",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+  {
+    urls: "turn:openrelay.metered.ca:443",
     username: "openrelayproject",
     credential: "openrelayproject",
   },
@@ -32,28 +36,18 @@ if (import.meta.env.VITE_TURN_URL) {
   });
 }
 
-// FIX: iceCandidatePoolSize reduced from 10 to 2.
-// A large pool pre-gathers candidates before they're needed, but 10 candidates
-// causes the browser to spin up 10 parallel STUN lookups right away, flooding
-// the ICE gathering phase and slowing the initial offer/answer exchange.
-// 2 is enough for most network topologies.
 const RTC_CONFIG = {
   iceTransportPolicy: "all",
-  iceCandidatePoolSize: 2, // was 10 → 8 fewer redundant STUN lookups at startup
+  iceCandidatePoolSize: 10,
   bundlePolicy: "max-bundle",
   rtcpMuxPolicy: "require",
 };
 
-// FIX: Improved camera config for smoother video.
-// - resizeMode: "none" disables software scaling (big CPU saver on mobile)
-// - frameRate raised to ideal 24 / max 30 for noticeably smoother live view
-// - facingMode stays "user" (front camera for interview)
 const CAMERA_CONFIG = {
   width: { ideal: 640 },
   height: { ideal: 480 },
-  frameRate: { ideal: 24, max: 30 }, // was ideal:15, max:20 → smoother video
+  frameRate: { ideal: 15, max: 20 },
   aspectRatio: 4 / 3,
-  resizeMode: "none", // FIX: disables CPU-heavy software rescaling
 };
 
 const WEBSOCKET_TIMEOUT = 30000;
@@ -128,19 +122,17 @@ const MobileCameraPage = () => {
   const videoElRef = useRef(null);
   const mountedRef = useRef(true);
   const frameTimerRef = useRef(null);
-  // FIX: Canvas and hidden video element created once and reused for the frame
-  // relay, rather than being recreated on every interval tick.
-  const frameCanvasRef = useRef(null);
-  const frameCtxRef = useRef(null);
-  const frameVidRef = useRef(null);
   const webRTCStartedRef = useRef(false);
   const iceCandidatesRef = useRef([]);
   const reconnectAttemptsRef = useRef(0);
   const answerTimeoutRef = useRef(null);
   const readyTimeoutRef = useRef(null);
-  const frameCountRef = useRef(0);
 
-  // Cleanup function
+  // FIX 1: Generation counter — each startWebRTC() call gets a unique number.
+  // Any answer arriving with a different generation is from a timed-out round
+  // and must be discarded to prevent "setRemoteDescription: wrong state: stable".
+  const webRTCGenRef = useRef(0);
+
   const teardown = useCallback(async () => {
     console.log("🧹 Cleaning up mobile camera resources");
 
@@ -156,15 +148,6 @@ const MobileCameraPage = () => {
       clearTimeout(readyTimeoutRef.current);
       readyTimeoutRef.current = null;
     }
-
-    // FIX: Clean up reused frame relay elements
-    if (frameVidRef.current) {
-      frameVidRef.current.srcObject = null;
-      frameVidRef.current = null;
-    }
-    frameCanvasRef.current = null;
-    frameCtxRef.current = null;
-    frameCountRef.current = 0;
 
     if (pcRef.current) {
       try {
@@ -191,6 +174,7 @@ const MobileCameraPage = () => {
     webRTCStartedRef.current = false;
     iceCandidatesRef.current = [];
     reconnectAttemptsRef.current = 0;
+    webRTCGenRef.current = 0; // FIX 1: reset generation on teardown
   }, []);
 
   useEffect(() => {
@@ -212,14 +196,10 @@ const MobileCameraPage = () => {
     try {
       const track = mediaStream.getVideoTracks()[0];
       if (!track) return false;
-
       const capabilities = track.getCapabilities?.();
       if (!capabilities?.zoom) return false;
-
       const minZoom = capabilities.zoom.min;
-      await track.applyConstraints({
-        advanced: [{ zoom: minZoom }],
-      });
+      await track.applyConstraints({ advanced: [{ zoom: minZoom }] });
       console.log(`✅ Zoom set to minimum (${minZoom})`);
       return true;
     } catch (err) {
@@ -228,96 +208,58 @@ const MobileCameraPage = () => {
     }
   }, []);
 
-  const processBufferedCandidates = useCallback(async (pc) => {
-    if (iceCandidatesRef.current.length === 0) return;
-
-    console.log(
-      `📱 Processing ${iceCandidatesRef.current.length} buffered ICE candidates`,
-    );
-    for (const candidate of iceCandidatesRef.current) {
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (err) {
-        console.warn("⚠️ Failed to add buffered candidate:", err.message);
-      }
-    }
-    iceCandidatesRef.current = [];
-  }, []);
-
-  // FIX: Rewritten frame relay — key changes:
-  //
-  // 1. Canvas and hidden video are created ONCE and stored in refs instead of
-  //    being created inside the interval callback on every call.
-  //
-  // 2. canvas.toDataURL() (synchronous) replaces the double-async chain of
-  //    canvas.toBlob() → new FileReader() → readAsDataURL().
-  //    The old approach created a new FileReader object every 500ms and had
-  //    two async callbacks in series before the socket.emit could fire.
-  //    Sync toDataURL() eliminates both allocations and both async hops.
-  //
-  // 3. Inflight-guard: if the previous emit hasn't completed when the interval
-  //    fires again we simply skip the frame instead of stacking up work.
   const startFrameRelay = useCallback((stream) => {
     if (frameTimerRef.current) return;
 
-    // Reuse canvas across frames
     const canvas = document.createElement("canvas");
     canvas.width = 320;
     canvas.height = 240;
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    frameCanvasRef.current = canvas;
-    frameCtxRef.current = ctx;
+    const ctx = canvas.getContext("2d", { alpha: false });
 
     const vid = document.createElement("video");
     vid.autoplay = true;
     vid.playsInline = true;
     vid.muted = true;
     vid.srcObject = stream;
-    frameVidRef.current = vid;
 
-    let quality = 0.4;
-    let emitting = false; // inflight guard
+    let frameCount = 0;
+    let sending = false;
 
     frameTimerRef.current = setInterval(() => {
-      // Stop relay once WebRTC is connected
+      if (vid.readyState < 2) return;
       if (pcRef.current?.connectionState === "connected") {
         clearInterval(frameTimerRef.current);
         frameTimerRef.current = null;
         return;
       }
+      if (sending) return;
 
-      if (vid.readyState < 2) return;
-      if (emitting) return; // skip frame if previous one is still processing
-
-      // FIX: synchronous toDataURL — no async chain, no FileReader allocation
-      try {
-        ctx.drawImage(vid, 0, 0, 320, 240);
-        const dataUrl = canvas.toDataURL("image/jpeg", quality);
-        const base64 = dataUrl.split(",")[1];
-
-        if (!base64) return;
-
-        emitting = true;
-        socketRef.current?.emit(
-          "mobile_camera_frame",
-          {
-            frame: base64,
-            timestamp: Date.now(),
-            frameNum: frameCountRef.current++,
-          },
-          () => {
-            emitting = false; // ack received — ready for next frame
-          },
-        );
-
-        // If socket doesn't ack (e.g. volatile emit), reset after 600ms
-        setTimeout(() => {
-          emitting = false;
-        }, 600);
-      } catch (_) {
-        emitting = false;
-      }
-    }, 500); // 2 fps fallback
+      ctx.drawImage(vid, 0, 0, 320, 240);
+      sending = true;
+      canvas.toBlob(
+        async (blob) => {
+          try {
+            if (!blob || blob.size > 50 * 1024) return;
+            const ab = await blob.arrayBuffer();
+            const bytes = new Uint8Array(ab);
+            let binary = "";
+            for (let i = 0; i < bytes.byteLength; i++) {
+              binary += String.fromCharCode(bytes[i]);
+            }
+            const base64 = btoa(binary);
+            socketRef.current?.emit("mobile_camera_frame", {
+              frame: base64,
+              timestamp: Date.now(),
+              frameNum: frameCount++,
+            });
+          } finally {
+            sending = false;
+          }
+        },
+        "image/jpeg",
+        0.5,
+      );
+    }, 333);
   }, []);
 
   const startWebRTC = useCallback(
@@ -331,6 +273,10 @@ const MobileCameraPage = () => {
       webRTCStartedRef.current = true;
       reconnectAttemptsRef.current = 0;
 
+      // FIX 1: Bump generation and clear stale ICE candidates from previous round
+      const myGeneration = ++webRTCGenRef.current;
+      iceCandidatesRef.current = [];
+
       try {
         setPhase("camera");
 
@@ -341,7 +287,6 @@ const MobileCameraPage = () => {
             height: CAMERA_CONFIG.height,
             frameRate: CAMERA_CONFIG.frameRate,
             aspectRatio: CAMERA_CONFIG.aspectRatio,
-            resizeMode: CAMERA_CONFIG.resizeMode,
           },
           audio: false,
         });
@@ -353,20 +298,9 @@ const MobileCameraPage = () => {
           return;
         }
 
-        // FIX: Hint the browser that this is a live motion stream so it can
-        // choose better encoder settings (lower latency, higher priority).
-        const videoTrack = rawStream.getVideoTracks()[0];
-        if (videoTrack) {
-          try {
-            videoTrack.contentHint = "motion";
-          } catch (_) {}
-        }
-
-        // Apply zoom if supported
         const applied = await applyHardwareZoomOut(rawStream);
         setZoomApplied(applied);
 
-        // Show camera preview
         if (videoElRef.current) {
           videoElRef.current.srcObject = rawStream;
           await videoElRef.current.play().catch(() => {});
@@ -375,36 +309,16 @@ const MobileCameraPage = () => {
         setCameraReady(true);
         setPhase("publishing");
 
-        // Create peer connection
         const pc = new RTCPeerConnection({
           iceServers: ICE_SERVERS,
           ...RTC_CONFIG,
         });
-
         pcRef.current = pc;
 
-        // Add tracks
         rawStream.getVideoTracks().forEach((track) => {
-          const sender = pc.addTrack(track, rawStream);
-
-          // FIX: Request low-latency encoding from the browser's RTP sender.
-          // "high" network priority requests lower jitter buffering.
-          // degradationPreference "maintain-framerate" drops resolution before
-          // dropping frames — better for a video conference use case.
-          try {
-            const params = sender.getParameters();
-            if (params.encodings?.length) {
-              params.encodings[0].networkPriority = "high";
-              params.encodings[0].priority = "high";
-              params.encodings[0].degradationPreference = "maintain-framerate";
-              // Cap bitrate to 800kbps — enough for 640×480 and saves bandwidth
-              params.encodings[0].maxBitrate = 800_000;
-              sender.setParameters(params).catch(() => {});
-            }
-          } catch (_) {}
+          pc.addTrack(track, rawStream);
         });
 
-        // ICE candidate handling
         pc.onicecandidate = ({ candidate }) => {
           if (candidate && socket?.connected) {
             socket.emit("mobile_webrtc_ice_candidate", { candidate });
@@ -418,15 +332,12 @@ const MobileCameraPage = () => {
         pc.oniceconnectionstatechange = () => {
           const state = pc.iceConnectionState;
           console.log("📱 ICE connection:", state);
-
           if (state === "connected") {
             setPeerConnected(true);
             setConnectionQuality("good");
-            processBufferedCandidates(pc);
           } else if (state === "failed") {
             console.error("❌ ICE failed - attempting recovery");
             setConnectionQuality("poor");
-
             if (reconnectAttemptsRef.current < 3) {
               reconnectAttemptsRef.current++;
               pc.restartIce();
@@ -436,7 +347,6 @@ const MobileCameraPage = () => {
 
         pc.onconnectionstatechange = () => {
           if (!mountedRef.current) return;
-
           const state = pc.connectionState;
           console.log("📱 Connection state:", state);
 
@@ -444,22 +354,29 @@ const MobileCameraPage = () => {
             setPeerConnected(true);
             setTrackPublished(true);
             setPhase("live");
-
             if (frameTimerRef.current) {
               clearInterval(frameTimerRef.current);
               frameTimerRef.current = null;
-              console.log("🛑 Frame relay stopped — WebRTC active");
+              console.log("🛑 Frame relay stopped - WebRTC active");
             }
           }
-
-          if (state === "failed" || state === "disconnected") {
+          if (state === "failed") {
+            setPeerConnected(false);
+            setTrackPublished(false);
+            webRTCStartedRef.current = false;
+            console.error("❌ PC failed — restarting ICE");
+            if (reconnectAttemptsRef.current < 3) {
+              reconnectAttemptsRef.current++;
+              pc.restartIce();
+            }
+          }
+          if (state === "disconnected") {
             setPeerConnected(false);
             setTrackPublished(false);
             webRTCStartedRef.current = false;
           }
         };
 
-        // Create and send offer
         const offer = await pc.createOffer({
           offerToReceiveVideo: false,
           offerToReceiveAudio: false,
@@ -468,17 +385,16 @@ const MobileCameraPage = () => {
 
         await pc.setLocalDescription(offer);
 
+        // FIX 1: Tag offer with generation so server echoes it back in answer
         socket.emit("mobile_webrtc_offer", {
-          offer: pc.localDescription,
+          offer: { ...pc.localDescription, _generation: myGeneration },
           identity: `mobile_${userId}`,
         });
 
-        // Set answer timeout
         answerTimeoutRef.current = setTimeout(() => {
           if (!mountedRef.current) return;
           console.warn("⚠️ WebRTC answer timeout - retrying");
           webRTCStartedRef.current = false;
-
           if (reconnectAttemptsRef.current < 3) {
             reconnectAttemptsRef.current++;
             startWebRTC(socket);
@@ -490,13 +406,11 @@ const MobileCameraPage = () => {
           }
         }, WEBRTC_ANSWER_TIMEOUT);
 
-        // Start fallback frame relay
         startFrameRelay(rawStream);
 
-        console.log("📱 WebRTC offer sent");
+        console.log(`📱 WebRTC offer sent (generation ${myGeneration})`);
       } catch (err) {
         if (!mountedRef.current) return;
-
         console.error("❌ WebRTC start failed:", err);
         webRTCStartedRef.current = false;
 
@@ -517,7 +431,7 @@ const MobileCameraPage = () => {
         setError(errorMsg);
       }
     },
-    [applyHardwareZoomOut, startFrameRelay, userId, processBufferedCandidates],
+    [applyHardwareZoomOut, startFrameRelay, userId],
   );
 
   const connectSocket = useCallback(() => {
@@ -548,10 +462,25 @@ const MobileCameraPage = () => {
 
     socket.on("connect", () => {
       if (!mountedRef.current) return;
-
       console.log("📱 Socket connected:", socket.id);
       setSocketConnected(true);
       reconnectAttemptsRef.current = 0;
+
+      socket.off("secondary_camera_ready");
+
+      const handleSecondaryReady = async () => {
+        if (!webRTCStartedRef.current && mountedRef.current) {
+          console.log("✅ secondary_camera_ready received");
+          if (readyTimeoutRef.current) {
+            clearTimeout(readyTimeoutRef.current);
+            readyTimeoutRef.current = null;
+          }
+          if (answerTimeoutRef.current) clearTimeout(answerTimeoutRef.current);
+          await startWebRTC(socket);
+        }
+      };
+
+      socket.on("secondary_camera_ready", handleSecondaryReady);
 
       socket.emit("secondary_camera_connected", {
         interviewId: sessionId,
@@ -564,29 +493,9 @@ const MobileCameraPage = () => {
         },
       });
 
-      // FIX: Use socket.once for secondary_camera_ready so the handler fires
-      // exactly once and doesn't accumulate on re-connects.
-      // Previously socket.on (persistent) AND socket.once were both registered
-      // for the same event, so handleSecondaryReady could fire multiple times.
-      socket.once("secondary_camera_ready", async () => {
-        // Clear fallback timer — we got the explicit ready signal
-        if (readyTimeoutRef.current) {
-          clearTimeout(readyTimeoutRef.current);
-          readyTimeoutRef.current = null;
-        }
-
-        if (!webRTCStartedRef.current && mountedRef.current) {
-          console.log("✅ secondary_camera_ready received");
-          await startWebRTC(socket);
-        }
-      });
-
-      // Fallback: if desktop never fires secondary_camera_ready, start anyway
       readyTimeoutRef.current = setTimeout(async () => {
         if (!webRTCStartedRef.current && mountedRef.current) {
-          console.warn(
-            "⚠️ Ready timeout — starting WebRTC without explicit ready signal",
-          );
+          console.warn("⚠️ Ready timeout - starting WebRTC anyway");
           await startWebRTC(socket);
         }
       }, READY_TIMEOUT);
@@ -596,42 +505,64 @@ const MobileCameraPage = () => {
       if (!mountedRef.current) return;
 
       try {
+        // FIX 1: Discard stale answers from previous timed-out negotiation rounds.
+        // When the 45s timeout fires and startWebRTC() restarts (new generation),
+        // the old answer may still arrive — calling setRemoteDescription on a
+        // fresh PC (signalingState="stable") throws "Called in wrong state: stable".
+        if (
+          answer._generation !== undefined &&
+          answer._generation !== webRTCGenRef.current
+        ) {
+          console.warn(
+            `⚠️ Ignoring stale WebRTC answer (gen ${answer._generation}, current ${webRTCGenRef.current})`,
+          );
+          return;
+        }
+
         if (answerTimeoutRef.current) {
           clearTimeout(answerTimeoutRef.current);
           answerTimeoutRef.current = null;
         }
 
-        if (!pcRef.current) {
+        const pc = pcRef.current;
+        if (!pc) {
           console.warn("⚠️ Received answer but no peer connection");
           return;
         }
 
-        await pcRef.current.setRemoteDescription(
-          new RTCSessionDescription(answer),
-        );
+        // FIX 1: Secondary guard — only accept answer when PC has a local offer set
+        if (pc.signalingState !== "have-local-offer") {
+          console.warn(
+            `⚠️ Ignoring answer in wrong signaling state: ${pc.signalingState}`,
+          );
+          return;
+        }
+
+        await pc.setRemoteDescription(new RTCSessionDescription(answer));
         console.log("📱 Remote description set");
 
-        // Process any buffered ICE candidates
-        await processBufferedCandidates(pcRef.current);
+        // Drain all ICE candidates buffered before setRemoteDescription
+        const buffered = iceCandidatesRef.current.splice(0);
+        for (const c of buffered) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(c));
+          } catch (_) {}
+        }
+        console.log(`📱 Drained ${buffered.length} buffered ICE candidates`);
       } catch (err) {
         console.error("❌ Failed to set remote description:", err.message);
       }
     });
 
     socket.on("mobile_webrtc_ice_from_desktop", async ({ candidate }) => {
-      if (!pcRef.current) {
+      if (!candidate) return;
+      const pc = pcRef.current;
+      if (!pc || !pc.remoteDescription) {
         iceCandidatesRef.current.push(candidate);
         return;
       }
-
-      if (!pcRef.current.remoteDescription) {
-        // Buffer if remote description not set yet
-        iceCandidatesRef.current.push(candidate);
-        return;
-      }
-
       try {
-        await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
       } catch (err) {
         console.warn("⚠️ Failed to add ICE candidate:", err.message);
       }
@@ -639,13 +570,11 @@ const MobileCameraPage = () => {
 
     socket.on("disconnect", (reason) => {
       if (!mountedRef.current) return;
-
       console.warn("📱 Socket disconnected:", reason);
       setSocketConnected(false);
       setPeerConnected(false);
       setTrackPublished(false);
       webRTCStartedRef.current = false;
-
       if (reason !== "io client disconnect") {
         setPhase("error");
         setError("Connection lost. Reconnecting...");
@@ -654,22 +583,19 @@ const MobileCameraPage = () => {
 
     socket.on("connect_error", (err) => {
       if (!mountedRef.current) return;
-
       console.error("❌ Socket error:", err.message);
       reconnectAttemptsRef.current++;
-
       if (reconnectAttemptsRef.current > 5) {
         setPhase("error");
         setError("Cannot reach server. Please check your internet connection.");
       }
     });
-  }, [sessionId, userId, startWebRTC, processBufferedCandidates]);
+  }, [sessionId, userId, startWebRTC]);
 
   useEffect(() => {
     if (sessionId && userId) {
       connectSocket();
     }
-
     return () => {
       if (readyTimeoutRef.current) clearTimeout(readyTimeoutRef.current);
       if (answerTimeoutRef.current) clearTimeout(answerTimeoutRef.current);
@@ -679,7 +605,6 @@ const MobileCameraPage = () => {
   const handleRetry = useCallback(async () => {
     setRetrying(true);
     await teardown();
-
     setSocketConnected(false);
     setCameraReady(false);
     setPeerConnected(false);
@@ -687,7 +612,6 @@ const MobileCameraPage = () => {
     setZoomApplied(false);
     setConnectionQuality("unknown");
     setError(null);
-
     setTimeout(() => {
       if (mountedRef.current) {
         setRetrying(false);
@@ -696,7 +620,6 @@ const MobileCameraPage = () => {
     }, 1000);
   }, [teardown, connectSocket]);
 
-  // Render invalid link
   if (!sessionId || !userId) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
@@ -777,7 +700,6 @@ const MobileCameraPage = () => {
         }}
       >
         <div className="w-full max-w-sm flex flex-col gap-4">
-          {/* Title */}
           <div className="text-center mb-2">
             <div
               className={`w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4 transition-all duration-500 ${
@@ -828,13 +750,10 @@ const MobileCameraPage = () => {
             </p>
           </div>
 
-          {/* Video Card */}
           <div className="relative bg-white rounded-2xl overflow-hidden border border-gray-200 shadow-sm">
             <div className="h-0.5 w-full bg-gray-100">
               <div
-                className={`h-full ${cfg.bar} transition-all duration-700 ${
-                  isLive ? "w-full" : isError ? "w-1/4" : "w-2/3 animate-pulse"
-                }`}
+                className={`h-full ${cfg.bar} transition-all duration-700 ${isLive ? "w-full" : isError ? "w-1/4" : "w-2/3 animate-pulse"}`}
               />
             </div>
             <div className="relative" style={{ aspectRatio: "9/16" }}>
@@ -900,7 +819,6 @@ const MobileCameraPage = () => {
             </div>
           </div>
 
-          {/* Error Box */}
           {isError && error && (
             <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
               <p className="text-red-600 text-sm mb-3">{error}</p>
@@ -921,7 +839,6 @@ const MobileCameraPage = () => {
             </div>
           )}
 
-          {/* Status Panel */}
           <div className="bg-white border border-gray-200 rounded-2xl px-4 py-1 shadow-sm">
             <StatusRow
               label="Server"
