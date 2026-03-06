@@ -551,16 +551,33 @@ const MobileCameraPage = () => {
     socket.on("mobile_webrtc_answer_from_server", async ({ answer }) => {
       if (!mountedRef.current) return;
 
+      // Discard stale answers from previous negotiation rounds.
+      // When mobile retries (new generation), the server may deliver answers
+      // for both the old and new offer. Accepting the old one after the new PC
+      // is already in "stable" state causes "Called in wrong state: stable".
+      if (
+        answer._generation !== undefined &&
+        answer._generation !== webRTCGenRef.current
+      ) {
+        console.warn(
+          `⚠️ Ignoring stale answer (gen ${answer._generation}, current gen ${webRTCGenRef.current})`,
+        );
+        return;
+      }
+
+      // Also guard by signaling state — only accept answer when we have a local offer
+      const pc = pcRef.current;
+      if (!pc || pc.signalingState !== "have-local-offer") {
+        console.warn(
+          `⚠️ Ignoring answer in wrong signaling state: ${pc?.signalingState}`,
+        );
+        return;
+      }
+
       try {
         if (answerTimeoutRef.current) {
           clearTimeout(answerTimeoutRef.current);
           answerTimeoutRef.current = null;
-        }
-
-        const pc = pcRef.current;
-        if (!pc) {
-          console.warn("⚠️ Received answer but no peer connection");
-          return;
         }
 
         await pc.setRemoteDescription(new RTCSessionDescription(answer));

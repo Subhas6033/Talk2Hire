@@ -513,6 +513,21 @@ async function handleInterviewSocket(
     // webrtcEstablished is set when the desktop emits "mobile_webrtc_connected".
     console.log(`📡 Desktop sent WebRTC answer for interview ${interviewId}`);
 
+    // Clear the stored offer once answered — prevents the old offer from being
+    // re-delivered to a future desktop reconnect or request_pending_offer call,
+    // which would cause mobile to receive a stale answer for a dead generation.
+    if (
+      session.pendingMobileOffer &&
+      answer._generation !== undefined &&
+      session.pendingMobileOffer.offer?._generation === answer._generation
+    ) {
+      session.pendingMobileOffer = null;
+      session.pendingMobileIceCandidates = [];
+      console.log(
+        `📡 Cleared pending offer (gen ${answer._generation}) — answered`,
+      );
+    }
+
     if (session.mobileSocketId) {
       io.to(session.mobileSocketId).emit("mobile_webrtc_answer_from_server", {
         answer,
@@ -1168,6 +1183,11 @@ async function handleInterviewSocket(
     }
   });
 
+  // playback_done: client signals that audio has finished playing.
+  // We use this as the true "user is ready to speak" signal to start idle
+  // detection and the no-transcript safety timer. Previously this was a no-op
+  // and both timers started at the 400ms gate delay — well before the client
+  // finished playing audio — causing premature idle on longer questions.
   socket.on("playback_done", () => {
     if (!isListeningActive || isInterviewEnded) return;
     const cached = sttConnectionCache.get(interviewId);
