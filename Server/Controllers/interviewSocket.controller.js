@@ -1,17 +1,4 @@
 const { Server } = require("socket.io");
-
-// ── Process-level safety net ──────────────────────────────────────────────────
-// Node 15+ treats unhandledRejection as a fatal error by default, which causes
-// nodemon to restart and drops all active WebSocket connections mid-interview.
-// Log the error but keep the process alive — the socket handlers have their own
-// per-connection error recovery.
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("⚠️  Unhandled Promise Rejection (kept alive):", reason);
-});
-process.on("uncaughtException", (err) => {
-  console.error("⚠️  Uncaught Exception (kept alive):", err.message, err.stack);
-});
-// ─────────────────────────────────────────────────────────────────────────────
 const { Interview } = require("../Models/interview.models.js");
 const { generateNextQuestionWithAI } = require("../Service/ai.service.js");
 const { createTTSStream } = require("../Service/tts.service.js");
@@ -30,11 +17,7 @@ const FACE_THROTTLE = 1000;
 const FACE_WINDOW = 3000;
 const MAX_FACE_WARN = 5;
 const NO_TRANSCRIPT_TIMEOUT_MS = 10_000;
-// FIX: reduced from 1000 → 400 ms.
-// The STT pre-warm (8 silence chunks × 10ms + network RTT ≈ 180ms) finishes
-// well within 400ms. The old 1-second gate added ~600ms of unnecessary silence
-// to the start of every listening window.
-const STT_GATE_DELAY_MS = 400;
+const STT_GATE_DELAY_MS = 1000;
 const PLAYBACK_DONE_TIMEOUT_MS = 10_000;
 const MAX_RETRY_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 1000;
@@ -392,6 +375,13 @@ async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
     });
   }
 
+  socket.on("request_secondary_camera_status", () => {
+    io.to(`interview_${interviewId}`).emit("secondary_camera_status", {
+      connected: session.secondaryCameraConnected,
+      metadata: session.secondaryCameraMetadata ?? null,
+    });
+  });
+
   socket.on("secondary_camera_connected", (data) => {
     session.secondaryCameraConnected = true;
     session.secondaryCameraMetadata = {
@@ -409,6 +399,13 @@ async function handleSettingsSocket(socket, interviewId, userId, io, sessions) {
       connected: true,
       metadata: session.secondaryCameraMetadata,
     });
+
+    if (session.desktopSocketId) {
+      io.to(session.desktopSocketId).emit("secondary_camera_ready", {
+        connected: true,
+        timestamp: Date.now(),
+      });
+    }
   });
 
   socket.on("mobile_webrtc_offer", ({ offer, identity }) => {
@@ -516,33 +513,32 @@ async function handleInterviewSocket(
   }
 
   socket.on("mobile_webrtc_answer", ({ answer, identity }) => {
-    // Do NOT set webrtcEstablished here — the ICE handshake hasn't completed yet.
-    // webrtcEstablished is set when the desktop emits "mobile_webrtc_connected".
-    console.log(`📡 Desktop sent WebRTC answer for interview ${interviewId}`);
-
+    // NOTE: webrtcEstablished is set in mobile_webrtc_connected (when desktop
+    // confirms the video track is actually received), NOT here. Setting it here
+    // would disable the socket frame-relay fallback before WebRTC is truly up.
     if (session.mobileSocketId) {
       io.to(session.mobileSocketId).emit("mobile_webrtc_answer_from_server", {
         answer,
         identity,
       });
     }
+    console.log(`📡 Desktop sent WebRTC answer for interview ${interviewId}`);
   });
 
-  // Desktop emits this once the WebRTC peer connection state becomes "connected"
-  // so the server knows to stop relaying fallback JPEG frames.
+  // Desktop confirms the mobile video track is live.
   socket.on("mobile_webrtc_connected", () => {
     session.webrtcEstablished = true;
     console.log(
-      `✅ Mobile WebRTC fully established for interview ${interviewId}`,
+      `✅ Mobile WebRTC track confirmed — frame relay disabled (interview ${interviewId})`,
     );
   });
 
-  // Desktop requests the current mobile camera connection status (e.g. on page load)
-  socket.on("request_secondary_camera_status", () => {
-    socket.emit("secondary_camera_status", {
-      connected: session.secondaryCameraConnected,
-      metadata: session.secondaryCameraMetadata ?? null,
-    });
+  // Desktop lost the mobile track; re-enable socket frame relay as fallback.
+  socket.on("mobile_webrtc_disconnected", () => {
+    session.webrtcEstablished = false;
+    console.log(
+      `⚠️ Mobile WebRTC lost — re-enabling frame relay fallback (interview ${interviewId})`,
+    );
   });
 
   socket.on("mobile_webrtc_ice_candidate_desktop", ({ candidate }) => {
@@ -572,20 +568,16 @@ async function handleInterviewSocket(
   }
 
   if (!firstQuestion) {
-    try {
-      const q =
-        "Tell me about yourself, your background, and what brings you here today.";
-      await Interview.saveQuestion({
-        interviewId,
-        question: q,
-        questionOrder: 1,
-        technology: null,
-        difficulty: "easy",
-      });
-      firstQuestion = await Interview.getQuestionByOrder(interviewId, 1);
-    } catch (err) {
-      console.error("❌ Failed to create default question:", err.message);
-    }
+    const q =
+      "Tell me about yourself, your background, and what brings you here today.";
+    await Interview.saveQuestion({
+      interviewId,
+      question: q,
+      questionOrder: 1,
+      technology: null,
+      difficulty: "easy",
+    });
+    firstQuestion = await Interview.getQuestionByOrder(interviewId, 1);
   }
 
   if (!firstQuestion) {
@@ -637,11 +629,6 @@ async function handleInterviewSocket(
     message: "Server ready",
   });
 
-  // In-flight dedup: prevents two concurrent callers (pre-warm + enableListening)
-  // from each opening a separate Deepgram socket, which caused the first socket's
-  // onError to reject the second caller's promise -> "Microphone connection failed".
-  let _sttConnecting = null;
-
   function ensureSTTConnection() {
     const cached = sttConnectionCache.get(interviewId);
     if (cached?.conn?.isConnected?.()) {
@@ -649,14 +636,11 @@ async function handleInterviewSocket(
       return Promise.resolve(cached.conn);
     }
 
-    if (_sttConnecting) return _sttConnecting;
-
-    _sttConnecting = new Promise((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       let done = false;
       const timer = setTimeout(() => {
         if (!done) {
           done = true;
-          _sttConnecting = null;
           reject(new Error("Deepgram connect timeout"));
         }
       }, 8000);
@@ -688,7 +672,6 @@ async function handleInterviewSocket(
           console.error("❌ Deepgram error:", e);
           if (!done) {
             done = true;
-            _sttConnecting = null;
             clearTimeout(timer);
             reject(e);
           }
@@ -710,7 +693,6 @@ async function handleInterviewSocket(
         .then(() => {
           if (!done) {
             done = true;
-            _sttConnecting = null;
             clearTimeout(timer);
             sttConnectionCache.set(interviewId, {
               conn,
@@ -723,17 +705,14 @@ async function handleInterviewSocket(
         .catch((e) => {
           if (!done) {
             done = true;
-            _sttConnecting = null;
             clearTimeout(timer);
             reject(e);
           }
         });
     });
-
-    return _sttConnecting;
   }
 
-  const enableListening = async (retryCount = 0) => {
+  const enableListening = async () => {
     if (isInterviewEnded || !session.interviewStarted || isListeningActive) {
       return;
     }
@@ -747,13 +726,6 @@ async function handleInterviewSocket(
         console.log("✅ Using existing STT connection");
       } else {
         console.log("🔄 Creating new STT connection");
-        // Clear stale cache + in-flight promise before retry
-        if (cached) {
-          try {
-            cached.conn.finish();
-          } catch (_) {}
-          sttConnectionCache.delete(interviewId);
-        }
         conn = await ensureSTTConnection();
       }
 
@@ -778,48 +750,29 @@ async function handleInterviewSocket(
           conn.activate?.();
         }
 
-        // Only emit listening_enabled here — idle detection starts on playback_done
-        // so the 8-second idle timer doesn't start burning while audio is still playing.
         setTimeout(() => {
           if (!isListeningActive || isInterviewEnded) return;
           socket.emit("listening_enabled");
+          // idle detection + no-transcript timer start in playback_done,
+          // so they only fire AFTER the client finishes playing TTS audio.
         }, remaining);
       } else {
         socket.emit("listening_enabled");
-        // If gate was already open (preWarmElapsed >= STT_GATE_DELAY_MS), start
-        // idle detection now since playback_done likely already arrived or won't.
-        conn.resumeIdleDetection?.();
-        startNoTranscriptTimer();
+        // idle detection + no-transcript timer start in playback_done
       }
     } catch (err) {
-      console.error(
-        `❌ enableListening failed (attempt ${retryCount + 1}):`,
-        err.message,
-      );
+      console.error(`❌ enableListening failed:`, err);
+      socket.emit("error", {
+        message: "Microphone connection failed. Please refresh.",
+      });
+      isProcessing = false;
 
-      // Clear stale state before retry
-      _sttConnecting = null;
       if (sttConnectionCache.has(interviewId)) {
         try {
           sttConnectionCache.get(interviewId).conn.finish();
         } catch (_) {}
         sttConnectionCache.delete(interviewId);
       }
-
-      // Auto-retry once before surfacing the error to the client
-      if (retryCount < 1) {
-        console.log("🔄 Retrying STT connection in 1.5s...");
-        setTimeout(
-          () => enableListening(retryCount + 1).catch(console.error),
-          1500,
-        );
-        return;
-      }
-
-      socket.emit("error", {
-        message: "Microphone connection failed. Please refresh.",
-      });
-      isProcessing = false;
     }
   };
 
@@ -1193,21 +1146,17 @@ async function handleInterviewSocket(
     }
   });
 
-  // playback_done: client signals that audio has finished playing.
-  // We use this as the true "user is ready to speak" signal to start idle
-  // detection and the no-transcript safety timer. Previously this was a no-op
-  // and both timers started at the 400ms gate delay — well before the client
-  // finished playing audio — causing premature idle on longer questions.
+  // playback_done fires from the client when TTS audio has FINISHED playing.
+  // We start idle detection here (not at the gate delay) so the 10-second
+  // no-transcript timer only begins once the user has actually heard the question.
   socket.on("playback_done", () => {
-    if (!isListeningActive || isInterviewEnded) return;
-    const cached = sttConnectionCache.get(interviewId);
-    if (cached?.conn) {
-      cached.conn.resumeIdleDetection?.();
+    if (!isListeningActive || isInterviewEnded || isProcessing) return;
+    console.log(`▶️ playback_done: idle detection started (user ready to speak)`);
+    const sttConn = sttConnectionCache.get(interviewId)?.conn;
+    if (sttConn?.isConnected?.()) {
+      sttConn.resumeIdleDetection?.();
     }
     startNoTranscriptTimer();
-    console.log(
-      "▶️ playback_done: idle detection started (user ready to speak)",
-    );
   });
 
   socket.on("secondary_camera_connected", (data) => {
@@ -1363,6 +1312,24 @@ async function handleInterviewSocket(
   socket.on("audio_chunk", () => {});
   socket.on("audio_recording_stop", () => {});
 
+  socket.on("mobile_camera_frame", (data, ack) => {
+    session.lastMobileFrame = {
+      frame: data.frame,
+      timestamp: data.timestamp ?? Date.now(),
+      frameNum: data.frameNum,
+    };
+
+    if (session.desktopSocketId && !session.webrtcEstablished) {
+      socket.to(`interview_${interviewId}`).emit("mobile_camera_frame", {
+        frame: data.frame,
+        timestamp: data.timestamp ?? Date.now(),
+        frameNum: data.frameNum,
+      });
+    }
+
+    if (typeof ack === "function") ack();
+  });
+
   socket.on("disconnect", () => {
     console.log(`🖥️ Desktop disconnected: ${socket.id}`);
 
@@ -1379,23 +1346,6 @@ async function handleInterviewSocket(
 
     isProcessing = false;
     isListeningActive = false;
-
-    // Abort any in-flight TTS Deepgram stream so it stops consuming bandwidth
-    // and CPU after the client has disconnected.
-    const ttsInst = ttsInstanceCache.get(interviewId);
-    if (ttsInst) {
-      try {
-        ttsInst.abort();
-      } catch (_) {}
-    }
-
-    // Put STT into standby so it stops forwarding audio to Deepgram
-    const sttCached = sttConnectionCache.get(interviewId);
-    if (sttCached?.conn) {
-      try {
-        sttCached.conn.enterStandby();
-      } catch (_) {}
-    }
   });
 
   socket.on("error", (e) => console.error("❌ socket error:", e));

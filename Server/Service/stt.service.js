@@ -399,6 +399,15 @@ function createSTTSession() {
       },
 
       activate() {
+        // Guard: if a flush interval is already running, don't restart it.
+        // activate() can be called twice per turn (once from streamTTSToClient,
+        // once from enableListening). The second call must be a no-op to avoid
+        // duplicate silence flushes and race conditions.
+        if (flushIntervalRef) {
+          console.log(`⚠️ STT activate() called while already activating — ignored`);
+          return;
+        }
+
         if (!wsReady || conn?.readyState !== WS.OPEN) {
           console.warn("⚠️ STT activate called but connection not ready");
           standby = false;
@@ -415,7 +424,6 @@ function createSTTSession() {
         gateOpen = false;
 
         if (activateTimer) clearTimeout(activateTimer);
-        if (flushIntervalRef) clearInterval(flushIntervalRef);
 
         const silenceChunk = Buffer.alloc(FLUSH_CHUNK_SIZE, 0);
         let chunksSent = 0;
@@ -435,6 +443,7 @@ function createSTTSession() {
 
           if (!wsReady || conn?.readyState !== WS.OPEN) {
             clearInterval(flushInterval);
+            flushIntervalRef = null;
             return;
           }
 
@@ -443,6 +452,7 @@ function createSTTSession() {
             chunksSent++;
           } catch (e) {
             clearInterval(flushInterval);
+            flushIntervalRef = null;
             console.error("❌ STT silence chunk failed:", e.message);
           }
         }, FLUSH_INTERVAL_MS);
