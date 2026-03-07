@@ -37,7 +37,7 @@ const quotes = [
 
 const getQuote = () => quotes[Math.floor(Math.random() * quotes.length)];
 
-// ── Shared keyframes + font import (can't be done in Tailwind alone) ──────────
+// ── Shared keyframes + font import  ──────────
 const STYLES = `
   @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&family=Lora:wght@400;500;600&display=swap');
 

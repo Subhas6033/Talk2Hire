@@ -1,12 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import {
-  motion,
-  AnimatePresence,
-  useScroll,
-  useTransform,
-  useInView,
-} from "framer-motion";
+import { motion, AnimatePresence, useInView } from "framer-motion";
 import {
   ArrowLeft,
   MapPin,
@@ -436,19 +430,13 @@ const JobCard = ({ job, index, onClick, accent }) => {
 const CompanyDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const heroRef = useRef(null);
   const [activeTab, setActiveTab] = useState("overview");
 
   useEffect(() => {
-    window.scrollTo({ top: 0, behavior: "instant" });
-    setActiveTab("overview"); // reset tab when company changes
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    setActiveTab("overview");
   }, [id]);
-
-  const { scrollYProgress } = useScroll({
-    target: heroRef,
-    offset: ["start start", "end start"],
-  });
-  const heroBgY = useTransform(scrollYProgress, [0, 1], ["0%", "28%"]);
 
   const company = ALL_COMPANIES.find((c) => c.id === id) || ALL_COMPANIES[0];
   const techPalettes = [
@@ -471,18 +459,14 @@ const CompanyDetail = () => {
       <title>
         {company.name} Careers & Open Jobs | Talk2Hire Careers Portal
       </title>
-
       <meta
         name="description"
         content={`${company.name} is hiring ${company.openRoles} roles in ${company.location}. Explore careers, company culture, tech stack, and open opportunities on Talk2Hire.`}
       />
-
       <link
         rel="canonical"
         href={`https://talk2hire.com/companies/${company.id}`}
       />
-
-      {/* Open Graph */}
       <meta
         property="og:title"
         content={`${company.name} Careers | Talk2Hire`}
@@ -496,16 +480,12 @@ const CompanyDetail = () => {
         content={`https://talk2hire.com/companies/${company.id}`}
       />
       <meta property="og:type" content="website" />
-
-      {/* Twitter */}
       <meta name="twitter:card" content="summary_large_image" />
       <meta name="twitter:title" content={`${company.name} Jobs | Talk2Hire`} />
       <meta
         name="twitter:description"
         content={`${company.description.slice(0, 160)}`}
       />
-
-      {/* Structured Data */}
       <script type="application/ld+json">
         {JSON.stringify({
           "@context": "https://schema.org",
@@ -523,8 +503,6 @@ const CompanyDetail = () => {
           ],
         })}
       </script>
-
-      {/* Job List Structured Data */}
       <script type="application/ld+json">
         {JSON.stringify({
           "@context": "https://schema.org",
@@ -538,15 +516,15 @@ const CompanyDetail = () => {
       </script>
 
       <style>{FONT_IMPORT}</style>
-      {/* Main page starts from here */}
+
       <div
-        key={id}
         className="min-h-screen bg-slate-50"
         style={{ fontFamily: "'DM Sans', sans-serif" }}
       >
         {/* ══ HERO ══════════════════════════════════════════ */}
-        <div ref={heroRef} className="relative h-80 overflow-hidden">
-          <motion.div style={{ y: heroBgY }} className="absolute inset-0">
+        <div className="relative h-80 overflow-hidden">
+          {/* Static background — no scroll-dependent transform */}
+          <div className="absolute inset-0">
             <div
               className="absolute inset-0"
               style={{
@@ -575,7 +553,7 @@ const CompanyDetail = () => {
                 background: `radial-gradient(circle, ${company.palette.accent}25 0%, transparent 70%)`,
               }}
             />
-          </motion.div>
+          </div>
 
           <div className="absolute bottom-0 left-0 right-0 h-32 bg-linear-to-b from-transparent to-slate-50 z-10" />
 
@@ -1289,4 +1267,10 @@ const CompanyDetail = () => {
   );
 };
 
-export default CompanyDetail;
+/* Wrapper forces full remount on route change */
+const CompanyDetailWrapper = () => {
+  const { id } = useParams();
+  return <CompanyDetail key={id} id={id} />;
+};
+
+export default CompanyDetailWrapper;

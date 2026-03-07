@@ -33,12 +33,19 @@ import {
   SavedJobs,
   CompanyPage,
   CompanyDetail,
+  Blog,
+  Carrers,
+  Cookies,
+  Security,
+  Practice,
+  SalaryPage,
 } from "./Pages/index.pages.js";
 import { InterviewSetup } from "./Components/index.js";
 import { useStreams } from "./Hooks/streamContext";
 
 const App = () => {
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [isNotFound, setIsNotFound] = useState(false);
   const location = useLocation();
   const streamsRef = useStreams();
 
@@ -66,7 +73,7 @@ const App = () => {
   }
 
   return (
-    <Layout>
+    <Layout isNotFound={isNotFound}>
       {showOnboarding ? (
         <OnboardingFlow
           isOpen={showOnboarding}
@@ -75,9 +82,13 @@ const App = () => {
       ) : (
         <>
           <ScrollToTop />
-          <AnimatePresence mode="wait" initial={true}>
+          <AnimatePresence
+            mode="wait"
+            initial={true}
+            onExitComplete={() => window.scrollTo(0, 0)}
+          >
             <motion.main
-              key={location.pathname}
+              key={location.pathname.split("/")[1]}
               {...pageTransition}
               className="flex-1"
             >
@@ -85,12 +96,19 @@ const App = () => {
                 {/* PUBLIC ROUTES */}
                 <Route path="/" element={<Home />} />
                 <Route path="/about" element={<About />} />
-                <Route path="/privacy" element={<Privacy />} />
-                <Route path="/terms" element={<Terms />} />
                 <Route path="/contact" element={<Contact />} />
                 <Route path="/verify-password" element={<VerifyPassword />} />
                 <Route path="/companies" element={<CompanyPage />} />
                 <Route path="/companies/:id" element={<CompanyDetail />} />
+                <Route path="/blog" element={<Blog />} />
+                <Route path="/careers" element={<Carrers />} />
+                <Route path="/salaries" element={<SalaryPage />} />
+
+                {/* Legal pages */}
+                <Route path="/privacy" element={<Privacy />} />
+                <Route path="/terms" element={<Terms />} />
+                <Route path="/cookies" element={<Cookies />} />
+                <Route path="/security" element={<Security />} />
 
                 <Route
                   path="/login"
@@ -143,6 +161,14 @@ const App = () => {
                   }
                 />
                 <Route
+                  path="/practice"
+                  element={
+                    <RoleBasedRoute allowedRole="user">
+                      <Practice />
+                    </RoleBasedRoute>
+                  }
+                />
+                <Route
                   path="/interview"
                   element={
                     <RoleBasedRoute allowedRole="user">
@@ -190,6 +216,7 @@ const App = () => {
                     </RoleBasedRoute>
                   }
                 />
+
                 {/* COMPANY ONLY ROUTES */}
                 <Route
                   path="/company/dashboard"
@@ -225,7 +252,12 @@ const App = () => {
                 />
 
                 <Route path="/mobile-camera" element={<MobileCameraPage />} />
-                <Route path="*" element={<NotFound />} />
+
+                {/* 404 — no inner Layout wrapper, isNotFound passed to outer Layout */}
+                <Route
+                  path="*"
+                  element={<NotFound404Wrapper setIsNotFound={setIsNotFound} />}
+                />
               </Routes>
             </motion.main>
           </AnimatePresence>
@@ -233,6 +265,16 @@ const App = () => {
       )}
     </Layout>
   );
+};
+
+/* ── Tiny wrapper that signals 404 to outer Layout on mount/unmount ── */
+const NotFound404Wrapper = ({ setIsNotFound }) => {
+  useEffect(() => {
+    setIsNotFound(true);
+    return () => setIsNotFound(false); // reset when navigating away
+  }, []);
+
+  return <NotFound />;
 };
 
 export default App;

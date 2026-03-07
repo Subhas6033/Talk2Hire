@@ -23,6 +23,12 @@ import AppliedJobs from "./AppliedJobs.jsx";
 import SavedJobs from "./SavedJobs.jsx";
 import CompanyPage from "./CompanyShowcase.jsx";
 import CompanyDetail from "./CompanyDetails.jsx";
+import Blog from "./Blogs.jsx";
+import Carrers from "./Carrers.jsx";
+import Cookies from "./Private/Cookies.jsx";
+import Security from "./Private/Security.jsx";
+import Practice from "./Practice.jsx";
+import SalaryPage from "./Salary.jsx";
 
 export {
   Home,
@@ -50,4 +56,10 @@ export {
   SavedJobs,
   CompanyPage,
   CompanyDetail,
+  Blog,
+  Carrers,
+  Cookies,
+  Security,
+  Practice,
+  SalaryPage,
 };

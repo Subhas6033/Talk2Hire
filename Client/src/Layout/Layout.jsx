@@ -13,7 +13,7 @@ const ROLE_NAV = {
   guest: Nav,
 };
 
-const Layout = ({ children }) => {
+const Layout = ({ children, isNotFound = false }) => {
   const { pathname } = useLocation();
   const {
     isAuthenticated: isUserAuth,
@@ -23,13 +23,15 @@ const Layout = ({ children }) => {
   const { isAuthenticated: isCompanyAuth, hydrated: companyHydrated } =
     useCompany();
 
-  const isFullscreen = FULLSCREEN_ROUTES.includes(pathname);
+  const isFullscreen = FULLSCREEN_ROUTES.includes(pathname) || isNotFound;
   const hydrated = userHydrated && companyHydrated;
   const role = isCompanyAuth ? "company" : userRole;
   const RoleNav = ROLE_NAV[role] ?? Nav;
 
-  const bgClass = role === "company";
-  ("min-h-screen bg-white text-gray-900 flex flex-col");
+  const bgClass =
+    role === "company"
+      ? "min-h-screen bg-white text-gray-900 flex flex-col"
+      : "min-h-screen bg-white text-gray-900 flex flex-col";
 
   return (
     <div className={bgClass} style={{ isolation: "isolate" }}>

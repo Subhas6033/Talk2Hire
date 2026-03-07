@@ -1,6 +1,6 @@
-import { Link } from "react-router-dom";
+import { href, Link } from "react-router-dom";
 import { motion, useMotionValue, useTransform, useSpring } from "framer-motion";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import {
   Twitter,
   Linkedin,
@@ -10,6 +10,10 @@ import {
   MapPin,
   Mail,
   ArrowRight,
+  Facebook,
+  Instagram,
+  Globe,
+  Youtube,
 } from "lucide-react";
 
 /* ─────────────────────────────────────────────
@@ -45,24 +49,215 @@ const NAV_LINKS = {
 };
 
 const SOCIALS = [
-  { Icon: Twitter, href: "https://twitter.com", label: "Twitter" },
-  { Icon: Linkedin, href: "https://linkedin.com", label: "LinkedIn" },
-  { Icon: Github, href: "https://github.com", label: "GitHub" },
+  {
+    Icon: Facebook,
+    href: "https://www.facebook.com/profile.php?id=61582410893482",
+    label: "Facebook",
+  },
+  {
+    Icon: Instagram,
+    href: "https://www.instagram.com/quantumhash_corporation/",
+    label: "Instagram",
+  },
+  { Icon: Twitter, href: "https://x.com/QuantumhashCrp", label: "Twitter" },
+  {
+    Icon: Linkedin,
+    href: "https://www.linkedin.com/company/quantumhash-corporation/",
+    label: "LinkedIn",
+  },
+  {
+    Icon: Youtube,
+    href: "https://www.youtube.com/@QuantumHashCorporation",
+    label: "Youtube",
+  },
+  { Icon: Globe, href: "https://quantumhash.me/", label: "Website" },
 ];
 
-const Footer = () => {
-  const ref = useRef(null);
+/* ─────────────────────────────────────────────
+   Wave Social Buttons
+───────────────────────────────────────────── */
+const WaveSocials = () => {
+  const [hoveredIndex, setHoveredIndex] = useState(null);
 
-  /* ── Mouse-reveal animation for the watermark ── */
-  const mouseX = useMotionValue(-600);
+  const getY = (i) => {
+    if (hoveredIndex === null) return 0;
+    const dist = Math.abs(i - hoveredIndex);
+    if (dist === 0) return -10;
+    if (dist === 1) return -5;
+    if (dist === 2) return -2;
+    return 0;
+  };
+
+  const getScale = (i) => {
+    if (hoveredIndex === null) return 1;
+    const dist = Math.abs(i - hoveredIndex);
+    if (dist === 0) return 1.22;
+    if (dist === 1) return 1.1;
+    if (dist === 2) return 1.04;
+    return 1;
+  };
+
+  const getBg = (i) => {
+    if (hoveredIndex === null) return "#faf9f7";
+    const dist = Math.abs(i - hoveredIndex);
+    if (dist === 0) return "#fef3c7";
+    if (dist === 1) return "#fffbf0";
+    return "#faf9f7";
+  };
+
+  const getBorder = (i) => {
+    if (hoveredIndex === null) return "rgba(13,13,18,0.09)";
+    const dist = Math.abs(i - hoveredIndex);
+    if (dist === 0) return "rgba(217,119,6,0.45)";
+    if (dist === 1) return "rgba(217,119,6,0.22)";
+    return "rgba(13,13,18,0.09)";
+  };
+
+  const getColor = (i) => {
+    if (hoveredIndex === null) return "rgba(13,13,18,0.50)";
+    const dist = Math.abs(i - hoveredIndex);
+    if (dist === 0) return "#d97706";
+    if (dist === 1) return "#f59e0b";
+    return "rgba(13,13,18,0.50)";
+  };
+
+  return (
+    <div className="flex items-end gap-2 mt-6">
+      {SOCIALS.map(({ Icon, href, label }, i) => (
+        <motion.a
+          key={label}
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={label}
+          onMouseEnter={() => setHoveredIndex(i)}
+          onMouseLeave={() => setHoveredIndex(null)}
+          whileTap={{ scale: 0.88 }}
+          animate={{
+            y: getY(i),
+            scale: getScale(i),
+            backgroundColor: getBg(i),
+            borderColor: getBorder(i),
+            color: getColor(i),
+            boxShadow:
+              hoveredIndex === i
+                ? "0 6px 20px rgba(217,119,6,0.18), 0 1px 3px rgba(13,13,18,0.07)"
+                : "0 1px 3px rgba(13,13,18,0.07)",
+          }}
+          transition={{
+            y: { type: "spring", stiffness: 380, damping: 18 },
+            scale: { type: "spring", stiffness: 380, damping: 18 },
+            backgroundColor: { duration: 0.18 },
+            borderColor: { duration: 0.18 },
+            color: { duration: 0.18 },
+            boxShadow: { duration: 0.18 },
+          }}
+          className="w-9 h-9 rounded-xl flex items-center justify-center border transition-colors"
+          style={{
+            backgroundColor: "#faf9f7",
+            borderColor: "rgba(13,13,18,0.09)",
+            color: "rgba(13,13,18,0.50)",
+          }}
+        >
+          <Icon size={15} />
+        </motion.a>
+      ))}
+    </div>
+  );
+};
+
+/* ─────────────────────────────────────────────
+   Watermark — original mouse-spotlight reveal
+───────────────────────────────────────────── */
+const GlowWatermark = ({ mouseX }) => {
   const smoothX = useSpring(mouseX, { stiffness: 100, damping: 22 });
 
-  /* Ink-colored reveal mask that sweeps across the text */
   const maskImage = useTransform(
     smoothX,
     (x) =>
       `radial-gradient(ellipse 220px 80px at ${x}px 50%, black 0%, transparent 100%)`,
   );
+
+  return (
+    <div className="relative h-[clamp(100px,18vw,280px)] select-none pointer-events-none overflow-hidden">
+      {/* Layer 1 — always-visible ghost stroke */}
+      <h1
+        className="absolute bottom-[-4%] left-0 w-full text-center font-extrabold tracking-tighter leading-none"
+        style={{
+          fontSize: "clamp(80px, 18vw, 280px)",
+          color: "transparent",
+          WebkitTextStroke: "1.5px rgba(13,13,18,0.07)",
+        }}
+      >
+        Talk2Hire
+      </h1>
+
+      {/* Layer 2 — filled ghost, very faint */}
+      <h1
+        className="absolute bottom-[-4%] left-0 w-full text-center font-extrabold tracking-tighter leading-none"
+        style={{
+          fontSize: "clamp(80px, 18vw, 280px)",
+          color: "rgba(13,13,18,0.04)",
+        }}
+      >
+        Talk2Hire
+      </h1>
+
+      {/* Layer 3 — amber gradient fill, medium opacity */}
+      <h1
+        className="absolute bottom-[-4%] left-0 w-full text-center font-extrabold tracking-tighter leading-none"
+        style={{
+          fontSize: "clamp(80px, 18vw, 280px)",
+          background:
+            "linear-gradient(135deg, #d97706 0%, #1e2235 60%, #7c3aed 100%)",
+          WebkitBackgroundClip: "text",
+          WebkitTextFillColor: "transparent",
+          backgroundClip: "text",
+          opacity: 0.12,
+        }}
+      >
+        Talk2Hire
+      </h1>
+
+      {/* Layer 4 — crisp ink text revealed by mouse spotlight */}
+      <motion.h1
+        style={{
+          WebkitMaskImage: maskImage,
+          maskImage,
+          fontSize: "clamp(80px, 18vw, 280px)",
+        }}
+        className="absolute bottom-[-4%] left-0 w-full text-center font-extrabold tracking-tighter leading-none text-[#1e2235]"
+      >
+        Talk2Hire
+      </motion.h1>
+
+      {/* Layer 5 — amber shimmer revealed by spotlight */}
+      <motion.h1
+        style={{
+          WebkitMaskImage: maskImage,
+          maskImage,
+          fontSize: "clamp(80px, 18vw, 280px)",
+          background:
+            "linear-gradient(135deg, #d97706 0%, #f59e0b 40%, #1e2235 80%)",
+          WebkitBackgroundClip: "text",
+          WebkitTextFillColor: "transparent",
+          backgroundClip: "text",
+          opacity: 0.6,
+        }}
+        className="absolute bottom-[-4%] left-0 w-full text-center font-extrabold tracking-tighter leading-none"
+      >
+        Talk2Hire
+      </motion.h1>
+    </div>
+  );
+};
+
+/* ─────────────────────────────────────────────
+   Footer
+───────────────────────────────────────────── */
+const Footer = () => {
+  const ref = useRef(null);
+  const mouseX = useMotionValue(-600);
 
   const handleMouseMove = (e) => {
     const rect = ref.current?.getBoundingClientRect();
@@ -80,7 +275,7 @@ const Footer = () => {
       {/* ── Top accent bar ── */}
       <div className="h-0.5 w-full bg-linear-to-r from-transparent via-[#d97706] to-transparent opacity-30" />
 
-      {/* ── Subtle radial glow (warm amber, very light) ── */}
+      {/* ── Subtle radial glows ── */}
       <div className="absolute pointer-events-none inset-0 bg-[radial-gradient(ellipse_at_50%_100%,rgba(217,119,6,0.06),transparent_65%)]" />
       <div className="absolute pointer-events-none inset-0 bg-[radial-gradient(ellipse_at_0%_80%,rgba(124,58,237,0.04),transparent_55%)]" />
 
@@ -89,7 +284,7 @@ const Footer = () => {
             TOP GRID
         ════════════════════════════════════════ */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-12 pb-16 border-b border-[rgba(13,13,18,0.07)]">
-          {/* Brand col — spans 2 on lg */}
+          {/* Brand col */}
           <div className="lg:col-span-2">
             {/* Logo */}
             <div className="flex items-center gap-2.5 mb-5">
@@ -111,7 +306,7 @@ const Footer = () => {
               roles, prepares you for interviews, and gets you hired faster.
             </p>
 
-            {/* Newsletter micro-form */}
+            {/* Newsletter */}
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[rgba(13,13,18,0.40)] mb-3">
               Stay in the loop
             </p>
@@ -139,23 +334,8 @@ const Footer = () => {
               </motion.button>
             </form>
 
-            {/* Socials */}
-            <div className="flex items-center gap-2 mt-6">
-              {SOCIALS.map(({ Icon, href, label }) => (
-                <motion.a
-                  key={label}
-                  href={href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={label}
-                  whileHover={{ y: -3 }}
-                  transition={{ type: "spring", stiffness: 400, damping: 20 }}
-                  className="w-9 h-9 rounded-xl flex items-center justify-center border border-[rgba(13,13,18,0.09)] bg-[#faf9f7] text-[rgba(13,13,18,0.50)] hover:text-[#1e2235] hover:border-[rgba(13,13,18,0.20)] hover:shadow-[0_4px_12px_rgba(13,13,18,0.08)] transition-all"
-                >
-                  <Icon size={15} />
-                </motion.a>
-              ))}
-            </div>
+            {/* Wave social buttons */}
+            <WaveSocials />
           </div>
 
           {/* Nav link columns */}
@@ -215,81 +395,9 @@ const Footer = () => {
         </div>
 
         {/* ════════════════════════════════════════
-            WATERMARK  "Talk2Hire"
-            Base layer  = very faint ink tint
-            Reveal layer = crisp dark ink, masked by
-                           radial spotlight following cursor
+            PER-LETTER GLOW WATERMARK
         ════════════════════════════════════════ */}
-        <div className="relative h-[clamp(100px,18vw,280px)] select-none pointer-events-none overflow-hidden">
-          {/* Layer 1 — always-visible ghost */}
-          <h1
-            className="absolute bottom-[-4%] left-0 w-full text-center font-extrabold tracking-tighter leading-none"
-            style={{
-              fontSize: "clamp(80px, 18vw, 280px)",
-              color: "transparent",
-              WebkitTextStroke: "1.5px rgba(13,13,18,0.07)",
-            }}
-          >
-            Talk2Hire
-          </h1>
-
-          {/* Layer 2 — filled ghosted fill, very faint */}
-          <h1
-            className="absolute bottom-[-4%] left-0 w-full text-center font-extrabold tracking-tighter leading-none"
-            style={{
-              fontSize: "clamp(80px, 18vw, 280px)",
-              color: "rgba(13,13,18,0.04)",
-            }}
-          >
-            Talk2Hire
-          </h1>
-
-          {/* Layer 3 — amber gradient fill, medium opacity */}
-          <h1
-            className="absolute bottom-[-4%] left-0 w-full text-center font-extrabold tracking-tighter leading-none"
-            style={{
-              fontSize: "clamp(80px, 18vw, 280px)",
-              background:
-                "linear-gradient(135deg, #d97706 0%, #1e2235 60%, #7c3aed 100%)",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-              backgroundClip: "text",
-              opacity: 0.12,
-            }}
-          >
-            Talk2Hire
-          </h1>
-
-          {/* Layer 4 — crisp ink text revealed by mouse spotlight */}
-          <motion.h1
-            style={{
-              WebkitMaskImage: maskImage,
-              maskImage,
-              fontSize: "clamp(80px, 18vw, 280px)",
-            }}
-            className="absolute bottom-[-4%] left-0 w-full text-center font-extrabold tracking-tighter leading-none text-[#1e2235]"
-          >
-            Talk2Hire
-          </motion.h1>
-
-          {/* Layer 5 — amber shimmer strip revealed by spotlight */}
-          <motion.h1
-            style={{
-              WebkitMaskImage: maskImage,
-              maskImage,
-              fontSize: "clamp(80px, 18vw, 280px)",
-              background:
-                "linear-gradient(135deg, #d97706 0%, #f59e0b 40%, #1e2235 80%)",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-              backgroundClip: "text",
-              opacity: 0.6,
-            }}
-            className="absolute bottom-[-4%] left-0 w-full text-center font-extrabold tracking-tighter leading-none"
-          >
-            Talk2Hire
-          </motion.h1>
-        </div>
+        <GlowWatermark mouseX={mouseX} />
       </div>
     </footer>
   );
