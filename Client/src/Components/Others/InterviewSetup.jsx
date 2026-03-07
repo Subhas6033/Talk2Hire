@@ -156,6 +156,46 @@ const STYLES = `
     border: 1px solid #E8E4DE;
     color: #78716C;
   }
+
+  /* ── Mobile warning additions ── */
+  @keyframes mw-floatin {
+    from { opacity: 0; transform: translateY(28px) scale(0.97); }
+    to   { opacity: 1; transform: translateY(0)   scale(1);    }
+  }
+  @keyframes mw-icon-bounce {
+    0%,100% { transform: translateY(0); }
+    40%     { transform: translateY(-6px); }
+    60%     { transform: translateY(-3px); }
+  }
+  @keyframes mw-ring-pulse {
+    0%,100% { box-shadow: 0 0 0 0   rgba(239,68,68,0.25); }
+    50%     { box-shadow: 0 0 0 12px rgba(239,68,68,0);    }
+  }
+  @keyframes mw-stripe-scroll {
+    from { background-position: 0 0; }
+    to   { background-position: 40px 0; }
+  }
+
+  .mw-card {
+    animation: mw-floatin 0.55s cubic-bezier(0.34,1.56,0.64,1) both;
+  }
+  .mw-icon-bounce {
+    animation: mw-icon-bounce 2.4s ease-in-out infinite;
+  }
+  .mw-ring-pulse {
+    animation: mw-ring-pulse 2s ease-in-out infinite;
+  }
+  .mw-stripe {
+    background-image: repeating-linear-gradient(
+      -45deg,
+      rgba(239,68,68,0.07) 0px,
+      rgba(239,68,68,0.07) 10px,
+      transparent 10px,
+      transparent 20px
+    );
+    background-size: 40px 40px;
+    animation: mw-stripe-scroll 1.8s linear infinite;
+  }
 `;
 
 // ── Step definitions ──────────────────────────────────────────────────────────
@@ -395,6 +435,173 @@ const InfoBanner = ({ type = "info", children }) => {
       <p className={`font-sora text-xs font-medium leading-relaxed ${c.text}`}>
         {children}
       </p>
+    </div>
+  );
+};
+
+// ── Mobile Warning Screen (NEW — additive only) ───────────────────────────────
+const MobileWarningScreen = () => {
+  const navigate = useNavigate();
+
+  const requirements = [
+    "Screen sharing (required for proctoring)",
+    "Stable multi-stream video recording",
+    "Full keyboard & browser API access",
+    "Optimal audio capture quality",
+  ];
+
+  return (
+    <div
+      className="fixed inset-0 z-9999 overflow-y-auto overflow-x-hidden bg-[#F7F5F2] font-sora"
+      style={{ WebkitOverflowScrolling: "touch" }}
+    >
+      {/* Animated stripe pinned to the viewport top */}
+      <div className="mw-stripe fixed top-0 left-0 right-0 h-1 z-10 bg-red-100" />
+
+      {/* Scrollable inner — min-h-full makes content push scroll when needed */}
+      <div className="min-h-full flex flex-col items-center justify-start px-5 pt-8 pb-10">
+        {/* ── Card ── */}
+        <div
+          className="mw-card w-full max-w-sm rounded-2xl overflow-hidden border border-[#E8E4DE]"
+          style={{
+            boxShadow:
+              "0 4px 24px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04)",
+          }}
+        >
+          {/* Red header */}
+          <div
+            className="text-center px-6 pt-7 pb-6 border-b border-red-200"
+            style={{ background: "linear-gradient(135deg,#FEF2F2,#FFF5F5)" }}
+          >
+            {/* Pulsing icon ring */}
+            <div className="mw-ring-pulse w-18 h-18 rounded-full bg-red-50 border border-red-200 flex items-center justify-center mx-auto mb-4">
+              <div className="mw-icon-bounce">
+                <svg
+                  width="32"
+                  height="32"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="#EF4444"
+                  strokeWidth="1.5"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                  />
+                </svg>
+              </div>
+            </div>
+
+            {/* Chip */}
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-100 border border-red-200 mb-3">
+              <div className="w-1.5 h-1.5 rounded-full bg-red-500 is-pulse" />
+              <span className="font-dm text-[10px] font-medium tracking-[0.08em] uppercase text-red-700">
+                Desktop Required
+              </span>
+            </div>
+
+            <h1 className="font-sora text-xl font-bold text-[#1C1917] leading-tight mb-2">
+              Mobile Not Supported
+            </h1>
+            <p className="font-sora text-[13px] text-stone-500 leading-relaxed">
+              Interviews must be taken on a laptop or desktop computer for a
+              complete and valid session.
+            </p>
+          </div>
+
+          {/* ── Body ── */}
+          <div className="bg-white px-6 pt-5 pb-6">
+            <p className="font-dm text-[9px] font-medium tracking-[0.12em] uppercase text-stone-400 mb-3">
+              Desktop is required for
+            </p>
+
+            {/* Requirements */}
+            <div className="flex flex-col gap-2 mb-5">
+              {requirements.map((req, i) => (
+                <div
+                  key={i}
+                  className="flex items-center gap-2.5 px-3 py-2.5 bg-[#FAFAF9] border border-[#F0EDE8] rounded-[10px]"
+                >
+                  <div className="w-4.5 h-4.5 rounded-full bg-red-50 border border-red-200 flex items-center justify-center shrink-0">
+                    <svg
+                      width="8"
+                      height="8"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="#EF4444"
+                      strokeWidth="2.5"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M6 18L18 6M6 6l12 12"
+                      />
+                    </svg>
+                  </div>
+                  <span className="font-sora text-xs text-[#57534E] leading-snug">
+                    {req}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Tip box */}
+            <div className="flex items-start gap-2.5 px-3.5 py-3 bg-amber-50 border border-amber-200 rounded-[10px] mb-5">
+              <svg
+                width="16"
+                height="16"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="#D97706"
+                strokeWidth="2"
+                className="shrink-0 mt-0.5"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
+                />
+              </svg>
+              <p className="font-sora text-xs text-amber-900 leading-relaxed">
+                <strong>Tip:</strong> Open this link on your laptop or desktop
+                browser and log in to continue your interview.
+              </p>
+            </div>
+
+            {/* Go Back button */}
+            <button
+              onClick={() => navigate(-1)}
+              className="w-full h-11.5 rounded-xl font-sora font-semibold text-sm text-white flex items-center justify-center gap-2 cursor-pointer transition-opacity duration-150 active:opacity-80 border-0"
+              style={{
+                background: "linear-gradient(135deg,#EF4444,#DC2626)",
+                boxShadow: "0 4px 16px rgba(239,68,68,0.3)",
+              }}
+            >
+              <svg
+                width="16"
+                height="16"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M10 19l-7-7m0 0l7-7m-7 7h18"
+                />
+              </svg>
+              Go Back
+            </button>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <p className="font-dm text-[10px] text-stone-400 tracking-[0.04em] mt-5 text-center">
+          Talk2Hire · Desktop browsers only
+        </p>
+      </div>
     </div>
   );
 };
@@ -959,6 +1166,10 @@ const InterviewSetup = () => {
   return (
     <>
       <style>{STYLES}</style>
+
+      {/* ── Mobile Warning Gate (NEW — additive only) ── */}
+      {IS_MOBILE && <MobileWarningScreen />}
+
       <div className="is-root fixed inset-0 flex overflow-hidden font-sora">
         {/* ── Sidebar ─────────────────────────────────────────────────────────── */}
         <aside className="hidden lg:flex flex-col w-64 shrink-0 is-sidebar">

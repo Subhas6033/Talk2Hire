@@ -1,10 +1,9 @@
-require("dotenv").config()
+require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const authRoutes = require("./Routes/auth.routes.js");
 const questionRoutes = require("./Middlewares/multer.middlewares.js");
-// const speechRoutes = require("./Middlewares/multer.middlewares.js");
 const resultRouter = require("./Routes/result.routes.js");
 const videoUploadRoutes = require("./Routes/videoUpload.routes.js");
 const VideoProcessingJobs = require("./Jobs/videoProcessing.jobs.js");
@@ -16,6 +15,7 @@ const companyInterviewRoutes = require("./Admin/routes/interview.routes.js");
 const interviewVideoUpload = require("./Routes/interviewRecording.routes.js");
 const violationsRoutes = require("./Routes/violation.routes.js");
 const applicationRoutes = require("./Admin/routes/application.routes.js");
+const userReviewRoutes = require("./Routes/review.routes.js");
 
 const app = express();
 
@@ -111,6 +111,7 @@ app.use("/api/v1/interview", videoUploadRoutes);
 app.use("/api/v1/hiring", hiringRoutes);
 app.use("/api/v1/video", interviewVideoUpload);
 app.use("/api/v1/applications", applicationRoutes);
+app.use("/api/v1/review", userReviewRoutes);
 
 // Company Routes
 app.use("/api/v1/company/auth", companyAuthRoutes);

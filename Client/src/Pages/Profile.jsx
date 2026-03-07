@@ -677,7 +677,16 @@ const ProfilePage = () => {
         footer={
           <button
             onClick={handlePasswordUpdate}
-            className="flex items-center gap-2 px-6 py-2.5 bg-linear-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700 text-white text-sm font-bold rounded-xl shadow-md transition-all duration-200 hover:scale-105 active:scale-95"
+            className="
+        inline-flex items-center gap-2
+        px-6 h-10 rounded-xl
+        bg-[#4F46E5] hover:bg-[#4338CA]
+        text-white text-sm font-semibold font-sora
+        shadow-[0_4px_16px_rgba(79,70,229,0.25)]
+        hover:shadow-[0_6px_20px_rgba(79,70,229,0.32)]
+        transition-all duration-200
+        cursor-pointer
+      "
           >
             <svg
               className="w-4 h-4"
@@ -717,7 +726,7 @@ const ProfilePage = () => {
             error={error && confirmPassword !== newPassword ? error : ""}
           />
           {error && (
-            <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-xl animate-pulse">
+            <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-xl">
               <svg
                 className="w-4 h-4 text-red-500 shrink-0"
                 fill="none"

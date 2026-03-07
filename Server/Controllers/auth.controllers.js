@@ -657,7 +657,7 @@ const forgotPassword = asyncHandler(async (req, res) => {
         <p class="warning">This OTP is valid for <strong>${OTP_EXPIRY_MINUTES} minutes</strong>. Please do not share it with anyone.</p>
         <p>If you did not request a password reset, you can safely ignore this email.</p>
       </div>
-      <div class="email-footer">&copy; 2026 QuantamHash Corporation. All rights reserved.</div>
+      <div class="email-footer">&copy; 2026 Talk1Hire. All rights reserved.</div>
     </div>
   </body>
 </html>`;
@@ -669,7 +669,9 @@ const forgotPassword = asyncHandler(async (req, res) => {
     htmlTemplate,
   );
 
-  res.status(200).json(new APIRES(200, true, "Successfully sent the mail"));
+  res
+    .status(200)
+    .json(new APIRES(200, { email }, "Successfully sent the mail"));
 });
 
 const verifyResetPasswordOtp = asyncHandler(async (req, res) => {

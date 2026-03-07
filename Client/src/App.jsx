@@ -110,11 +110,20 @@ const App = () => {
                 <Route path="/cookies" element={<Cookies />} />
                 <Route path="/security" element={<Security />} />
 
+                {/* Auth Routes */}
                 <Route
                   path="/login"
                   element={
                     <PublicRoute>
                       <Login />
+                    </PublicRoute>
+                  }
+                />
+                <Route
+                  path="/forgot-password"
+                  element={
+                    <PublicRoute>
+                      <VerifyPassword />
                     </PublicRoute>
                   }
                 />

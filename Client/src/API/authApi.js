@@ -100,6 +100,53 @@ export const updateUser = createAsyncThunk(
   },
 );
 
+export const forgotPassword = createAsyncThunk(
+  "auth/forgotPassword",
+  async (email, { rejectWithValue }) => {
+    try {
+      const response = await api.post(
+        "/auth/forgot-password",
+        { email },
+        { withCredentials: true },
+      );
+      // Always attach the email we sent with — guaranteed regardless of
+      // what the response shape looks like after any axios interceptor
+      return { ...response.data, _sentEmail: email };
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.message || error.message);
+    }
+  },
+);
+
+// Verify OTP
+export const verifyOtp = createAsyncThunk(
+  "auth/verifyOtp",
+  async ({ email, otp }, { rejectWithValue }) => {
+    try {
+      const response = await api.post(
+        "/auth/verify-password",
+        { email, otp },
+        { withCredentials: true },
+      );
+      // After axios interceptor unwraps response.data:
+      //   response.data = { verified: true }  (interceptor already stripped the wrapper)
+      // Without interceptor:
+      //   response.data = { statusCode, data: { verified: true }, message }
+      const verified = response.data?.verified ?? response.data?.data?.verified;
+      if (verified) {
+        return response.data;
+      }
+      return rejectWithValue("OTP verification failed. Please try again.");
+    } catch (err) {
+      return rejectWithValue(
+        err.response?.data?.message || "Invalid or expired OTP.",
+      );
+    }
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 const saveAuthState = (user, isAuthenticated) => {
   try {
     localStorage.setItem(
@@ -124,6 +171,13 @@ const loadStateFromStorage = () => {
       error: null,
       hydrated: true,
       lastVerified: parsed.lastVerified || null,
+      forgotPasswordLoading: false,
+      forgotPasswordError: null,
+      forgotPasswordSuccess: false,
+      forgotPasswordEmail: null,
+      otpLoading: false,
+      otpError: null,
+      otpVerified: false,
     };
   } catch (err) {
     console.error("Failed to load auth state:", err);
@@ -139,6 +193,16 @@ const defaultState = () => ({
   error: null,
   hydrated: true,
   lastVerified: null,
+  // Forgot-password dedicated state
+  forgotPasswordLoading: false,
+  forgotPasswordError: null,
+  forgotPasswordSuccess: false,
+  // Email returned by forgotPassword — consumed by VerifyPassword page
+  forgotPasswordEmail: null,
+  // OTP verification dedicated state
+  otpLoading: false,
+  otpError: null,
+  otpVerified: false,
 });
 
 const SESSION_GRACE_MS = 5 * 60 * 1000;
@@ -170,6 +234,17 @@ const authSlice = createSlice({
       state.lastVerified = null;
       state.error = null;
       localStorage.removeItem("authState");
+    },
+    clearForgotPassword: (state) => {
+      state.forgotPasswordLoading = false;
+      state.forgotPasswordError = null;
+      state.forgotPasswordSuccess = false;
+      state.forgotPasswordEmail = null;
+    },
+    clearOtp: (state) => {
+      state.otpLoading = false;
+      state.otpError = null;
+      state.otpVerified = false;
     },
   },
 
@@ -245,7 +320,6 @@ const authSlice = createSlice({
       })
       .addCase(getCurrentUser.fulfilled, (state, action) => {
         state.loading = false;
-        // Merge instead of replace — preserves fields not returned by this endpoint
         state.user = { ...state.user, ...action.payload.data };
         state.isAuthenticated = true;
         state.hydrated = true;
@@ -274,7 +348,6 @@ const authSlice = createSlice({
       .addCase(updateUser.fulfilled, (state, action) => {
         state.loading = false;
         if (state.user) {
-          // Merge so no existing fields are lost
           state.user = { ...state.user, ...action.payload.data };
           saveAuthState(state.user, state.isAuthenticated);
         }
@@ -282,11 +355,50 @@ const authSlice = createSlice({
       .addCase(updateUser.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
+      })
+
+      // ── forgotPassword ──────────────────────────────────────────────────────
+      .addCase(forgotPassword.pending, (state) => {
+        state.forgotPasswordLoading = true;
+        state.forgotPasswordError = null;
+        state.forgotPasswordSuccess = false;
+      })
+      .addCase(forgotPassword.fulfilled, (state, action) => {
+        state.forgotPasswordLoading = false;
+        state.forgotPasswordSuccess = true;
+        // _sentEmail is injected in the thunk from the original email arg —
+        // this is the most reliable source regardless of interceptor shape.
+        state.forgotPasswordEmail = action.payload?._sentEmail ?? null;
+      })
+      .addCase(forgotPassword.rejected, (state, action) => {
+        state.forgotPasswordLoading = false;
+        state.forgotPasswordError = action.payload;
+      })
+
+      // ── verifyOtp ───────────────────────────────────────────────────────────
+      .addCase(verifyOtp.pending, (state) => {
+        state.otpLoading = true;
+        state.otpError = null;
+        state.otpVerified = false;
+      })
+      .addCase(verifyOtp.fulfilled, (state) => {
+        state.otpLoading = false;
+        state.otpVerified = true;
+      })
+      .addCase(verifyOtp.rejected, (state, action) => {
+        state.otpLoading = false;
+        state.otpError = action.payload;
       });
   },
 });
 
-export const { setAuthHydrated, clearError, updateUserLocal, clearSession } =
-  authSlice.actions;
+export const {
+  setAuthHydrated,
+  clearError,
+  updateUserLocal,
+  clearSession,
+  clearForgotPassword,
+  clearOtp,
+} = authSlice.actions;
 
 export default authSlice.reducer;

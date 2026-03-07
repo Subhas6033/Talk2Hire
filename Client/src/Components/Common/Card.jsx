@@ -5,29 +5,29 @@ import clsx from "clsx";
 const baseStyles = `
   relative
   rounded-2xl
-  backdrop-blur-xl
   transition-all duration-300
 `;
 
 const variants = {
   default: `
-    bg-white/5
-    border border-white/10
-    shadow-[0_0_40px_rgba(155,92,255,0.15)]
+    bg-white
+    border border-[#E8E4DE]
+    shadow-[0_1px_3px_rgba(0,0,0,0.05),0_4px_16px_rgba(0,0,0,0.04)]
   `,
   solid: `
-    bg-[#12091F]
-    border border-purpleMain/40
+    bg-[#F7F5F2]
+    border border-[#E8E4DE]
+    shadow-[0_1px_3px_rgba(0,0,0,0.04)]
   `,
   glow: `
-    bg-white/5
-    border border-purpleGlow/40
-    shadow-[0_0_60px_rgba(155,92,255,0.35)]
+    bg-white
+    border border-indigo-100
+    shadow-[0_0_0_1px_rgba(99,102,241,0.08),0_4px_24px_rgba(99,102,241,0.10)]
   `,
   scrollable: `
-    bg-white/5
-    border border-white/10
-    shadow-[0_0_40px_rgba(155,92,255,0.15)]
+    bg-white
+    border border-[#E8E4DE]
+    shadow-[0_1px_3px_rgba(0,0,0,0.05),0_4px_16px_rgba(0,0,0,0.04)]
     max-h-[80vh]
     overflow-y-auto
   `,
@@ -40,17 +40,13 @@ const paddings = {
   none: "p-0",
 };
 
-//  FIXED: Hidden scrollbar styles
 const scrollbarStyles = `
-  /* Hide scrollbar for Chrome, Safari and Opera */
   [class*="scrollbar-hide"]::-webkit-scrollbar {
     display: none;
   }
-
-  /* Hide scrollbar for IE, Edge and Firefox */
   [class*="scrollbar-hide"] {
-    -ms-overflow-style: none;  /* IE and Edge */
-    scrollbar-width: none;  /* Firefox */
+    -ms-overflow-style: none;
+    scrollbar-width: none;
   }
 `;
 
@@ -62,28 +58,33 @@ export const Card = ({
   hoverable = false,
   scrollable = false,
   maxHeight,
-  hideScrollbar = false, //  NEW: Option to hide scrollbar
+  hideScrollbar = false,
   ...props
 }) => {
   const cardVariant = scrollable ? "scrollable" : variant;
-
   const customStyles = maxHeight ? { maxHeight } : {};
 
   return (
     <>
-      {/*  Inject scrollbar styles */}
       {hideScrollbar && <style>{scrollbarStyles}</style>}
-
       <motion.div
-        whileHover={hoverable ? { y: -4 } : undefined}
+        whileHover={
+          hoverable
+            ? {
+                y: -3,
+                boxShadow:
+                  "0 4px 24px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04)",
+              }
+            : undefined
+        }
         className={clsx(
           baseStyles,
           variants[cardVariant],
           paddings[padding],
-          hoverable && "hover:shadow-[0_0_60px_rgba(155,92,255,0.3)]",
+          hoverable && "cursor-pointer",
           scrollable &&
             !hideScrollbar &&
-            "scrollbar-thin scrollbar-thumb-purpleMain/50 scrollbar-track-transparent",
+            "scrollbar-thin scrollbar-thumb-stone-300 scrollbar-track-transparent",
           scrollable && hideScrollbar && "scrollbar-hide overflow-y-auto",
           className,
         )}
@@ -97,7 +98,12 @@ export const Card = ({
 };
 
 export const CardHeader = ({ children, headerClass }) => (
-  <div className={`mb-4 text-lg font-semibold text-purpleSoft ${headerClass}`}>
+  <div
+    className={clsx(
+      "mb-4 text-base font-semibold text-[#1C1917] font-sora leading-snug",
+      headerClass,
+    )}
+  >
     {children}
   </div>
 );
@@ -116,10 +122,10 @@ export const CardBody = ({
         {hideScrollbar && <style>{scrollbarStyles}</style>}
         <div
           className={clsx(
-            "text-sm text-white/75 overflow-y-auto pr-2",
+            "text-sm text-stone-500 overflow-y-auto pr-2",
             hideScrollbar
               ? "scrollbar-hide"
-              : "scrollbar-thin scrollbar-thumb-purpleMain/50 scrollbar-track-transparent",
+              : "scrollbar-thin scrollbar-thumb-stone-300 scrollbar-track-transparent",
           )}
           style={customStyles}
         >
@@ -129,7 +135,9 @@ export const CardBody = ({
     );
   }
 
-  return <div className="text-sm text-white/75">{children}</div>;
+  return (
+    <div className="text-sm text-stone-500 leading-relaxed">{children}</div>
+  );
 };
 
 export const CardFooter = ({ children, sticky = false }) => (
@@ -137,7 +145,7 @@ export const CardFooter = ({ children, sticky = false }) => (
     className={clsx(
       "mt-6 flex items-center justify-center gap-3",
       sticky &&
-        "sticky bottom-0 bg-[#12091F]/95 backdrop-blur-sm pt-4 -mx-6 px-6 -mb-6 pb-6 border-t border-white/10",
+        "sticky bottom-0 bg-white/95 backdrop-blur-sm pt-4 -mx-6 px-6 -mb-6 pb-6 border-t border-[#E8E4DE]",
     )}
   >
     {children}

@@ -1,53 +1,21 @@
-import React, { useState } from "react";
-import {
-  Card,
-  CardHeader,
-  CardBody,
-  CardFooter,
-} from "../../Components/Common/Card";
-import { Button, Modal } from "../../Components/index";
+import React, { useEffect, useState } from "react";
+import { Modal } from "../../Components/index";
 import { FormField } from "../../Components/Common/Input";
 import { Eye, EyeOff } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { useAuth } from "../../Hooks/useAuthHook";
-import { usePassword } from "../../Hooks/usePassHook";
+import { motion } from "motion/react";
 
+// ── Spinner ───────────────────────────────────────────────────────────────────
 const Loader = () => (
   <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-indigo-300 border-t-indigo-600" />
 );
 
-/* ─── Floating decorative blobs ─── */
-const Blobs = () => (
-  <>
-    {/* Top-left warm peach blob */}
-    <div
-      className="pointer-events-none absolute -top-32 -left-32 h-105 w-105 rounded-full opacity-40 blur-[120px]"
-      style={{
-        background: "radial-gradient(circle, #f9a8d4 0%, #fde68a 100%)",
-      }}
-    />
-    {/* Bottom-right cool indigo blob */}
-    <div
-      className="pointer-events-none absolute -bottom-32 -right-32 h-105 w-105 rounded-full opacity-35 blur-[120px]"
-      style={{
-        background: "radial-gradient(circle, #a5b4fc 0%, #6ee7b7 100%)",
-      }}
-    />
-    {/* Centre subtle sky blob */}
-    <div
-      className="pointer-events-none absolute top-1/2 left-1/2 h-75 w-75 -translate-x-1/2 -translate-y-1/2 rounded-full opacity-20 blur-[100px]"
-      style={{
-        background: "radial-gradient(circle, #bae6fd 0%, #e0e7ff 100%)",
-      }}
-    />
-  </>
-);
-
-/* ─── Subtle dot-grid background ─── */
+// ── Dot-grid texture ──────────────────────────────────────────────────────────
 const DotGrid = () => (
   <div
-    className="pointer-events-none absolute inset-0 opacity-[0.07]"
+    className="pointer-events-none absolute inset-0 opacity-[0.06]"
     style={{
       backgroundImage: "radial-gradient(circle, #6366f1 1px, transparent 1px)",
       backgroundSize: "28px 28px",
@@ -55,29 +23,99 @@ const DotGrid = () => (
   />
 );
 
+// ── Animated colour blob ──────────────────────────────────────────────────────
+const Blob = ({ className, gradient }) => (
+  <div
+    className={`pointer-events-none absolute rounded-full blur-[110px] ${className}`}
+    style={{ background: gradient }}
+  />
+);
+
+// ── Framer Motion fade-up helper ──────────────────────────────────────────────
+const fadeUp = (delay = 0) => ({
+  initial: { opacity: 0, y: 22 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 0.52, ease: [0.22, 1, 0.36, 1], delay },
+});
+
+// ── Reusable primary button ───────────────────────────────────────────────────
+const PrimaryBtn = ({ children, className = "", disabled, ...props }) => (
+  <button
+    disabled={disabled}
+    className={[
+      "inline-flex items-center justify-center gap-2 rounded-xl",
+      "bg-linear-to-br from-indigo-500 to-violet-600 text-white",
+      "text-sm font-semibold tracking-wide",
+      "shadow-[0_4px_15px_rgba(99,102,241,0.35)]",
+      "transition-all duration-200",
+      "hover:-translate-y-px hover:shadow-[0_8px_25px_rgba(99,102,241,0.45)]",
+      "active:translate-y-0",
+      "focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:ring-offset-1",
+      "disabled:opacity-60 disabled:cursor-not-allowed disabled:translate-y-0",
+      "disabled:shadow-[0_4px_15px_rgba(99,102,241,0.35)]",
+      className,
+    ].join(" ")}
+    {...props}
+  >
+    {children}
+  </button>
+);
+
+// ── Reusable ghost button ─────────────────────────────────────────────────────
+const GhostBtn = ({ children, className = "", ...props }) => (
+  <button
+    className={[
+      "inline-flex items-center justify-center gap-1.5 rounded-xl",
+      "px-3 py-1.5 text-sm font-medium",
+      "text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50",
+      "transition-all duration-150",
+      "focus:outline-none focus:ring-2 focus:ring-indigo-300/50",
+      "disabled:opacity-50 disabled:cursor-not-allowed",
+      className,
+    ].join(" ")}
+    {...props}
+  >
+    {children}
+  </button>
+);
+
+// ── Main component ────────────────────────────────────────────────────────────
 const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isMailSending, setIsMailSending] = useState(false);
-  const { login, loading, error } = useAuth();
+
   const {
-    sendForgotPasswordEmail,
-    loading: forgotLoading,
-    error: forgotError,
-  } = usePassword();
+    login,
+    loading,
+    error,
+    forgotPassword,
+    forgotPasswordLoading,
+    forgotPasswordError,
+    forgotPasswordSuccess,
+    forgotPasswordEmail,
+    clearForgotPassword,
+  } = useAuth();
 
   const navigate = useNavigate();
 
+  // Navigate to verify page ONLY after forgotPasswordEmail is confirmed in
+  // Redux state — avoids the race where navigate fires before fulfilled runs.
+  useEffect(() => {
+    if (forgotPasswordSuccess && forgotPasswordEmail) {
+      setIsModalOpen(false);
+      navigate("/forgot-password");
+      // Don't clearForgotPassword here — VerifyPassword still needs the email
+    }
+  }, [forgotPasswordSuccess, forgotPasswordEmail, navigate]);
+
+  // Login form
   const {
     register,
     handleSubmit,
     formState: { errors, isValid },
   } = useForm({
     mode: "onTouched",
-    defaultValues: {
-      email: "",
-      password: "",
-    },
+    defaultValues: { email: "", password: "" },
   });
 
   const onSubmit = async (data) => {
@@ -86,278 +124,115 @@ const Login = () => {
         email: data.email,
         password: data.password,
       }).unwrap();
-      const userRole = result?.data?.role;
-      if (userRole === "company") {
-        navigate("/company/dashboard", { replace: true });
-      } else {
-        navigate("/", { replace: true });
-      }
+      const role = result?.data?.role;
+      navigate(role === "company" ? "/company/dashboard" : "/", {
+        replace: true,
+      });
     } catch (err) {
       console.error("Login failed:", err);
     }
   };
 
+  // Forgot-password form
   const {
     register: registerReset,
     handleSubmit: handleResetSubmit,
     formState: { errors: resetErrors, isValid: isResetValid },
-  } = useForm({
-    mode: "onTouched",
-    defaultValues: {
-      resetEmail: "",
-    },
-  });
+  } = useForm({ mode: "onTouched", defaultValues: { resetEmail: "" } });
+
+  const handleCloseModal = () => {
+    if (forgotPasswordLoading) return;
+    setIsModalOpen(false);
+    clearForgotPassword();
+  };
 
   const onResetSubmit = async (data) => {
     try {
-      setIsMailSending(true);
-      await sendForgotPasswordEmail(data.resetEmail).unwrap();
-      setIsModalOpen(false);
-      navigate("/verify-password");
-    } catch (error) {
-      console.error("Error sending reset mail:", error);
-    } finally {
-      setIsMailSending(false);
+      // Just dispatch — navigation is handled by the useEffect above,
+      // which waits until forgotPasswordEmail is in Redux state.
+      await forgotPassword(data.resetEmail).unwrap();
+    } catch (err) {
+      console.error("Error sending reset mail:", err);
     }
   };
 
   return (
     <>
-      {/* Basic SEO */}
+      {/* SEO */}
       <title>User Login | Talk2Hire Careers Portal</title>
-
       <meta
         name="description"
-        content="Sign in to your Talk2Hire account to continue AI-powered interview practice and track your progress."
+        content="Sign in to your Talk2Hire account to continue AI-powered interview practice."
       />
-
       <meta name="robots" content="noindex, nofollow" />
-
       <link rel="canonical" href="https://talk2hire.com/login" />
-
-      {/* Open Graph */}
       <meta property="og:title" content="User Login | Talk2Hire" />
-      <meta
-        property="og:description"
-        content="Access your Talk2Hire dashboard and continue preparing with AI mock interviews."
-      />
       <meta property="og:type" content="website" />
       <meta property="og:url" content="https://talk2hire.com/login" />
-
-      {/* Twitter */}
       <meta name="twitter:card" content="summary" />
-      <meta name="twitter:title" content="User Login | Talk2Hire" />
-      <meta
-        name="twitter:description"
-        content="Sign in to Talk2Hire and continue your interview preparation journey."
-      />
 
-      {/* ── Keyframe animations injected once ── */}
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500&display=swap');
-
-        .login-root * { font-family: 'DM Sans', sans-serif; }
-        .login-root h1 { font-family: 'Sora', sans-serif; }
-
-        @keyframes fadeUp {
-          from { opacity: 0; transform: translateY(28px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes fadeIn {
-          from { opacity: 0; }
-          to   { opacity: 1; }
-        }
+        @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=DM+Sans:wght@300;400;500&display=swap');
         @keyframes floatA {
-          0%, 100% { transform: translateY(0px) scale(1); }
-          50%       { transform: translateY(-18px) scale(1.04); }
+          0%,100% { transform: translateY(0) scale(1); }
+          50%      { transform: translateY(-18px) scale(1.04); }
         }
         @keyframes floatB {
-          0%, 100% { transform: translateY(0px) scale(1); }
-          50%       { transform: translateY(14px) scale(0.97); }
+          0%,100% { transform: translateY(0) scale(1); }
+          50%      { transform: translateY(14px) scale(0.97); }
         }
-        @keyframes shimmer {
-          0%   { background-position: -200% center; }
-          100% { background-position:  200% center; }
+        @keyframes pulseRing {
+          0%   { box-shadow: 0 0 0 0   rgba(99,102,241,0.3); }
+          70%  { box-shadow: 0 0 0 8px rgba(99,102,241,0);   }
+          100% { box-shadow: 0 0 0 0   rgba(99,102,241,0);   }
         }
-        @keyframes pulse-ring {
-          0%   { box-shadow: 0 0 0 0 rgba(99,102,241,0.25); }
-          70%  { box-shadow: 0 0 0 10px rgba(99,102,241,0); }
-          100% { box-shadow: 0 0 0 0 rgba(99,102,241,0); }
-        }
-
-        .blob-a { animation: floatA 9s ease-in-out infinite; }
-        .blob-b { animation: floatB 11s ease-in-out infinite 1.5s; }
-        .blob-c { animation: floatA 13s ease-in-out infinite 3s; }
-
-        .card-enter  { animation: fadeUp .55s cubic-bezier(.22,1,.36,1) both; }
-        .header-enter{ animation: fadeUp .55s cubic-bezier(.22,1,.36,1) .12s both; }
-        .form-enter  { animation: fadeUp .55s cubic-bezier(.22,1,.36,1) .22s both; }
-        .footer-enter{ animation: fadeUp .55s cubic-bezier(.22,1,.36,1) .32s both; }
-        .bg-enter    { animation: fadeIn .7s ease both; }
-
-        /* Card glass effect */
-        .login-card {
-          background: rgba(255,255,255,0.72);
-          backdrop-filter: blur(24px) saturate(1.6);
-          -webkit-backdrop-filter: blur(24px) saturate(1.6);
-          border: 1px solid rgba(255,255,255,0.85);
-          box-shadow:
-            0 4px 6px -1px rgba(0,0,0,0.04),
-            0 20px 60px -10px rgba(99,102,241,0.10),
-            0 1px 0 0 rgba(255,255,255,0.9) inset;
-          border-radius: 24px;
-        }
-
-        /* Input fields */
-        .login-root input[type="email"],
-        .login-root input[type="password"],
-        .login-root input[type="text"] {
-          background: rgba(248,250,252,0.9);
-          border: 1.5px solid rgba(203,213,225,0.8);
-          border-radius: 12px;
-          color: #1e293b;
-          transition: border-color .2s, box-shadow .2s;
-        }
-        .login-root input:focus {
-          border-color: #6366f1;
-          box-shadow: 0 0 0 3px rgba(99,102,241,0.12);
-          outline: none;
-        }
-        .login-root input::placeholder { color: #94a3b8; }
-
-        /* Labels */
-        .login-root label { color: #475569; font-weight: 500; font-size: 0.85rem; }
-
-        /* Primary button */
-        .btn-primary {
-          background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-          background-size: 200% auto;
-          border-radius: 12px;
-          font-family: 'Sora', sans-serif;
-          font-weight: 600;
-          letter-spacing: .02em;
-          color: #fff;
-          border: none;
-          transition: transform .15s, box-shadow .15s, background-position .4s;
-          box-shadow: 0 4px 15px rgba(99,102,241,0.35);
-        }
-        .btn-primary:hover:not(:disabled) {
-          background-position: right center;
-          transform: translateY(-1px);
-          box-shadow: 0 8px 25px rgba(99,102,241,0.45);
-        }
-        .btn-primary:active:not(:disabled) { transform: translateY(0); }
-        .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
-
-        /* Ghost button */
-        .btn-ghost {
-          background: transparent;
-          color: #6366f1;
-          border-radius: 10px;
-          font-weight: 500;
-          transition: background .15s, color .15s;
-        }
-        .btn-ghost:hover { background: rgba(99,102,241,0.08); }
-
-        /* Divider */
-        .divider {
-          border: none;
-          border-top: 1px solid rgba(203,213,225,0.6);
-          margin: 0;
-        }
-
-        /* Brand badge */
-        .brand-badge {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          background: linear-gradient(135deg,#e0e7ff,#ede9fe);
-          border: 1px solid rgba(129,140,248,0.35);
-          border-radius: 999px;
-          padding: 4px 14px;
-          font-size: 0.75rem;
-          font-weight: 600;
-          letter-spacing: .06em;
-          color: #4f46e5;
-          text-transform: uppercase;
-          font-family: 'Sora', sans-serif;
-        }
-        .brand-dot {
-          width: 6px; height: 6px;
-          background: #6366f1;
-          border-radius: 50%;
-          animation: pulse-ring 2s ease-out infinite;
-        }
-
-        /* Error text */
-        .error-text { color: #ef4444; font-size: 0.8rem; }
-
-        /* Link style */
-        .link-accent { color: #6366f1; font-weight: 500; transition: color .15s; }
-        .link-accent:hover { color: #4f46e5; text-decoration: underline; }
-
-        /* Muted text */
-        .text-muted { color: #64748b; font-size: 0.875rem; }
-
-        /* Eye toggle button */
-        .eye-btn { color: #94a3b8; transition: color .15s; }
-        .eye-btn:hover { color: #6366f1; }
-
-        /* Modal override – white glass */
-        .modal-glass {
-          background: rgba(255,255,255,0.88) !important;
-          backdrop-filter: blur(20px) !important;
-          border: 1px solid rgba(255,255,255,0.9) !important;
-          border-radius: 20px !important;
-          color: #1e293b !important;
-        }
+        .blob-float-a { animation: floatA 9s ease-in-out infinite; }
+        .blob-float-b { animation: floatB 11s ease-in-out 1.5s infinite; }
+        .blob-float-c { animation: floatA 13s ease-in-out 3s infinite; }
+        .badge-pulse   { animation: pulseRing 2s ease-out infinite; }
+        .sora          { font-family: 'Sora', sans-serif; }
+        .dm-sans       { font-family: 'DM Sans', sans-serif; }
       `}</style>
 
-      <section className="login-root min-h-screen flex items-center justify-center px-4 py-16 relative overflow-hidden bg-linear-to-br from-slate-50 via-blue-50/40 to-indigo-50/60 bg-enter">
-        {/* Dot grid texture */}
+      {/* ── Page shell ── */}
+      <section className="dm-sans relative min-h-screen overflow-hidden flex items-center justify-center px-4 py-16 bg-linear-to-br from-slate-50 via-blue-50/40 to-indigo-50/60">
         <DotGrid />
 
-        {/* Animated colour blobs */}
-        <div
-          className="blob-a absolute -top-28 -left-28 h-95 w-95 rounded-full opacity-40 blur-[110px]"
-          style={{
-            background: "radial-gradient(circle, #f9a8d4 0%, #fde68a 100%)",
-          }}
+        {/* Blobs */}
+        <Blob
+          className="blob-float-a -top-28 -left-28 h-96 w-96 opacity-40"
+          gradient="radial-gradient(circle,#f9a8d4 0%,#fde68a 100%)"
         />
-        <div
-          className="blob-b absolute -bottom-28 -right-28 h-95 w-95 rounded-full opacity-35 blur-[110px]"
-          style={{
-            background: "radial-gradient(circle, #a5b4fc 0%, #6ee7b7 100%)",
-          }}
+        <Blob
+          className="blob-float-b -bottom-28 -right-28 h-96 w-96 opacity-35"
+          gradient="radial-gradient(circle,#a5b4fc 0%,#6ee7b7 100%)"
         />
-        <div
-          className="blob-c absolute top-1/2 left-1/2 h-65 w-65 -translate-x-1/2 -translate-y-1/2 rounded-full opacity-20 blur-[90px]"
-          style={{
-            background: "radial-gradient(circle, #bae6fd 0%, #e0e7ff 100%)",
-          }}
+        <Blob
+          className="blob-float-c top-1/2 left-1/2 h-64 w-64 -translate-x-1/2 -translate-y-1/2 opacity-20"
+          gradient="radial-gradient(circle,#bae6fd 0%,#e0e7ff 100%)"
         />
 
-        {/* Card */}
-        <div className="relative w-full max-w-105 card-enter">
-          <div className="login-card p-8 sm:p-10">
+        {/* ── Card ── */}
+        <motion.div className="relative w-full max-w-md" {...fadeUp(0)}>
+          <div className="rounded-3xl p-8 sm:p-10 bg-white/75 backdrop-blur-2xl border border-white/80 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.04),0_20px_60px_-10px_rgba(99,102,241,0.10),inset_0_1px_0_rgba(255,255,255,0.9)]">
             {/* Header */}
-            <div className="text-center mb-8 header-enter">
+            <motion.div className="text-center mb-8" {...fadeUp(0.08)}>
               <div className="flex justify-center mb-5">
-                <span className="brand-badge">
-                  <span className="brand-dot" />
+                <span className="sora inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-linear-to-r from-indigo-100 to-violet-100 border border-indigo-200/60 text-[0.68rem] font-semibold tracking-widest uppercase text-indigo-600">
+                  <span className="badge-pulse w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />
                   Talk2Hire
                 </span>
               </div>
-              <h1 className="text-[1.8rem] font-bold text-slate-800 tracking-tight leading-tight">
+              <h1 className="sora text-[1.75rem] font-bold text-slate-800 tracking-tight leading-tight">
                 Welcome back
               </h1>
-              <p className="mt-2 text-muted">
+              <p className="mt-2 text-sm text-slate-500 leading-relaxed">
                 Sign in to continue your interview preparation
               </p>
-            </div>
+            </motion.div>
 
             {/* Form */}
-            <div className="form-enter">
+            <motion.div {...fadeUp(0.16)}>
               <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
                 <FormField
                   label="Email Address"
@@ -373,11 +248,9 @@ const Login = () => {
                   })}
                 />
 
-                <div className="space-y-1">
-                  <label
-                    className="text-sm font-medium"
-                    style={{ color: "#475569" }}
-                  >
+                {/* Password with toggle */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-semibold text-slate-600 tracking-wide">
                     Password
                   </label>
                   <div className="relative">
@@ -396,102 +269,112 @@ const Login = () => {
                     />
                     <button
                       type="button"
-                      onClick={() => setShowPassword((prev) => !prev)}
-                      className="eye-btn absolute right-3 top-1/2 -translate-y-1/2"
+                      onClick={() => setShowPassword((p) => !p)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-indigo-500 transition-colors duration-150 focus:outline-none"
                     >
-                      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                      {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
                     </button>
                   </div>
                 </div>
 
-                {error && <p className="error-text text-center">{error}</p>}
+                {error && (
+                  <p className="text-center text-xs font-medium text-red-500">
+                    {error}
+                  </p>
+                )}
 
-                <button
+                <PrimaryBtn
                   type="submit"
-                  className="btn-primary w-full flex items-center justify-center gap-2 py-3 px-6 text-sm"
                   disabled={!isValid || loading}
+                  className="w-full py-3 text-sm"
                 >
                   {loading ? (
                     <>
                       <Loader />
-                      Signing in...
+                      Signing in…
                     </>
                   ) : (
                     "Sign In"
                   )}
-                </button>
+                </PrimaryBtn>
               </form>
 
-              {/* Forgot password */}
               <div className="flex justify-center mt-4">
-                <button
-                  className="btn-ghost text-sm px-3 py-1.5"
-                  onClick={() => setIsModalOpen(true)}
-                >
+                <GhostBtn onClick={() => setIsModalOpen(true)}>
                   Forgot password?
-                </button>
+                </GhostBtn>
               </div>
-            </div>
+            </motion.div>
 
             {/* Divider */}
-            <hr className="divider my-6" />
+            <div className="my-6 border-t border-slate-200/70" />
 
             {/* Footer links */}
-            <div className="footer-enter space-y-2 text-center">
-              <p className="text-muted">
-                Don't have an account?{" "}
-                <Link to="/signup" className="link-accent">
-                  Create one
-                </Link>
-              </p>
-              <p className="text-muted">
-                Login as Company?{" "}
-                <Link to="/login/company" className="link-accent">
-                  Sign in
-                </Link>
-              </p>
-              <p className="text-muted">
-                Register as Company?{" "}
-                <Link to="/signup/company" className="link-accent">
-                  Create one
-                </Link>
-              </p>
-            </div>
+            <motion.div className="space-y-2 text-center" {...fadeUp(0.24)}>
+              {[
+                {
+                  text: "Don't have an account?",
+                  label: "Create one",
+                  to: "/signup",
+                },
+                {
+                  text: "Login as Company?",
+                  label: "Sign in",
+                  to: "/login/company",
+                },
+                {
+                  text: "Register as Company?",
+                  label: "Create one",
+                  to: "/signup/company",
+                },
+              ].map(({ text, label, to }) => (
+                <p key={to} className="text-sm text-slate-500">
+                  {text}{" "}
+                  <Link
+                    to={to}
+                    className="font-medium text-indigo-600 hover:text-indigo-700 hover:underline transition-colors duration-150"
+                  >
+                    {label}
+                  </Link>
+                </p>
+              ))}
+            </motion.div>
           </div>
-        </div>
+        </motion.div>
 
-        {/* Forgot password modal */}
+        {/* ── Forgot-password modal ── */}
         <Modal
           isOpen={isModalOpen}
-          onClose={() => !isMailSending && setIsModalOpen(false)}
+          onClose={handleCloseModal}
           title="Reset your password"
           footer={
-            <div className="flex flex-wrap justify-end gap-3 items-center">
-              {forgotError && (
-                <p className="error-text mr-auto">{forgotError}</p>
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              {forgotPasswordError && (
+                <p className="mr-auto text-xs font-medium text-red-500">
+                  {forgotPasswordError}
+                </p>
               )}
-              <button
-                className="btn-ghost text-sm px-4 py-2"
-                onClick={() => setIsModalOpen(false)}
-                disabled={isMailSending}
+              <GhostBtn
+                onClick={handleCloseModal}
+                disabled={forgotPasswordLoading}
               >
                 Cancel
-              </button>
-              <button
+              </GhostBtn>
+              <PrimaryBtn
                 type="submit"
                 form="reset-password-form"
-                className="btn-primary flex items-center gap-2 text-sm px-5 py-2"
-                disabled={!isResetValid || isMailSending}
+                disabled={!isResetValid || forgotPasswordLoading}
+                className="px-5 py-2 text-sm"
               >
-                {isMailSending ? (
+                {forgotPasswordLoading ? (
                   <>
                     <Loader />
-                    Sending...
+                    Sending…
                   </>
                 ) : (
                   "Send reset link"
                 )}
-              </button>
+              </PrimaryBtn>
             </div>
           }
         >
@@ -500,14 +383,14 @@ const Login = () => {
             onSubmit={handleResetSubmit(onResetSubmit)}
             className="space-y-4"
           >
-            <p className="text-muted">
+            <p className="text-sm text-slate-500 leading-relaxed">
               Enter your email address and we'll send you a password reset link.
             </p>
             <FormField
               label="Email Address"
               type="email"
               placeholder="you@example.com"
-              disabled={isMailSending}
+              disabled={forgotPasswordLoading}
               error={resetErrors.resetEmail?.message}
               {...registerReset("resetEmail", {
                 required: "Email is required",

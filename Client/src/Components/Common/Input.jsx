@@ -4,24 +4,25 @@ import clsx from "clsx";
 const baseStyles = [
   "w-full",
   "rounded-xl",
-  "bg-white/5",
-  "backdrop-blur-xl",
+  "bg-[#FAFAF9]",
   "px-4 py-3",
-  "text-sm text-textLight",
-  "placeholder-white/40",
-  "border border-white/10",
+  "text-sm text-[#1C1917]",
+  "placeholder-stone-400",
+  "border border-[#E8E4DE]",
   "transition-all duration-200",
   "focus:outline-none",
-  "focus:border-purpleGlow",
-  "focus:ring-2 focus:ring-purpleGlow/40",
+  "focus:bg-white",
+  "focus:border-indigo-400",
+  "focus:ring-2 focus:ring-indigo-200/60",
   "disabled:opacity-50",
   "disabled:cursor-not-allowed",
 ].join(" ");
 
 const errorStyles = [
-  "border-red-400/50",
+  "border-red-300",
+  "bg-red-50",
   "focus:border-red-400",
-  "focus:ring-red-400/40",
+  "focus:ring-red-200/60",
 ].join(" ");
 
 // Input component
@@ -35,7 +36,7 @@ export const Input = React.forwardRef(
         {...props}
       />
     );
-  }
+  },
 );
 
 Input.displayName = "Input";
@@ -43,21 +44,24 @@ Input.displayName = "Input";
 // FormField component
 export const FormField = ({ id, label, error, helperText, ...props }) => {
   return (
-    <div className="space-y-1">
+    <div className="space-y-1.5">
       {label && (
-        <label htmlFor={id} className="text-sm font-medium text-white/80">
+        <label
+          htmlFor={id}
+          className="block text-xs font-semibold text-stone-600 tracking-wide font-sora"
+        >
           {label}
         </label>
       )}
 
       <Input id={id} error={!!error} {...props} />
 
-      {/* Keep space reserved even if no helper text */}
+      {/* Keep space reserved even if no helper/error text */}
       <p
         className={clsx(
-          "text-xs",
-          error ? "text-red-400" : "text-white/50",
-          !(helperText || error) && "invisible"
+          "text-xs font-sora",
+          error ? "text-red-500" : "text-stone-400",
+          !(helperText || error) && "invisible",
         )}
       >
         {error || helperText || " "}

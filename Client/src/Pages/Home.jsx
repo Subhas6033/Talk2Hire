@@ -135,22 +135,22 @@ const SectionHeading = ({ label, title, subtitle, center = false }) => (
       transition={{ duration: 0.5 }}
     >
       <p
-        className="text-xs uppercase tracking-[0.3em] font-bold text-var(--c-amber) mb-4 flex items-center gap-2"
+        className="text-xs uppercase tracking-[0.3em] font-bold text-[var(--c-amber)] mb-4 flex items-center gap-2"
         style={center ? { justifyContent: "center" } : {}}
       >
-        <span className="w-5 h-px bg-var(--c-amber) inline-block" />
+        <span className="w-5 h-px bg-[var(--c-amber)] inline-block" />
         {label}
-        <span className="w-5 h-px bg-var(--c-amber) inline-block" />
+        <span className="w-5 h-px bg-[var(--c-amber)] inline-block" />
       </p>
       <h2
-        className="text-4xl sm:text-5xl font-black text-var(--c-ink) tracking-tight leading-[1.06] max-w-lg"
+        className="text-4xl sm:text-5xl font-black text-[var(--c-ink)] tracking-tight leading-[1.06] max-w-lg"
         style={center ? { marginInline: "auto" } : {}}
       >
         {title}
       </h2>
       {subtitle && (
         <p
-          className="mt-4 text-var(--c-ink-70) text-base leading-relaxed max-w-xl"
+          className="mt-4 text-[var(--c-ink-70)] text-base leading-relaxed max-w-xl"
           style={center ? { marginInline: "auto" } : {}}
         >
           {subtitle}
@@ -183,35 +183,35 @@ const JobSearchBar = ({ className }) => {
       transition={{ delay: 0.3, duration: 0.5 }}
       onSubmit={handleSearch}
       className={clsx(
-        "flex flex-col sm:flex-row gap-2 p-2 bg-white rounded-2xl border border-var(--c-border) shadow-var(--sh-xl)",
+        "flex flex-col sm:flex-row gap-2 p-2 bg-white rounded-2xl border border-[var(--c-border)] shadow-[var(--sh-xl)]",
         className,
       )}
     >
-      <label className="flex items-center gap-2.5 flex-1 px-3 py-2 rounded-xl bg-var(--c-cream) border border-var(--c-border) focus-within:border-var(--c-slate) focus-within:shadow-[0_0_0_3px_rgba(30,34,53,0.08)] transition-all">
-        <Search size={16} className="text-var(--c-ink-40) shrink-0" />
+      <label className="flex items-center gap-2.5 flex-1 px-3 py-2 rounded-xl bg-[var(--c-cream)] border border-[var(--c-border)] focus-within:border-[var(--c-slate)] focus-within:shadow-[0_0_0_3px_rgba(30,34,53,0.08)] transition-all">
+        <Search size={16} className="text-[var(--c-ink-40)] shrink-0" />
         <input
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Job title, keyword, or company"
-          className="flex-1 bg-transparent text-sm text-var(--c-ink) placeholder:text-var(--c-ink-40) outline-none"
+          className="flex-1 bg-transparent text-sm text-[var(--c-ink)] placeholder:text-[var(--c-ink-40)] outline-none"
         />
       </label>
-      <div className="hidden sm:block w-px self-stretch my-1 bg-var(--c-border)" />
-      <label className="flex items-center gap-2.5 flex-1 px-3 py-2 rounded-xl bg-var(--c-cream) border border-var(--c-border) focus-within:border-var(--c-slate) focus-within:shadow-[0_0_0_3px_rgba(30,34,53,0.08)] transition-all">
-        <MapPin size={16} className="text-var(--c-ink-40) shrink-0" />
+      <div className="hidden sm:block w-px self-stretch my-1 bg-[var(--c-border)]" />
+      <label className="flex items-center gap-2.5 flex-1 px-3 py-2 rounded-xl bg-[var(--c-cream)] border border-[var(--c-border)] focus-within:border-[var(--c-slate)] focus-within:shadow-[0_0_0_3px_rgba(30,34,53,0.08)] transition-all">
+        <MapPin size={16} className="text-[var(--c-ink-40)] shrink-0" />
         <input
           type="text"
           value={location}
           onChange={(e) => setLocation(e.target.value)}
           placeholder="City, state, or remote"
-          className="flex-1 bg-transparent text-sm text-var(--c-ink) placeholder:text-var(--c-ink-40) outline-none"
+          className="flex-1 bg-transparent text-sm text-[var(--c-ink)] placeholder:text-[var(--c-ink-40)] outline-none"
         />
       </label>
       <motion.button
         whileTap={{ scale: 0.97 }}
         type="submit"
-        className="px-7 py-2.5 bg-var(--c-slate) text-white text-sm font-semibold rounded-xl shadow-md hover:bg-var(--c-slate-2) hover:shadow-lg transition-all flex items-center justify-center gap-2 shrink-0"
+        className="px-7 py-2.5 bg-[var(--c-slate)] text-white text-sm font-semibold rounded-xl shadow-md hover:bg-[var(--c-slate-2)] hover:shadow-lg transition-all flex items-center justify-center gap-2 shrink-0"
       >
         <Search size={15} />
       </motion.button>
@@ -293,28 +293,30 @@ const AnimatedJobBoard = memo(() => {
         initial={{ opacity: 0, scale: 0.8 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ delay: 0.6, duration: 0.4, type: "spring" }}
-        className="absolute -top-2 right-2 flex items-center gap-2 bg-white rounded-xl px-3 py-2 border border-var(--c-border) shadow-var(--sh-lg) z-10"
+        className="absolute -top-2 right-2 flex items-center gap-2 bg-white rounded-xl px-3 py-2 border border-[var(--c-border)] shadow-[var(--sh-lg)] z-10"
       >
-        <div className="w-8 h-8 rounded-lg bg-var(--c-slate) flex items-center justify-center">
+        <div className="w-8 h-8 rounded-lg bg-[var(--c-slate)] flex items-center justify-center">
           <Briefcase size={14} className="text-white" />
         </div>
         <div className="leading-none">
-          <p className="text-sm font-bold text-var(--c-ink)">12,400+</p>
-          <p className="text-[10px] text-var(--c-ink-40) mt-0.5">Open roles</p>
+          <p className="text-sm font-bold text-[var(--c-ink)]">12,400+</p>
+          <p className="text-[10px] text-[var(--c-ink-40)] mt-0.5">
+            Open roles
+          </p>
         </div>
       </motion.div>
       <motion.div
         initial={{ opacity: 0, scale: 0.8 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ delay: 0.8, duration: 0.4, type: "spring" }}
-        className="absolute -bottom-2 left-2 flex items-center gap-2 bg-white rounded-xl px-3 py-2 border border-var(--c-border) shadow-var(--sh-lg) z-10"
+        className="absolute -bottom-2 left-2 flex items-center gap-2 bg-white rounded-xl px-3 py-2 border border-[var(--c-border)] shadow-[var(--sh-lg)] z-10"
       >
-        <div className="w-8 h-8 rounded-lg bg-var(--c-sage-l) flex items-center justify-center">
-          <TrendingUp size={14} className="text-var(--c-sage)" />
+        <div className="w-8 h-8 rounded-lg bg-[var(--c-sage-l)] flex items-center justify-center">
+          <TrendingUp size={14} className="text-[var(--c-sage)]" />
         </div>
         <div className="leading-none">
-          <p className="text-sm font-bold text-var(--c-ink)">+840 today</p>
-          <p className="text-[10px] text-var(--c-ink-40) mt-0.5">
+          <p className="text-sm font-bold text-[var(--c-ink)]">+840 today</p>
+          <p className="text-[10px] text-[var(--c-ink-40)] mt-0.5">
             New listings
           </p>
         </div>
@@ -323,12 +325,12 @@ const AnimatedJobBoard = memo(() => {
         initial={{ opacity: 0, x: 40 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ duration: 0.7, ease: "easeOut", delay: 0.1 }}
-        className="relative w-full max-w-105 mx-auto"
+        className="relative w-full max-w-[420px] mx-auto"
       >
         {[2, 1].map((offset) => (
           <div
             key={offset}
-            className="absolute inset-x-0 top-0 bg-white rounded-2xl border border-var(--c-border)"
+            className="absolute inset-x-0 top-0 bg-white rounded-2xl border border-[var(--c-border)]"
             style={{
               transform: `translateY(${offset * 6}px) scale(${1 - offset * 0.03})`,
               opacity: 1 - offset * 0.25,
@@ -344,7 +346,7 @@ const AnimatedJobBoard = memo(() => {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.97 }}
             transition={{ duration: 0.38, ease: "easeInOut" }}
-            className="relative z-20 bg-white rounded-2xl border border-var(--c-border) shadow-var(--sh-lg) p-5"
+            className="relative z-20 bg-white rounded-2xl border border-[var(--c-border)] shadow-[var(--sh-lg)] p-5"
           >
             <div className="flex items-start gap-3 mb-4">
               <div
@@ -360,10 +362,10 @@ const AnimatedJobBoard = memo(() => {
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <p className="font-bold text-var(--c-ink)]text-sm leading-snug">
+                    <p className="font-bold text-[var(--c-ink)] text-sm leading-snug">
                       {mockJobs[activeCard].title}
                     </p>
-                    <p className="text-xs text-var(--c-ink-40) mt-0.5">
+                    <p className="text-xs text-[var(--c-ink-40)] mt-0.5">
                       {mockJobs[activeCard].company}
                     </p>
                   </div>
@@ -374,12 +376,12 @@ const AnimatedJobBoard = memo(() => {
               </div>
             </div>
             <div className="flex flex-wrap gap-2 mb-4">
-              <span className="flex items-center gap-1 text-xs text-var(--c-ink-70)">
-                <MapPin size={11} className="text-var(--c-ink-40)" />
+              <span className="flex items-center gap-1 text-xs text-[var(--c-ink-70)]">
+                <MapPin size={11} className="text-[var(--c-ink-40)]" />
                 {mockJobs[activeCard].location}
               </span>
-              <span className="text-var(--c-ink-40)">·</span>
-              <span className="text-xs font-semibold text-var(--c-ink)">
+              <span className="text-[var(--c-ink-40)]">·</span>
+              <span className="text-xs font-semibold text-[var(--c-ink)]">
                 {mockJobs[activeCard].salary}
               </span>
             </div>
@@ -393,18 +395,18 @@ const AnimatedJobBoard = memo(() => {
                 {mockJobs[activeCard].type}
               </Pill>
             </div>
-            <div className="flex items-center justify-between pt-3 border-t border-var(--c-border)">
-              <span className="flex items-center gap-1 text-[11px] text-var(--c-ink-40)">
+            <div className="flex items-center justify-between pt-3 border-t border-[var(--c-border)]">
+              <span className="flex items-center gap-1 text-[11px] text-[var(--c-ink-40)]">
                 <Clock size={11} />
                 {mockJobs[activeCard].posted}
               </span>
-              <span className="flex items-center gap-1 text-[11px] text-var(--c-ink-40)">
+              <span className="flex items-center gap-1 text-[11px] text-[var(--c-ink-40)]">
                 <Users size={11} />
                 {mockJobs[activeCard].applicants} applicants
               </span>
               <motion.button
                 whileTap={{ scale: 0.96 }}
-                className="px-4 py-1.5 bg-var(--c-slate) text-white text-[11px] font-semibold rounded-lg hover:bg-var(--c-slate-2) transition-colors"
+                className="px-4 py-1.5 bg-[var(--c-slate)] text-white text-[11px] font-semibold rounded-lg hover:bg-[var(--c-slate-2)] transition-colors"
               >
                 Quick Apply
               </motion.button>
@@ -419,8 +421,8 @@ const AnimatedJobBoard = memo(() => {
               className={clsx(
                 "rounded-full transition-all duration-300",
                 i === activeCard
-                  ? "w-5 h-2 bg-var(--c-slate)"
-                  : "w-2 h-2 bg-var(--c-ink-12) hover:bg-var(--c-ink-40)",
+                  ? "w-5 h-2 bg-[var(--c-slate)]"
+                  : "w-2 h-2 bg-[var(--c-ink-12)] hover:bg-[var(--c-ink-40)]",
               )}
             />
           ))}
@@ -497,7 +499,7 @@ export const FeaturesSection = () => {
   return (
     <section
       ref={ref}
-      className="relative py-28 overflow-hidden bg-var(--c-cream) home-root"
+      className="relative py-28 overflow-hidden bg-[var(--c-cream)] home-root"
     >
       <style>{TOKENS}</style>
 
@@ -511,7 +513,7 @@ export const FeaturesSection = () => {
         }}
       />
       <div
-        className="absolute top-0 right-0 w-125 h-125 rounded-full blur-[160px] opacity-30 pointer-events-none"
+        className="absolute top-0 right-0 w-[500px] h-[500px] rounded-full blur-[160px] opacity-30 pointer-events-none"
         style={{
           background:
             "radial-gradient(circle, var(--c-violet-l), transparent 70%)",
@@ -534,7 +536,7 @@ export const FeaturesSection = () => {
           >
             <Link
               to="/jobs"
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-var(--c-border) bg-white text-sm font-semibold text-var(--c-ink-70) hover:text-var(--c-ink) hover:shadow-var(--sh-md) transition-all shadow-var(--sh-sm)"
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-[var(--c-border)] bg-white text-sm font-semibold text-[var(--c-ink-70)] hover:text-[var(--c-ink)] hover:shadow-[var(--sh-md)] transition-all shadow-[var(--sh-sm)]"
             >
               Browse all features <ChevronRight size={15} />
             </Link>
@@ -561,8 +563,8 @@ export const FeaturesSection = () => {
                   transition={{ type: "spring", stiffness: 320, damping: 20 }}
                   className={clsx(
                     "feature-card h-full group relative overflow-hidden",
-                    "bg-white rounded-3xl border border-var(--c-border)",
-                    "shadow-var(--sh-sm) hover:shadow-var(--sh-lg) transition-shadow duration-300",
+                    "bg-white rounded-3xl border border-[var(--c-border)]",
+                    "shadow-[var(--sh-sm)] hover:shadow-[var(--sh-lg)] transition-shadow duration-300",
                     "p-7 flex flex-col gap-5",
                     // Make first and last card span wider on large screens
                     i === 0 && "lg:col-span-1",
@@ -588,16 +590,16 @@ export const FeaturesSection = () => {
 
                   {/* Content */}
                   <div className="flex-1 relative">
-                    <h3 className="font-bold text-var(--c-ink) text-[16px] mb-2.5 leading-snug tracking-tight group-hover:text-var(--c-slate) transition-colors">
+                    <h3 className="font-bold text-[var(--c-ink)] text-[16px] mb-2.5 leading-snug tracking-tight group-hover:text-[var(--c-slate)] transition-colors">
                       {item.title}
                     </h3>
-                    <p className="text-sm text-var(--c-ink-70) leading-relaxed">
+                    <p className="text-sm text-[var(--c-ink-70)] leading-relaxed">
                       {item.desc}
                     </p>
                   </div>
 
                   {/* Stat chip */}
-                  <div className="relative flex items-center justify-between pt-4 border-t border-var(--c-border)">
+                  <div className="relative flex items-center justify-between pt-4 border-t border-[var(--c-border)]">
                     <span
                       className="text-xs font-bold"
                       style={{ color: item.color }}
@@ -668,8 +670,8 @@ export const TrustedCompaniesSlider = memo(() => {
       <style>{TOKENS}</style>
 
       {/* Subtle top/bottom rule lines */}
-      <div className="absolute top-0 left-0 right-0 h-px bg-linear-to-r from-transparent via-var(--c-border) to-transparent" />
-      <div className="absolute bottom-0 left-0 right-0 h-px bg-linear-to-r from-transparent via-var(--c-border) to-transparent" />
+      <div className="absolute top-0 left-0 right-0 h-px bg-linear-to-r from-transparent via-[var(--c-border)] to-transparent" />
+      <div className="absolute bottom-0 left-0 right-0 h-px bg-linear-to-r from-transparent via-[var(--c-border)] to-transparent" />
 
       <div className="relative mx-auto max-w-7xl px-6">
         {/* Header row */}
@@ -679,11 +681,11 @@ export const TrustedCompaniesSlider = memo(() => {
             animate={inView ? { opacity: 1, y: 0 } : {}}
             transition={{ duration: 0.5 }}
           >
-            <p className="text-xs uppercase tracking-[0.3em] font-bold text-var(--c-amber) mb-2 flex items-center gap-2">
-              <span className="w-5 h-px bg-var(--c-amber) inline-block" /> Our
+            <p className="text-xs uppercase tracking-[0.3em] font-bold text-[var(--c-amber)] mb-2 flex items-center gap-2">
+              <span className="w-5 h-px bg-[var(--c-amber)] inline-block" /> Our
               Partners
             </p>
-            <h2 className="text-2xl sm:text-3xl font-black text-var(--c-ink) tracking-tight">
+            <h2 className="text-2xl sm:text-3xl font-black text-[var(--c-ink)] tracking-tight">
               Top companies hiring now
             </h2>
           </motion.div>
@@ -705,7 +707,7 @@ export const TrustedCompaniesSlider = memo(() => {
                   duration: 0.4,
                   type: "spring",
                 }}
-                className="flex items-center gap-2.5 px-4 py-2.5 rounded-2xl border border-var(--c-border) shadow-var(--sh-sm)"
+                className="flex items-center gap-2.5 px-4 py-2.5 rounded-2xl border border-[var(--c-border)] shadow-[var(--sh-sm)]"
                 style={{ backgroundColor: s.color }}
               >
                 <span
@@ -714,7 +716,7 @@ export const TrustedCompaniesSlider = memo(() => {
                 >
                   {s.value}
                 </span>
-                <span className="text-[11px] font-medium text-var(--c-ink-70) leading-tight max-w-70px">
+                <span className="text-[11px] font-medium text-[var(--c-ink-70)] leading-tight max-w-[70px]">
                   {s.label}
                 </span>
               </motion.div>
@@ -723,9 +725,9 @@ export const TrustedCompaniesSlider = memo(() => {
         </div>
 
         {/* Slider */}
-        <div className="relative overflow-hidden rounded-2xl border border-var(--c-border) bg-var(--c-cream) p-4 shadow-var(--sh-sm)">
-          <div className="pointer-events-none absolute inset-y-0 left-0 w-20 z-10 bg-linear-to-r from-var(--c-cream) to-transparent" />
-          <div className="pointer-events-none absolute inset-y-0 right-0 w-20 z-10 bg-linear-to-l from-var(--c-cream) to-transparent" />
+        <div className="relative overflow-hidden rounded-2xl border border-[var(--c-border)] bg-[var(--c-cream)] p-4 shadow-[var(--sh-sm)]">
+          <div className="pointer-events-none absolute inset-y-0 left-0 w-20 z-10 bg-linear-to-r from-[var(--c-cream)] to-transparent" />
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-20 z-10 bg-linear-to-l from-[var(--c-cream)] to-transparent" />
 
           <motion.div
             className="flex gap-4 marquee-track"
@@ -737,7 +739,7 @@ export const TrustedCompaniesSlider = memo(() => {
                 key={`${c.name}-${i}`}
                 whileHover={{ y: -4, scale: 1.04, backgroundColor: "#ffffff" }}
                 transition={{ type: "spring", stiffness: 400, damping: 22 }}
-                className="shrink-0 w-40 h-16 flex items-center justify-center bg-white rounded-xl border border-var(--c-border) shadow-var(--sh-sm) cursor-pointer transition-colors"
+                className="shrink-0 w-40 h-16 flex items-center justify-center bg-white rounded-xl border border-[var(--c-border)] shadow-[var(--sh-sm)] cursor-pointer transition-colors"
               >
                 <img
                   src={c.logo}
@@ -760,12 +762,12 @@ export const TrustedCompaniesSlider = memo(() => {
           transition={{ delay: 0.4, duration: 0.5 }}
           className="mt-8 flex items-center justify-center gap-4"
         >
-          <p className="text-sm text-var(--c-ink-40)">
+          <p className="text-sm text-[var(--c-ink-40)]">
             Want to post a job and reach 50k+ candidates?
           </p>
           <Link
             to="/company/login"
-            className="inline-flex items-center gap-1.5 text-sm font-semibold text-var(--c-slate) hover:text-var(--c-slate-2) transition-colors"
+            className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--c-slate)] hover:text-[var(--c-slate-2)] transition-colors"
           >
             List your company <ChevronRight size={14} />
           </Link>
@@ -865,7 +867,7 @@ const FeaturedTestimonial = ({ item }) => (
           <Star
             key={i}
             size={16}
-            className="fill-var(--c-amber) text-var(--c-amber)"
+            className="fill-[var(--c-amber)] text-[var(--c-amber)]"
           />
         ))}
       </div>
@@ -904,12 +906,12 @@ const TestimonialCard = memo(({ item, index }) => (
     whileInView={{ opacity: 1, y: 0 }}
     viewport={{ once: true }}
     transition={{ delay: index * 0.1, duration: 0.5 }}
-    className="min-w-75 max-w-75"
+    className="min-w-[300px] max-w-[300px]"
   >
     <motion.div
       whileHover={{ y: -6 }}
       transition={{ type: "spring", stiffness: 320, damping: 20 }}
-      className="h-full bg-white rounded-3xl border border-var(--c-border) shadow-var(--sh-sm) hover:shadow-var(--sh-lg) p-6 flex flex-col gap-4 relative overflow-hidden transition-shadow duration-300 group"
+      className="h-full bg-white rounded-3xl border border-[var(--c-border)] shadow-[var(--sh-sm)] hover:shadow-[var(--sh-lg)] p-6 flex flex-col gap-4 relative overflow-hidden transition-shadow duration-300 group"
     >
       {/* Top accent line */}
       <div
@@ -927,10 +929,10 @@ const TestimonialCard = memo(({ item, index }) => (
             {item.avatar}
           </div>
           <div>
-            <p className="font-bold text-var(--c-ink) text-sm leading-none">
+            <p className="font-bold text-[var(--c-ink)] text-sm leading-none">
               {item.name}
             </p>
-            <p className="text-[11px] text-var(--c-ink-40) mt-0.5">
+            <p className="text-[11px] text-[var(--c-ink-40)] mt-0.5">
               {item.company}
             </p>
           </div>
@@ -941,21 +943,21 @@ const TestimonialCard = memo(({ item, index }) => (
             <Star
               key={i}
               size={11}
-              className="text-var(--c-amber) fill-var(--c-amber)"
+              className="text-[var(--c-amber)] fill-[var(--c-amber)]"
             />
           ))}
         </div>
       </div>
 
-      <p className="text-sm text-var(--c-ink-70) leading-relaxed flex-1">
+      <p className="text-sm text-[var(--c-ink-70)] leading-relaxed flex-1">
         "{item.quote}"
       </p>
 
-      <div className="flex items-center justify-between pt-3 border-t border-var(--c-border)">
+      <div className="flex items-center justify-between pt-3 border-t border-[var(--c-border)]">
         <Pill color={item.outcomeColor} className="text-[10px]">
           <CheckCircle size={9} /> {item.outcome}
         </Pill>
-        <p className="text-[10px] text-var(--c-ink-40)">{item.role}</p>
+        <p className="text-[10px] text-[var(--c-ink-40)]">{item.role}</p>
       </div>
     </motion.div>
   </motion.div>
@@ -968,7 +970,7 @@ export const TestimonialsSlider = memo(() => {
   return (
     <section
       ref={ref}
-      className="relative py-28 overflow-hidden bg-var(--c-cream) home-root"
+      className="relative py-28 overflow-hidden bg-[var(--c-cream)] home-root"
     >
       <style>{TOKENS}</style>
 
@@ -981,7 +983,7 @@ export const TestimonialsSlider = memo(() => {
         }}
       />
       <div
-        className="absolute bottom-0 left-1/2 -translate-x-1/2 w-175 h-75 rounded-full blur-[120px] opacity-20 pointer-events-none"
+        className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[700px] h-[300px] rounded-full blur-[120px] opacity-20 pointer-events-none"
         style={{
           background:
             "radial-gradient(circle, var(--c-violet-l), transparent 70%)",
@@ -1055,13 +1057,13 @@ export const TestimonialsSlider = memo(() => {
                 duration: 0.4,
                 type: "spring",
               }}
-              className="flex flex-col items-center justify-center gap-2 p-5 rounded-2xl bg-white border border-var(--c-border) shadow-var(--sh-sm) text-center"
+              className="flex flex-col items-center justify-center gap-2 p-5 rounded-2xl bg-white border border-[var(--c-border)] shadow-[var(--sh-sm)] text-center"
             >
               <span className="text-2xl">{stat.icon}</span>
-              <p className="text-2xl font-black text-var(--c-ink)">
+              <p className="text-2xl font-black text-[var(--c-ink)]">
                 {stat.value}
               </p>
-              <p className="text-xs text-var(--c-ink-40) font-medium">
+              <p className="text-xs text-[var(--c-ink-40)] font-medium">
                 {stat.label}
               </p>
             </motion.div>
@@ -1089,11 +1091,11 @@ export const CTABanner = () => (
       }}
     />
     <div
-      className="absolute top-[-30%] left-1/2 -translate-x-1/2 w-175 h-100 rounded-full blur-[160px] opacity-20 pointer-events-none"
+      className="absolute top-[-30%] left-1/2 -translate-x-1/2 w-[700px] h-[400px] rounded-full blur-[160px] opacity-20 pointer-events-none"
       style={{ backgroundColor: "var(--c-amber)" }}
     />
     <div
-      className="absolute bottom-[-20%] right-[-5%] w-100 h-100 rounded-full blur-[120px] opacity-10 pointer-events-none"
+      className="absolute bottom-[-20%] right-[-5%] w-[400px] h-[400px] rounded-full blur-[120px] opacity-10 pointer-events-none"
       style={{ backgroundColor: "var(--c-violet)" }}
     />
 
@@ -1139,7 +1141,7 @@ export const CTABanner = () => (
         ].map(({ icon: Icon, value, label }) => (
           <div key={label} className="text-center">
             <div className="flex items-center justify-center gap-1.5 mb-1">
-              <Icon size={13} className="text-var(--c-amber)" />
+              <Icon size={13} className="text-[var(--c-amber)]" />
               <p className="text-2xl font-black text-white">{value}</p>
             </div>
             <p className="text-xs text-white/35">{label}</p>
@@ -1161,7 +1163,7 @@ export const HeroSection = () => {
     "DevOps",
   ];
   return (
-    <section className="relative overflow-hidden bg-var(--c-cream) home-root">
+    <section className="relative overflow-hidden bg-[var(--c-cream)] home-root">
       <style>{TOKENS}</style>
       <div
         className="absolute inset-0 opacity-50"
@@ -1171,8 +1173,8 @@ export const HeroSection = () => {
           backgroundSize: "52px 52px",
         }}
       />
-      <div className="absolute top-[-20%] right-[-8%] w-130 h-130 rounded-full bg-amber-100 blur-[140px] opacity-70 pointer-events-none" />
-      <div className="absolute bottom-[-10%] left-[-5%] w-95 h-95 rounded-full bg-slate-100 blur-[100px] opacity-80 pointer-events-none" />
+      <div className="absolute top-[-20%] right-[-8%] w-[520px] h-[520px] rounded-full bg-amber-100 blur-[140px] opacity-70 pointer-events-none" />
+      <div className="absolute bottom-[-10%] left-[-5%] w-[380px] h-[380px] rounded-full bg-slate-100 blur-[100px] opacity-80 pointer-events-none" />
 
       <div className="relative mx-auto max-w-7xl px-6 pt-24 pb-28">
         <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-20">
@@ -1185,7 +1187,7 @@ export const HeroSection = () => {
               <Pill color="amber" className="mb-6">
                 <Sparkles size={11} /> Now with AI Interview Coaching
               </Pill>
-              <h1 className="text-[clamp(2.6rem,5vw,3.8rem)] font-black leading-[1.08] tracking-tight text-var(--c-ink) mb-6">
+              <h1 className="text-[clamp(2.6rem,5vw,3.8rem)] font-black leading-[1.08] tracking-tight text-[var(--c-ink)] mb-6">
                 Find Work That{" "}
                 <span className="relative inline-block">
                   Fits
@@ -1214,19 +1216,19 @@ export const HeroSection = () => {
                 <br />
                 <span className="text-indigo-600">Your Ambition.</span>
               </h1>
-              <p className="text-var(--c-ink-70) text-base leading-relaxed mb-8 max-w-md">
+              <p className="text-[var(--c-ink-70)] text-base leading-relaxed mb-8 max-w-md">
                 Discover roles at top-tier companies, practice with AI interview
                 coaching, and land offers faster — all in one place.
               </p>
               <JobSearchBar className="mb-4" />
               <div className="flex flex-wrap items-center gap-2 mt-4">
-                <span className="text-xs text-var(--c-ink-40) font-medium">
+                <span className="text-xs text-[var(--c-ink-40)] font-medium">
                   Trending:
                 </span>
                 {trendingSearches.map((s) => (
                   <button
                     key={s}
-                    className="px-3 py-1 rounded-full bg-white border border-var(--c-border) text-xs text-var(--c-ink-70) hover:text-var(--c-ink) hover:border-var(--c-ink-40) transition-all shadow-var(--sh-sm)"
+                    className="px-3 py-1 rounded-full bg-white border border-[var(--c-border)] text-xs text-[var(--c-ink-70)] hover:text-[var(--c-ink)] hover:border-[var(--c-ink-40)] transition-all shadow-[var(--sh-sm)]"
                   >
                     {s}
                   </button>
@@ -1237,7 +1239,7 @@ export const HeroSection = () => {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.5, duration: 0.5 }}
-              className="mt-10 flex items-center gap-4 pt-8 border-t border-var(--c-border)"
+              className="mt-10 flex items-center gap-4 pt-8 border-t border-[var(--c-border)]"
             >
               <div className="flex -space-x-2">
                 {["#6366f1", "#ec4899", "#f59e0b", "#10b981"].map((c, i) => (
@@ -1256,12 +1258,12 @@ export const HeroSection = () => {
                     <Star
                       key={i}
                       size={12}
-                      className="text-var(--c-amber) fill-var(--c-amber)"
+                      className="text-[var(--c-amber)] fill-[var(--c-amber)]"
                     />
                   ))}
                 </div>
-                <p className="text-xs text-var(--c-ink-40)">
-                  <span className="font-bold text-var(--c-ink)">8,200+</span>{" "}
+                <p className="text-xs text-[var(--c-ink-40)]">
+                  <span className="font-bold text-[var(--c-ink)]">8,200+</span>{" "}
                   professionals hired this year
                 </p>
               </div>
@@ -1271,10 +1273,12 @@ export const HeroSection = () => {
                   { value: "12k+", label: "Open Roles" },
                 ].map(({ value, label }) => (
                   <div key={label} className="text-center">
-                    <p className="text-lg font-black text-var(--c-ink)">
+                    <p className="text-lg font-black text-[var(--c-ink)]">
                       {value}
                     </p>
-                    <p className="text-[11px] text-var(--c-ink-40)">{label}</p>
+                    <p className="text-[11px] text-[var(--c-ink-40)]">
+                      {label}
+                    </p>
                   </div>
                 ))}
               </div>
