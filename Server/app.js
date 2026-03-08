@@ -16,6 +16,7 @@ const interviewVideoUpload = require("./Routes/interviewRecording.routes.js");
 const violationsRoutes = require("./Routes/violation.routes.js");
 const applicationRoutes = require("./Admin/routes/application.routes.js");
 const userReviewRoutes = require("./Routes/review.routes.js");
+const newsLetterRoutes = require("./Routes/newLetter.routes.js");
 
 const app = express();
 
@@ -112,6 +113,7 @@ app.use("/api/v1/hiring", hiringRoutes);
 app.use("/api/v1/video", interviewVideoUpload);
 app.use("/api/v1/applications", applicationRoutes);
 app.use("/api/v1/review", userReviewRoutes);
+app.use("/api/v1/news", newsLetterRoutes);
 
 // Company Routes
 app.use("/api/v1/company/auth", companyAuthRoutes);

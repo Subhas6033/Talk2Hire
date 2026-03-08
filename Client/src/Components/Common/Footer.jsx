@@ -1,4 +1,4 @@
-import { href, Link } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { motion, useMotionValue, useTransform, useSpring } from "framer-motion";
 import { useRef, useState } from "react";
 import {
@@ -14,10 +14,14 @@ import {
   Instagram,
   Globe,
   Youtube,
+  CheckCircle,
+  Loader,
 } from "lucide-react";
+import axios from "axios";
+const backendUrl = `${import.meta.env.VITE_BACKEND_URL}/api/v1/news`;
 
 /* ─────────────────────────────────────────────
-   Design tokens (same as HomeComponents)
+   Design tokens
 ───────────────────────────────────────────── */
 const TOKENS = `
   @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@400;500;600;700&display=swap');
@@ -81,44 +85,32 @@ const WaveSocials = () => {
 
   const getY = (i) => {
     if (hoveredIndex === null) return 0;
-    const dist = Math.abs(i - hoveredIndex);
-    if (dist === 0) return -10;
-    if (dist === 1) return -5;
-    if (dist === 2) return -2;
-    return 0;
+    const d = Math.abs(i - hoveredIndex);
+    return d === 0 ? -10 : d === 1 ? -5 : d === 2 ? -2 : 0;
   };
-
   const getScale = (i) => {
     if (hoveredIndex === null) return 1;
-    const dist = Math.abs(i - hoveredIndex);
-    if (dist === 0) return 1.22;
-    if (dist === 1) return 1.1;
-    if (dist === 2) return 1.04;
-    return 1;
+    const d = Math.abs(i - hoveredIndex);
+    return d === 0 ? 1.22 : d === 1 ? 1.1 : d === 2 ? 1.04 : 1;
   };
-
   const getBg = (i) => {
     if (hoveredIndex === null) return "#faf9f7";
-    const dist = Math.abs(i - hoveredIndex);
-    if (dist === 0) return "#fef3c7";
-    if (dist === 1) return "#fffbf0";
-    return "#faf9f7";
+    const d = Math.abs(i - hoveredIndex);
+    return d === 0 ? "#fef3c7" : d === 1 ? "#fffbf0" : "#faf9f7";
   };
-
   const getBorder = (i) => {
     if (hoveredIndex === null) return "rgba(13,13,18,0.09)";
-    const dist = Math.abs(i - hoveredIndex);
-    if (dist === 0) return "rgba(217,119,6,0.45)";
-    if (dist === 1) return "rgba(217,119,6,0.22)";
-    return "rgba(13,13,18,0.09)";
+    const d = Math.abs(i - hoveredIndex);
+    return d === 0
+      ? "rgba(217,119,6,0.45)"
+      : d === 1
+        ? "rgba(217,119,6,0.22)"
+        : "rgba(13,13,18,0.09)";
   };
-
   const getColor = (i) => {
     if (hoveredIndex === null) return "rgba(13,13,18,0.50)";
-    const dist = Math.abs(i - hoveredIndex);
-    if (dist === 0) return "#d97706";
-    if (dist === 1) return "#f59e0b";
-    return "rgba(13,13,18,0.50)";
+    const d = Math.abs(i - hoveredIndex);
+    return d === 0 ? "#d97706" : d === 1 ? "#f59e0b" : "rgba(13,13,18,0.50)";
   };
 
   return (
@@ -167,11 +159,92 @@ const WaveSocials = () => {
 };
 
 /* ─────────────────────────────────────────────
+   Newsletter Subscribe Form
+───────────────────────────────────────────── */
+const NewsletterForm = () => {
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState("idle"); // idle | loading | success | error
+  const [message, setMessage] = useState("");
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setStatus("error");
+      setMessage("Please enter a valid email.");
+      return;
+    }
+    setStatus("loading");
+    try {
+      // POST to backend controller
+      const res = await axios.post(`${backendUrl}/subscribe`, { email });
+      setStatus("success");
+      setMessage(res.data.message || "You're subscribed!");
+      setEmail("");
+    } catch (err) {
+      setStatus("error");
+      setMessage(
+        err?.response?.data?.message || "Something went wrong. Try again.",
+      );
+    }
+  };
+
+  if (status === "success") {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="flex items-center gap-2.5 max-w-xs px-4 py-3 rounded-xl bg-emerald-50 border border-emerald-200"
+      >
+        <CheckCircle size={15} className="text-emerald-500 shrink-0" />
+        <p className="text-xs text-emerald-700 font-medium">{message}</p>
+      </motion.div>
+    );
+  }
+
+  return (
+    <div className="max-w-xs">
+      <form onSubmit={handleSubmit} className="flex gap-2">
+        <div
+          className={`flex-1 flex items-center gap-2 px-3 py-2 rounded-xl bg-[#faf9f7] border transition-all
+            ${status === "error" ? "border-red-300 shadow-[0_0_0_3px_rgba(239,68,68,0.07)]" : "border-[rgba(13,13,18,0.09)] focus-within:border-[#1e2235] focus-within:shadow-[0_0_0_3px_rgba(30,34,53,0.07)]"}`}
+        >
+          <Mail size={13} className="text-[rgba(13,13,18,0.35)] shrink-0" />
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              if (status === "error") setStatus("idle");
+            }}
+            placeholder="your@email.com"
+            className="flex-1 bg-transparent text-xs text-[#0d0d12] placeholder:text-[rgba(13,13,18,0.35)] outline-none"
+          />
+        </div>
+        <motion.button
+          whileTap={{ scale: 0.96 }}
+          type="submit"
+          disabled={status === "loading"}
+          className="px-3.5 py-2 rounded-xl bg-[#1e2235] text-white text-xs font-semibold hover:bg-[#2d3352] transition-colors shrink-0 disabled:opacity-60"
+        >
+          {status === "loading" ? (
+            <Loader size={14} className="animate-spin" />
+          ) : (
+            <ArrowRight size={14} />
+          )}
+        </motion.button>
+      </form>
+      {status === "error" && (
+        <p className="mt-1.5 text-[11px] text-red-500 pl-1">{message}</p>
+      )}
+    </div>
+  );
+};
+
+/* ─────────────────────────────────────────────
    Watermark — original mouse-spotlight reveal
 ───────────────────────────────────────────── */
 const GlowWatermark = ({ mouseX }) => {
   const smoothX = useSpring(mouseX, { stiffness: 100, damping: 22 });
-
   const maskImage = useTransform(
     smoothX,
     (x) =>
@@ -180,7 +253,6 @@ const GlowWatermark = ({ mouseX }) => {
 
   return (
     <div className="relative h-[clamp(100px,18vw,280px)] select-none pointer-events-none overflow-hidden">
-      {/* Layer 1 — always-visible ghost stroke */}
       <h1
         className="absolute bottom-[-4%] left-0 w-full text-center font-extrabold tracking-tighter leading-none"
         style={{
@@ -191,8 +263,6 @@ const GlowWatermark = ({ mouseX }) => {
       >
         Talk2Hire
       </h1>
-
-      {/* Layer 2 — filled ghost, very faint */}
       <h1
         className="absolute bottom-[-4%] left-0 w-full text-center font-extrabold tracking-tighter leading-none"
         style={{
@@ -202,8 +272,6 @@ const GlowWatermark = ({ mouseX }) => {
       >
         Talk2Hire
       </h1>
-
-      {/* Layer 3 — amber gradient fill, medium opacity */}
       <h1
         className="absolute bottom-[-4%] left-0 w-full text-center font-extrabold tracking-tighter leading-none"
         style={{
@@ -218,8 +286,6 @@ const GlowWatermark = ({ mouseX }) => {
       >
         Talk2Hire
       </h1>
-
-      {/* Layer 4 — crisp ink text revealed by mouse spotlight */}
       <motion.h1
         style={{
           WebkitMaskImage: maskImage,
@@ -230,8 +296,6 @@ const GlowWatermark = ({ mouseX }) => {
       >
         Talk2Hire
       </motion.h1>
-
-      {/* Layer 5 — amber shimmer revealed by spotlight */}
       <motion.h1
         style={{
           WebkitMaskImage: maskImage,
@@ -258,7 +322,6 @@ const GlowWatermark = ({ mouseX }) => {
 const Footer = () => {
   const ref = useRef(null);
   const mouseX = useMotionValue(-600);
-
   const handleMouseMove = (e) => {
     const rect = ref.current?.getBoundingClientRect();
     if (rect) mouseX.set(e.clientX - rect.left);
@@ -271,22 +334,14 @@ const Footer = () => {
       className="footer-root relative overflow-hidden bg-white border-t border-[rgba(13,13,18,0.09)]"
     >
       <style>{TOKENS}</style>
-
-      {/* ── Top accent bar ── */}
       <div className="h-0.5 w-full bg-linear-to-r from-transparent via-[#d97706] to-transparent opacity-30" />
-
-      {/* ── Subtle radial glows ── */}
       <div className="absolute pointer-events-none inset-0 bg-[radial-gradient(ellipse_at_50%_100%,rgba(217,119,6,0.06),transparent_65%)]" />
       <div className="absolute pointer-events-none inset-0 bg-[radial-gradient(ellipse_at_0%_80%,rgba(124,58,237,0.04),transparent_55%)]" />
 
       <div className="relative mx-auto max-w-7xl px-6 pt-20 pb-0">
-        {/* ════════════════════════════════════════
-            TOP GRID
-        ════════════════════════════════════════ */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-12 pb-16 border-b border-[rgba(13,13,18,0.07)]">
           {/* Brand col */}
           <div className="lg:col-span-2">
-            {/* Logo */}
             <div className="flex items-center gap-2.5 mb-5">
               <div
                 className="w-9 h-9 rounded-xl flex items-center justify-center shadow-sm"
@@ -300,41 +355,18 @@ const Footer = () => {
                 Talk2Hire
               </span>
             </div>
-
             <p className="text-sm leading-relaxed text-[rgba(13,13,18,0.60)] max-w-xs mb-6">
               The AI-powered careers platform that matches you to verified
               roles, prepares you for interviews, and gets you hired faster.
             </p>
 
-            {/* Newsletter */}
+            {/* ── Newsletter ── */}
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[rgba(13,13,18,0.40)] mb-3">
               Stay in the loop
             </p>
-            <form
-              onSubmit={(e) => e.preventDefault()}
-              className="flex gap-2 max-w-xs"
-            >
-              <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-xl bg-[#faf9f7] border border-[rgba(13,13,18,0.09)] focus-within:border-[#1e2235] focus-within:shadow-[0_0_0_3px_rgba(30,34,53,0.07)] transition-all">
-                <Mail
-                  size={13}
-                  className="text-[rgba(13,13,18,0.35)] shrink-0"
-                />
-                <input
-                  type="email"
-                  placeholder="your@email.com"
-                  className="flex-1 bg-transparent text-xs text-[#0d0d12] placeholder:text-[rgba(13,13,18,0.35)] outline-none"
-                />
-              </div>
-              <motion.button
-                whileTap={{ scale: 0.96 }}
-                type="submit"
-                className="px-3.5 py-2 rounded-xl bg-[#1e2235] text-white text-xs font-semibold hover:bg-[#2d3352] transition-colors shrink-0"
-              >
-                <ArrowRight size={14} />
-              </motion.button>
-            </form>
+            {/* 🔔 Replaced inline form with NewsletterForm component */}
+            <NewsletterForm />
 
-            {/* Wave social buttons */}
             <WaveSocials />
           </div>
 
@@ -364,15 +396,12 @@ const Footer = () => {
           ))}
         </div>
 
-        {/* ════════════════════════════════════════
-            BOTTOM BAR
-        ════════════════════════════════════════ */}
+        {/* Bottom bar */}
         <div className="flex flex-col items-center justify-between gap-3 py-5 text-xs text-[rgba(13,13,18,0.40)] md:flex-row border-b border-[rgba(13,13,18,0.06)]">
           <div className="flex items-center gap-1.5">
             <MapPin size={11} className="opacity-60" />
             <span>Wilmington, DE 19801, USA</span>
           </div>
-
           <p className="text-center">
             © {new Date().getFullYear()}{" "}
             <span className="font-semibold text-[rgba(13,13,18,0.65)]">
@@ -380,7 +409,6 @@ const Footer = () => {
             </span>
             . All rights reserved.
           </p>
-
           <p>
             A subsidiary of{" "}
             <a
@@ -394,9 +422,6 @@ const Footer = () => {
           </p>
         </div>
 
-        {/* ════════════════════════════════════════
-            PER-LETTER GLOW WATERMARK
-        ════════════════════════════════════════ */}
         <GlowWatermark mouseX={mouseX} />
       </div>
     </footer>

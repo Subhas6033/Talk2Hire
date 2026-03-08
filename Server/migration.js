@@ -2,31 +2,32 @@ const { pool } = require("./Config/database.config.js");
 
 const MIGRATIONS = [
   {
-    table: "drop old reviews table",
-    sql: `DROP TABLE IF EXISTS reviews;`,
-  },
-  {
-    table: "user_reviews",
+    table: "newsletter_subscribers",
     sql: `
-      CREATE TABLE IF NOT EXISTS user_reviews (
-        id          BIGINT UNSIGNED  AUTO_INCREMENT PRIMARY KEY,
+      CREATE TABLE IF NOT EXISTS newsletter_subscribers (
+        id                  BIGINT UNSIGNED   AUTO_INCREMENT PRIMARY KEY,
 
-        full_name   VARCHAR(100)     NOT NULL
-                      COMMENT 'Full name of the reviewer',
-        email       VARCHAR(150)     NOT NULL
-                      COMMENT 'Email address of the reviewer',
-        subject     VARCHAR(255)     NOT NULL
-                      COMMENT 'Subject of the review',
-        message     TEXT             NOT NULL
-                      COMMENT 'Review message body',
+        email               VARCHAR(255)      NOT NULL
+                              COMMENT 'Subscriber email address',
+        unsubscribe_token   CHAR(64)          NOT NULL
+                              COMMENT 'Unique token for 1-click unsubscribe links',
+        is_active           TINYINT(1)        NOT NULL DEFAULT 1
+                              COMMENT '1 = subscribed, 0 = unsubscribed',
 
-        created_at  DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at  DATETIME         NULL     ON UPDATE CURRENT_TIMESTAMP,
+        subscribed_at       DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP
+                              COMMENT 'When the user subscribed (or re-subscribed)',
+        unsubscribed_at     DATETIME          NULL
+                              COMMENT 'When the user unsubscribed, NULL if still active',
 
-        INDEX idx_email      (email),
-        INDEX idx_created_at (created_at)
+        created_at          DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at          DATETIME          NULL      ON UPDATE CURRENT_TIMESTAMP,
+
+        UNIQUE KEY uq_email             (email),
+        UNIQUE KEY uq_unsubscribe_token (unsubscribe_token),
+        INDEX      idx_is_active        (is_active),
+        INDEX      idx_subscribed_at    (subscribed_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-        COMMENT='User submitted reviews and contact messages';
+        COMMENT='Footer newsletter subscribers — receives job alert emails';
     `,
   },
 ];
@@ -119,28 +120,29 @@ const inspect = async () => {
     console.log();
 
     // ── STEP 2: Inspect table ──────────────────────────────────────────────
-    console.log("🔍  Inspecting reviews table…\n");
-    await inspectTable(connection, "user_reviews");
+    console.log("🔍  Inspecting newsletter_subscribers table…\n");
+    await inspectTable(connection, "newsletter_subscribers");
 
-    // ── STEP 3: Reviews summary ────────────────────────────────────────────
-    const [reviewSummary] = await connection
+    // ── STEP 3: Subscriber summary ─────────────────────────────────────────
+    const [subscriberSummary] = await connection
       .query(
         `
         SELECT
-          DATE(created_at)  AS date,
-          COUNT(*)          AS total_reviews,
-          COUNT(DISTINCT email) AS unique_emails
-        FROM reviews
-        GROUP BY DATE(created_at)
+          DATE(subscribed_at)   AS date,
+          COUNT(*)              AS total_subscribed,
+          SUM(is_active = 1)    AS active,
+          SUM(is_active = 0)    AS unsubscribed
+        FROM newsletter_subscribers
+        GROUP BY DATE(subscribed_at)
         ORDER BY date DESC
         LIMIT 10;
       `,
       )
       .catch(() => [[]]);
 
-    if (reviewSummary.length > 0) {
-      console.log("\n📊  Reviews summary (last 10 days):\n");
-      console.table(reviewSummary);
+    if (subscriberSummary.length > 0) {
+      console.log("\n📊  Subscriber summary (last 10 days):\n");
+      console.table(subscriberSummary);
     }
   } catch (err) {
     console.error("❌ Script failed:", err.message);

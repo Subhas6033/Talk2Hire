@@ -1,6 +1,7 @@
 const Job = require("../models/job.models.js");
 const { APIERR, APIRES, asyncHandler } = require("../../Utils/index.utils.js");
 const { pool } = require("../../Config/database.config.js");
+const { sendJobAlertToAll } = require("../../News/newsLetter.controllers.js");
 
 const createJob = asyncHandler(async (req, res) => {
   const {
@@ -39,6 +40,23 @@ const createJob = asyncHandler(async (req, res) => {
     requirements: requirements?.trim() || null,
     skills: Array.isArray(skills) ? skills : [],
   });
+
+  // ── Send job alert emails to all newsletter subscribers ──────────────────
+  // Only send alerts for active/published jobs, not drafts
+  if (status !== "draft") {
+    sendJobAlertToAll({
+      id: job.id,
+      title: title.trim(),
+      company: req.company.companyName || req.company.name || "Talk2Hire",
+      location: location.trim(),
+      type: type || "Full-time",
+      salary: salary || null,
+      description: description.trim(),
+    }).catch((err) =>
+      console.error("[createJob] Newsletter alert failed:", err.message),
+    );
+  }
+  // ─────────────────────────────────────────────────────────────────────────
 
   return res.status(201).json(new APIRES(201, job, "Job posted successfully"));
 });
@@ -79,7 +97,6 @@ const getJobById = asyncHandler(async (req, res) => {
   const job = await Job.findById(Number(id));
   if (!job) throw new APIERR(404, "Job not found");
 
-  // Prevent companies from accessing other companies' jobs
   if (job.company_id !== req.company.id)
     throw new APIERR(
       403,
@@ -145,6 +162,22 @@ const toggleJobStatus = asyncHandler(async (req, res) => {
     updatedJob.status === "active"
       ? "Job activated successfully"
       : "Job deactivated successfully";
+
+  // ── Also notify subscribers when a job is toggled TO active ──────────────
+  if (updatedJob.status === "active") {
+    sendJobAlertToAll({
+      id: updatedJob.id,
+      title: updatedJob.title,
+      company: req.company.companyName || req.company.name || "Talk2Hire",
+      location: updatedJob.location,
+      type: updatedJob.type || "Full-time",
+      salary: updatedJob.salary || null,
+      description: updatedJob.description,
+    }).catch((err) =>
+      console.error("[toggleJobStatus] Newsletter alert failed:", err.message),
+    );
+  }
+  // ─────────────────────────────────────────────────────────────────────────
 
   return res.status(200).json(new APIRES(200, updatedJob, message));
 });
@@ -283,8 +316,8 @@ const searchJobs = async (req, res) => {
         j.status,
         j.applicants,
         j.posted        AS posted,
-        c.companyName             AS companyName,
-        c.logo             AS companyLogo
+        c.companyName   AS companyName,
+        c.logo          AS companyLogo
       FROM jobs j
       LEFT JOIN company_details c ON c.id = j.company_id
       ${whereSQL}
