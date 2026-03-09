@@ -41,7 +41,7 @@ const PrimaryBtn = ({ children, className = "", disabled, ...props }) => (
     disabled={disabled}
     className={[
       "inline-flex items-center justify-center gap-2 rounded-xl",
-      "bg-gradient-to-br from-indigo-500 to-violet-600 text-white",
+      "bg-linear-to-br from-indigo-500 to-violet-600 text-white",
       "text-sm font-semibold tracking-wide px-6 py-3",
       "shadow-[0_4px_15px_rgba(99,102,241,0.35)]",
       "transition-all duration-200 select-none",
@@ -376,7 +376,7 @@ const SuccessScreen = ({ onLogin }) => (
       transition={{ type: "spring", stiffness: 280, damping: 17, delay: 0.08 }}
       className="flex justify-center"
     >
-      <div className="w-20 h-20 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center shadow-[0_8px_30px_rgba(52,211,153,0.40)]">
+      <div className="w-20 h-20 rounded-full bg-linear-to-br from-emerald-400 to-teal-500 flex items-center justify-center shadow-[0_8px_30px_rgba(52,211,153,0.40)]">
         <CheckCircle2 className="w-10 h-10 text-white" strokeWidth={1.8} />
       </div>
     </motion.div>
@@ -470,7 +470,7 @@ const VerifyPassword = () => {
   // Don't render anything until Redux has rehydrated — prevents flash/redirect
   if (!hydrated) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50/40 to-indigo-50/60">
+      <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-slate-50 via-blue-50/40 to-indigo-50/60">
         <span className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600" />
       </div>
     );
@@ -508,7 +508,7 @@ const VerifyPassword = () => {
         .dm-sans{font-family:'DM Sans',sans-serif}
       `}</style>
 
-      <section className="dm-sans relative min-h-screen overflow-hidden flex items-center justify-center px-4 py-16 bg-gradient-to-br from-slate-50 via-blue-50/40 to-indigo-50/60">
+      <section className="dm-sans relative min-h-screen overflow-hidden flex items-center justify-center px-4 py-16 bg-linear-to-br from-slate-50 via-blue-50/40 to-indigo-50/60">
         <DotGrid />
         <Blob
           className="blob-a -top-28 -left-28 h-96 w-96 opacity-40"
@@ -529,7 +529,7 @@ const VerifyPassword = () => {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.52, ease: [0.22, 1, 0.36, 1] }}
         >
-          <div className="absolute -top-px left-10 right-10 h-px bg-gradient-to-r from-transparent via-indigo-400/50 to-transparent" />
+          <div className="absolute -top-px left-10 right-10 h-px bg-linear-to-r from-transparent via-indigo-400/50 to-transparent" />
 
           <div className="rounded-3xl p-8 sm:p-10 bg-white/78 backdrop-blur-2xl border border-white/85 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.04),0_24px_64px_-12px_rgba(99,102,241,0.12),inset_0_1px_0_rgba(255,255,255,0.95)] overflow-x-hidden">
             {passwordReset ? (
@@ -549,7 +549,7 @@ const VerifyPassword = () => {
                       delay: 0.1,
                     }}
                   >
-                    <div className="relative w-16 h-16 rounded-2xl flex items-center justify-center bg-gradient-to-br from-indigo-100 to-violet-100 border border-indigo-200/60 shadow-[0_4px_18px_rgba(99,102,241,0.18)]">
+                    <div className="relative w-16 h-16 rounded-2xl flex items-center justify-center bg-linear-to-br from-indigo-100 to-violet-100 border border-indigo-200/60 shadow-[0_4px_18px_rgba(99,102,241,0.18)]">
                       <AnimatePresence mode="wait">
                         {step === 1 ? (
                           <motion.div
@@ -579,13 +579,13 @@ const VerifyPassword = () => {
                           </motion.div>
                         )}
                       </AnimatePresence>
-                      <div className="absolute -top-px -right-px w-4 h-4 bg-gradient-to-br from-white/80 to-transparent rounded-bl-xl" />
+                      <div className="absolute -top-px -right-px w-4 h-4 bg-linear-to-br from-white/80 to-transparent rounded-bl-xl" />
                     </div>
                   </motion.div>
 
                   {/* Brand chip */}
                   <div className="flex justify-center mb-4">
-                    <span className="sora inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-gradient-to-r from-indigo-100 to-violet-100 border border-indigo-200/60 text-[0.67rem] font-semibold tracking-widest uppercase text-indigo-600">
+                    <span className="sora inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-linear-to-r from-indigo-100 to-violet-100 border border-indigo-200/60 text-[0.67rem] font-semibold tracking-widest uppercase text-indigo-600">
                       <span className="badge-pulse w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />
                       Talk2Hire
                     </span>
@@ -656,7 +656,7 @@ const VerifyPassword = () => {
                           <div className="flex items-center justify-center">
                             <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-indigo-50 border border-indigo-200/80">
                               <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />
-                              <span className="text-xs font-medium text-indigo-700 font-mono truncate max-w-[240px]">
+                              <span className="text-xs font-medium text-indigo-700 font-mono truncate max-w-60">
                                 {email}
                               </span>
                             </div>
@@ -739,7 +739,7 @@ const VerifyPassword = () => {
                         <div className="flex items-center justify-center mb-5">
                           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200/80">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
-                            <span className="text-xs font-medium text-emerald-700 font-mono truncate max-w-[220px]">
+                            <span className="text-xs font-medium text-emerald-700 font-mono truncate max-w-55">
                               {email}
                             </span>
                           </div>

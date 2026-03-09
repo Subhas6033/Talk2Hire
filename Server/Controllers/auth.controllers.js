@@ -17,6 +17,37 @@ const {
 const crypto = require("node:crypto");
 const mammoth = require("mammoth");
 
+function generateStrongPassword() {
+  const uppercase = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lowercase = "abcdefghjkmnpqrstuvwxyz";
+  const numbers = "23456789";
+  const special = "@#$%^&*!";
+  const all = uppercase + lowercase + numbers + special;
+
+  const pick = (charset) => charset[Math.floor(Math.random() * charset.length)];
+
+  const required = [
+    pick(uppercase),
+    pick(uppercase),
+    pick(lowercase),
+    pick(lowercase),
+    pick(numbers),
+    pick(numbers),
+    pick(special),
+    pick(special),
+    pick(all),
+    pick(all),
+  ];
+
+  // Fisher-Yates shuffle
+  for (let i = required.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [required[i], required[j]] = [required[j], required[i]];
+  }
+
+  return required.join("");
+}
+
 const generateRefreshAndAccessTokens = async (user) => {
   const refreshToken = jwt.sign(
     { id: user.id, email: user.email, role: user.role },
@@ -98,7 +129,8 @@ const uploadResumeForRegistration = asyncHandler(async (req, res) => {
   const tempSessionId = crypto.randomBytes(32).toString("hex");
 
   await pool.execute(
-    `INSERT INTO temp_registrations (session_id, password_hash, resume_url, resume_mimetype, resume_filename, status, created_at, expires_at)
+    `INSERT INTO temp_registrations
+       (session_id, password_hash, resume_url, resume_mimetype, resume_filename, status, created_at, expires_at)
      VALUES (?, ?, ?, ?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 1 HOUR))`,
     [
       tempSessionId,
@@ -110,6 +142,7 @@ const uploadResumeForRegistration = asyncHandler(async (req, res) => {
     ],
   );
 
+  // Background extraction — runs simultaneously, does not block response
   extractResumeForTempRegistration({
     sessionId: tempSessionId,
     ftpUrl: ftpResult.url,
@@ -117,15 +150,17 @@ const uploadResumeForRegistration = asyncHandler(async (req, res) => {
     originalFileName: resumeFile.originalname,
   }).catch((error) => console.error("❌ Background extraction failed:", error));
 
-  res
-    .status(200)
-    .json(
-      new APIRES(
-        200,
-        { sessionId: tempSessionId, status: "processing" },
-        "Resume uploaded. Extraction in progress.",
-      ),
-    );
+  res.status(200).json(
+    new APIRES(
+      200,
+      {
+        sessionId: tempSessionId,
+        status: "processing",
+        // suggestedPassword removed — generated client-side now
+      },
+      "Resume uploaded. Extraction in progress.",
+    ),
+  );
 });
 
 async function extractResumeForTempRegistration({
@@ -330,6 +365,131 @@ const getExtractionStatus = asyncHandler(async (req, res) => {
   );
 });
 
+const sendRegistrationOtp = asyncHandler(async (req, res) => {
+  const { sessionId } = req.body;
+  if (!sessionId) throw new APIERR(400, "Session ID is required");
+
+  const [rows] = await pool.execute(
+    `SELECT session_id, status, extracted_email, extracted_fullname
+     FROM temp_registrations
+     WHERE session_id = ? AND status = 'completed' AND expires_at > NOW()`,
+    [sessionId],
+  );
+
+  if (!rows[0])
+    throw new APIERR(
+      404,
+      "Session not found, expired, or extraction not complete yet",
+    );
+
+  const { extracted_email: email, extracted_fullname: fullName } = rows[0];
+  if (!email)
+    throw new APIERR(
+      422,
+      "No email could be extracted from your resume. Please complete registration manually.",
+    );
+
+  const OTP = Math.floor(100000 + Math.random() * 900000); // 6-digit
+  const OTP_EXPIRY_MINUTES = 10;
+  const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
+
+  await pool.execute(
+    `UPDATE temp_registrations
+     SET registration_otp = ?, registration_otp_expires_at = ?, otp_verified = 0
+     WHERE session_id = ?`,
+    [OTP, expiresAt, sessionId],
+  );
+
+  const htmlTemplate = `<!DOCTYPE html>
+<html>
+  <head><meta charset="UTF-8" /><title>Verify Your Email</title>
+    <style>
+      body{margin:0;padding:0;background-color:#f4f6f8;font-family:Arial,Helvetica,sans-serif}
+      .email-container{max-width:480px;margin:40px auto;background-color:#fff;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.08);overflow:hidden}
+      .email-header{background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;padding:24px;text-align:center}
+      .email-header h1{margin:0;font-size:22px}
+      .email-body{padding:28px;color:#333;line-height:1.6}
+      .email-body p{margin:0 0 16px;font-size:14px}
+      .otp-box{margin:24px 0;padding:16px;background-color:#f1f5ff;border-radius:8px;text-align:center;font-size:32px;letter-spacing:10px;font-weight:700;color:#4f46e5}
+      .warning{font-size:12px;color:#6b7280}
+      .email-footer{padding:16px;text-align:center;font-size:12px;color:#9ca3af;border-top:1px solid #e5e7eb}
+    </style>
+  </head>
+  <body>
+    <div class="email-container">
+      <div class="email-header"><h1>Verify Your Email</h1></div>
+      <div class="email-body">
+        <p>Hi <strong>${fullName || "there"}</strong>,</p>
+        <p>Thanks for signing up to <strong>Talk2Hire</strong>! Please use the OTP below to verify your email address and complete your registration:</p>
+        <div class="otp-box">${OTP}</div>
+        <p class="warning">This OTP is valid for <strong>${OTP_EXPIRY_MINUTES} minutes</strong>. Do not share it with anyone.</p>
+        <p>If you did not create an account, you can safely ignore this email.</p>
+      </div>
+      <div class="email-footer">&copy; 2026 Talk2Hire. All rights reserved.</div>
+    </div>
+  </body>
+</html>`;
+
+  await sendMail(
+    email,
+    "Verify Your Email – OTP Verification",
+    `Your Talk2Hire email verification OTP is ${OTP}. Valid for ${OTP_EXPIRY_MINUTES} minutes.`,
+    htmlTemplate,
+  );
+
+  res.status(200).json(
+    new APIRES(
+      200,
+      { email: email.replace(/(.{2}).+(@.+)/, "$1***$2") }, // mask email in response
+      "OTP sent to your registered email",
+    ),
+  );
+});
+
+const verifyRegistrationOtp = asyncHandler(async (req, res) => {
+  const { sessionId, otp } = req.body;
+  if (!sessionId || otp === undefined || otp === null)
+    throw new APIERR(400, "Session ID and OTP are required");
+
+  // Normalize OTP — accept both string and number, always compare as integer
+  const otpInt = parseInt(otp, 10);
+  if (isNaN(otpInt)) throw new APIERR(400, "OTP must be a number");
+
+  console.log("[verifyRegistrationOtp] sessionId:", sessionId, "otp:", otpInt);
+
+  const [rows] = await pool.execute(
+    `SELECT session_id
+     FROM temp_registrations
+     WHERE session_id = ?
+       AND registration_otp = ?
+       AND registration_otp_expires_at > NOW()
+       AND expires_at > NOW()`,
+    [sessionId, otpInt],
+  );
+
+  console.log("[verifyRegistrationOtp] matched rows:", rows.length);
+
+  if (rows.length === 0)
+    throw new APIERR(400, "Invalid or expired OTP. Please request a new one.");
+
+  // Mark session as OTP-verified and clear the OTP
+  const [updateResult] = await pool.execute(
+    `UPDATE temp_registrations
+     SET otp_verified = 1, registration_otp = NULL, registration_otp_expires_at = NULL
+     WHERE session_id = ?`,
+    [sessionId],
+  );
+
+  console.log(
+    "[verifyRegistrationOtp] update affectedRows:",
+    updateResult.affectedRows,
+  );
+
+  res
+    .status(200)
+    .json(new APIRES(200, { verified: true }, "Email verified successfully"));
+});
+
 const completeRegistration = asyncHandler(async (req, res) => {
   const { sessionId, fullName, email, mobile, location, skills } = req.body;
 
@@ -338,7 +498,8 @@ const completeRegistration = asyncHandler(async (req, res) => {
   }
 
   const [tempRows] = await pool.execute(
-    `SELECT * FROM temp_registrations WHERE session_id = ? AND status = 'completed' AND expires_at > NOW()`,
+    `SELECT * FROM temp_registrations
+     WHERE session_id = ? AND status = 'completed' AND expires_at > NOW()`,
     [sessionId],
   );
 
@@ -349,6 +510,14 @@ const completeRegistration = asyncHandler(async (req, res) => {
     );
 
   const tempData = tempRows[0];
+
+  // ── Guard: email must have been OTP-verified ──────────────
+  if (!tempData.otp_verified) {
+    throw new APIERR(
+      403,
+      "Email verification required. Please verify your email with the OTP before completing registration.",
+    );
+  }
 
   const existingUser = await User.findByEmail(email);
   if (existingUser) throw new APIERR(409, "Email is already registered");
@@ -657,7 +826,7 @@ const forgotPassword = asyncHandler(async (req, res) => {
         <p class="warning">This OTP is valid for <strong>${OTP_EXPIRY_MINUTES} minutes</strong>. Please do not share it with anyone.</p>
         <p>If you did not request a password reset, you can safely ignore this email.</p>
       </div>
-      <div class="email-footer">&copy; 2026 Talk1Hire. All rights reserved.</div>
+      <div class="email-footer">&copy; 2026 Talk2Hire. All rights reserved.</div>
     </div>
   </body>
 </html>`;
@@ -888,6 +1057,8 @@ module.exports = {
   generateRefreshAndAccessTokens,
   uploadResumeForRegistration,
   getExtractionStatus,
+  sendRegistrationOtp,
+  verifyRegistrationOtp,
   completeRegistration,
   loginUser,
   logoutUser,

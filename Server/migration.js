@@ -2,32 +2,15 @@ const { pool } = require("./Config/database.config.js");
 
 const MIGRATIONS = [
   {
-    table: "newsletter_subscribers",
+    table: "temp_registrations",
     sql: `
-      CREATE TABLE IF NOT EXISTS newsletter_subscribers (
-        id                  BIGINT UNSIGNED   AUTO_INCREMENT PRIMARY KEY,
-
-        email               VARCHAR(255)      NOT NULL
-                              COMMENT 'Subscriber email address',
-        unsubscribe_token   CHAR(64)          NOT NULL
-                              COMMENT 'Unique token for 1-click unsubscribe links',
-        is_active           TINYINT(1)        NOT NULL DEFAULT 1
-                              COMMENT '1 = subscribed, 0 = unsubscribed',
-
-        subscribed_at       DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP
-                              COMMENT 'When the user subscribed (or re-subscribed)',
-        unsubscribed_at     DATETIME          NULL
-                              COMMENT 'When the user unsubscribed, NULL if still active',
-
-        created_at          DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at          DATETIME          NULL      ON UPDATE CURRENT_TIMESTAMP,
-
-        UNIQUE KEY uq_email             (email),
-        UNIQUE KEY uq_unsubscribe_token (unsubscribe_token),
-        INDEX      idx_is_active        (is_active),
-        INDEX      idx_subscribed_at    (subscribed_at)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-        COMMENT='Footer newsletter subscribers — receives job alert emails';
+      ALTER TABLE temp_registrations
+        ADD COLUMN IF NOT EXISTS registration_otp              VARCHAR(6)   NULL
+          COMMENT '6-digit OTP sent to the extracted email for registration verification',
+        ADD COLUMN IF NOT EXISTS registration_otp_expires_at   DATETIME     NULL
+          COMMENT 'Expiry timestamp of the registration OTP',
+        ADD COLUMN IF NOT EXISTS otp_verified                  TINYINT(1)   NOT NULL DEFAULT 0
+          COMMENT '1 = email OTP verified, 0 = not yet verified';
     `,
   },
 ];
@@ -120,29 +103,28 @@ const inspect = async () => {
     console.log();
 
     // ── STEP 2: Inspect table ──────────────────────────────────────────────
-    console.log("🔍  Inspecting newsletter_subscribers table…\n");
-    await inspectTable(connection, "newsletter_subscribers");
+    console.log("🔍  Inspecting temp_registrations table…\n");
+    await inspectTable(connection, "temp_registrations");
 
-    // ── STEP 3: Subscriber summary ─────────────────────────────────────────
-    const [subscriberSummary] = await connection
+    // ── STEP 3: OTP column verification ───────────────────────────────────
+    const [otpCols] = await connection
       .query(
         `
-        SELECT
-          DATE(subscribed_at)   AS date,
-          COUNT(*)              AS total_subscribed,
-          SUM(is_active = 1)    AS active,
-          SUM(is_active = 0)    AS unsubscribed
-        FROM newsletter_subscribers
-        GROUP BY DATE(subscribed_at)
-        ORDER BY date DESC
-        LIMIT 10;
+        SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_COMMENT
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME   = 'temp_registrations'
+          AND COLUMN_NAME  IN ('registration_otp', 'registration_otp_expires_at', 'otp_verified')
+        ORDER BY ORDINAL_POSITION;
       `,
       )
       .catch(() => [[]]);
 
-    if (subscriberSummary.length > 0) {
-      console.log("\n📊  Subscriber summary (last 10 days):\n");
-      console.table(subscriberSummary);
+    if (otpCols.length > 0) {
+      console.log("\n🔐  OTP columns on temp_registrations:\n");
+      console.table(otpCols);
+    } else {
+      console.warn("⚠️  OTP columns not found — migration may have failed.");
     }
   } catch (err) {
     console.error("❌ Script failed:", err.message);

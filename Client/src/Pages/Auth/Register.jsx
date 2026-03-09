@@ -105,6 +105,15 @@ const Ic = {
       ]}
     />
   ),
+  Copy: (p) => (
+    <Svg
+      {...p}
+      d={[
+        "M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2",
+        "M15 2H9a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1z",
+      ]}
+    />
+  ),
   ArrowRight: (p) => <Svg {...p} d={["M5 12h14", "M12 5l7 7-7 7"]} />,
   Briefcase: (p) => (
     <Svg
@@ -152,6 +161,33 @@ const Ic = {
     />
   ),
 };
+
+// ─── Client-side strong password generator ───────────────────────────────────
+function generateStrongPassword() {
+  const uppercase = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lowercase = "abcdefghjkmnpqrstuvwxyz";
+  const numbers = "23456789";
+  const special = "@#$%^&*!";
+  const all = uppercase + lowercase + numbers + special;
+  const pick = (charset) => charset[Math.floor(Math.random() * charset.length)];
+  const required = [
+    pick(uppercase),
+    pick(uppercase),
+    pick(lowercase),
+    pick(lowercase),
+    pick(numbers),
+    pick(numbers),
+    pick(special),
+    pick(special),
+    pick(all),
+    pick(all),
+  ];
+  for (let i = required.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [required[i], required[j]] = [required[j], required[i]];
+  }
+  return required.join("");
+}
 
 // ─── Reusable field wrapper ────────────────────────────────────────────────────
 const Field = ({ label, hint, error, children }) => (
@@ -213,20 +249,15 @@ const EmailExtracted = ({ email, onEdit }) => (
     transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
     className="flex items-center gap-3 p-3.5 rounded-2xl bg-emerald-50 border-2 border-emerald-200"
   >
-    {/* Icon */}
     <div className="w-9 h-9 rounded-xl bg-emerald-500 flex items-center justify-center shrink-0 shadow-sm">
       <Ic.Mail size={15} className="text-white" />
     </div>
-
-    {/* Text */}
     <div className="flex-1 min-w-0">
       <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-0.5">
         ✦ AI Extracted Email
       </p>
       <p className="text-sm font-bold text-slate-800 truncate">{email}</p>
     </div>
-
-    {/* Edit button */}
     <motion.button
       whileHover={{ scale: 1.05, boxShadow: "0 4px 12px rgba(16,185,129,0.2)" }}
       whileTap={{ scale: 0.95 }}
@@ -239,7 +270,7 @@ const EmailExtracted = ({ email, onEdit }) => (
   </motion.div>
 );
 
-// ─── Inline email editor (shown when Edit clicked) ────────────────────────────
+// ─── Inline email editor ──────────────────────────────────────────────────────
 const EmailEditor = ({ value, onChange, onSave, onCancel, error }) => (
   <motion.div
     initial={{ opacity: 0, y: 8, scale: 0.97 }}
@@ -299,6 +330,54 @@ const EmailEditor = ({ value, onChange, onSave, onCancel, error }) => (
   </motion.div>
 );
 
+// ─── Password suggestion banner ───────────────────────────────────────────────
+const PasswordSuggestion = ({ suggested, onUse }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(suggested).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -6, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -6, scale: 0.98 }}
+      transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+      className="p-3.5 rounded-2xl bg-violet-50 border-2 border-violet-200"
+    >
+      <p className="text-[10px] font-bold text-violet-600 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+        <Ic.Sparkles size={10} className="text-violet-500" />
+        Suggested strong password
+      </p>
+      <div className="flex items-center gap-2">
+        <code className="flex-1 text-xs font-bold text-slate-700 bg-white border border-violet-200 rounded-xl px-3 py-2 tracking-wide truncate">
+          {suggested}
+        </code>
+        <motion.button
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          onClick={handleCopy}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border-2 border-violet-200 text-violet-700 text-xs font-bold hover:bg-violet-100 transition-all shrink-0"
+        >
+          {copied ? <Ic.Check size={11} /> : <Ic.Copy size={11} />}
+          {copied ? "Copied!" : "Copy"}
+        </motion.button>
+        <motion.button
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          onClick={onUse}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-violet-600 text-white text-xs font-bold hover:bg-violet-700 transition-all shrink-0 shadow-sm"
+        >
+          Use
+        </motion.button>
+      </div>
+    </motion.div>
+  );
+};
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 const RegistrationForm = () => {
   const navigate = useNavigate();
@@ -308,15 +387,19 @@ const RegistrationForm = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [isExtracting, setExtracting] = useState(false);
 
-  // Email state — separate from a plain input
-  const [extractedEmail, setExtractedEmail] = useState(null); // null = not extracted yet
-  const [editingEmail, setEditingEmail] = useState(false); // is editor open?
+  // Email state
+  const [extractedEmail, setExtractedEmail] = useState(null);
+  const [editingEmail, setEditingEmail] = useState(false);
   const [emailDraft, setEmailDraft] = useState("");
   const [emailEditError, setEmailEditError] = useState(null);
 
-  // Other form state
+  // Password state
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [suggestedPassword] = useState(() => generateStrongPassword());
+  const [showSuggestion, setShowSuggestion] = useState(false);
+
+  // Form state
   const [fieldErrors, setFieldErrors] = useState({});
   const [uploadError, setUploadError] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -404,8 +487,23 @@ const RegistrationForm = () => {
     setEmailEditError(null);
   };
 
+  // ── Password focus → show suggestion ───────────────────────────────────────
+  const handlePasswordFocus = () => {
+    if (!password) setShowSuggestion(true);
+  };
+  const handlePasswordChange = (val) => {
+    setPassword(val);
+    setFieldErrors((er) => ({ ...er, password: null }));
+    if (val) setShowSuggestion(false);
+  };
+  const useSuggested = () => {
+    setPassword(suggestedPassword);
+    setShowSuggestion(false);
+    setFieldErrors((er) => ({ ...er, password: null }));
+  };
+
   // ── Submit ──────────────────────────────────────────────────────────────────
-  const handleContinue = () => {
+  const handleContinue = async () => {
     const errors = {};
     if (!resumeFile) errors.resume = "Please upload your resume to continue";
     if (!extractedEmail)
@@ -420,27 +518,32 @@ const RegistrationForm = () => {
 
     setIsUploading(true);
     setUploadError(null);
-    sessionStorage.setItem("showOnboarding", "true");
-    navigate("/", { replace: true });
-    setTimeout(() => backgroundUpload(resumeFile, password), 100);
-  };
 
-  const backgroundUpload = async (file, pwd) => {
     try {
       const fd = new FormData();
-      fd.append("password", pwd);
+      fd.append("password", password);
       fd.append("email", extractedEmail);
-      fd.append("resume", file);
+      fd.append("resume", resumeFile);
       const res = await fetch(`${API_URL}/api/v1/auth/upload-resume`, {
         method: "POST",
         body: fd,
         credentials: "include",
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || "Upload failed. Please try again.");
+      }
       const result = await res.json();
-      if (result.data?.sessionId)
-        sessionStorage.setItem("registrationSessionId", result.data.sessionId);
-    } catch {}
+      if (!result.data?.sessionId)
+        throw new Error("No session returned from server.");
+      // Store sessionId BEFORE navigating so OnboardingFlow finds it immediately
+      sessionStorage.setItem("registrationSessionId", result.data.sessionId);
+      sessionStorage.setItem("showOnboarding", "true");
+      navigate("/", { replace: true });
+    } catch (err) {
+      setIsUploading(false);
+      setUploadError(err.message || "Something went wrong. Please try again.");
+    }
   };
 
   const inputCls = (err) =>
@@ -473,24 +576,17 @@ const RegistrationForm = () => {
 
   return (
     <>
-      {/* Basic SEO */}
       <title>Create Your Profile | Talk2Hire AI Job Platform</title>
-
       <meta
         name="description"
         content="Upload your resume and create your Talk2Hire profile in seconds. Our AI extracts your details and matches you with the right job opportunities instantly."
       />
-
       <meta
         name="keywords"
         content="AI job matching, resume upload platform, create job profile, online interview preparation, Talk2Hire signup"
       />
-
       <meta name="robots" content="index, follow" />
-
       <link rel="canonical" href="https://talk2hire.com/signup" />
-
-      {/* Open Graph */}
       <meta property="og:title" content="Create Your Profile | Talk2Hire" />
       <meta
         property="og:description"
@@ -502,8 +598,6 @@ const RegistrationForm = () => {
         property="og:image"
         content="https://talk2hire.com/talk2hirelogo.png"
       />
-
-      {/* Twitter */}
       <meta name="twitter:card" content="summary_large_image" />
       <meta name="twitter:title" content="Create Your Profile | Talk2Hire" />
       <meta
@@ -516,7 +610,7 @@ const RegistrationForm = () => {
       />
 
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap');
+       @import url('https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&family=Sour+Gummy:ital,wght@0,100..900;1,100..900&display=swap');
         * { box-sizing: border-box; }
         @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
         @keyframes spin-slow { to { transform: rotate(360deg); } }
@@ -528,15 +622,10 @@ const RegistrationForm = () => {
         className="min-h-screen relative overflow-hidden"
         style={{ fontFamily: "'DM Sans', sans-serif" }}
       >
-        {/* ── Rich background: warm tinted gradient + mesh overlays ── */}
         <div className="absolute inset-0 bg-linear-to-br from-slate-100 via-indigo-50/70 to-violet-100/60" />
-
-        {/* Large blurred orbs */}
         <div className="absolute -top-40 -left-40 w-150 h-150 rounded-full bg-indigo-200/40 blur-[120px] pointer-events-none" />
         <div className="absolute -bottom-40 -right-40 w-125 h-125 rounded-full bg-violet-200/50 blur-[100px] pointer-events-none" />
         <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-96 h-96 rounded-full bg-sky-200/30 blur-[80px] pointer-events-none" />
-
-        {/* Faint dot-grid texture */}
         <div
           className="absolute inset-0 pointer-events-none opacity-[0.035]"
           style={{
@@ -545,15 +634,12 @@ const RegistrationForm = () => {
             backgroundSize: "28px 28px",
           }}
         />
-
-        {/* Decorative ring top-right */}
         <div className="absolute top-10 right-10 w-72 h-72 rounded-full border border-indigo-200/40 pointer-events-none spin-slow" />
         <div
           className="absolute top-20 right-20 w-52 h-52 rounded-full border border-violet-200/30 pointer-events-none"
           style={{ animation: "spin-slow 18s linear infinite reverse" }}
         />
 
-        {/* ── Content ── */}
         <div className="relative z-10 min-h-screen flex flex-col">
           {/* Nav */}
           <nav className="px-6 sm:px-10 py-5 flex items-center justify-between">
@@ -594,22 +680,19 @@ const RegistrationForm = () => {
           {/* Main */}
           <div className="flex-1 flex items-center px-4 sm:px-6 lg:px-10 py-6">
             <div className="w-full max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-10 xl:gap-20 items-center">
-              {/* ─────────── LEFT: Info panel ─────────── */}
+              {/* LEFT: Info panel */}
               <motion.div
                 initial={{ opacity: 0, x: -28 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}
                 className="space-y-8 order-2 lg:order-1"
               >
-                {/* Badge */}
                 <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-indigo-100/80 border border-indigo-300/60 shadow-sm backdrop-blur-sm">
                   <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
                   <span className="text-xs font-bold text-indigo-700 uppercase tracking-wider">
                     AI-Powered Hiring Portal
                   </span>
                 </div>
-
-                {/* Headline */}
                 <div>
                   <h1
                     className="text-4xl sm:text-5xl xl:text-[3.4rem] font-black text-slate-900 leading-[1.05] tracking-tight mb-5"
@@ -629,8 +712,6 @@ const RegistrationForm = () => {
                     personalized job matching.
                   </p>
                 </div>
-
-                {/* Feature cards */}
                 <div className="space-y-3">
                   <FeatureCard
                     icon={Ic.Target}
@@ -654,8 +735,6 @@ const RegistrationForm = () => {
                     delay={0.35}
                   />
                 </div>
-
-                {/* Stats row */}
                 <motion.div
                   initial={{ opacity: 0, y: 16 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -686,8 +765,6 @@ const RegistrationForm = () => {
                     </div>
                   ))}
                 </motion.div>
-
-                {/* Floating testimonial chip */}
                 <motion.div
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -715,16 +792,15 @@ const RegistrationForm = () => {
                 </motion.div>
               </motion.div>
 
-              {/* ─────────── RIGHT: Form ─────────── */}
+              {/* RIGHT: Form */}
               <motion.div
                 initial={{ opacity: 0, x: 28 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}
                 className="order-1 lg:order-2"
               >
-                {/* Card with tinted header band */}
                 <div className="rounded-3xl overflow-hidden shadow-2xl shadow-indigo-200/40 border border-white/80 backdrop-blur-sm">
-                  {/* Tinted header band */}
+                  {/* Header band */}
                   <div className="bg-linear-to-r from-indigo-600 via-violet-600 to-purple-600 px-8 pt-8 pb-7">
                     <div className="flex items-center gap-3 mb-4">
                       <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shadow-inner float">
@@ -742,7 +818,6 @@ const RegistrationForm = () => {
                         </p>
                       </div>
                     </div>
-                    {/* Step indicator */}
                     <div className="flex items-center gap-2">
                       {[
                         "Upload Resume",
@@ -754,11 +829,7 @@ const RegistrationForm = () => {
                           className="flex items-center gap-1.5 flex-1"
                         >
                           <div
-                            className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-black shrink-0 ${
-                              i === 0
-                                ? "bg-white text-indigo-600"
-                                : "bg-white/25 text-white/70"
-                            }`}
+                            className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-black shrink-0 ${i === 0 ? "bg-white text-indigo-600" : "bg-white/25 text-white/70"}`}
                           >
                             {i + 1}
                           </div>
@@ -775,9 +846,9 @@ const RegistrationForm = () => {
                     </div>
                   </div>
 
-                  {/* White form body */}
+                  {/* Form body */}
                   <div className="bg-white/95 backdrop-blur-sm px-8 py-7 space-y-5">
-                    {/* ── Resume Upload ── */}
+                    {/* Resume Upload */}
                     <Field
                       label="Upload Your Resume"
                       error={fieldErrors.resume}
@@ -796,13 +867,7 @@ const RegistrationForm = () => {
                             }}
                             onDragLeave={() => setIsDragging(false)}
                             onDrop={handleDrop}
-                            className={`flex flex-col items-center justify-center w-full h-36 rounded-2xl border-2 border-dashed cursor-pointer transition-all ${
-                              isDragging
-                                ? "border-indigo-400 bg-indigo-50"
-                                : fieldErrors.resume
-                                  ? "border-rose-300 bg-rose-50/30 hover:border-rose-400"
-                                  : "border-slate-200 bg-slate-50/60 hover:border-indigo-300 hover:bg-indigo-50/40"
-                            }`}
+                            className={`flex flex-col items-center justify-center w-full h-36 rounded-2xl border-2 border-dashed cursor-pointer transition-all ${isDragging ? "border-indigo-400 bg-indigo-50" : fieldErrors.resume ? "border-rose-300 bg-rose-50/30 hover:border-rose-400" : "border-slate-200 bg-slate-50/60 hover:border-indigo-300 hover:bg-indigo-50/40"}`}
                           >
                             <motion.div
                               animate={
@@ -902,7 +967,7 @@ const RegistrationForm = () => {
                       </AnimatePresence>
                     </Field>
 
-                    {/* ── Extracted Email section ── */}
+                    {/* Extracted Email section */}
                     <AnimatePresence>
                       {(extractedEmail || isExtracting) && (
                         <motion.div
@@ -984,7 +1049,7 @@ const RegistrationForm = () => {
                       )}
                     </AnimatePresence>
 
-                    {/* ── Password ── */}
+                    {/* Password */}
                     <Field
                       label="Create Password"
                       hint="Must be at least 6 characters"
@@ -998,10 +1063,8 @@ const RegistrationForm = () => {
                         <input
                           type={showPassword ? "text" : "password"}
                           value={password}
-                          onChange={(e) => {
-                            setPassword(e.target.value);
-                            setFieldErrors((er) => ({ ...er, password: null }));
-                          }}
+                          onChange={(e) => handlePasswordChange(e.target.value)}
+                          onFocus={handlePasswordFocus}
                           disabled={isUploading}
                           placeholder="Create a secure password"
                           className={`${inputCls(fieldErrors.password)} pl-10 pr-12`}
@@ -1019,6 +1082,23 @@ const RegistrationForm = () => {
                           )}
                         </button>
                       </div>
+
+                      {/* Password suggestion */}
+                      <AnimatePresence>
+                        {showSuggestion && !password && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="overflow-hidden mt-2"
+                          >
+                            <PasswordSuggestion
+                              suggested={suggestedPassword}
+                              onUse={useSuggested}
+                            />
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
 
                       {/* Strength bar */}
                       <AnimatePresence>
@@ -1094,7 +1174,7 @@ const RegistrationForm = () => {
                             }}
                             className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full"
                           />
-                          Setting up your profile…
+                          Uploading resume…
                         </>
                       ) : (
                         <>
@@ -1117,7 +1197,7 @@ const RegistrationForm = () => {
                     </p>
                   </div>
 
-                  {/* Bottom tinted footer band */}
+                  {/* Footer band */}
                   <div className="bg-linear-to-r from-slate-50 via-indigo-50/60 to-violet-50/60 px-8 py-5 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-6 text-center">
                     <p className="text-sm text-slate-500">
                       Already hired before?{" "}

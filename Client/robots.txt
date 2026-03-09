@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+
+Disallow: /interview
+Disallow: /interview/live
+
+Sitemap: https://talk2hire.com/sitemap-index.xml

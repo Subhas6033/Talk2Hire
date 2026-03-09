@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import {
-  registerUser,
   loginUser,
   logoutUser,
   clearError,
@@ -14,6 +13,13 @@ import {
   clearForgotPassword,
   verifyOtp as verifyOtpThunk,
   clearOtp,
+  regUploadResume,
+  regPollStatus,
+  regSendOtp,
+  regVerifyOtp,
+  regComplete,
+  clearRegistration,
+  setRegStep,
 } from "../API/authApi";
 import api from "../API/api";
 
@@ -21,22 +27,35 @@ export const useAuth = () => {
   const dispatch = useDispatch();
 
   const {
+    // ── Core auth ─────────────────────────────────────────────────────────────
     user,
     isAuthenticated,
     loading,
     error,
     hydrated,
+
+    // ── Forgot-password ───────────────────────────────────────────────────────
     forgotPasswordLoading,
     forgotPasswordError,
     forgotPasswordSuccess,
     forgotPasswordEmail,
+
+    // ── OTP (forgot-password flow) ────────────────────────────────────────────
     otpLoading,
     otpError,
     otpVerified,
+
+    // ── Registration wizard ───────────────────────────────────────────────────
+    regStep,
+    regLoading,
+    regError,
+    regSessionId,
+    regExtractedData,
+    regMaskedEmail,
+    // NOTE: regSuggestedPassword removed — generated client-side in RegistrationForm
   } = useSelector((state) => state.auth);
 
-  // updatePassword is scoped to the reset-password flow only — no need to
-  // persist this in Redux, so local state lives here in the hook.
+  // ── Reset-password local state ─────────────────────────────────────────────
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordError, setPasswordError] = useState(null);
   const [passwordReset, setPasswordReset] = useState(false);
@@ -73,7 +92,7 @@ export const useAuth = () => {
     hydrated,
     role: user?.role ?? "guest",
 
-    // ── Main loading / error (login, register, etc.) ──────────────────────────
+    // ── Main loading / error ──────────────────────────────────────────────────
     loading,
     error,
 
@@ -81,7 +100,6 @@ export const useAuth = () => {
     forgotPasswordLoading,
     forgotPasswordError,
     forgotPasswordSuccess,
-    // Email stored after forgotPassword succeeds — no need to re-enter on VerifyPassword page
     forgotPasswordEmail,
 
     // ── OTP + reset-password state ────────────────────────────────────────────
@@ -91,12 +109,20 @@ export const useAuth = () => {
     passwordLoading,
     passwordError,
     passwordReset,
-    // Merged helpers for VerifyPassword.jsx — single loading/error across both steps
     verifyPasswordLoading: otpLoading || passwordLoading,
     verifyPasswordError: otpError || passwordError,
 
+    // ── Registration wizard state ─────────────────────────────────────────────
+    // regStep: 'idle' | 'uploading' | 'extracting' | 'otp_sent' | 'otp_verified' | 'completing'
+    regStep,
+    regLoading,
+    regError,
+    regSessionId,
+    regExtractedData, // { email, fullName, mobile, location, cvSkills }
+    regMaskedEmail, // masked email shown on OTP screen e.g. "jo***@gmail.com"
+    // regSuggestedPassword removed — generated client-side in RegistrationForm
+
     // ── Actions ───────────────────────────────────────────────────────────────
-    registerUser: (data) => dispatch(registerUser(data)),
     login: (data) => dispatch(loginUser(data)),
     logout: () => dispatch(logoutUser()),
     updateUser: (data) => dispatch(updateUser(data)),
@@ -106,6 +132,16 @@ export const useAuth = () => {
     verifyOtp: (email, otp) => dispatch(verifyOtpThunk({ email, otp })),
     updatePassword,
     resetState,
+
+    // ── Registration wizard actions ───────────────────────────────────────────
+    regUploadResume: (formData) => dispatch(regUploadResume(formData)),
+    regPollStatus: (sessionId) => dispatch(regPollStatus(sessionId)),
+    regSendOtp: (sessionId) => dispatch(regSendOtp(sessionId)),
+    regVerifyOtp: (sessionId, otp) =>
+      dispatch(regVerifyOtp({ sessionId, otp })),
+    regComplete: (data) => dispatch(regComplete(data)),
+    clearRegistration: () => dispatch(clearRegistration()),
+    setRegStep: (step) => dispatch(setRegStep(step)),
 
     // ── Utility ───────────────────────────────────────────────────────────────
     clearError: () => dispatch(clearError()),

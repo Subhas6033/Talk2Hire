@@ -1,21 +1,6 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import api from "./api";
 
-export const registerUser = createAsyncThunk(
-  "auth/register",
-  async (formData, { rejectWithValue }) => {
-    try {
-      const response = await api.post("/auth/register", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-        withCredentials: true,
-      });
-      return response.data;
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || error.message);
-    }
-  },
-);
-
 export const getCVSkills = createAsyncThunk(
   "auth/getCVSkills",
   async (_, { rejectWithValue }) => {
@@ -109,8 +94,6 @@ export const forgotPassword = createAsyncThunk(
         { email },
         { withCredentials: true },
       );
-      // Always attach the email we sent with — guaranteed regardless of
-      // what the response shape looks like after any axios interceptor
       return { ...response.data, _sentEmail: email };
     } catch (error) {
       return rejectWithValue(error.response?.data?.message || error.message);
@@ -118,7 +101,6 @@ export const forgotPassword = createAsyncThunk(
   },
 );
 
-// Verify OTP
 export const verifyOtp = createAsyncThunk(
   "auth/verifyOtp",
   async ({ email, otp }, { rejectWithValue }) => {
@@ -128,14 +110,8 @@ export const verifyOtp = createAsyncThunk(
         { email, otp },
         { withCredentials: true },
       );
-      // After axios interceptor unwraps response.data:
-      //   response.data = { verified: true }  (interceptor already stripped the wrapper)
-      // Without interceptor:
-      //   response.data = { statusCode, data: { verified: true }, message }
       const verified = response.data?.verified ?? response.data?.data?.verified;
-      if (verified) {
-        return response.data;
-      }
+      if (verified) return response.data;
       return rejectWithValue("OTP verification failed. Please try again.");
     } catch (err) {
       return rejectWithValue(
@@ -145,7 +121,89 @@ export const verifyOtp = createAsyncThunk(
   },
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
+export const regUploadResume = createAsyncThunk(
+  "auth/regUploadResume",
+  async (formData, { rejectWithValue }) => {
+    try {
+      const response = await api.post("/auth/upload-resume", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+        withCredentials: true,
+      });
+      return response.data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.message || error.message);
+    }
+  },
+);
+
+export const regPollStatus = createAsyncThunk(
+  "auth/regPollStatus",
+  async (sessionId, { rejectWithValue }) => {
+    try {
+      const response = await api.get(`/auth/extraction-status/${sessionId}`, {
+        withCredentials: true,
+      });
+      return response.data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.message || error.message);
+    }
+  },
+);
+
+export const regSendOtp = createAsyncThunk(
+  "auth/regSendOtp",
+  async (sessionId, { rejectWithValue }) => {
+    try {
+      const response = await api.post(
+        "/auth/send-registration-otp",
+        { sessionId },
+        { withCredentials: true },
+      );
+      return response.data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.message || error.message);
+    }
+  },
+);
+
+export const regVerifyOtp = createAsyncThunk(
+  "auth/regVerifyOtp",
+  async ({ sessionId, otp }, { rejectWithValue }) => {
+    try {
+      const response = await api.post(
+        "/auth/verify-registration-otp",
+        { sessionId, otp },
+        { withCredentials: true },
+      );
+      const verified = response.data?.verified ?? response.data?.data?.verified;
+      if (verified) return response.data;
+      return rejectWithValue("OTP verification failed. Please try again.");
+    } catch (err) {
+      return rejectWithValue(
+        err.response?.data?.message || "Invalid or expired OTP.",
+      );
+    }
+  },
+);
+
+export const regComplete = createAsyncThunk(
+  "auth/regComplete",
+  async (
+    { sessionId, fullName, email, mobile, location, skills },
+    { rejectWithValue },
+  ) => {
+    try {
+      const response = await api.post(
+        "/auth/complete-registration",
+        { sessionId, fullName, email, mobile, location, skills },
+        { withCredentials: true },
+      );
+      return response.data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.message || error.message);
+    }
+  },
+);
 
 const saveAuthState = (user, isAuthenticated) => {
   try {
@@ -162,22 +220,13 @@ const loadStateFromStorage = () => {
   try {
     const serialized = localStorage.getItem("authState");
     if (!serialized) return defaultState();
-
     const parsed = JSON.parse(serialized);
     return {
+      ...defaultState(),
       user: parsed.user || null,
       isAuthenticated: parsed.isAuthenticated || false,
-      loading: false,
-      error: null,
       hydrated: true,
       lastVerified: parsed.lastVerified || null,
-      forgotPasswordLoading: false,
-      forgotPasswordError: null,
-      forgotPasswordSuccess: false,
-      forgotPasswordEmail: null,
-      otpLoading: false,
-      otpError: null,
-      otpVerified: false,
     };
   } catch (err) {
     console.error("Failed to load auth state:", err);
@@ -187,26 +236,37 @@ const loadStateFromStorage = () => {
 };
 
 const defaultState = () => ({
+  // ── Core auth ───────────────────────────────────────────────────────────────
   user: null,
   isAuthenticated: false,
   loading: false,
   error: null,
   hydrated: true,
   lastVerified: null,
-  // Forgot-password dedicated state
+
+  // ── Forgot-password ─────────────────────────────────────────────────────────
   forgotPasswordLoading: false,
   forgotPasswordError: null,
   forgotPasswordSuccess: false,
-  // Email returned by forgotPassword — consumed by VerifyPassword page
   forgotPasswordEmail: null,
-  // OTP verification dedicated state
+
+  // ── OTP (forgot-password flow) ──────────────────────────────────────────────
   otpLoading: false,
   otpError: null,
   otpVerified: false,
+
+  // ── Registration wizard ─────────────────────────────────────────────────────
+  // regStep: 'idle' | 'uploading' | 'extracting' | 'otp_sent' | 'otp_verified' | 'completing'
+  regStep: "idle",
+  regLoading: false,
+  regError: null,
+  regSessionId: null,
+  regExtractedData: null, // { email, fullName, mobile, location, cvSkills }
+  regMaskedEmail: null, // e.g. "jo***@gmail.com" — returned from sendRegistrationOtp
+  // NOTE: regSuggestedPassword removed — password suggestion is now generated client-side
 });
 
 const SESSION_GRACE_MS = 5 * 60 * 1000;
-
 const isRecentSession = (lastVerified) =>
   lastVerified && Date.now() - lastVerified < SESSION_GRACE_MS;
 
@@ -246,28 +306,23 @@ const authSlice = createSlice({
       state.otpError = null;
       state.otpVerified = false;
     },
+    clearRegistration: (state) => {
+      state.regStep = "idle";
+      state.regLoading = false;
+      state.regError = null;
+      state.regSessionId = null;
+      state.regExtractedData = null;
+      state.regMaskedEmail = null;
+    },
+    setRegStep: (state, action) => {
+      state.regStep = action.payload;
+      state.regError = null;
+    },
   },
 
   extraReducers: (builder) => {
     builder
-      .addCase(registerUser.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-      })
-      .addCase(registerUser.fulfilled, (state, action) => {
-        state.loading = false;
-        state.user = action.payload.data;
-        state.isAuthenticated = true;
-        state.hydrated = true;
-        state.lastVerified = Date.now();
-        saveAuthState(state.user, state.isAuthenticated);
-      })
-      .addCase(registerUser.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload;
-        state.hydrated = true;
-      })
-
+      // ── getCVSkills ───────────────────────────────────────────────────────
       .addCase(getCVSkills.pending, (state) => {
         state.loading = true;
       })
@@ -276,7 +331,7 @@ const authSlice = createSlice({
         if (state.user) {
           state.user = {
             ...state.user,
-            cvSkills: action.payload.data.cvSkills || [],
+            cvSkills: action.payload.data?.cvSkills || [],
           };
           saveAuthState(state.user, state.isAuthenticated);
         }
@@ -285,6 +340,7 @@ const authSlice = createSlice({
         state.loading = false;
       })
 
+      // ── loginUser ─────────────────────────────────────────────────────────
       .addCase(loginUser.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -303,6 +359,7 @@ const authSlice = createSlice({
         state.hydrated = true;
       })
 
+      // ── logoutUser ────────────────────────────────────────────────────────
       .addCase(logoutUser.pending, (state) => {
         state.loading = true;
       })
@@ -315,6 +372,7 @@ const authSlice = createSlice({
         localStorage.removeItem("authState");
       })
 
+      // ── getCurrentUser ────────────────────────────────────────────────────
       .addCase(getCurrentUser.pending, (state) => {
         state.loading = true;
       })
@@ -329,10 +387,8 @@ const authSlice = createSlice({
       .addCase(getCurrentUser.rejected, (state, action) => {
         state.loading = false;
         state.hydrated = true;
-
         const is401 = action.payload?.status === 401;
         const isRecent = isRecentSession(state.lastVerified);
-
         if (is401 && !isRecent) {
           state.user = null;
           state.isAuthenticated = false;
@@ -341,6 +397,7 @@ const authSlice = createSlice({
         }
       })
 
+      // ── updateUser ────────────────────────────────────────────────────────
       .addCase(updateUser.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -357,7 +414,7 @@ const authSlice = createSlice({
         state.error = action.payload;
       })
 
-      // ── forgotPassword ──────────────────────────────────────────────────────
+      // ── forgotPassword ────────────────────────────────────────────────────
       .addCase(forgotPassword.pending, (state) => {
         state.forgotPasswordLoading = true;
         state.forgotPasswordError = null;
@@ -366,8 +423,6 @@ const authSlice = createSlice({
       .addCase(forgotPassword.fulfilled, (state, action) => {
         state.forgotPasswordLoading = false;
         state.forgotPasswordSuccess = true;
-        // _sentEmail is injected in the thunk from the original email arg —
-        // this is the most reliable source regardless of interceptor shape.
         state.forgotPasswordEmail = action.payload?._sentEmail ?? null;
       })
       .addCase(forgotPassword.rejected, (state, action) => {
@@ -375,7 +430,7 @@ const authSlice = createSlice({
         state.forgotPasswordError = action.payload;
       })
 
-      // ── verifyOtp ───────────────────────────────────────────────────────────
+      // ── verifyOtp (forgot-password) ───────────────────────────────────────
       .addCase(verifyOtp.pending, (state) => {
         state.otpLoading = true;
         state.otpError = null;
@@ -388,6 +443,93 @@ const authSlice = createSlice({
       .addCase(verifyOtp.rejected, (state, action) => {
         state.otpLoading = false;
         state.otpError = action.payload;
+      })
+
+      // ── regUploadResume ───────────────────────────────────────────────────
+      .addCase(regUploadResume.pending, (state) => {
+        state.regStep = "uploading";
+        state.regLoading = true;
+        state.regError = null;
+      })
+      .addCase(regUploadResume.fulfilled, (state, action) => {
+        state.regLoading = false;
+        state.regSessionId = action.payload.data?.sessionId ?? null;
+        // No suggestedPassword — generated client-side
+        state.regStep = "extracting";
+      })
+      .addCase(regUploadResume.rejected, (state, action) => {
+        state.regLoading = false;
+        state.regStep = "idle";
+        state.regError = action.payload;
+      })
+
+      // ── regPollStatus ─────────────────────────────────────────────────────
+      .addCase(regPollStatus.fulfilled, (state, action) => {
+        const { status, extractedData, error } = action.payload.data || {};
+        if (status === "completed") {
+          state.regExtractedData = extractedData;
+        } else if (status === "failed") {
+          state.regStep = "idle";
+          state.regError =
+            error ||
+            "Could not extract data from your resume. Please try again.";
+        }
+      })
+      .addCase(regPollStatus.rejected, () => {})
+
+      // ── regSendOtp ────────────────────────────────────────────────────────
+      .addCase(regSendOtp.pending, (state) => {
+        state.regLoading = true;
+        state.regError = null;
+      })
+      .addCase(regSendOtp.fulfilled, (state, action) => {
+        state.regLoading = false;
+        state.regMaskedEmail =
+          action.payload.data?.email ?? action.payload?.email ?? null;
+        state.regStep = "otp_sent";
+      })
+      .addCase(regSendOtp.rejected, (state, action) => {
+        state.regLoading = false;
+        state.regError = action.payload;
+      })
+
+      // ── regVerifyOtp ──────────────────────────────────────────────────────
+      .addCase(regVerifyOtp.pending, (state) => {
+        state.regLoading = true;
+        state.regError = null;
+      })
+      .addCase(regVerifyOtp.fulfilled, (state) => {
+        state.regLoading = false;
+        state.regStep = "otp_verified";
+      })
+      .addCase(regVerifyOtp.rejected, (state, action) => {
+        state.regLoading = false;
+        state.regError = action.payload;
+      })
+
+      // ── regComplete ───────────────────────────────────────────────────────
+      .addCase(regComplete.pending, (state) => {
+        state.regStep = "completing";
+        state.regLoading = true;
+        state.regError = null;
+      })
+      .addCase(regComplete.fulfilled, (state, action) => {
+        state.user = action.payload.data;
+        state.isAuthenticated = true;
+        state.hydrated = true;
+        state.lastVerified = Date.now();
+        saveAuthState(state.user, state.isAuthenticated);
+        state.regStep = "idle";
+        state.regLoading = false;
+        state.regSessionId = null;
+        state.regExtractedData = null;
+        state.regMaskedEmail = null;
+        state.regError = null;
+      })
+      .addCase(regComplete.rejected, (state, action) => {
+        state.regLoading = false;
+        state.regStep = "otp_verified";
+        state.regError = action.payload;
       });
   },
 });
@@ -399,6 +541,8 @@ export const {
   clearSession,
   clearForgotPassword,
   clearOtp,
+  clearRegistration,
+  setRegStep,
 } = authSlice.actions;
 
 export default authSlice.reducer;

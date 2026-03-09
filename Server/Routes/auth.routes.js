@@ -1,8 +1,10 @@
 const router = require("express").Router();
 const {
-  uploadResumeForRegistration, //  NEW - Step 1: Upload resume
-  getExtractionStatus, //  NEW - Polling endpoint
-  completeRegistration, //  NEW - Step 2: Create account
+  uploadResumeForRegistration,
+  getExtractionStatus,
+  sendRegistrationOtp,
+  verifyRegistrationOtp,
+  completeRegistration,
   loginUser,
   logoutUser,
   forgotPassword,
@@ -23,18 +25,27 @@ const {
 const uploadResume = uploadSingle("resume");
 
 router
+  // ── Registration flow ──────────────────────────────────────
   .post("/upload-resume", uploadResume, uploadResumeForRegistration)
   .get("/extraction-status/:sessionId", getExtractionStatus)
+  .post("/send-registration-otp", sendRegistrationOtp)
+  .post("/verify-registration-otp", verifyRegistrationOtp)
   .post("/complete-registration", completeRegistration)
+
+  // ── Auth ───────────────────────────────────────────────────
   .post("/login", loginUser)
+  .post("/logout", authMiddleware, logoutUser)
+  .post("/refresh-access-token", refreshAccessToken)
+
+  // ── Password reset ─────────────────────────────────────────
   .post("/forgot-password", forgotPassword)
   .post("/verify-password", verifyResetPasswordOtp)
   .put("/update-password", resetPassword)
+
+  // ── Protected ──────────────────────────────────────────────
   .get("/get-current-user", authMiddleware, getCurrentUser)
   .get("/cv-skills", authMiddleware, getCVSkills)
   .get("/resume-status", authMiddleware, checkResumeStatus)
-  .post("/refresh-access-token", refreshAccessToken)
-  .post("/logout", authMiddleware, logoutUser)
   .patch("/update-profile", authMiddleware, uploadProfileFiles, updateProfile);
 
 module.exports = router;

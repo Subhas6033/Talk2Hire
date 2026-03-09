@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
@@ -124,6 +124,17 @@ const Ic = {
       d={["M22 11.08V12a10 10 0 1 1-5.93-9.14", "M22 4 12 14.01l-3-3"]}
     />
   ),
+  RefreshCw: (p) => (
+    <Svg
+      {...p}
+      d={[
+        "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8",
+        "M21 3v5h-5",
+        "M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16",
+        "M8 16H3v5",
+      ]}
+    />
+  ),
 };
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -244,7 +255,6 @@ const LOADING_MESSAGES = [
 /* ─────────────────────────────────────────────────────────────────────────────
    SMALL REUSABLES
 ───────────────────────────────────────────────────────────────────────────── */
-// Generic text input
 const TextInput = ({
   label,
   icon: IconComp,
@@ -272,11 +282,7 @@ const TextInput = ({
       )}
       <input
         disabled={disabled}
-        className={`w-full ${IconComp ? "pl-10" : "pl-4"} pr-4 py-3 rounded-2xl border-2 text-sm font-medium text-slate-800 placeholder-slate-300 focus:outline-none transition-all bg-white disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed ${
-          error
-            ? "border-rose-300 focus:border-rose-400 bg-rose-50/30"
-            : "border-slate-200 focus:border-indigo-300 focus:bg-indigo-50/20"
-        }`}
+        className={`w-full ${IconComp ? "pl-10" : "pl-4"} pr-4 py-3 rounded-2xl border-2 text-sm font-medium text-slate-800 placeholder-slate-300 focus:outline-none transition-all bg-white disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed ${error ? "border-rose-300 focus:border-rose-400 bg-rose-50/30" : "border-slate-200 focus:border-indigo-300 focus:bg-indigo-50/20"}`}
         {...props}
       />
     </div>
@@ -289,7 +295,6 @@ const TextInput = ({
   </div>
 );
 
-// Email row — display mode with Edit button
 const EmailDisplay = ({ email, onEdit, disabled }) => (
   <motion.div
     initial={{ opacity: 0, y: 6, scale: 0.97 }}
@@ -321,7 +326,6 @@ const EmailDisplay = ({ email, onEdit, disabled }) => (
   </motion.div>
 );
 
-// Email edit input
 const EmailEditor = ({ value, onChange, onSave, onCancel, error }) => (
   <motion.div
     initial={{ opacity: 0, y: 6, scale: 0.97 }}
@@ -346,11 +350,7 @@ const EmailEditor = ({ value, onChange, onSave, onCancel, error }) => (
             if (e.key === "Escape") onCancel();
           }}
           placeholder="your@email.com"
-          className={`w-full pl-10 pr-4 py-3 rounded-2xl border-2 text-sm font-medium text-slate-800 placeholder-slate-300 focus:outline-none transition-all bg-white ${
-            error
-              ? "border-rose-300 focus:border-rose-400"
-              : "border-indigo-300 focus:border-indigo-500"
-          }`}
+          className={`w-full pl-10 pr-4 py-3 rounded-2xl border-2 text-sm font-medium text-slate-800 placeholder-slate-300 focus:outline-none transition-all bg-white ${error ? "border-rose-300 focus:border-rose-400" : "border-indigo-300 focus:border-indigo-500"}`}
         />
       </div>
       <motion.button
@@ -380,13 +380,202 @@ const EmailEditor = ({ value, onChange, onSave, onCancel, error }) => (
 );
 
 /* ─────────────────────────────────────────────────────────────────────────────
+   OTP MODAL
+───────────────────────────────────────────────────────────────────────────── */
+const OtpModal = ({
+  maskedEmail,
+  onVerified,
+  onResend,
+  isResending,
+  error,
+  isVerifying,
+}) => {
+  const [digits, setDigits] = useState(["", "", "", "", "", ""]);
+  const inputRefs = useRef([]);
+  const hasAutoSubmitted = useRef(false);
+
+  const otp = digits.join("");
+
+  // Auto-submit when all 6 digits filled
+  useEffect(() => {
+    if (otp.length === 6 && !hasAutoSubmitted.current) {
+      hasAutoSubmitted.current = true;
+      onVerified(otp);
+    }
+    if (otp.length < 6) hasAutoSubmitted.current = false;
+  }, [otp, onVerified]);
+
+  const handleChange = (i, val) => {
+    // Only allow digits
+    const digit = val.replace(/\D/g, "").slice(-1);
+    const next = [...digits];
+    next[i] = digit;
+    setDigits(next);
+    if (digit && i < 5) {
+      inputRefs.current[i + 1]?.focus();
+    }
+  };
+
+  const handleKeyDown = (i, e) => {
+    if (e.key === "Backspace") {
+      if (digits[i]) {
+        const next = [...digits];
+        next[i] = "";
+        setDigits(next);
+      } else if (i > 0) {
+        inputRefs.current[i - 1]?.focus();
+      }
+    }
+    if (e.key === "ArrowLeft" && i > 0) inputRefs.current[i - 1]?.focus();
+    if (e.key === "ArrowRight" && i < 5) inputRefs.current[i + 1]?.focus();
+  };
+
+  const handlePaste = (e) => {
+    e.preventDefault();
+    const pasted = e.clipboardData
+      .getData("text")
+      .replace(/\D/g, "")
+      .slice(0, 6);
+    if (!pasted) return;
+    const next = [...digits];
+    for (let i = 0; i < 6; i++) next[i] = pasted[i] || "";
+    setDigits(next);
+    const focusIdx = Math.min(pasted.length, 5);
+    inputRefs.current[focusIdx]?.focus();
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-60 flex items-center justify-center px-4"
+    >
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" />
+
+      {/* Card */}
+      <motion.div
+        initial={{ opacity: 0, scale: 0.92, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.92, y: 20 }}
+        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+        className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl shadow-indigo-200/50 overflow-hidden"
+      >
+        {/* Top gradient band */}
+        <div className="bg-linear-to-r from-indigo-600 via-violet-600 to-purple-600 px-8 pt-8 pb-7 text-center">
+          <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center mx-auto mb-4 shadow-inner">
+            <Ic.Mail size={24} className="text-white" />
+          </div>
+          <h3
+            className="text-xl font-black text-white mb-1"
+            style={{ fontFamily: "'Syne', sans-serif" }}
+          >
+            Verify Your Email
+          </h3>
+          <p className="text-indigo-200 text-sm">We sent a 6-digit code to</p>
+          <p className="text-white font-bold text-sm mt-0.5">{maskedEmail}</p>
+        </div>
+
+        {/* Body */}
+        <div className="px-8 py-7 space-y-6">
+          {/* OTP inputs */}
+          <div className="flex justify-center gap-2.5" onPaste={handlePaste}>
+            {digits.map((d, i) => (
+              <input
+                key={i}
+                ref={(el) => (inputRefs.current[i] = el)}
+                type="text"
+                inputMode="numeric"
+                maxLength={1}
+                value={d}
+                onChange={(e) => handleChange(i, e.target.value)}
+                onKeyDown={(e) => handleKeyDown(i, e)}
+                className={`w-11 h-13 text-center text-lg font-black rounded-2xl border-2 focus:outline-none transition-all ${
+                  d
+                    ? "border-indigo-400 bg-indigo-50 text-indigo-700"
+                    : "border-slate-200 bg-white text-slate-800"
+                } focus:border-indigo-400 focus:bg-indigo-50/30`}
+                style={{ height: "52px" }}
+                autoFocus={i === 0}
+              />
+            ))}
+          </div>
+
+          {/* Status / Error */}
+          <AnimatePresence>
+            {isVerifying && (
+              <motion.div
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="flex items-center justify-center gap-2.5 py-3 rounded-2xl bg-indigo-50 border border-indigo-200"
+              >
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                  className="w-4 h-4 border-2 border-indigo-300 border-t-indigo-600 rounded-full"
+                />
+                <span className="text-sm font-semibold text-indigo-600">
+                  Verifying your code…
+                </span>
+              </motion.div>
+            )}
+            {error && !isVerifying && (
+              <motion.div
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="flex items-center gap-2.5 p-3.5 rounded-2xl bg-rose-50 border border-rose-200"
+              >
+                <Ic.Alert size={15} className="text-rose-500 shrink-0" />
+                <p className="text-sm text-rose-700">{error}</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Resend */}
+          <div className="text-center">
+            <p className="text-sm text-slate-500 mb-2">
+              Didn't receive the code?
+            </p>
+            <button
+              type="button"
+              onClick={onResend}
+              disabled={isResending}
+              className="flex items-center gap-2 mx-auto px-4 py-2 rounded-xl border-2 border-slate-200 text-slate-600 text-sm font-bold hover:bg-slate-50 hover:border-slate-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isResending ? (
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                  className="w-3.5 h-3.5 border-2 border-slate-300 border-t-slate-600 rounded-full"
+                />
+              ) : (
+                <Ic.RefreshCw size={13} />
+              )}
+              {isResending ? "Sending…" : "Resend Code"}
+            </button>
+          </div>
+
+          <p className="text-xs text-slate-400 text-center">
+            Enter the code above and it will verify automatically
+          </p>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
+
+/* ─────────────────────────────────────────────────────────────────────────────
    MAIN COMPONENT
 ───────────────────────────────────────────────────────────────────────────── */
 const OnboardingFlow = ({ isOpen, onComplete }) => {
   const navigate = useNavigate();
   const { getCurrentUser } = useAuth();
 
-  const [step, setStep] = useState(0); // 0=carousel, 1=form
+  // step: 0=carousel, 1=otp (full-screen, blocks everything), 2=form
+  const [step, setStep] = useState(0);
   const [slide, setSlide] = useState(0);
   const [slideDir, setSlideDir] = useState(1);
   const [autoPlay, setAutoPlay] = useState(true);
@@ -394,11 +583,24 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
   const [loadMsg, setLoadMsg] = useState(LOADING_MESSAGES[0]);
   const [regError, setRegError] = useState(null);
 
-  // Email edit state (separate from react-hook-form)
-  const [emailDisplay, setEmailDisplay] = useState(""); // shown in display row
-  const [emailEditing, setEmailEditing] = useState(false); // edit mode?
+  // OTP state
+  const [maskedEmail, setMaskedEmail] = useState("");
+  const [otpError, setOtpError] = useState(null);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [isResending, setIsResending] = useState(false);
+
+  // Email edit state
+  const [emailDisplay, setEmailDisplay] = useState("");
+  const [emailEditing, setEmailEditing] = useState(false);
   const [emailDraft, setEmailDraft] = useState("");
   const [emailEditErr, setEmailEditErr] = useState(null);
+
+  // Track session id locally for OTP calls
+  const sessionIdRef = useRef(null);
+  // Prevent OTP from being sent more than once
+  const otpSentRef = useRef(false);
+  // Track OTP verification so carousel skip/finish cannot bypass it
+  const otpVerifiedRef = useRef(false);
 
   const API_URL = import.meta?.env?.VITE_BACKEND_URL || "";
 
@@ -406,7 +608,6 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
     register,
     handleSubmit,
     setValue,
-    getValues,
     formState: { errors },
   } = useForm({
     mode: "onTouched",
@@ -439,17 +640,139 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
     return () => clearInterval(t);
   }, [isDataLoading]);
 
+  // ── Verify OTP ────────────────────────────────────────────────────────────
+  const handleVerifyOtp = async (otp) => {
+    // If sessionIdRef not yet set, try reading from sessionStorage as fallback
+    const sid =
+      sessionIdRef.current || sessionStorage.getItem("registrationSessionId");
+    if (!sid) {
+      setOtpError("Session expired. Please restart registration.");
+      return;
+    }
+    // Keep sessionIdRef in sync
+    sessionIdRef.current = sid;
+
+    setIsVerifying(true);
+    setOtpError(null);
+    try {
+      // Send OTP as integer to match DB column type (INT)
+      const otpInt = parseInt(otp, 10);
+      if (isNaN(otpInt) || otp.length !== 6) {
+        throw new Error("Invalid OTP format. Please enter all 6 digits.");
+      }
+      console.log("[OTP Verify] sessionId:", sid, "otp:", otpInt);
+      const res = await fetch(
+        `${API_URL}/api/v1/auth/verify-registration-otp`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ sessionId: sid, otp: otpInt }),
+        },
+      );
+      const json = await res.json();
+      console.log("[OTP Verify] response:", res.status, json);
+      if (!res.ok) {
+        throw new Error(json.message || json.data?.message || "Invalid OTP");
+      }
+      // Confirm backend actually marked it verified
+      const verified = json?.data?.verified ?? json?.verified ?? true;
+      if (!verified) {
+        throw new Error("OTP verification failed. Please try again.");
+      }
+      setIsVerifying(false);
+      otpVerifiedRef.current = true;
+      setStep(2); // move to form
+    } catch (e) {
+      setIsVerifying(false);
+      otpVerifiedRef.current = false;
+      setOtpError(e.message || "Invalid or expired OTP. Please try again.");
+    }
+  };
+
+  // ── Resend OTP ────────────────────────────────────────────────────────────
+  const handleResendOtp = async () => {
+    if (!sessionIdRef.current) return;
+    setIsResending(true);
+    setOtpError(null);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/auth/send-registration-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ sessionId: sessionIdRef.current }),
+      });
+      if (!res.ok) throw new Error("Failed to resend");
+      const data = await res.json();
+      setMaskedEmail(data?.data?.email || maskedEmail);
+    } catch {}
+    setIsResending(false);
+  };
+
   // ── Polling ───────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!isOpen) return;
+    // Reset guards for a fresh registration attempt
+    otpSentRef.current = false;
+    otpVerifiedRef.current = false;
     let checkT, pollT;
 
+    // sendOtp is inlined here to avoid stale closure — never reference outside state setters
+    const doSendOtp = async (sid, apiUrl, retries = 3) => {
+      if (otpSentRef.current) return; // prevent duplicate sends
+      otpSentRef.current = true;
+      try {
+        const res = await fetch(`${apiUrl}/api/v1/auth/send-registration-otp`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ sessionId: sid }),
+        });
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          throw new Error(errJson.message || "Failed to send OTP");
+        }
+        const json = await res.json();
+        setMaskedEmail(json?.data?.email || "your email");
+        setStep(1); // show OTP modal — THIS is what makes it appear
+      } catch (err) {
+        otpSentRef.current = false; // allow retry
+        if (retries > 0) {
+          // Retry after 1.5s — extraction may not be fully committed to DB yet
+          setTimeout(() => doSendOtp(sid, apiUrl, retries - 1), 1500);
+        } else {
+          // All retries exhausted — skip to form but show warning
+          setRegError(
+            `Could not send OTP: ${err.message}. You may proceed but email is unverified.`,
+          );
+          setStep(2);
+        }
+      }
+    };
+
     const waitForSession = () => {
+      // Check immediately first (sessionId may already be set before component mounts)
+      const sidNow = sessionStorage.getItem("registrationSessionId");
+      if (sidNow) {
+        sessionIdRef.current = sidNow;
+        poll(sidNow);
+        return;
+      }
+      // Otherwise poll until it appears (set by backgroundUpload)
+      let waited = 0;
       checkT = setInterval(() => {
+        waited += 500;
         const sid = sessionStorage.getItem("registrationSessionId");
         if (sid) {
           clearInterval(checkT);
+          sessionIdRef.current = sid;
           poll(sid);
+        } else if (waited >= 30000) {
+          // 30s timeout — give up and show error
+          clearInterval(checkT);
+          setDataLoad(false);
+          setRegError("Upload timed out. Please go back and try again.");
+          setStep(2);
         }
       }, 500);
     };
@@ -478,17 +801,19 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
             setEmailDisplay(ex.email || "");
             setEmailDraft(ex.email || "");
             setDataLoad(false);
-            setTimeout(() => setStep(1), 1500);
+            // Send OTP — inlined to avoid stale closure
+            setTimeout(() => doSendOtp(sid, API_URL), 1500);
           } else if (data.status === "failed") {
             clearInterval(pollT);
             setDataLoad(false);
             setRegError(data.error || "Failed to extract resume data");
+            setStep(2);
           }
         } catch {}
         if (attempts >= 60 && !found) {
           clearInterval(pollT);
           setDataLoad(false);
-          setStep(1);
+          setStep(2);
         }
       }, 1000);
     };
@@ -508,7 +833,8 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
   };
   const nextSlide = () => {
     if (slide === SLIDES.length - 1) {
-      setStep(1);
+      // Only advance to form if OTP is already verified; otherwise OTP modal will appear automatically
+      if (otpVerifiedRef.current) setStep(2);
       return;
     }
     setSlideDir(1);
@@ -546,11 +872,20 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
 
   // ── Submit ────────────────────────────────────────────────────────────────
   const handleProfileSubmit = async (data) => {
+    // Guard: block if OTP not verified yet (show friendly message instead of backend 403)
+    if (!otpVerifiedRef.current) {
+      setRegError(
+        "Please verify your email with the OTP before completing registration.",
+      );
+      return;
+    }
     try {
       setRegError(null);
-      const sid = sessionStorage.getItem("registrationSessionId");
-      if (!sid) throw new Error("Session ID not found");
-
+      // Use sessionIdRef (set during polling) as the single source of truth
+      const sid =
+        sessionIdRef.current || sessionStorage.getItem("registrationSessionId");
+      if (!sid)
+        throw new Error("Session ID not found. Please restart registration.");
       const res = await fetch(`${API_URL}/api/v1/auth/complete-registration`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -578,25 +913,25 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
   const s = SLIDES[slide];
 
   /* ══════════════════════════════════════════════════════════════════════════
-     STEP 0 — CAROUSEL
+     STEP 0 — CAROUSEL  (with optional OTP modal overlay on step 1)
   ══════════════════════════════════════════════════════════════════════════ */
-  if (step === 0)
+  if (step === 0 || step === 1)
     return (
       <>
         <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800;900&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap');
-        @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-10px)} }
-        @keyframes spin-ring { to{transform:rotate(360deg)} }
-        .float { animation: float 4s ease-in-out infinite; }
-        .spin-ring { animation: spin-ring 14s linear infinite; }
-        .spin-ring-rev { animation: spin-ring 18s linear infinite reverse; }
-      `}</style>
+          @import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800;900&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap');
+          @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-10px)} }
+          @keyframes spin-ring { to{transform:rotate(360deg)} }
+          .float { animation: float 4s ease-in-out infinite; }
+          .spin-ring { animation: spin-ring 14s linear infinite; }
+          .spin-ring-rev { animation: spin-ring 18s linear infinite reverse; }
+        `}</style>
 
         <div
           className="fixed inset-0 z-50 overflow-hidden"
           style={{ fontFamily: "'DM Sans', sans-serif" }}
         >
-          {/* ── Background ── */}
+          {/* Background */}
           <div className="absolute inset-0 bg-linear-to-br from-slate-100 via-white to-indigo-50/60" />
           <div
             className={`absolute -top-48 -left-48 w-150 h-150 rounded-full ${s.orb1} blur-[130px] transition-all duration-1000 pointer-events-none`}
@@ -612,11 +947,9 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
               backgroundSize: "30px 30px",
             }}
           />
-          {/* Decorative rings */}
           <div className="absolute top-6 right-6 w-64 h-64 rounded-full border border-indigo-200/40 pointer-events-none spin-ring" />
           <div className="absolute top-16 right-16 w-44 h-44 rounded-full border border-violet-200/30 pointer-events-none spin-ring-rev" />
 
-          {/* ── Content wrapper — full screen, no scroll ── */}
           <div className="relative z-10 h-full flex flex-col">
             {/* Nav bar */}
             <div className="flex-none flex items-center justify-between px-6 sm:px-10 py-4">
@@ -632,10 +965,17 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
                 </span>
               </div>
               <button
-                onClick={() => setStep(1)}
-                className="text-xs font-semibold text-slate-400 hover:text-slate-700 transition-colors border border-slate-200 px-3 py-1.5 rounded-xl bg-white/70 hover:bg-white"
+                onClick={() => {
+                  if (otpVerifiedRef.current) setStep(2);
+                }}
+                className={`text-xs font-semibold transition-colors border px-3 py-1.5 rounded-xl ${otpVerifiedRef.current ? "text-slate-400 hover:text-slate-700 border-slate-200 bg-white/70 hover:bg-white cursor-pointer" : "text-slate-300 border-slate-100 bg-white/40 cursor-not-allowed"}`}
+                title={
+                  otpVerifiedRef.current ? "" : "Please verify your email first"
+                }
               >
-                Skip to profile →
+                {otpVerifiedRef.current
+                  ? "Skip to profile →"
+                  : "Verify email to continue"}
               </button>
             </div>
 
@@ -659,7 +999,7 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
               </div>
             </div>
 
-            {/* Slide content — takes remaining height */}
+            {/* Slide content */}
             <div className="flex-1 flex items-center justify-center px-4 sm:px-8 min-h-0">
               <AnimatePresence mode="wait" custom={slideDir}>
                 <motion.div
@@ -679,7 +1019,6 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
                   <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 lg:gap-10 items-center">
                     {/* Left: text */}
                     <div className="lg:col-span-3 space-y-5 text-center lg:text-left">
-                      {/* Badge */}
                       <div
                         className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full ${s.accentSoft} border ${s.accentBorder}`}
                       >
@@ -694,7 +1033,6 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
                           {s.tag}
                         </span>
                       </div>
-
                       <h2
                         className="text-3xl sm:text-4xl lg:text-5xl font-black text-slate-900 leading-[1.05] tracking-tight"
                         style={{ fontFamily: "'Syne', sans-serif" }}
@@ -714,12 +1052,9 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
                           </span>
                         ))}
                       </h2>
-
                       <p className="text-slate-500 text-base leading-relaxed max-w-md mx-auto lg:mx-0">
                         {s.desc}
                       </p>
-
-                      {/* Feature list */}
                       <div className="space-y-2.5">
                         {s.features.map((f, i) => (
                           <motion.div
@@ -741,10 +1076,8 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
                         ))}
                       </div>
                     </div>
-
                     {/* Right: visual */}
                     <div className="lg:col-span-2 flex flex-col items-center gap-5">
-                      {/* Icon cube */}
                       <motion.div
                         initial={{ scale: 0.85, opacity: 0 }}
                         animate={{ scale: 1, opacity: 1 }}
@@ -756,8 +1089,6 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
                       >
                         <s.Icon size={52} className="text-white" />
                       </motion.div>
-
-                      {/* Stat card */}
                       <motion.div
                         initial={{ opacity: 0, y: 12 }}
                         animate={{ opacity: 1, y: 0 }}
@@ -783,7 +1114,6 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
             {/* Footer controls */}
             <div className="flex-none px-6 sm:px-10 pb-5 pt-3">
               <div className="max-w-4xl mx-auto flex items-center justify-between gap-4">
-                {/* Dots */}
                 <div className="flex gap-2 items-center">
                   {SLIDES.map((_, i) => (
                     <button key={i} onClick={() => goToSlide(i)}>
@@ -799,8 +1129,6 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
                     </button>
                   ))}
                 </div>
-
-                {/* Nav buttons */}
                 <div className="flex items-center gap-2.5">
                   {slide > 0 && (
                     <button
@@ -820,7 +1148,11 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
                     className={`flex items-center gap-2 px-7 py-3 rounded-xl bg-linear-to-r ${s.accent} text-white font-black text-sm shadow-lg transition-all`}
                     style={{ fontFamily: "'Syne', sans-serif" }}
                   >
-                    {slide === SLIDES.length - 1 ? "Review My Profile" : "Next"}
+                    {slide === SLIDES.length - 1
+                      ? otpVerifiedRef.current
+                        ? "Review My Profile"
+                        : "Almost ready…"
+                      : "Next"}
                     <Ic.ChevRight size={14} />
                   </motion.button>
                 </div>
@@ -828,11 +1160,25 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
             </div>
           </div>
         </div>
+
+        {/* OTP Modal overlaid on carousel */}
+        <AnimatePresence>
+          {step === 1 && (
+            <OtpModal
+              maskedEmail={maskedEmail}
+              onVerified={handleVerifyOtp}
+              onResend={handleResendOtp}
+              isResending={isResending}
+              error={otpError}
+              isVerifying={isVerifying}
+            />
+          )}
+        </AnimatePresence>
       </>
     );
 
   /* ══════════════════════════════════════════════════════════════════════════
-     STEP 1 — REVIEW FORM  (full screen, scrollable inner area only)
+     STEP 2 — REVIEW FORM
   ══════════════════════════════════════════════════════════════════════════ */
   return (
     <>
@@ -858,7 +1204,7 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
           }}
         />
 
-        {/* ── Top bar (fixed height) ── */}
+        {/* Top bar */}
         <div className="relative z-10 flex-none flex items-center justify-between px-6 sm:px-10 py-4 border-b border-slate-200/60 bg-white/60 backdrop-blur-sm">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-linear-to-br from-indigo-600 to-violet-600 flex items-center justify-center shadow-md shadow-indigo-300/50">
@@ -871,30 +1217,32 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
               Talk2Hire
             </span>
           </div>
-          <div className="flex items-center gap-2">
-            {/* Colored progress strip */}
-            <div className="hidden sm:flex items-center gap-1.5 text-xs font-semibold text-slate-500">
-              <span className="w-5 h-5 rounded-full bg-indigo-500 text-white flex items-center justify-center text-[10px] font-black">
-                1
-              </span>
-              <span className="text-indigo-600">Carousel</span>
-              <div className="w-8 h-px bg-slate-300" />
-              <span className="w-5 h-5 rounded-full bg-linear-to-br from-indigo-600 to-violet-600 text-white flex items-center justify-center text-[10px] font-black">
-                2
-              </span>
-              <span className="font-bold text-slate-800">Review Profile</span>
-            </div>
+          <div className="hidden sm:flex items-center gap-1.5 text-xs font-semibold text-slate-500">
+            <span className="w-5 h-5 rounded-full bg-indigo-500 text-white flex items-center justify-center text-[10px] font-black">
+              1
+            </span>
+            <span className="text-indigo-600">Carousel</span>
+            <div className="w-8 h-px bg-slate-300" />
+            <span className="w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[10px] font-black">
+              <Ic.Check size={9} />
+            </span>
+            <span className="text-emerald-600">Email Verified</span>
+            <div className="w-8 h-px bg-slate-300" />
+            <span className="w-5 h-5 rounded-full bg-linear-to-br from-indigo-600 to-violet-600 text-white flex items-center justify-center text-[10px] font-black">
+              3
+            </span>
+            <span className="font-bold text-slate-800">Review Profile</span>
           </div>
         </div>
 
-        {/* ── Scrollable body ── */}
+        {/* Scrollable body */}
         <div className="relative z-10 flex-1 overflow-y-auto">
           <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <form
               onSubmit={handleSubmit(handleProfileSubmit)}
               className="space-y-6"
             >
-              {/* ── Page header ── */}
+              {/* Page header */}
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -916,7 +1264,6 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
                     everything and edit as needed.
                   </p>
                 </div>
-                {/* AI badge */}
                 <div className="sm:ml-auto flex items-center gap-2 px-3.5 py-2 rounded-2xl bg-indigo-50 border border-indigo-200 shrink-0">
                   <Ic.Sparkles size={13} className="text-indigo-500" />
                   <span className="text-xs font-bold text-indigo-600">
@@ -925,7 +1272,7 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
                 </div>
               </motion.div>
 
-              {/* ── Loading card ── */}
+              {/* Loading card */}
               <AnimatePresence>
                 {isDataLoading && (
                   <motion.div
@@ -982,7 +1329,7 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
                 )}
               </AnimatePresence>
 
-              {/* ── Error banner ── */}
+              {/* Error banner */}
               <AnimatePresence>
                 {regError && (
                   <motion.div
@@ -1000,7 +1347,7 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
                 )}
               </AnimatePresence>
 
-              {/* ── Form grid ── */}
+              {/* Form grid */}
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -1009,7 +1356,6 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
               >
                 {/* Left card */}
                 <div className="p-6 rounded-3xl bg-white/85 backdrop-blur-sm border border-slate-200 shadow-sm shadow-slate-100 space-y-5">
-                  {/* Card header */}
                   <div className="flex items-center gap-2.5 pb-3 border-b border-slate-100">
                     <div className="w-7 h-7 rounded-lg bg-indigo-100 flex items-center justify-center">
                       <Ic.User size={13} className="text-indigo-600" />
@@ -1021,8 +1367,6 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
                       Personal Info
                     </span>
                   </div>
-
-                  {/* Full name */}
                   <TextInput
                     label="Full Name"
                     icon={Ic.User}
@@ -1033,8 +1377,6 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
                       required: "Full name is required",
                     })}
                   />
-
-                  {/* Mobile */}
                   <TextInput
                     label="Mobile Number"
                     icon={Ic.Phone}
@@ -1043,8 +1385,7 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
                     error={errors.mobile?.message}
                     {...register("mobile")}
                   />
-
-                  {/* Email — display + edit button */}
+                  {/* Email */}
                   <div className="space-y-1.5">
                     <label
                       className="block text-xs font-bold text-slate-600 uppercase tracking-widest"
@@ -1092,7 +1433,6 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
 
                 {/* Right card */}
                 <div className="p-6 rounded-3xl bg-white/85 backdrop-blur-sm border border-slate-200 shadow-sm shadow-slate-100 space-y-5">
-                  {/* Card header */}
                   <div className="flex items-center gap-2.5 pb-3 border-b border-slate-100">
                     <div className="w-7 h-7 rounded-lg bg-violet-100 flex items-center justify-center">
                       <Ic.Code size={13} className="text-violet-600" />
@@ -1104,8 +1444,6 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
                       Professional Info
                     </span>
                   </div>
-
-                  {/* Location */}
                   <TextInput
                     label="Location"
                     icon={Ic.MapPin}
@@ -1114,8 +1452,6 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
                     error={errors.location?.message}
                     {...register("location")}
                   />
-
-                  {/* Skills */}
                   <div className="space-y-1.5">
                     <div className="flex items-center gap-2">
                       <label
@@ -1157,7 +1493,7 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
                 </div>
               </motion.div>
 
-              {/* ── Action bar ── */}
+              {/* Action bar */}
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
