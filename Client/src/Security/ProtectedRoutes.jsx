@@ -1,6 +1,7 @@
 import { Navigate } from "react-router-dom";
 import { useAuth } from "../Hooks/useAuthHook";
 import { useCompany } from "../Hooks/useCompanyAuthHook";
+import { useSelector } from "react-redux";
 import Loader from "../Components/Loader/Loader";
 
 const useUnifiedAuth = () => {
@@ -22,8 +23,23 @@ const useUnifiedAuth = () => {
 
 export const PublicRoute = ({ children }) => {
   const { isAuthenticated, hydrated, role } = useUnifiedAuth();
+  const pendingAutofillEmail = useSelector(
+    (state) => state.auth.pendingAutofillEmail,
+  );
+
+  const localAuthState = (() => {
+    try {
+      const s = localStorage.getItem("authState");
+      return s ? JSON.parse(s) : null;
+    } catch {
+      return null;
+    }
+  })();
 
   if (!hydrated) return <Loader label="Loading" />;
+
+  if (pendingAutofillEmail) return children;
+  if (!localAuthState?.isAuthenticated && isAuthenticated) return children;
 
   if (isAuthenticated) {
     return (

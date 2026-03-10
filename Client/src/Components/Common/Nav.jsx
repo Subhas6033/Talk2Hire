@@ -4,7 +4,6 @@ import { motion, AnimatePresence } from "motion/react";
 import clsx from "clsx";
 import { useAuth } from "../../Hooks/useAuthHook";
 import {
-  Briefcase,
   Bell,
   ChevronDown,
   LogOut,
@@ -14,7 +13,6 @@ import {
   User,
 } from "lucide-react";
 
-/* ─── Design tokens (scoped) ─── */
 const NAV_TOKENS = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
   .nav-root { font-family: 'DM Sans', sans-serif; }
@@ -41,12 +39,13 @@ const NAV_LINKS = [
 const Nav = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isAuthenticated, user, logout } = useAuth();
+
+  // ── setPendingAutofillEmail now comes from Redux via useAuth ──────────────
+  const { isAuthenticated, user, logout, setPendingAutofillEmail } = useAuth();
 
   const [scrolled, setScrolled] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
 
-  /* scroll shadow */
   useEffect(() => {
     const handler = () => setScrolled(window.scrollY > 12);
     window.addEventListener("scroll", handler, { passive: true });
@@ -55,9 +54,15 @@ const Nav = () => {
 
   const isActive = (href) => location.pathname === href;
 
-  const handleLogout = () => {
-    logout({});
+  const handleLogout = async () => {
+    const emailToSave = user?.email;
+    if (emailToSave) {
+      setPendingAutofillEmail(emailToSave);
+    } else {
+    }
     setProfileOpen(false);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await logout();
     navigate("/login");
   };
 
@@ -88,7 +93,7 @@ const Nav = () => {
         )}
       >
         <nav className="mx-auto max-w-7xl px-6 h-16 flex items-center justify-between gap-8">
-          {/* ── Logo ── */}
+          {/* Logo */}
           <Link to="/" className="flex items-center gap-3 shrink-0 group">
             <div className="flex items-center gap-3 leading-none">
               <div className="relative">
@@ -97,12 +102,11 @@ const Nav = () => {
                   alt="Talk2Hire"
                   className="h-16 w-auto bg-transparent object-contain transition-transform duration-300 group-hover:scale-105"
                 />
-                <div className="absolute -inset-1 rounded-2xl blur-md opacity-0 transition duration-300" />
               </div>
             </div>
           </Link>
 
-          {/* ── Nav links (center) ── */}
+          {/* Nav links */}
           <div className="hidden md:flex items-center gap-1 flex-1">
             {NAV_LINKS.map(({ href, label }) => (
               <Link
@@ -120,11 +124,10 @@ const Nav = () => {
             ))}
           </div>
 
-          {/* ── Right side ── */}
+          {/* Right side */}
           <div className="flex items-center gap-2">
             {isAuthenticated ? (
               <>
-                {/* Notification bell */}
                 <button className="relative w-9 h-9 flex items-center justify-center rounded-lg text-(--nav-ink-40) hover:text-(--nav-ink) hover:bg-(--nav-ink-08) transition-all">
                   <Bell size={17} />
                   <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border-2 border-white" />
@@ -132,17 +135,14 @@ const Nav = () => {
 
                 <div className="w-px h-6 bg-(--nav-border)" />
 
-                {/* Profile dropdown */}
                 <div className="relative z-201">
                   <button
                     onClick={() => setProfileOpen((p) => !p)}
                     className="flex items-center gap-2 px-3 py-1.5 rounded-xl hover:bg-(--nav-ink-08) transition-all"
                   >
-                    {/* Avatar */}
                     <div className="w-8 h-8 rounded-lg bg-(--nav-slate) flex items-center justify-center text-white text-xs font-bold shadow-sm shrink-0">
                       {user?.fullName?.[0]?.toUpperCase() ?? "U"}
                     </div>
-
                     <div className="hidden sm:flex flex-col items-start leading-none">
                       <span className="text-sm font-semibold text-(--nav-ink) max-w-30 truncate">
                         {user?.fullName ?? "Profile"}
@@ -151,7 +151,6 @@ const Nav = () => {
                         {user?.email ?? ""}
                       </span>
                     </div>
-
                     <ChevronDown
                       size={13}
                       className={clsx(
@@ -161,16 +160,13 @@ const Nav = () => {
                     />
                   </button>
 
-                  {/* Dropdown */}
                   <AnimatePresence>
                     {profileOpen && (
                       <>
-                        {/* Backdrop */}
                         <div
                           className="fixed inset-0 z-10"
                           onClick={() => setProfileOpen(false)}
                         />
-
                         <motion.div
                           initial={{ opacity: 0, y: 6, scale: 0.96 }}
                           animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -178,7 +174,6 @@ const Nav = () => {
                           transition={{ duration: 0.15, ease: "easeOut" }}
                           className="absolute right-0 top-full mt-2 w-56 bg-white border border-(--nav-border) rounded-2xl shadow-(--nav-shadow-lg) z-202 overflow-hidden"
                         >
-                          {/* User info header */}
                           <div className="px-4 py-3 bg-(--nav-cream) border-b border-(--nav-border)">
                             <p className="text-xs font-bold text-(--nav-ink) truncate">
                               {user?.fullName ?? "User"}
@@ -188,7 +183,6 @@ const Nav = () => {
                             </p>
                           </div>
 
-                          {/* Menu items */}
                           <div className="p-1.5">
                             {PROFILE_LINKS.map(
                               ({ label, href, icon: Icon }) => (
@@ -215,7 +209,6 @@ const Nav = () => {
                             )}
                           </div>
 
-                          {/* Sign out */}
                           <div className="p-1.5 border-t border-(--nav-border)">
                             <button
                               onClick={handleLogout}
@@ -232,7 +225,6 @@ const Nav = () => {
                 </div>
               </>
             ) : (
-              /* Unauthenticated */
               <div className="flex items-center gap-2">
                 <Link
                   to="/login"

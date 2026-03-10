@@ -20,6 +20,8 @@ import {
   regComplete,
   clearRegistration,
   setRegStep,
+  setPendingAutofillEmail,
+  clearPendingAutofillEmail,
 } from "../API/authApi";
 import api from "../API/api";
 
@@ -52,7 +54,9 @@ export const useAuth = () => {
     regSessionId,
     regExtractedData,
     regMaskedEmail,
-    // NOTE: regSuggestedPassword removed — generated client-side in RegistrationForm
+
+    // ── Autofill email ────────────────────────────────────────────────────────
+    pendingAutofillEmail,
   } = useSelector((state) => state.auth);
 
   // ── Reset-password local state ─────────────────────────────────────────────
@@ -113,14 +117,15 @@ export const useAuth = () => {
     verifyPasswordError: otpError || passwordError,
 
     // ── Registration wizard state ─────────────────────────────────────────────
-    // regStep: 'idle' | 'uploading' | 'extracting' | 'otp_sent' | 'otp_verified' | 'completing'
     regStep,
     regLoading,
     regError,
     regSessionId,
-    regExtractedData, // { email, fullName, mobile, location, cvSkills }
-    regMaskedEmail, // masked email shown on OTP screen e.g. "jo***@gmail.com"
-    // regSuggestedPassword removed — generated client-side in RegistrationForm
+    regExtractedData,
+    regMaskedEmail,
+
+    // ── Autofill email ────────────────────────────────────────────────────────
+    pendingAutofillEmail,
 
     // ── Actions ───────────────────────────────────────────────────────────────
     login: (data) => dispatch(loginUser(data)),
@@ -142,6 +147,11 @@ export const useAuth = () => {
     regComplete: (data) => dispatch(regComplete(data)),
     clearRegistration: () => dispatch(clearRegistration()),
     setRegStep: (step) => dispatch(setRegStep(step)),
+
+    // ── Autofill email actions ────────────────────────────────────────────────
+    setPendingAutofillEmail: (email) =>
+      dispatch(setPendingAutofillEmail(email)),
+    clearPendingAutofillEmail: () => dispatch(clearPendingAutofillEmail()),
 
     // ── Utility ───────────────────────────────────────────────────────────────
     clearError: () => dispatch(clearError()),

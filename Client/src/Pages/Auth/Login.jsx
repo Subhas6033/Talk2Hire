@@ -5,14 +5,13 @@ import { Eye, EyeOff } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { useAuth } from "../../Hooks/useAuthHook";
+import { useSelector } from "react-redux";
 import { motion } from "motion/react";
 
-// ── Spinner ───────────────────────────────────────────────────────────────────
 const Loader = () => (
   <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-indigo-300 border-t-indigo-600" />
 );
 
-// ── Dot-grid texture ──────────────────────────────────────────────────────────
 const DotGrid = () => (
   <div
     className="pointer-events-none absolute inset-0 opacity-[0.06]"
@@ -23,7 +22,6 @@ const DotGrid = () => (
   />
 );
 
-// ── Animated colour blob ──────────────────────────────────────────────────────
 const Blob = ({ className, gradient }) => (
   <div
     className={`pointer-events-none absolute rounded-full blur-[110px] ${className}`}
@@ -31,14 +29,12 @@ const Blob = ({ className, gradient }) => (
   />
 );
 
-// ── Framer Motion fade-up helper ──────────────────────────────────────────────
 const fadeUp = (delay = 0) => ({
   initial: { opacity: 0, y: 22 },
   animate: { opacity: 1, y: 0 },
   transition: { duration: 0.52, ease: [0.22, 1, 0.36, 1], delay },
 });
 
-// ── Reusable primary button ───────────────────────────────────────────────────
 const PrimaryBtn = ({ children, className = "", disabled, ...props }) => (
   <button
     disabled={disabled}
@@ -61,7 +57,6 @@ const PrimaryBtn = ({ children, className = "", disabled, ...props }) => (
   </button>
 );
 
-// ── Reusable ghost button ─────────────────────────────────────────────────────
 const GhostBtn = ({ children, className = "", ...props }) => (
   <button
     className={[
@@ -79,7 +74,6 @@ const GhostBtn = ({ children, className = "", ...props }) => (
   </button>
 );
 
-// ── Main component ────────────────────────────────────────────────────────────
 const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -94,29 +88,36 @@ const Login = () => {
     forgotPasswordSuccess,
     forgotPasswordEmail,
     clearForgotPassword,
+    clearPendingAutofillEmail,
   } = useAuth();
 
+  const pendingEmail = useSelector((state) => state.auth.pendingAutofillEmail);
   const navigate = useNavigate();
 
-  // Navigate to verify page ONLY after forgotPasswordEmail is confirmed in
-  // Redux state — avoids the race where navigate fires before fulfilled runs.
   useEffect(() => {
     if (forgotPasswordSuccess && forgotPasswordEmail) {
       setIsModalOpen(false);
       navigate("/forgot-password");
-      // Don't clearForgotPassword here — VerifyPassword still needs the email
     }
   }, [forgotPasswordSuccess, forgotPasswordEmail, navigate]);
 
-  // Login form
   const {
     register,
     handleSubmit,
+    reset,
     formState: { errors, isValid },
   } = useForm({
     mode: "onTouched",
-    defaultValues: { email: "", password: "" },
+    defaultValues: {
+      email: pendingEmail || "",
+      password: "",
+    },
   });
+
+  useEffect(() => {
+    if (!pendingEmail) return;
+    reset({ email: pendingEmail, password: "" });
+  }, [pendingEmail]);
 
   const onSubmit = async (data) => {
     try {
@@ -124,6 +125,7 @@ const Login = () => {
         email: data.email,
         password: data.password,
       }).unwrap();
+      clearPendingAutofillEmail();
       const role = result?.data?.role;
       navigate(role === "company" ? "/company/dashboard" : "/", {
         replace: true,
@@ -133,7 +135,6 @@ const Login = () => {
     }
   };
 
-  // Forgot-password form
   const {
     register: registerReset,
     handleSubmit: handleResetSubmit,
@@ -148,8 +149,6 @@ const Login = () => {
 
   const onResetSubmit = async (data) => {
     try {
-      // Just dispatch — navigation is handled by the useEffect above,
-      // which waits until forgotPasswordEmail is in Redux state.
       await forgotPassword(data.resetEmail).unwrap();
     } catch (err) {
       console.error("Error sending reset mail:", err);
@@ -158,7 +157,6 @@ const Login = () => {
 
   return (
     <>
-      {/* SEO */}
       <title>User Login | Talk2Hire Careers Portal</title>
       <meta
         name="description"
@@ -194,11 +192,8 @@ const Login = () => {
         .dm-sans       { font-family: 'DM Sans', sans-serif; }
       `}</style>
 
-      {/* ── Page shell ── */}
       <section className="dm-sans relative min-h-screen overflow-hidden flex items-center justify-center px-4 py-16 bg-linear-to-br from-slate-50 via-blue-50/40 to-indigo-50/60">
         <DotGrid />
-
-        {/* Blobs */}
         <Blob
           className="blob-float-a -top-28 -left-28 h-96 w-96 opacity-40"
           gradient="radial-gradient(circle,#f9a8d4 0%,#fde68a 100%)"
@@ -212,10 +207,8 @@ const Login = () => {
           gradient="radial-gradient(circle,#bae6fd 0%,#e0e7ff 100%)"
         />
 
-        {/* ── Card ── */}
         <motion.div className="relative w-full max-w-md" {...fadeUp(0)}>
           <div className="rounded-3xl p-8 sm:p-10 bg-white/75 backdrop-blur-2xl border border-white/80 shadow-[0_4px_6px_-1px_rgba(0,0,0,0.04),0_20px_60px_-10px_rgba(99,102,241,0.10),inset_0_1px_0_rgba(255,255,255,0.9)]">
-            {/* Header */}
             <motion.div className="text-center mb-8" {...fadeUp(0.08)}>
               <div className="flex justify-center mb-5">
                 <span className="sora inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-linear-to-r from-indigo-100 to-violet-100 border border-indigo-200/60 text-[0.68rem] font-semibold tracking-widest uppercase text-indigo-600">
@@ -231,7 +224,6 @@ const Login = () => {
               </p>
             </motion.div>
 
-            {/* Form */}
             <motion.div {...fadeUp(0.16)}>
               <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
                 <FormField
@@ -248,7 +240,6 @@ const Login = () => {
                   })}
                 />
 
-                {/* Password with toggle */}
                 <div className="space-y-1.5">
                   <label className="block text-xs font-semibold text-slate-600 tracking-wide">
                     Password
@@ -306,10 +297,8 @@ const Login = () => {
               </div>
             </motion.div>
 
-            {/* Divider */}
             <div className="my-6 border-t border-slate-200/70" />
 
-            {/* Footer links */}
             <motion.div className="space-y-2 text-center" {...fadeUp(0.24)}>
               {[
                 {
@@ -342,7 +331,6 @@ const Login = () => {
           </div>
         </motion.div>
 
-        {/* ── Forgot-password modal ── */}
         <Modal
           isOpen={isModalOpen}
           onClose={handleCloseModal}

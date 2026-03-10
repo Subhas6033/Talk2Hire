@@ -641,42 +641,6 @@ const RegistrationForm = () => {
         />
 
         <div className="relative z-10 min-h-screen flex flex-col">
-          {/* Nav */}
-          <nav className="px-6 sm:px-10 py-5 flex items-center justify-between">
-            <motion.div
-              initial={{ opacity: 0, x: -16 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.5 }}
-              className="flex items-center gap-2.5"
-            >
-              <div className="w-9 h-9 rounded-xl bg-linear-to-br from-indigo-600 to-violet-600 flex items-center justify-center shadow-lg shadow-indigo-300/50">
-                <Ic.Briefcase size={15} className="text-white" />
-              </div>
-              <span
-                className="text-lg font-black text-slate-900"
-                style={{ fontFamily: "'Syne', sans-serif" }}
-              >
-                Talk2Hire
-              </span>
-            </motion.div>
-            <motion.div
-              initial={{ opacity: 0, x: 16 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.5 }}
-              className="flex items-center gap-3"
-            >
-              <span className="text-sm text-slate-500 hidden sm:block">
-                Already have an account?
-              </span>
-              <button
-                onClick={() => navigate("/login")}
-                className="text-sm font-bold text-indigo-600 border-2 border-indigo-200 bg-white/80 backdrop-blur-sm px-4 py-2 rounded-xl hover:bg-indigo-50 transition-all hover:border-indigo-300 shadow-sm"
-              >
-                Sign in →
-              </button>
-            </motion.div>
-          </nav>
-
           {/* Main */}
           <div className="flex-1 flex items-center px-4 sm:px-6 lg:px-10 py-6">
             <div className="w-full max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-10 xl:gap-20 items-center">

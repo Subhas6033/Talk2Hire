@@ -572,7 +572,7 @@ const OtpModal = ({
 ───────────────────────────────────────────────────────────────────────────── */
 const OnboardingFlow = ({ isOpen, onComplete }) => {
   const navigate = useNavigate();
-  const { getCurrentUser } = useAuth();
+  const { getCurrentUser, setPendingAutofillEmail } = useAuth();
 
   // step: 0=carousel, 1=otp (full-screen, blocks everything), 2=form
   const [step, setStep] = useState(0);
@@ -872,7 +872,6 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
 
   // ── Submit ────────────────────────────────────────────────────────────────
   const handleProfileSubmit = async (data) => {
-    // Guard: block if OTP not verified yet (show friendly message instead of backend 403)
     if (!otpVerifiedRef.current) {
       setRegError(
         "Please verify your email with the OTP before completing registration.",
@@ -881,11 +880,11 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
     }
     try {
       setRegError(null);
-      // Use sessionIdRef (set during polling) as the single source of truth
       const sid =
         sessionIdRef.current || sessionStorage.getItem("registrationSessionId");
       if (!sid)
         throw new Error("Session ID not found. Please restart registration.");
+
       const res = await fetch(`${API_URL}/api/v1/auth/complete-registration`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -896,11 +895,18 @@ const OnboardingFlow = ({ isOpen, onComplete }) => {
         const err = await res.json();
         throw new Error(err.message || "Registration failed");
       }
+
+      // Clean up session keys
       sessionStorage.removeItem("registrationSessionId");
       sessionStorage.removeItem("showOnboarding");
-      await getCurrentUser();
+
+      // ── Save email to Redux so Login can autofill it ──────────────────────
+      // Must use Redux (not sessionStorage) because navigate("/login") will
+      // cause PublicRoute to remount Login — Redux survives remounts.
+      setPendingAutofillEmail(emailDisplay);
+
       onComplete();
-      navigate("/", { replace: true });
+      navigate("/login", { replace: true }); // go directly to login, not "/"
     } catch (e) {
       setRegError(
         e.message || "Failed to complete registration. Please try again.",

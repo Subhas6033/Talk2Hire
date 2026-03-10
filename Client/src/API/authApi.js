@@ -219,8 +219,15 @@ const saveAuthState = (user, isAuthenticated) => {
 const loadStateFromStorage = () => {
   try {
     const serialized = localStorage.getItem("authState");
+    const pendingAutofill = localStorage.getItem("pendingAutofillEmail");
     if (!serialized) return defaultState();
     const parsed = JSON.parse(serialized);
+    if (pendingAutofill) {
+      return {
+        ...defaultState(),
+        hydrated: true,
+      };
+    }
     return {
       ...defaultState(),
       user: parsed.user || null,
@@ -236,34 +243,26 @@ const loadStateFromStorage = () => {
 };
 
 const defaultState = () => ({
-  // ── Core auth ───────────────────────────────────────────────────────────────
   user: null,
   isAuthenticated: false,
   loading: false,
   error: null,
   hydrated: true,
   lastVerified: null,
-
-  // ── Forgot-password ─────────────────────────────────────────────────────────
   forgotPasswordLoading: false,
   forgotPasswordError: null,
   forgotPasswordSuccess: false,
   forgotPasswordEmail: null,
-
-  // ── OTP (forgot-password flow) ──────────────────────────────────────────────
   otpLoading: false,
   otpError: null,
   otpVerified: false,
-
-  // ── Registration wizard ─────────────────────────────────────────────────────
-  // regStep: 'idle' | 'uploading' | 'extracting' | 'otp_sent' | 'otp_verified' | 'completing'
   regStep: "idle",
   regLoading: false,
   regError: null,
   regSessionId: null,
-  regExtractedData: null, // { email, fullName, mobile, location, cvSkills }
-  regMaskedEmail: null, // e.g. "jo***@gmail.com" — returned from sendRegistrationOtp
-  // NOTE: regSuggestedPassword removed — password suggestion is now generated client-side
+  regExtractedData: null,
+  regMaskedEmail: null,
+  pendingAutofillEmail: localStorage.getItem("pendingAutofillEmail") || null,
 });
 
 const SESSION_GRACE_MS = 5 * 60 * 1000;
@@ -318,11 +317,18 @@ const authSlice = createSlice({
       state.regStep = action.payload;
       state.regError = null;
     },
+    setPendingAutofillEmail: (state, action) => {
+      state.pendingAutofillEmail = action.payload;
+      localStorage.setItem("pendingAutofillEmail", action.payload);
+    },
+    clearPendingAutofillEmail: (state) => {
+      state.pendingAutofillEmail = null;
+      localStorage.removeItem("pendingAutofillEmail");
+    },
   },
 
   extraReducers: (builder) => {
     builder
-      // ── getCVSkills ───────────────────────────────────────────────────────
       .addCase(getCVSkills.pending, (state) => {
         state.loading = true;
       })
@@ -340,7 +346,6 @@ const authSlice = createSlice({
         state.loading = false;
       })
 
-      // ── loginUser ─────────────────────────────────────────────────────────
       .addCase(loginUser.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -359,20 +364,23 @@ const authSlice = createSlice({
         state.hydrated = true;
       })
 
-      // ── logoutUser ────────────────────────────────────────────────────────
       .addCase(logoutUser.pending, (state) => {
         state.loading = true;
       })
       .addCase(logoutUser.fulfilled, (state) => {
+        const pending = state.pendingAutofillEmail;
         Object.assign(state, defaultState(), { hydrated: true });
+        state.pendingAutofillEmail = pending; // defaultState() already reads localStorage, but be explicit
         localStorage.removeItem("authState");
       })
       .addCase(logoutUser.rejected, (state) => {
+        // Same — preserve it even on logout failure
+        const pending = state.pendingAutofillEmail;
         Object.assign(state, defaultState(), { hydrated: true });
+        state.pendingAutofillEmail = pending;
         localStorage.removeItem("authState");
       })
 
-      // ── getCurrentUser ────────────────────────────────────────────────────
       .addCase(getCurrentUser.pending, (state) => {
         state.loading = true;
       })
@@ -397,7 +405,6 @@ const authSlice = createSlice({
         }
       })
 
-      // ── updateUser ────────────────────────────────────────────────────────
       .addCase(updateUser.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -414,7 +421,6 @@ const authSlice = createSlice({
         state.error = action.payload;
       })
 
-      // ── forgotPassword ────────────────────────────────────────────────────
       .addCase(forgotPassword.pending, (state) => {
         state.forgotPasswordLoading = true;
         state.forgotPasswordError = null;
@@ -430,7 +436,6 @@ const authSlice = createSlice({
         state.forgotPasswordError = action.payload;
       })
 
-      // ── verifyOtp (forgot-password) ───────────────────────────────────────
       .addCase(verifyOtp.pending, (state) => {
         state.otpLoading = true;
         state.otpError = null;
@@ -445,7 +450,6 @@ const authSlice = createSlice({
         state.otpError = action.payload;
       })
 
-      // ── regUploadResume ───────────────────────────────────────────────────
       .addCase(regUploadResume.pending, (state) => {
         state.regStep = "uploading";
         state.regLoading = true;
@@ -454,7 +458,6 @@ const authSlice = createSlice({
       .addCase(regUploadResume.fulfilled, (state, action) => {
         state.regLoading = false;
         state.regSessionId = action.payload.data?.sessionId ?? null;
-        // No suggestedPassword — generated client-side
         state.regStep = "extracting";
       })
       .addCase(regUploadResume.rejected, (state, action) => {
@@ -463,7 +466,6 @@ const authSlice = createSlice({
         state.regError = action.payload;
       })
 
-      // ── regPollStatus ─────────────────────────────────────────────────────
       .addCase(regPollStatus.fulfilled, (state, action) => {
         const { status, extractedData, error } = action.payload.data || {};
         if (status === "completed") {
@@ -477,7 +479,6 @@ const authSlice = createSlice({
       })
       .addCase(regPollStatus.rejected, () => {})
 
-      // ── regSendOtp ────────────────────────────────────────────────────────
       .addCase(regSendOtp.pending, (state) => {
         state.regLoading = true;
         state.regError = null;
@@ -493,7 +494,6 @@ const authSlice = createSlice({
         state.regError = action.payload;
       })
 
-      // ── regVerifyOtp ──────────────────────────────────────────────────────
       .addCase(regVerifyOtp.pending, (state) => {
         state.regLoading = true;
         state.regError = null;
@@ -507,7 +507,6 @@ const authSlice = createSlice({
         state.regError = action.payload;
       })
 
-      // ── regComplete ───────────────────────────────────────────────────────
       .addCase(regComplete.pending, (state) => {
         state.regStep = "completing";
         state.regLoading = true;
@@ -543,6 +542,8 @@ export const {
   clearOtp,
   clearRegistration,
   setRegStep,
+  setPendingAutofillEmail,
+  clearPendingAutofillEmail,
 } = authSlice.actions;
 
 export default authSlice.reducer;
