@@ -53,9 +53,7 @@ export const PublicRoute = ({ children }) => {
   if (pendingAutofillEmail) return children;
 
   if (isAuthenticated) {
-    return (
-      <Navigate to={role === "company" ? "/company/dashboard" : "/"} replace />
-    );
+    return <Navigate to={role === "company" ? "/company" : "/"} replace />;
   }
 
   return children;
@@ -76,9 +74,7 @@ export const RoleBasedRoute = ({ children, allowedRole }) => {
   }
 
   if (role !== allowedRole) {
-    return (
-      <Navigate to={role === "company" ? "/company/dashboard" : "/"} replace />
-    );
+    return <Navigate to={role === "company" ? "/company" : "/"} replace />;
   }
 
   return children;

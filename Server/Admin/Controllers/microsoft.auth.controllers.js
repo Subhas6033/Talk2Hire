@@ -9,6 +9,21 @@ const {
   generateRefreshAndAccessTokens,
 } = require("../../Controllers/auth.controllers.js");
 
+const FREE_EMAIL_DOMAINS = [
+  "gmail.com",
+  "yahoo.com",
+  "hotmail.com",
+  "outlook.com",
+  "aol.com",
+  "icloud.com",
+  "protonmail.com",
+  "mail.com",
+  "yandex.com",
+  "gmx.com",
+  "zoho.com",
+  "live.com",
+];
+
 const cookieOptions = {
   httpOnly: true,
   secure: process.env.NODE_ENV === "production",
@@ -38,6 +53,14 @@ const microsoftCallback = (req, res, next) => {
             info?.message || "Microsoft authentication failed",
           ),
         );
+    }
+
+    // ✅ Block free/personal email domains — company emails only
+    const emailDomain = company.companyMail?.split("@")[1]?.toLowerCase();
+    if (!emailDomain || FREE_EMAIL_DOMAINS.includes(emailDomain)) {
+      return res.redirect(
+        `${process.env.CORS_ORIGIN}/company/microsoft/callback?error=${encodeURIComponent("Only company email addresses are allowed. Personal emails are not permitted.")}`,
+      );
     }
 
     try {

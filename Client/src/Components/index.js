@@ -16,6 +16,7 @@ import WelcomeCarousel from "./Common/WelcomeCarousal";
 import OnboardingFlow from "./Common/Onboarding";
 import InterviewSetup from "./Others/InterviewSetup";
 import CompanyNavbar from "./Common/CompanyNav";
+import AdminNav from "./Common/AdminNav";
 
 export {
   Nav,
@@ -36,4 +37,5 @@ export {
   OnboardingFlow,
   InterviewSetup,
   CompanyNavbar,
+  AdminNav,
 };

@@ -1,5 +1,5 @@
 import React from "react";
-import { Nav, Footer, CompanyNavbar } from "../Components/index.js";
+import { Nav, Footer, CompanyNavbar, AdminNav } from "../Components/index.js";
 import { motion } from "motion/react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../Hooks/useAuthHook.js";
@@ -10,6 +10,7 @@ import { useMicrosoftUserAuth } from "../Hooks/useMicrosoftAuth.js";
 const FULLSCREEN_ROUTES = ["/interview", "/interview/live"];
 
 const ROLE_NAV = {
+  admin: AdminNav,
   company: CompanyNavbar,
   user: Nav,
   guest: Nav,
@@ -17,6 +18,7 @@ const ROLE_NAV = {
 
 const Layout = ({ children, isNotFound = false }) => {
   const { pathname } = useLocation();
+
   const {
     isAuthenticated: isUserAuth,
     hydrated: userHydrated,
@@ -33,15 +35,17 @@ const Layout = ({ children, isNotFound = false }) => {
   const hydrated =
     userHydrated && companyHydrated && msCompanyHydrated && msUserHydrated;
 
-  // Company takes priority, then user, then guest
   const role =
-    isCompanyAuth || isMsCompanyAuth
-      ? "company"
-      : isUserAuth || isMsUserAuth
-        ? userRole
-        : "guest";
+    userRole === "admin"
+      ? "admin"
+      : isCompanyAuth || isMsCompanyAuth
+        ? "company"
+        : isUserAuth || isMsUserAuth
+          ? userRole
+          : "guest";
 
   const RoleNav = ROLE_NAV[role] ?? Nav;
+  const showFooter = !isFullscreen && role !== "company" && role !== "admin";
 
   return (
     <div
@@ -59,7 +63,7 @@ const Layout = ({ children, isNotFound = false }) => {
         {children}
       </motion.main>
 
-      {!isFullscreen && role !== "company" && <Footer />}
+      {showFooter && <Footer />}
     </div>
   );
 };

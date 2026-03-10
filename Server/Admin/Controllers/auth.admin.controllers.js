@@ -73,8 +73,31 @@ const registerCompany = asyncHandler(async (req, res) => {
     throw new APIERR(400, "All fields are required");
   }
 
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(companyMail)) {
+  const FREE_EMAIL_DOMAINS = [
+    "gmail.com",
+    "yahoo.com",
+    "hotmail.com",
+    "outlook.com",
+    "aol.com",
+    "icloud.com",
+    "protonmail.com",
+    "mail.com",
+    "yandex.com",
+    "gmx.com",
+    "zoho.com",
+    "live.com",
+  ];
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  if (!emailRegex.test(companyMail)) {
     throw new APIERR(400, "Invalid email format");
+  }
+
+  const domain = companyMail.split("@")[1].toLowerCase();
+
+  if (FREE_EMAIL_DOMAINS.includes(domain)) {
+    throw new APIERR(400, "Please use your company email address");
   }
 
   if (!/^\d{10}$/.test(companyMobile)) {

@@ -5,7 +5,17 @@ import { Eye, EyeOff, Building2, AlertCircle } from "lucide-react";
 import { useCompany } from "../../Hooks/useCompanyAuthHook";
 import { useMicrosoftAuth } from "../../Hooks/useMicrosoftCompanyAuthHook";
 
-// Microsoft logo SVG
+const TECHNICAL_PATTERNS =
+  /network|fetch|ECONNREFUSED|timeout|socket|cors|undefined|500|Internal/i;
+
+const sanitizeError = (err) => {
+  const message = err?.data?.message || err?.message || err?.error || "";
+  if (!message || TECHNICAL_PATTERNS.test(message)) {
+    return "Something went wrong. Please try again.";
+  }
+  return message;
+};
+
 const MicrosoftLogo = ({ size = 18 }) => (
   <svg
     width={size}
@@ -22,6 +32,7 @@ const MicrosoftLogo = ({ size = 18 }) => (
 
 const Companylogin = () => {
   const [showPassword, setShowPassword] = useState(false);
+  const [displayError, setDisplayError] = useState(null);
   const { login, loading, error, clearError } = useCompany();
   const { loginWithMicrosoft, redirecting: msRedirecting } = useMicrosoftAuth();
   const navigate = useNavigate();
@@ -36,6 +47,7 @@ const Companylogin = () => {
   });
 
   const onSubmit = async (data) => {
+    setDisplayError(null);
     try {
       const result = await login({
         companyMail: data.companyMail,
@@ -44,13 +56,19 @@ const Companylogin = () => {
 
       const role = result?.data?.role;
       if (role === "company") {
-        navigate("/company/dashboard", { replace: true });
+        navigate("/company", { replace: true });
       } else {
         navigate("/", { replace: true });
       }
     } catch (err) {
+      setDisplayError(sanitizeError(err));
       console.error("Company login failed:", err);
     }
+  };
+
+  const handleInputChange = () => {
+    if (error) clearError();
+    if (displayError) setDisplayError(null);
   };
 
   const inputCls = (hasError) =>
@@ -59,6 +77,12 @@ const Companylogin = () => {
         ? "border-rose-400/60 bg-rose-50 text-rose-800 focus:ring-2 focus:ring-rose-300/40 placeholder-rose-300"
         : "border-slate-200 bg-white/70 text-slate-800 focus:border-amber-400 focus:bg-white focus:ring-2 focus:ring-amber-300/30 placeholder-slate-400"
     }`;
+
+  const shownError =
+    displayError ||
+    (error && TECHNICAL_PATTERNS.test(error)
+      ? "Something went wrong. Please try again."
+      : error);
 
   return (
     <>
@@ -171,7 +195,6 @@ const Companylogin = () => {
         .dot-grid { background-image:radial-gradient(circle,rgba(217,119,6,0.12) 1px,transparent 1px); background-size:26px 26px; }
         .co-root input:focus { outline:none; }
 
-        /* Microsoft button */
         .btn-ms {
           display:flex; align-items:center; justify-content:center; gap:10px;
           width:100%; padding:12px 16px;
@@ -217,7 +240,6 @@ const Companylogin = () => {
           <div className="co-card-glass">
             <div className="accent-bar" />
 
-            {/* Header */}
             <div className="co-card-header px-9 pt-8 pb-7 co-header">
               <div className="mb-5">
                 <span className="biz-badge">
@@ -240,22 +262,19 @@ const Companylogin = () => {
               </div>
             </div>
 
-            {/* Form */}
             <div className="px-9 pt-7 pb-9 co-form">
-              {/* API Error banner */}
-              {error && (
+              {shownError && (
                 <div className="error-banner flex items-start gap-2.5 mb-5">
                   <AlertCircle
                     size={15}
                     className="text-rose-500 mt-0.5 shrink-0"
                   />
                   <p className="text-xs text-rose-600 leading-relaxed">
-                    {error}
+                    {shownError}
                   </p>
                 </div>
               )}
 
-              {/* Microsoft button */}
               <button
                 type="button"
                 onClick={loginWithMicrosoft}
@@ -276,7 +295,6 @@ const Companylogin = () => {
               <div className="or-divider">or sign in with email</div>
 
               <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
-                {/* Business Email */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-500 mb-1.5 tracking-wide uppercase">
                     Business Email *
@@ -284,7 +302,7 @@ const Companylogin = () => {
                   <input
                     className={inputCls(!!errors.companyMail)}
                     placeholder="contact@company.com"
-                    onChange={() => error && clearError()}
+                    onChange={handleInputChange}
                     {...register("companyMail", {
                       required: "Email is required",
                       pattern: {
@@ -300,7 +318,6 @@ const Companylogin = () => {
                   )}
                 </div>
 
-                {/* Password */}
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="text-xs font-semibold text-slate-500 tracking-wide uppercase">
@@ -318,7 +335,7 @@ const Companylogin = () => {
                       type={showPassword ? "text" : "password"}
                       className={inputCls(!!errors.password) + " pr-12"}
                       placeholder="••••••••"
-                      onChange={() => error && clearError()}
+                      onChange={handleInputChange}
                       {...register("password", {
                         required: "Password is required",
                         minLength: {
@@ -342,7 +359,6 @@ const Companylogin = () => {
                   )}
                 </div>
 
-                {/* Submit */}
                 <button
                   type="submit"
                   disabled={!isValid || loading}
@@ -359,7 +375,6 @@ const Companylogin = () => {
                 </button>
               </form>
 
-              {/* Divider */}
               <div className="flex items-center gap-3 py-4">
                 <hr className="flex-1 co-divider" />
                 <span className="text-[10px] text-slate-400 tracking-widest uppercase">
@@ -368,7 +383,6 @@ const Companylogin = () => {
                 <hr className="flex-1 co-divider" />
               </div>
 
-              {/* Footer links */}
               <div className="space-y-2 text-center">
                 <p className="text-co-muted">
                   Don't have a company account?{" "}

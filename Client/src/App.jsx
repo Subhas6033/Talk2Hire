@@ -41,6 +41,8 @@ import {
   SalaryPage,
   UserMicrosoftCallback,
   CompanyMicrosoftCallback,
+  CompanyHome,
+  AdminDashboard,
 } from "./Pages/index.pages.js";
 import { InterviewSetup } from "./Components/index.js";
 import { useStreams } from "./Hooks/streamContext";
@@ -244,6 +246,14 @@ const App = () => {
 
                 {/* COMPANY ONLY ROUTES */}
                 <Route
+                  path="/company"
+                  element={
+                    <RoleBasedRoute allowedRole="company">
+                      <CompanyHome />
+                    </RoleBasedRoute>
+                  }
+                />
+                <Route
                   path="/company/dashboard"
                   element={
                     <RoleBasedRoute allowedRole="company">
@@ -275,9 +285,13 @@ const App = () => {
                     </RoleBasedRoute>
                   }
                 />
-
+                {/* Mobile Camera */}
                 <Route path="/mobile-camera" element={<MobileCameraPage />} />
 
+                {/* Admin Routes */}
+                <Route path="/admin" element={<AdminDashboard />} />
+
+                {/* NOT FOUND PAGE */}
                 <Route
                   path="*"
                   element={<NotFound404Wrapper setIsNotFound={setIsNotFound} />}

@@ -160,7 +160,7 @@ const buildCompanyWelcomeEmail = (companyName) => `<!DOCTYPE html>
           💡 <strong>Pro tip:</strong> Companies with complete profiles get <strong>3× more applications</strong>. Head to your dashboard and fill out your company details first.
         </div>
 
-        <a href="${process.env.CORS_ORIGIN || "https://talk2hire.com"}/company/dashboard" class="cta-btn">Go to Company Dashboard →</a>
+        <a href="${process.env.CORS_ORIGIN || "https://talk2hire.com"}/company" class="cta-btn">Go to Company Dashboard →</a>
 
         <p style="font-size:13px; color:#6b7280;">
           Need help getting started? Email us at <a href="mailto:support@talk2hire.com" style="color:#059669;">support@talk2hire.com</a>

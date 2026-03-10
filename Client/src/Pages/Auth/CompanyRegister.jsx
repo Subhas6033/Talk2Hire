@@ -4,6 +4,43 @@ import { Link, useNavigate } from "react-router-dom";
 import { useCompany } from "../../Hooks/useCompanyAuthHook";
 import { useMicrosoftAuth } from "../../Hooks/useMicrosoftCompanyAuthHook";
 
+// ✅ Moved outside component to prevent re-creation on every render (fixes focus loss)
+const FREE_DOMAINS = [
+  "gmail.com",
+  "yahoo.com",
+  "hotmail.com",
+  "outlook.com",
+  "aol.com",
+  "icloud.com",
+  "protonmail.com",
+  "mail.com",
+  "yandex.com",
+  "gmx.com",
+  "zoho.com",
+  "live.com",
+];
+
+const inputCls = (hasError) =>
+  `w-full px-4 py-3 rounded-xl text-sm outline-none transition-all border font-secondary ${
+    hasError
+      ? "border-rose-400/60 bg-rose-50 text-rose-800 focus:ring-2 focus:ring-rose-300/40 placeholder-rose-300"
+      : "border-slate-200 bg-white/70 text-slate-800 focus:border-amber-400 focus:bg-white focus:ring-2 focus:ring-amber-300/30 placeholder-slate-400"
+  }`;
+
+const Field = ({ label, error, children }) => (
+  <div className="mb-5">
+    <label className="block text-xs font-semibold text-slate-500 mb-1.5 tracking-wide uppercase">
+      {label}
+    </label>
+    {children}
+    {error && (
+      <p className="mt-1.5 text-xs text-rose-500 flex items-center gap-1">
+        ⚠ {error.message}
+      </p>
+    )}
+  </div>
+);
+
 const CompanyRegister = () => {
   const [step, setStep] = useState(1);
   const [submitted, setSubmitted] = useState(false);
@@ -52,7 +89,7 @@ const CompanyRegister = () => {
         password: data.password,
       }).unwrap();
       setSubmitted(true);
-      setTimeout(() => navigate("/company/dashboard"), 1500);
+      setTimeout(() => navigate("/company"), 1500);
     } catch (err) {
       console.error("Registration failed:", err);
     }
@@ -84,27 +121,6 @@ const CompanyRegister = () => {
   ];
   const sizes = ["1–10", "11–50", "51–200", "201–500", "500+"];
   const progress = submitted ? 100 : Math.round((step / totalSteps) * 100);
-
-  const inputCls = (hasError) =>
-    `w-full px-4 py-3 rounded-xl text-sm outline-none transition-all border font-secondary ${
-      hasError
-        ? "border-rose-400/60 bg-rose-50 text-rose-800 focus:ring-2 focus:ring-rose-300/40 placeholder-rose-300"
-        : "border-slate-200 bg-white/70 text-slate-800 focus:border-amber-400 focus:bg-white focus:ring-2 focus:ring-amber-300/30 placeholder-slate-400"
-    }`;
-
-  const Field = ({ label, error, children }) => (
-    <div className="mb-5">
-      <label className="block text-xs font-semibold text-slate-500 mb-1.5 tracking-wide uppercase">
-        {label}
-      </label>
-      {children}
-      {error && (
-        <p className="mt-1.5 text-xs text-rose-500 flex items-center gap-1">
-          ⚠ {error.message}
-        </p>
-      )}
-    </div>
-  );
 
   return (
     <>
@@ -682,6 +698,17 @@ const CompanyRegister = () => {
                               pattern: {
                                 value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
                                 message: "Enter a valid email address",
+                              },
+                              validate: {
+                                companyOnly: (value) => {
+                                  const domain = value
+                                    .split("@")[1]
+                                    ?.toLowerCase();
+                                  return (
+                                    !FREE_DOMAINS.includes(domain) ||
+                                    "Please use your company email address"
+                                  );
+                                },
                               },
                             })}
                           />

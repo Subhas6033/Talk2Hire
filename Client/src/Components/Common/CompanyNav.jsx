@@ -10,6 +10,7 @@ import {
   Bell,
   ChevronDown,
   Building2,
+  Home,
 } from "lucide-react";
 
 export default function CompanyNavbar() {
@@ -34,6 +35,7 @@ export default function CompanyNavbar() {
   const navigate = useNavigate();
 
   const NAV = [
+    { id: "/company", label: "Home", icon: Home },
     { id: "/company/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { id: "/company/jobs", label: "Post a Job", icon: Briefcase },
     { id: "/company/interviews", label: "Interviews", icon: Video },
@@ -55,7 +57,7 @@ export default function CompanyNavbar() {
         <div className="flex items-center justify-between h-16">
           {/* ── Logo ── */}
           <button
-            onClick={() => navigate("/company/dashboard")}
+            onClick={() => navigate("/company")}
             className="flex items-center gap-2.5 group"
           >
             <div className="flex items-center gap-2 leading-none">

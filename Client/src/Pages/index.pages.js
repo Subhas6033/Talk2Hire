@@ -31,6 +31,8 @@ import Practice from "./Practice.jsx";
 import SalaryPage from "./Salary.jsx";
 import UserMicrosoftCallback from "./Auth/UserMicrosoftCallback.jsx";
 import CompanyMicrosoftCallback from "./Auth/CompanyMicrosoftCallback.jsx";
+import CompanyHome from "./CompanyHome.jsx";
+import AdminDashboard from "./AdminDashboard.jsx";
 
 export {
   Home,
@@ -66,4 +68,6 @@ export {
   SalaryPage,
   UserMicrosoftCallback,
   CompanyMicrosoftCallback,
+  CompanyHome,
+  AdminDashboard,
 };
