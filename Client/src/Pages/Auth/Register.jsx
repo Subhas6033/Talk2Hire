@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
+import { useMicrosoftUserAuth } from "../../Hooks/useMicrosoftAuth";
 
 // ─── SVG primitive ────────────────────────────────────────────────────────────
 const Svg = ({ d, size = 20, className = "", sw = 1.8, fill = "none" }) => (
@@ -162,7 +163,16 @@ const Ic = {
   ),
 };
 
-// ─── Client-side strong password generator ───────────────────────────────────
+// ─── Microsoft SVG logo ───────────────────────────────────────────────────────
+const MicrosoftLogo = () => (
+  <svg width="18" height="18" viewBox="0 0 21 21" fill="none">
+    <rect x="1" y="1" width="9" height="9" fill="#f25022" />
+    <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
+    <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
+    <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
+  </svg>
+);
+
 function generateStrongPassword() {
   const uppercase = "ABCDEFGHJKLMNPQRSTUVWXYZ";
   const lowercase = "abcdefghjkmnpqrstuvwxyz";
@@ -189,7 +199,6 @@ function generateStrongPassword() {
   return required.join("");
 }
 
-// ─── Reusable field wrapper ────────────────────────────────────────────────────
 const Field = ({ label, hint, error, children }) => (
   <div>
     <label
@@ -215,7 +224,6 @@ const Field = ({ label, hint, error, children }) => (
   </div>
 );
 
-// ─── Feature card (left panel) ────────────────────────────────────────────────
 const FeatureCard = ({ icon: IconComp, title, desc, accent, delay }) => (
   <motion.div
     initial={{ opacity: 0, x: -20 }}
@@ -240,7 +248,6 @@ const FeatureCard = ({ icon: IconComp, title, desc, accent, delay }) => (
   </motion.div>
 );
 
-// ─── Extracted email display row ──────────────────────────────────────────────
 const EmailExtracted = ({ email, onEdit }) => (
   <motion.div
     initial={{ opacity: 0, y: 8, scale: 0.97 }}
@@ -264,13 +271,11 @@ const EmailExtracted = ({ email, onEdit }) => (
       onClick={onEdit}
       className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border-2 border-emerald-200 text-emerald-700 text-xs font-bold hover:bg-emerald-100 transition-all shrink-0 shadow-sm"
     >
-      <Ic.Edit size={11} />
-      Edit
+      <Ic.Edit size={11} /> Edit
     </motion.button>
   </motion.div>
 );
 
-// ─── Inline email editor ──────────────────────────────────────────────────────
 const EmailEditor = ({ value, onChange, onSave, onCancel, error }) => (
   <motion.div
     initial={{ opacity: 0, y: 8, scale: 0.97 }}
@@ -295,11 +300,7 @@ const EmailEditor = ({ value, onChange, onSave, onCancel, error }) => (
             if (e.key === "Escape") onCancel();
           }}
           placeholder="your@email.com"
-          className={`w-full pl-10 pr-4 py-3 rounded-2xl border-2 text-sm font-medium text-slate-800 placeholder-slate-300 focus:outline-none transition-all bg-white ${
-            error
-              ? "border-rose-300 focus:border-rose-400 bg-rose-50/30"
-              : "border-indigo-300 focus:border-indigo-400 focus:bg-indigo-50/20"
-          }`}
+          className={`w-full pl-10 pr-4 py-3 rounded-2xl border-2 text-sm font-medium text-slate-800 placeholder-slate-300 focus:outline-none transition-all bg-white ${error ? "border-rose-300 focus:border-rose-400 bg-rose-50/30" : "border-indigo-300 focus:border-indigo-400 focus:bg-indigo-50/20"}`}
         />
       </div>
       <motion.button
@@ -330,16 +331,13 @@ const EmailEditor = ({ value, onChange, onSave, onCancel, error }) => (
   </motion.div>
 );
 
-// ─── Password suggestion banner ───────────────────────────────────────────────
 const PasswordSuggestion = ({ suggested, onUse }) => {
   const [copied, setCopied] = useState(false);
-
   const handleCopy = () => {
     navigator.clipboard.writeText(suggested).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
-
   return (
     <motion.div
       initial={{ opacity: 0, y: -6, scale: 0.98 }}
@@ -349,8 +347,8 @@ const PasswordSuggestion = ({ suggested, onUse }) => {
       className="p-3.5 rounded-2xl bg-violet-50 border-2 border-violet-200"
     >
       <p className="text-[10px] font-bold text-violet-600 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-        <Ic.Sparkles size={10} className="text-violet-500" />
-        Suggested strong password
+        <Ic.Sparkles size={10} className="text-violet-500" /> Suggested strong
+        password
       </p>
       <div className="flex items-center gap-2">
         <code className="flex-1 text-xs font-bold text-slate-700 bg-white border border-violet-200 rounded-xl px-3 py-2 tracking-wide truncate">
@@ -381,6 +379,7 @@ const PasswordSuggestion = ({ suggested, onUse }) => {
 // ─── Main Component ───────────────────────────────────────────────────────────
 const RegistrationForm = () => {
   const navigate = useNavigate();
+  const { loginWithMicrosoft, redirecting } = useMicrosoftUserAuth();
 
   // File state
   const [resumeFile, setResumeFile] = useState(null);
@@ -406,7 +405,6 @@ const RegistrationForm = () => {
 
   const API_URL = import.meta?.env?.VITE_BACKEND_URL || "";
 
-  // ── File helpers ────────────────────────────────────────────────────────────
   const processFile = (file) => {
     setFieldErrors((e) => ({ ...e, resume: null }));
     setUploadError(null);
@@ -414,7 +412,6 @@ const RegistrationForm = () => {
       setResumeFile(null);
       return;
     }
-
     const allowed = [
       "application/pdf",
       "application/msword",
@@ -434,12 +431,9 @@ const RegistrationForm = () => {
       }));
       return;
     }
-
     setResumeFile(file);
     setExtractedEmail(null);
     setEditingEmail(false);
-
-    // Simulate AI extraction — replace with your real API call
     setExtracting(true);
     setTimeout(() => {
       setExtractedEmail("candidate@example.com");
@@ -465,7 +459,6 @@ const RegistrationForm = () => {
     processFile(e.dataTransfer.files[0]);
   };
 
-  // ── Email edit helpers ──────────────────────────────────────────────────────
   const openEmailEdit = () => {
     setEmailDraft(extractedEmail || "");
     setEmailEditError(null);
@@ -487,7 +480,6 @@ const RegistrationForm = () => {
     setEmailEditError(null);
   };
 
-  // ── Password focus → show suggestion ───────────────────────────────────────
   const handlePasswordFocus = () => {
     if (!password) setShowSuggestion(true);
   };
@@ -502,7 +494,6 @@ const RegistrationForm = () => {
     setFieldErrors((er) => ({ ...er, password: null }));
   };
 
-  // ── Submit ──────────────────────────────────────────────────────────────────
   const handleContinue = async () => {
     const errors = {};
     if (!resumeFile) errors.resume = "Please upload your resume to continue";
@@ -515,10 +506,8 @@ const RegistrationForm = () => {
       setFieldErrors(errors);
       return;
     }
-
     setIsUploading(true);
     setUploadError(null);
-
     try {
       const fd = new FormData();
       fd.append("password", password);
@@ -536,7 +525,6 @@ const RegistrationForm = () => {
       const result = await res.json();
       if (!result.data?.sessionId)
         throw new Error("No session returned from server.");
-      // Store sessionId BEFORE navigating so OnboardingFlow finds it immediately
       sessionStorage.setItem("registrationSessionId", result.data.sessionId);
       sessionStorage.setItem("showOnboarding", "true");
       navigate("/", { replace: true });
@@ -547,11 +535,7 @@ const RegistrationForm = () => {
   };
 
   const inputCls = (err) =>
-    `w-full px-4 py-3 rounded-2xl border-2 text-sm font-medium text-slate-800 placeholder-slate-300 focus:outline-none transition-all ${
-      err
-        ? "border-rose-300 focus:border-rose-400 bg-rose-50/30"
-        : "border-slate-200 bg-white focus:border-indigo-300 focus:bg-white"
-    }`;
+    `w-full px-4 py-3 rounded-2xl border-2 text-sm font-medium text-slate-800 placeholder-slate-300 focus:outline-none transition-all ${err ? "border-rose-300 focus:border-rose-400 bg-rose-50/30" : "border-slate-200 bg-white focus:border-indigo-300 focus:bg-white"}`;
 
   const strengthLevel =
     password.length >= 12
@@ -610,7 +594,7 @@ const RegistrationForm = () => {
       />
 
       <style>{`
-       @import url('https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&family=Sour+Gummy:ital,wght@0,100..900;1,100..900&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&family=Sour+Gummy:ital,wght@0,100..900;1,100..900&display=swap');
         * { box-sizing: border-box; }
         @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
         @keyframes spin-slow { to { transform: rotate(360deg); } }
@@ -641,7 +625,6 @@ const RegistrationForm = () => {
         />
 
         <div className="relative z-10 min-h-screen flex flex-col">
-          {/* Main */}
           <div className="flex-1 flex items-center px-4 sm:px-6 lg:px-10 py-6">
             <div className="w-full max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-10 xl:gap-20 items-center">
               {/* LEFT: Info panel */}
@@ -812,6 +795,47 @@ const RegistrationForm = () => {
 
                   {/* Form body */}
                   <div className="bg-white/95 backdrop-blur-sm px-8 py-7 space-y-5">
+                    {/* ── Microsoft Sign Up Button ── */}
+                    <motion.button
+                      whileHover={{
+                        y: -2,
+                        boxShadow: "0 8px 24px rgba(0,0,0,0.10)",
+                      }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={loginWithMicrosoft}
+                      disabled={redirecting || isUploading}
+                      className="w-full flex items-center justify-center gap-3 py-3.5 rounded-2xl bg-white border-2 border-slate-200 hover:border-slate-300 text-slate-700 font-semibold text-sm shadow-sm transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {redirecting ? (
+                        <>
+                          <motion.div
+                            animate={{ rotate: 360 }}
+                            transition={{
+                              duration: 1,
+                              repeat: Infinity,
+                              ease: "linear",
+                            }}
+                            className="w-4 h-4 border-2 border-slate-300 border-t-indigo-500 rounded-full"
+                          />
+                          Redirecting to Microsoft…
+                        </>
+                      ) : (
+                        <>
+                          <MicrosoftLogo />
+                          Continue with Microsoft
+                        </>
+                      )}
+                    </motion.button>
+
+                    {/* ── Divider ── */}
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 h-px bg-slate-200" />
+                      <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
+                        or sign up with resume
+                      </span>
+                      <div className="flex-1 h-px bg-slate-200" />
+                    </div>
+
                     {/* Resume Upload */}
                     <Field
                       label="Upload Your Resume"
@@ -1046,8 +1070,6 @@ const RegistrationForm = () => {
                           )}
                         </button>
                       </div>
-
-                      {/* Password suggestion */}
                       <AnimatePresence>
                         {showSuggestion && !password && (
                           <motion.div
@@ -1063,8 +1085,6 @@ const RegistrationForm = () => {
                           </motion.div>
                         )}
                       </AnimatePresence>
-
-                      {/* Strength bar */}
                       <AnimatePresence>
                         {password && (
                           <motion.div
@@ -1123,7 +1143,7 @@ const RegistrationForm = () => {
                       }
                       whileTap={!isUploading ? { scale: 0.98 } : {}}
                       onClick={handleContinue}
-                      disabled={isUploading}
+                      disabled={isUploading || redirecting}
                       className="w-full flex items-center justify-center gap-2.5 py-4 rounded-2xl bg-linear-to-r from-indigo-600 via-violet-600 to-purple-600 text-white font-bold text-sm shadow-lg shadow-indigo-300/50 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                       style={{ fontFamily: "'Syne', sans-serif" }}
                     >

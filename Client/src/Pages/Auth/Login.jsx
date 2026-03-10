@@ -1,15 +1,21 @@
-import React, { useEffect, useState } from "react";
-import { Modal } from "../../Components/index";
-import { FormField } from "../../Components/Common/Input";
+import { useState } from "react";
+import { useNavigate, Link } from "react-router-dom";
+import { motion, AnimatePresence } from "motion/react";
 import { Eye, EyeOff } from "lucide-react";
-import { Link, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { useAuth } from "../../Hooks/useAuthHook";
+import { useMicrosoftUserAuth } from "../../Hooks/useMicrosoftAuth";
 import { useSelector } from "react-redux";
-import { motion } from "motion/react";
+import { Modal } from "../../Components/index";
+import { FormField } from "../../Components/Common/Input";
+import { useEffect } from "react";
 
 const Loader = () => (
   <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-indigo-300 border-t-indigo-600" />
+);
+
+const MsLoader = () => (
+  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-blue-300 border-t-blue-600" />
 );
 
 const DotGrid = () => (
@@ -48,7 +54,6 @@ const PrimaryBtn = ({ children, className = "", disabled, ...props }) => (
       "active:translate-y-0",
       "focus:outline-none focus:ring-2 focus:ring-indigo-400/50 focus:ring-offset-1",
       "disabled:opacity-60 disabled:cursor-not-allowed disabled:translate-y-0",
-      "disabled:shadow-[0_4px_15px_rgba(99,102,241,0.35)]",
       className,
     ].join(" ")}
     {...props}
@@ -74,6 +79,21 @@ const GhostBtn = ({ children, className = "", ...props }) => (
   </button>
 );
 
+// Microsoft logo SVG
+const MicrosoftLogo = ({ size = 18 }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 21 21"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <rect x="1" y="1" width="9" height="9" fill="#f25022" />
+    <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
+    <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
+    <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
+  </svg>
+);
+
 const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -90,6 +110,9 @@ const Login = () => {
     clearForgotPassword,
     clearPendingAutofillEmail,
   } = useAuth();
+
+  const { loginWithMicrosoft, redirecting: msRedirecting } =
+    useMicrosoftUserAuth();
 
   const pendingEmail = useSelector((state) => state.auth.pendingAutofillEmail);
   const navigate = useNavigate();
@@ -108,10 +131,7 @@ const Login = () => {
     formState: { errors, isValid },
   } = useForm({
     mode: "onTouched",
-    defaultValues: {
-      email: pendingEmail || "",
-      password: "",
-    },
+    defaultValues: { email: pendingEmail || "", password: "" },
   });
 
   useEffect(() => {
@@ -163,33 +183,31 @@ const Login = () => {
         content="Sign in to your Talk2Hire account to continue AI-powered interview practice."
       />
       <meta name="robots" content="noindex, nofollow" />
-      <link rel="canonical" href="https://talk2hire.com/login" />
-      <meta property="og:title" content="User Login | Talk2Hire" />
-      <meta property="og:type" content="website" />
-      <meta property="og:url" content="https://talk2hire.com/login" />
-      <meta name="twitter:card" content="summary" />
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=DM+Sans:wght@300;400;500&display=swap');
-        @keyframes floatA {
-          0%,100% { transform: translateY(0) scale(1); }
-          50%      { transform: translateY(-18px) scale(1.04); }
-        }
-        @keyframes floatB {
-          0%,100% { transform: translateY(0) scale(1); }
-          50%      { transform: translateY(14px) scale(0.97); }
-        }
+        @keyframes floatA { 0%,100%{transform:translateY(0) scale(1)} 50%{transform:translateY(-18px) scale(1.04)} }
+        @keyframes floatB { 0%,100%{transform:translateY(0) scale(1)} 50%{transform:translateY(14px) scale(0.97)} }
         @keyframes pulseRing {
-          0%   { box-shadow: 0 0 0 0   rgba(99,102,241,0.3); }
-          70%  { box-shadow: 0 0 0 8px rgba(99,102,241,0);   }
-          100% { box-shadow: 0 0 0 0   rgba(99,102,241,0);   }
+          0%  { box-shadow:0 0 0 0   rgba(99,102,241,0.3); }
+          70% { box-shadow:0 0 0 8px rgba(99,102,241,0);   }
+          100%{ box-shadow:0 0 0 0   rgba(99,102,241,0);   }
         }
         .blob-float-a { animation: floatA 9s ease-in-out infinite; }
         .blob-float-b { animation: floatB 11s ease-in-out 1.5s infinite; }
         .blob-float-c { animation: floatA 13s ease-in-out 3s infinite; }
         .badge-pulse   { animation: pulseRing 2s ease-out infinite; }
-        .sora          { font-family: 'Sora', sans-serif; }
-        .dm-sans       { font-family: 'DM Sans', sans-serif; }
+        .sora { font-family:'Sora',sans-serif; }
+        .dm-sans { font-family:'DM Sans',sans-serif; }
+        @keyframes spinnerRing { to { transform:rotate(360deg); } }
+        .ms-spinner {
+          width:16px; height:16px;
+          border:2px solid rgba(37,99,235,.25);
+          border-top-color:#2563eb;
+          border-radius:50%;
+          animation:spinnerRing .7s linear infinite;
+          display:inline-block;
+        }
       `}</style>
 
       <section className="dm-sans relative min-h-screen overflow-hidden flex items-center justify-center px-4 py-16 bg-linear-to-br from-slate-50 via-blue-50/40 to-indigo-50/60">
@@ -225,6 +243,32 @@ const Login = () => {
             </motion.div>
 
             <motion.div {...fadeUp(0.16)}>
+              {/* Microsoft login button */}
+              <button
+                onClick={loginWithMicrosoft}
+                disabled={msRedirecting || loading}
+                className="w-full flex items-center justify-center gap-3 py-3 px-4 mb-5 rounded-xl bg-white border-[1.5px] border-slate-200 text-slate-700 text-sm font-semibold hover:border-blue-400 hover:bg-blue-50/50 hover:text-blue-700 transition-all duration-200 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {msRedirecting ? (
+                  <>
+                    <span className="ms-spinner" /> Redirecting to Microsoft…
+                  </>
+                ) : (
+                  <>
+                    <MicrosoftLogo /> Continue with Microsoft
+                  </>
+                )}
+              </button>
+
+              {/* OR divider */}
+              <div className="flex items-center gap-3 mb-5">
+                <hr className="flex-1 border-slate-200" />
+                <span className="text-[10px] text-slate-400 tracking-widest uppercase font-medium">
+                  or sign in with email
+                </span>
+                <hr className="flex-1 border-slate-200" />
+              </div>
+
               <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
                 <FormField
                   label="Email Address"
@@ -331,6 +375,7 @@ const Login = () => {
           </div>
         </motion.div>
 
+        {/* Forgot password modal — unchanged */}
         <Modal
           isOpen={isModalOpen}
           onClose={handleCloseModal}

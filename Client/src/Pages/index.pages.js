@@ -29,6 +29,8 @@ import Cookies from "./Private/Cookies.jsx";
 import Security from "./Private/Security.jsx";
 import Practice from "./Practice.jsx";
 import SalaryPage from "./Salary.jsx";
+import UserMicrosoftCallback from "./Auth/UserMicrosoftCallback.jsx";
+import CompanyMicrosoftCallback from "./Auth/CompanyMicrosoftCallback.jsx";
 
 export {
   Home,
@@ -62,4 +64,6 @@ export {
   Security,
   Practice,
   SalaryPage,
+  UserMicrosoftCallback,
+  CompanyMicrosoftCallback,
 };

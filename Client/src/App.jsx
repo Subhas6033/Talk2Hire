@@ -39,6 +39,8 @@ import {
   Security,
   Practice,
   SalaryPage,
+  UserMicrosoftCallback,
+  CompanyMicrosoftCallback,
 } from "./Pages/index.pages.js";
 import { InterviewSetup } from "./Components/index.js";
 import { useStreams } from "./Hooks/streamContext";
@@ -50,7 +52,11 @@ const App = () => {
   const streamsRef = useStreams();
 
   const hydrated = useSelector(
-    (state) => state.auth.hydrated && state.company.hydrated,
+    (state) =>
+      state.auth.hydrated &&
+      state.company.hydrated &&
+      state.microsoftAuth.hydrated &&
+      state.microsoftUserAuth.hydrated,
   );
 
   useEffect(() => {
@@ -103,6 +109,16 @@ const App = () => {
                 <Route path="/blog" element={<Blog />} />
                 <Route path="/careers" element={<Carrers />} />
                 <Route path="/salaries" element={<SalaryPage />} />
+
+                {/* Microsoft OAuth Callbacks — must be public, no auth wrapper */}
+                <Route
+                  path="/user/microsoft/callback"
+                  element={<UserMicrosoftCallback />}
+                />
+                <Route
+                  path="/company/microsoft/callback"
+                  element={<CompanyMicrosoftCallback />}
+                />
 
                 {/* Legal pages */}
                 <Route path="/privacy" element={<Privacy />} />
@@ -262,7 +278,6 @@ const App = () => {
 
                 <Route path="/mobile-camera" element={<MobileCameraPage />} />
 
-                {/* 404 — no inner Layout wrapper, isNotFound passed to outer Layout */}
                 <Route
                   path="*"
                   element={<NotFound404Wrapper setIsNotFound={setIsNotFound} />}
@@ -276,11 +291,10 @@ const App = () => {
   );
 };
 
-/* ── Tiny wrapper that signals 404 to outer Layout on mount/unmount ── */
 const NotFound404Wrapper = ({ setIsNotFound }) => {
   useEffect(() => {
     setIsNotFound(true);
-    return () => setIsNotFound(false); // reset when navigating away
+    return () => setIsNotFound(false);
   }, []);
 
   return <NotFound />;

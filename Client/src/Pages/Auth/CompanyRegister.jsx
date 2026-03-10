@@ -1,13 +1,15 @@
 import React, { useState } from "react";
 import { useForm, Controller } from "react-hook-form";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useCompany } from "../../Hooks/useCompanyAuthHook";
+import { useMicrosoftAuth } from "../../Hooks/useMicrosoftCompanyAuthHook";
 
 const CompanyRegister = () => {
   const [step, setStep] = useState(1);
   const [submitted, setSubmitted] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const { registerCompany, loading, error } = useCompany();
+  const { loginWithMicrosoft, redirecting } = useMicrosoftAuth();
   const navigate = useNavigate();
 
   const {
@@ -106,24 +108,17 @@ const CompanyRegister = () => {
 
   return (
     <>
-      {/* Basic SEO */}
       <title>Register Your Company | Talk2Hire Business Portal</title>
-
       <meta
         name="description"
         content="Create your company account on Talk2Hire to conduct AI-powered interviews, manage candidates, and streamline your hiring process."
       />
-
       <meta
         name="keywords"
         content="company registration, recruiter signup, business hiring platform, AI interview software, Talk2Hire employer account"
       />
-
       <meta name="robots" content="index, follow" />
-
       <link rel="canonical" href="https://talk2hire.com/signup/company" />
-
-      {/* Open Graph */}
       <meta property="og:title" content="Register Your Company | Talk2Hire" />
       <meta
         property="og:description"
@@ -135,8 +130,6 @@ const CompanyRegister = () => {
         property="og:image"
         content="https://talk2hire.com/talk2hirelogo.png"
       />
-
-      {/* Twitter */}
       <meta name="twitter:card" content="summary" />
       <meta name="twitter:title" content="Company Registration | Talk2Hire" />
       <meta
@@ -159,7 +152,6 @@ const CompanyRegister = () => {
           to   { opacity: 1; transform: translateY(0); }
         }
         @keyframes crBgFade { from { opacity:0; } to { opacity:1; } }
-
         @keyframes floatA {
           0%,100% { transform: translate(0,0) scale(1); }
           33%      { transform: translate(20px,-16px) scale(1.05); }
@@ -197,94 +189,62 @@ const CompanyRegister = () => {
         @keyframes spinnerRing {
           to { transform: rotate(360deg); }
         }
+        @keyframes msShimmer {
+          0%   { background-position: -200% center; }
+          100% { background-position:  200% center; }
+        }
 
         .cr-blob-a { animation: floatA 12s ease-in-out infinite; }
         .cr-blob-b { animation: floatB 14s ease-in-out infinite 2s; }
         .cr-blob-c { animation: floatC 10s ease-in-out infinite 1s; }
-
         .cr-bg    { animation: crBgFade .6s ease both; }
         .cr-card  { animation: crFadeUp .55s cubic-bezier(.22,1,.36,1) .05s both; }
         .cr-head  { animation: crFadeUp .55s cubic-bezier(.22,1,.36,1) .15s both; }
         .cr-body  { animation: crFadeUp .55s cubic-bezier(.22,1,.36,1) .25s both; }
-
         .step-enter { animation: fadeSlide .3s ease forwards; }
         .pop-in     { animation: popIn .5s cubic-bezier(0.34,1.56,0.64,1) forwards; }
 
-        /* Mesh background */
         .cr-mesh {
-          background: linear-gradient(
-            135deg,
-            #fdf8f0 0%, #fef9ec 20%, #f0f7ff 50%, #f5f0ff 80%, #fdf8f0 100%
-          );
+          background: linear-gradient(135deg, #fdf8f0 0%, #fef9ec 20%, #f0f7ff 50%, #f5f0ff 80%, #fdf8f0 100%);
           background-size: 300% 300%;
           animation: meshDrift 18s ease infinite;
         }
-
-        /* Dot grid */
         .cr-dots {
           background-image: radial-gradient(circle, rgba(217,119,6,0.12) 1px, transparent 1px);
           background-size: 26px 26px;
         }
-
-        /* Card glass */
         .cr-card-glass {
           background: rgba(255,255,255,0.75);
           backdrop-filter: blur(28px) saturate(1.8);
           -webkit-backdrop-filter: blur(28px) saturate(1.8);
           border: 1px solid rgba(255,255,255,0.9);
-          box-shadow:
-            0 1px 0 0 rgba(255,255,255,0.95) inset,
-            0 8px 32px -4px rgba(180,140,60,0.12),
-            0 24px 64px -12px rgba(99,102,241,0.08);
+          box-shadow: 0 1px 0 0 rgba(255,255,255,0.95) inset, 0 8px 32px -4px rgba(180,140,60,0.12), 0 24px 64px -12px rgba(99,102,241,0.08);
           border-radius: 28px;
           overflow: hidden;
         }
-
-        /* Shimmer accent bar */
         .cr-accent-bar {
           height: 3px;
           background: linear-gradient(90deg, #f59e0b, #d97706, #fbbf24, #d97706, #f59e0b);
           background-size: 200% auto;
           animation: shimmerBar 3s linear infinite;
         }
-
-        /* Card header area */
         .cr-card-header {
-          background: linear-gradient(135deg,
-            rgba(255,251,235,0.9) 0%,
-            rgba(255,255,255,0.7) 100%
-          );
+          background: linear-gradient(135deg, rgba(255,251,235,0.9) 0%, rgba(255,255,255,0.7) 100%);
           border-bottom: 1px solid rgba(217,119,6,0.12);
         }
-
-        /* Badge */
         .cr-badge {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
+          display: inline-flex; align-items: center; gap: 6px;
           background: linear-gradient(135deg, #fef3c7, #fde68a);
           border: 1px solid rgba(217,119,6,0.25);
-          border-radius: 999px;
-          padding: 4px 14px;
-          font-size: 0.68rem;
-          font-weight: 600;
-          letter-spacing: .1em;
-          color: #92400e;
-          text-transform: uppercase;
-          font-family: 'Sora', sans-serif;
+          border-radius: 999px; padding: 4px 14px;
+          font-size: 0.68rem; font-weight: 600; letter-spacing: .1em;
+          color: #92400e; text-transform: uppercase; font-family: 'Sora', sans-serif;
         }
         .cr-badge-dot {
-          width: 6px; height: 6px;
-          background: #d97706;
-          border-radius: 50%;
-          animation: pulseDot 2s ease-out infinite;
+          width: 6px; height: 6px; background: #d97706;
+          border-radius: 50%; animation: pulseDot 2s ease-out infinite;
         }
-
-        /* Progress bar track */
-        .cr-progress-track {
-          background: rgba(203,213,225,0.4);
-          height: 4px;
-        }
+        .cr-progress-track { background: rgba(203,213,225,0.4); height: 4px; }
         .cr-progress-fill {
           height: 100%;
           background: linear-gradient(90deg, #f59e0b, #d97706);
@@ -293,131 +253,127 @@ const CompanyRegister = () => {
           transition: width .5s ease-in-out;
           border-radius: 999px;
         }
-
-        /* Step dot active */
         .step-dot-active {
           background: linear-gradient(135deg, #f59e0b, #d97706);
-          color: #fff;
-          border: none;
+          color: #fff; border: none;
           box-shadow: 0 0 16px rgba(217,119,6,0.4);
         }
-        .step-dot-done {
-          background: rgba(217,119,6,0.12);
-          color: #d97706;
-          border: 1.5px solid rgba(217,119,6,0.35);
-        }
-        .step-dot-pending {
-          background: rgba(203,213,225,0.4);
-          color: #94a3b8;
-          border: 1.5px solid rgba(203,213,225,0.6);
-        }
-
-        /* Size toggle */
+        .step-dot-done { background: rgba(217,119,6,0.12); color: #d97706; border: 1.5px solid rgba(217,119,6,0.35); }
+        .step-dot-pending { background: rgba(203,213,225,0.4); color: #94a3b8; border: 1.5px solid rgba(203,213,225,0.6); }
         .size-toggle {
-          display: flex;
-          border-radius: 14px;
-          overflow: hidden;
+          display: flex; border-radius: 14px; overflow: hidden;
           border: 1.5px solid rgba(203,213,225,0.7);
           background: rgba(248,250,252,0.8);
         }
         .size-btn {
-          flex: 1;
-          padding: 10px 0;
-          font-size: 0.75rem;
-          font-weight: 500;
-          transition: all .2s;
-          border-right: 1px solid rgba(203,213,225,0.5);
-          color: #94a3b8;
-          background: transparent;
+          flex: 1; padding: 10px 0; font-size: 0.75rem; font-weight: 500;
+          transition: all .2s; border-right: 1px solid rgba(203,213,225,0.5);
+          color: #94a3b8; background: transparent;
         }
         .size-btn:last-child { border-right: none; }
         .size-btn:hover { color: #d97706; background: rgba(253,243,199,0.5); }
         .size-btn-active {
           background: linear-gradient(135deg, #fef3c7, #fde68a) !important;
-          color: #92400e !important;
-          font-weight: 600;
+          color: #92400e !important; font-weight: 600;
         }
-
-        /* Buttons */
         .btn-gold {
           background: linear-gradient(135deg, #f59e0b 0%, #d97706 50%, #b45309 100%);
-          background-size: 200% auto;
-          border-radius: 14px;
-          font-family: 'Sora', sans-serif;
-          font-weight: 600;
-          font-size: 0.875rem;
-          color: #fff;
-          border: none;
+          background-size: 200% auto; border-radius: 14px;
+          font-family: 'Sora', sans-serif; font-weight: 600; font-size: 0.875rem;
+          color: #fff; border: none;
           transition: transform .15s, box-shadow .2s, background-position .4s;
-          box-shadow: 0 4px 20px rgba(217,119,6,0.35);
-          letter-spacing: .02em;
+          box-shadow: 0 4px 20px rgba(217,119,6,0.35); letter-spacing: .02em;
         }
-        .btn-gold:hover:not(:disabled) {
-          background-position: right center;
-          transform: translateY(-2px);
-          box-shadow: 0 8px 28px rgba(217,119,6,0.45);
-        }
+        .btn-gold:hover:not(:disabled) { background-position: right center; transform: translateY(-2px); box-shadow: 0 8px 28px rgba(217,119,6,0.45); }
         .btn-gold:active:not(:disabled) { transform: translateY(0); }
         .btn-gold:disabled { opacity: .6; cursor: not-allowed; }
-
         .btn-back {
-          border: 1.5px solid rgba(203,213,225,0.8);
-          border-radius: 14px;
-          color: #64748b;
-          background: rgba(248,250,252,0.7);
-          font-size: 0.875rem;
+          border: 1.5px solid rgba(203,213,225,0.8); border-radius: 14px;
+          color: #64748b; background: rgba(248,250,252,0.7); font-size: 0.875rem;
           transition: all .15s;
         }
         .btn-back:hover { border-color: #d97706; color: #d97706; background: rgba(253,243,199,0.3); }
 
-        /* Spinner */
+        /* ── Microsoft button ── */
+        .btn-microsoft {
+          display: flex; align-items: center; justify-content: center; gap: 10px;
+          width: 100%; padding: 12px 16px;
+          background: rgba(255,255,255,0.9);
+          border: 1.5px solid rgba(203,213,225,0.8);
+          border-radius: 14px;
+          font-family: 'Sora', sans-serif; font-size: 0.84rem; font-weight: 600;
+          color: #1e293b; letter-spacing: .01em;
+          transition: all .2s;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+          cursor: pointer;
+        }
+        .btn-microsoft:hover:not(:disabled) {
+          border-color: #2563eb;
+          background: rgba(239,246,255,0.9);
+          box-shadow: 0 4px 16px rgba(37,99,235,0.12);
+          transform: translateY(-1px);
+        }
+        .btn-microsoft:active:not(:disabled) { transform: translateY(0); }
+        .btn-microsoft:disabled { opacity: .6; cursor: not-allowed; }
+
+        /* Microsoft logo SVG colours */
+        .ms-sq-1 { fill: #f25022; }
+        .ms-sq-2 { fill: #7fba00; }
+        .ms-sq-3 { fill: #00a4ef; }
+        .ms-sq-4 { fill: #ffb900; }
+
+        /* Or divider */
+        .or-divider {
+          display: flex; align-items: center; gap: 10px; margin: 16px 0;
+          color: #94a3b8; font-size: 0.72rem; font-weight: 500; letter-spacing: .08em; text-transform: uppercase;
+        }
+        .or-divider::before, .or-divider::after {
+          content: ''; flex: 1; height: 1px; background: rgba(203,213,225,0.6);
+        }
+
         .cr-spinner {
           width: 16px; height: 16px;
           border: 2px solid rgba(255,255,255,0.35);
-          border-top-color: #fff;
-          border-radius: 50%;
-          animation: spinnerRing .7s linear infinite;
-          display: inline-block;
+          border-top-color: #fff; border-radius: 50%;
+          animation: spinnerRing .7s linear infinite; display: inline-block;
         }
-
-        /* Error banner */
+        .ms-spinner {
+          width: 16px; height: 16px;
+          border: 2px solid rgba(37,99,235,0.25);
+          border-top-color: #2563eb; border-radius: 50%;
+          animation: spinnerRing .7s linear infinite; display: inline-block;
+        }
         .error-banner {
-          background: rgba(255,241,242,0.9);
-          border: 1px solid rgba(251,113,133,0.4);
-          border-radius: 12px;
-          padding: 10px 14px;
+          background: rgba(255,241,242,0.9); border: 1px solid rgba(251,113,133,0.4);
+          border-radius: 12px; padding: 10px 14px;
         }
-
-        /* Select options */
         .cr-root select option { background: #fff; color: #1e293b; }
-
-        /* Input focus */
         .cr-root input:focus, .cr-root select:focus { outline: none; }
-
-        /* Divider */
         .cr-divider { border: none; border-top: 1px solid rgba(203,213,225,0.5); }
-
-        /* Success icon */
         .success-icon {
           background: linear-gradient(135deg, #fef3c7, #fde68a);
-          border: 2px solid rgba(217,119,6,0.3);
-          border-radius: 50%;
+          border: 2px solid rgba(217,119,6,0.3); border-radius: 50%;
           width: 80px; height: 80px;
           display: flex; align-items: center; justify-content: center;
-          font-size: 1.8rem;
-          box-shadow: 0 8px 24px rgba(217,119,6,0.2);
+          font-size: 1.8rem; box-shadow: 0 8px 24px rgba(217,119,6,0.2);
         }
-
-        /* Step connector line */
         .step-line-done { background: rgba(217,119,6,0.35); }
         .step-line-pending { background: rgba(203,213,225,0.5); }
+
+        /* Microsoft redirecting overlay */
+        .ms-redirecting {
+          display: flex; flex-direction: column; align-items: center;
+          justify-content: center; gap: 16px; padding: 48px 24px;
+          text-align: center;
+        }
+        .ms-logo-large {
+          width: 48px; height: 48px; animation: popIn .5s cubic-bezier(0.34,1.56,0.64,1) forwards;
+        }
       `}</style>
 
       <div className="cr-root cr-mesh min-h-screen flex items-center justify-center px-4 py-12 relative overflow-hidden cr-bg">
-        {/* Dot grid */}
         <div className="pointer-events-none absolute inset-0 cr-dots opacity-100" />
 
-        {/* Animated blobs */}
         <div
           className="cr-blob-a pointer-events-none absolute -top-32 -right-32 w-105 h-105 rounded-full opacity-35 blur-[110px]"
           style={{
@@ -437,13 +393,10 @@ const CompanyRegister = () => {
           }}
         />
 
-        {/* Card */}
         <div className="relative z-10 w-full max-w-lg cr-card">
           <div className="cr-card-glass">
-            {/* Top shimmer bar */}
             <div className="cr-accent-bar" />
 
-            {/* Progress track */}
             <div className="cr-progress-track mx-8 mt-6 rounded-full overflow-hidden">
               <div
                 className="cr-progress-fill"
@@ -451,8 +404,37 @@ const CompanyRegister = () => {
               />
             </div>
 
-            {submitted ? (
-              /* ── Success State ── */
+            {/* ── Microsoft redirect in-progress ── */}
+            {redirecting ? (
+              <div className="ms-redirecting">
+                <svg
+                  className="ms-logo-large"
+                  viewBox="0 0 21 21"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <rect x="1" y="1" width="9" height="9" className="ms-sq-1" />
+                  <rect x="11" y="1" width="9" height="9" className="ms-sq-2" />
+                  <rect x="1" y="11" width="9" height="9" className="ms-sq-3" />
+                  <rect
+                    x="11"
+                    y="11"
+                    width="9"
+                    height="9"
+                    className="ms-sq-4"
+                  />
+                </svg>
+                <div>
+                  <p className="text-sm font-semibold text-slate-700">
+                    Redirecting to Microsoft
+                  </p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Please wait while we take you to the sign-in page…
+                  </p>
+                </div>
+                <span className="ms-spinner" />
+              </div>
+            ) : submitted ? (
+              /* ── Success ── */
               <div className="px-10 py-14 text-center">
                 <div className="pop-in success-icon mx-auto mb-6">✦</div>
                 <h2 className="text-2xl font-bold text-slate-800 mb-3">
@@ -479,7 +461,6 @@ const CompanyRegister = () => {
                       Business Portal
                     </span>
                   </div>
-
                   <h1 className="text-[1.9rem] font-bold text-slate-800 leading-snug tracking-tight mb-1">
                     Register Your
                     <br />
@@ -548,6 +529,63 @@ const CompanyRegister = () => {
                           {error}
                         </p>
                       </div>
+                    )}
+
+                    {/* ── Microsoft OAuth button (shown only on Step 1) ── */}
+                    {step === 1 && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={loginWithMicrosoft}
+                          disabled={redirecting}
+                          className="btn-microsoft"
+                        >
+                          {redirecting ? (
+                            <span className="ms-spinner" />
+                          ) : (
+                            <svg
+                              width="18"
+                              height="18"
+                              viewBox="0 0 21 21"
+                              xmlns="http://www.w3.org/2000/svg"
+                            >
+                              <rect
+                                x="1"
+                                y="1"
+                                width="9"
+                                height="9"
+                                className="ms-sq-1"
+                              />
+                              <rect
+                                x="11"
+                                y="1"
+                                width="9"
+                                height="9"
+                                className="ms-sq-2"
+                              />
+                              <rect
+                                x="1"
+                                y="11"
+                                width="9"
+                                height="9"
+                                className="ms-sq-3"
+                              />
+                              <rect
+                                x="11"
+                                y="11"
+                                width="9"
+                                height="9"
+                                className="ms-sq-4"
+                              />
+                            </svg>
+                          )}
+                          {redirecting
+                            ? "Redirecting…"
+                            : "Continue with Microsoft"}
+                        </button>
+
+                        <div className="or-divider">or register with email</div>
+                      </>
                     )}
 
                     {/* Step 1 — Company Profile */}
@@ -666,7 +704,6 @@ const CompanyRegister = () => {
                               })}
                             />
                           </Field>
-
                           <Field label="Website" error={errors.companySite}>
                             <input
                               className={inputCls(!!errors.companySite)}
@@ -799,7 +836,6 @@ const CompanyRegister = () => {
                           ← Back
                         </button>
                       )}
-
                       {step < totalSteps ? (
                         <button
                           type="button"
@@ -825,6 +861,20 @@ const CompanyRegister = () => {
                         </button>
                       )}
                     </div>
+
+                    {/* Login link */}
+                    <p className="text-center text-xs text-slate-400 mt-6">
+                      Already have an account?{" "}
+                      <Link
+                        to="/login/company"
+                        className="font-semibold transition-colors"
+                        style={{ color: "#d97706" }}
+                        onMouseEnter={(e) => (e.target.style.color = "#b45309")}
+                        onMouseLeave={(e) => (e.target.style.color = "#d97706")}
+                      >
+                        Sign in →
+                      </Link>
+                    </p>
                   </div>
                 </form>
               </>

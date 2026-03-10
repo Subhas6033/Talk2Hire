@@ -3,6 +3,8 @@ import { useAuth } from "../Hooks/useAuthHook";
 import { useCompany } from "../Hooks/useCompanyAuthHook";
 import { useSelector } from "react-redux";
 import Loader from "../Components/Loader/Loader";
+import { useMicrosoftUserAuth } from "../Hooks/useMicrosoftAuth.js";
+import { useMicrosoftAuth } from "../Hooks/useMicrosoftCompanyAuthHook.js";
 
 const useUnifiedAuth = () => {
   const {
@@ -10,15 +12,35 @@ const useUnifiedAuth = () => {
     hydrated: userHydrated,
     role: userRole,
   } = useAuth();
-
   const { isAuthenticated: isCompanyAuth, hydrated: companyHydrated } =
     useCompany();
+  const {
+    isAuthenticated: isMsUserAuth,
+    hydrated: msUserHydrated,
+    role: msUserRole,
+  } = useMicrosoftUserAuth();
+  const {
+    isAuthenticated: isMsCompanyAuth,
+    hydrated: msCompanyHydrated,
+    role: msCompanyRole,
+  } = useMicrosoftAuth();
 
-  return {
-    hydrated: userHydrated && companyHydrated,
-    isAuthenticated: isUserAuth || isCompanyAuth,
-    role: isCompanyAuth ? "company" : isUserAuth ? userRole : "guest",
-  };
+  const isAuthenticated =
+    isUserAuth || isCompanyAuth || isMsUserAuth || isMsCompanyAuth;
+  const hydrated =
+    userHydrated && companyHydrated && msUserHydrated && msCompanyHydrated;
+
+  const role = isMsCompanyAuth
+    ? (msCompanyRole ?? "company")
+    : isCompanyAuth
+      ? "company"
+      : isMsUserAuth
+        ? (msUserRole ?? "user")
+        : isUserAuth
+          ? userRole
+          : "guest";
+
+  return { hydrated, isAuthenticated, role };
 };
 
 export const PublicRoute = ({ children }) => {
@@ -27,19 +49,8 @@ export const PublicRoute = ({ children }) => {
     (state) => state.auth.pendingAutofillEmail,
   );
 
-  const localAuthState = (() => {
-    try {
-      const s = localStorage.getItem("authState");
-      return s ? JSON.parse(s) : null;
-    } catch {
-      return null;
-    }
-  })();
-
   if (!hydrated) return <Loader label="Loading" />;
-
   if (pendingAutofillEmail) return children;
-  if (!localAuthState?.isAuthenticated && isAuthenticated) return children;
 
   if (isAuthenticated) {
     return (
@@ -66,10 +77,7 @@ export const RoleBasedRoute = ({ children, allowedRole }) => {
 
   if (role !== allowedRole) {
     return (
-      <Navigate
-        to={role === "company" ? "/company/dashboard" : "/dashboard"}
-        replace
-      />
+      <Navigate to={role === "company" ? "/company/dashboard" : "/"} replace />
     );
   }
 

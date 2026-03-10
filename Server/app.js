@@ -1,7 +1,9 @@
 require("dotenv").config();
 const express = require("express");
+const session = require("express-session");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
+const { passport } = require("./Service/passport.service.js");
 const authRoutes = require("./Routes/auth.routes.js");
 const questionRoutes = require("./Middlewares/multer.middlewares.js");
 const resultRouter = require("./Routes/result.routes.js");
@@ -17,7 +19,7 @@ const violationsRoutes = require("./Routes/violation.routes.js");
 const applicationRoutes = require("./Admin/routes/application.routes.js");
 const userReviewRoutes = require("./Routes/review.routes.js");
 const newsLetterRoutes = require("./Routes/newLetter.routes.js");
-
+const microsoftAuthRoutes = require("./Admin/routes/microsoftauth.routes.js");
 const app = express();
 
 const allowedOrigins = [process.env.CORS_ORIGIN];
@@ -104,6 +106,22 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || "talk2hire-secret",
+    resave: true,
+    saveUninitialized: true,
+    cookie: {
+      secure: process.env.NODE_ENV === "production" ? true : false,
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      httpOnly: true,
+      maxAge: 5 * 60 * 1000, // 5 min is enough — just for the OAuth handshake
+    },
+  }),
+);
+app.use(passport.initialize());
+app.use(passport.session());
+
 // Routes
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/questions", questionRoutes);
@@ -121,6 +139,7 @@ app.use("/api/v1/jobs", jobRoutes);
 app.use("/api/v1/dashboard", companyDashboardRoutes);
 app.use("/api/v1/company/interview", companyInterviewRoutes);
 app.use("/api/v1/company/violation", violationsRoutes);
+app.use("/api/auth/v1", microsoftAuthRoutes);
 
 // Health check endpoint
 app.get("/health", (req, res) => {

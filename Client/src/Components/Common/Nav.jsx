@@ -3,6 +3,7 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import clsx from "clsx";
 import { useAuth } from "../../Hooks/useAuthHook";
+import { useMicrosoftUserAuth } from "../../Hooks/useMicrosoftAuth";
 import {
   Bell,
   ChevronDown,
@@ -40,8 +41,21 @@ const Nav = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // ── setPendingAutofillEmail now comes from Redux via useAuth ──────────────
-  const { isAuthenticated, user, logout, setPendingAutofillEmail } = useAuth();
+  const {
+    isAuthenticated: isEmailAuth,
+    user: emailUser,
+    logout: emailLogout,
+    setPendingAutofillEmail,
+  } = useAuth();
+  const {
+    isAuthenticated: isMsAuth,
+    user: msUser,
+    logout: msLogout,
+  } = useMicrosoftUserAuth();
+
+  // Merge — Microsoft takes priority if active
+  const isAuthenticated = isEmailAuth || isMsAuth;
+  const user = isMsAuth ? msUser : emailUser;
 
   const [scrolled, setScrolled] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -55,14 +69,15 @@ const Nav = () => {
   const isActive = (href) => location.pathname === href;
 
   const handleLogout = async () => {
-    const emailToSave = user?.email;
-    if (emailToSave) {
-      setPendingAutofillEmail(emailToSave);
-    } else {
-    }
     setProfileOpen(false);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    await logout();
+    if (isMsAuth) {
+      await msLogout();
+    } else {
+      const emailToSave = emailUser?.email;
+      if (emailToSave) setPendingAutofillEmail(emailToSave);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await emailLogout();
+    }
     navigate("/login");
   };
 

@@ -3,6 +3,7 @@ const {
   APIERR,
   APIRES,
   sendMail,
+  buildUserWelcomeEmail,
 } = require("../Utils/index.utils.js");
 const { extractSkills, mistral } = require("./mistral.controllers.js");
 const bcrypt = require("bcrypt");
@@ -511,7 +512,6 @@ const completeRegistration = asyncHandler(async (req, res) => {
 
   const tempData = tempRows[0];
 
-  // ── Guard: email must have been OTP-verified ──────────────
   if (!tempData.otp_verified) {
     throw new APIERR(
       403,
@@ -519,36 +519,69 @@ const completeRegistration = asyncHandler(async (req, res) => {
     );
   }
 
-  const existingUser = await User.findByEmail(email);
-  if (existingUser) throw new APIERR(409, "Email is already registered");
-
   const ROLE = "user";
+  const existingUser = await User.findByEmail(email);
+  let userId;
+  let isNewUser = false;
 
-  const [result] = await pool.execute(
-    `INSERT INTO users (email, hashPassword, fullName, mobile, location, skills, resume, resume_upload_status, created_at, updated_at, role)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)`,
-    [
-      email,
-      tempData.password_hash,
-      fullName,
-      mobile || null,
-      location || null,
-      skills,
-      tempData.resume_url,
-      "completed",
-      ROLE,
-    ],
-  );
+  if (existingUser) {
+    if (existingUser.microsoft_id && !existingUser.hashPassword) {
+      await pool.execute(
+        `UPDATE users
+         SET fullName = ?, hashPassword = ?, mobile = ?, location = ?, skills = ?,
+             resume = ?, resume_upload_status = ?, updated_at = NOW()
+         WHERE id = ?`,
+        [
+          fullName,
+          tempData.password_hash,
+          mobile || null,
+          location || null,
+          skills,
+          tempData.resume_url,
+          "completed",
+          existingUser.id,
+        ],
+      );
+      userId = existingUser.id;
+    } else {
+      throw new APIERR(409, "Email is already registered");
+    }
+  } else {
+    const [result] = await pool.execute(
+      `INSERT INTO users (email, hashPassword, fullName, mobile, location, skills, resume, resume_upload_status, created_at, updated_at, role)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)`,
+      [
+        email,
+        tempData.password_hash,
+        fullName,
+        mobile || null,
+        location || null,
+        skills,
+        tempData.resume_url,
+        "completed",
+        ROLE,
+      ],
+    );
+    userId = result.insertId;
+    isNewUser = true;
+  }
 
-  const userId = result.insertId;
-
-  // role is now passed so JWT contains it
   const { refreshToken, accessToken } = await generateRefreshAndAccessTokens({
     id: userId,
     email,
     role: ROLE,
   });
   await User.updateRefreshToken(userId, refreshToken);
+
+  // Fire-and-forget welcome email for brand new resume-registered users
+  if (isNewUser) {
+    sendMail(
+      email,
+      "🎉 Welcome to Talk2Hire — You're In!",
+      `Hi ${fullName}, welcome to Talk2Hire! Head to your dashboard to start exploring matched jobs.`,
+      buildUserWelcomeEmail(fullName),
+    ).catch((e) => console.warn("⚠️ Welcome email failed:", e.message));
+  }
 
   const cookieOptions = {
     httpOnly: true,

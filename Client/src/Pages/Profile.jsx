@@ -1,10 +1,15 @@
 import { useState, useRef, useEffect } from "react";
 import { useAuth } from "../Hooks/useAuthHook";
+import { useMicrosoftUserAuth } from "../Hooks/useMicrosoftAuth";
 import { Button, Modal, PreviousInterview } from "../Components/index";
 import { FormField } from "../Components/Common/Input";
 
 const ProfilePage = () => {
-  const { user, updateUser, getCurrentUser } = useAuth();
+  const { user: emailUser, updateUser, getCurrentUser } = useAuth();
+  const { user: msUser } = useMicrosoftUserAuth();
+
+  // Use whichever auth source has the user
+  const user = emailUser || msUser;
 
   const [isModalOpen, setModalOpen] = useState(false);
   const [isResumeModalOpen, setResumeModalOpen] = useState(false);
@@ -252,25 +257,14 @@ const ProfilePage = () => {
 
   return (
     <>
-      {/* Title */}
       <title>My Profile | Talk2Hire Careers Portal</title>
-
-      {/* Description */}
       <meta
         name="description"
         content="Manage your Talk2Hire account, update your resume, track interview performance, and monitor your AI interview progress."
       />
-
-      {/* Private Dashboard Page */}
       <meta name="robots" content="noindex, nofollow, noarchive" />
-
-      {/* Canonical */}
       <link rel="canonical" href="https://talk2hire.com/profile" />
-
-      {/* Theme Color */}
       <meta name="theme-color" content="#7C3AED" />
-
-      {/* Open Graph */}
       <meta property="og:type" content="profile" />
       <meta property="og:site_name" content="Talk2Hire" />
       <meta property="og:title" content="My Profile | Talk2Hire" />
@@ -283,8 +277,6 @@ const ProfilePage = () => {
         property="og:image"
         content="https://talk2hire.com/talk2hirelogo.png"
       />
-
-      {/* Twitter */}
       <meta name="twitter:card" content="summary_large_image" />
       <meta name="twitter:title" content="My Profile | Talk2Hire" />
       <meta
@@ -296,44 +288,6 @@ const ProfilePage = () => {
         content="https://talk2hire.com/talk2hirelogo.png"
       />
 
-      {/* Structured Data */}
-      <script type="application/ld+json">
-        {JSON.stringify({
-          "@context": "https://schema.org",
-          "@type": "WebApplication",
-          name: "Talk2Hire User Profile",
-          url: "https://talk2hire.com/profile",
-          applicationCategory: "BusinessApplication",
-          operatingSystem: "Web",
-          isPartOf: {
-            "@type": "WebApplication",
-            name: "Talk2Hire",
-            url: "https://talk2hire.com/",
-          },
-          publisher: {
-            "@type": "Organization",
-            name: "QuantamHash Corporation",
-            address: {
-              "@type": "PostalAddress",
-              streetAddress: "800 N King Street, Suite 304",
-              addressLocality: "Wilmington",
-              addressRegion: "DE",
-              postalCode: "19801",
-              addressCountry: "US",
-            },
-          },
-          description:
-            "Private user dashboard for managing interview performance, resumes, and account settings within Talk2Hire.",
-          featureList: [
-            "View interview statistics",
-            "Upload and manage resume",
-            "Update password",
-            "Track AI interview scores",
-            "Review previous interviews",
-          ],
-        })}
-      </script>
-
       <div
         className="min-h-screen"
         style={{
@@ -342,7 +296,6 @@ const ProfilePage = () => {
         }}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12 space-y-6 sm:space-y-8">
-          {/* ── Page Header ── */}
           <div
             className="transition-all duration-700 ease-out"
             style={{
@@ -361,7 +314,6 @@ const ProfilePage = () => {
             </p>
           </div>
 
-          {/* ── Hero Banner ── */}
           <div
             className="rounded-2xl sm:rounded-3xl overflow-hidden shadow-xl border border-violet-200/40"
             style={{
@@ -373,7 +325,6 @@ const ProfilePage = () => {
               transitionDelay: "130ms",
             }}
           >
-            {/* Subtle shimmer overlay */}
             <div
               className="absolute inset-0 opacity-10 pointer-events-none"
               style={{
@@ -383,7 +334,6 @@ const ProfilePage = () => {
             />
 
             <div className="relative px-5 sm:px-8 lg:px-10 pt-7 pb-6 flex flex-col sm:flex-row items-center sm:items-end gap-5 sm:gap-8">
-              {/* Avatar */}
               <div className="relative shrink-0 group">
                 <div
                   className="relative w-24 h-24 sm:w-28 sm:h-28 rounded-2xl overflow-hidden cursor-pointer border-4 border-white/25 shadow-2xl hover:border-white/50 hover:scale-105 transition-all duration-300"
@@ -437,7 +387,6 @@ const ProfilePage = () => {
                 onChange={handleImageChange}
               />
 
-              {/* Name area */}
               <div className="flex-1 text-center sm:text-left pb-1 min-w-0">
                 <h2 className="text-xl sm:text-2xl lg:text-3xl font-black text-white tracking-tight leading-tight">
                   {user.fullName}
@@ -508,7 +457,6 @@ const ProfilePage = () => {
                 )}
               </div>
 
-              {/* Action buttons */}
               <div className="flex flex-row sm:flex-col lg:flex-row gap-2 shrink-0 pb-1 flex-wrap justify-center">
                 <button
                   onClick={() => setModalOpen(true)}
@@ -550,11 +498,9 @@ const ProfilePage = () => {
                 </button>
               </div>
             </div>
-
             <div className="h-1 bg-linear-to-r from-violet-300/40 via-white/20 to-indigo-300/40" />
           </div>
 
-          {/* ── Stats Grid ── */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
             {stats.map((stat, i) => (
               <div
@@ -585,7 +531,6 @@ const ProfilePage = () => {
             ))}
           </div>
 
-          {/* ── Bio Card ── */}
           <div
             className="bg-white rounded-2xl sm:rounded-3xl border border-gray-100 shadow-sm overflow-hidden"
             style={{
@@ -625,7 +570,6 @@ const ProfilePage = () => {
                 </p>
               </div>
             </div>
-
             <div className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {bioFields.map((item, i) => (
                 <div
@@ -654,7 +598,6 @@ const ProfilePage = () => {
             </div>
           </div>
 
-          {/* ── Previous Interviews ── */}
           <div
             style={{
               opacity: mounted ? 1 : 0,
@@ -668,7 +611,6 @@ const ProfilePage = () => {
         </div>
       </div>
 
-      {/* ── Password Modal ── */}
       <Modal
         isOpen={isModalOpen}
         onClose={() => setModalOpen(false)}
@@ -677,16 +619,7 @@ const ProfilePage = () => {
         footer={
           <button
             onClick={handlePasswordUpdate}
-            className="
-        inline-flex items-center gap-2
-        px-6 h-10 rounded-xl
-        bg-[#4F46E5] hover:bg-[#4338CA]
-        text-white text-sm font-semibold font-sora
-        shadow-[0_4px_16px_rgba(79,70,229,0.25)]
-        hover:shadow-[0_6px_20px_rgba(79,70,229,0.32)]
-        transition-all duration-200
-        cursor-pointer
-      "
+            className="inline-flex items-center gap-2 px-6 h-10 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] text-white text-sm font-semibold shadow-[0_4px_16px_rgba(79,70,229,0.25)] hover:shadow-[0_6px_20px_rgba(79,70,229,0.32)] transition-all duration-200 cursor-pointer"
           >
             <svg
               className="w-4 h-4"
@@ -746,7 +679,6 @@ const ProfilePage = () => {
         </div>
       </Modal>
 
-      {/* ── Resume Modal ── */}
       <Modal
         isOpen={isResumeModalOpen}
         onClose={() => {
@@ -831,11 +763,7 @@ const ProfilePage = () => {
             />
             <div
               onClick={() => resumeInputRef.current.click()}
-              className={`relative border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all duration-300 group ${
-                selectedResume
-                  ? "border-emerald-300 bg-emerald-50/60"
-                  : "border-gray-200 bg-gray-50 hover:border-violet-400 hover:bg-violet-50/40"
-              }`}
+              className={`relative border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all duration-300 group ${selectedResume ? "border-emerald-300 bg-emerald-50/60" : "border-gray-200 bg-gray-50 hover:border-violet-400 hover:bg-violet-50/40"}`}
             >
               {selectedResume ? (
                 <div className="space-y-2">

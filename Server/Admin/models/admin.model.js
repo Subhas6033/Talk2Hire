@@ -13,12 +13,14 @@ const createCompany = async (companyData) => {
     companyRegisterNumber,
     password,
     role = "company",
+    microsoftId = null,
   } = companyData;
 
   const sql = `
     INSERT INTO company_details 
-    (companyName, industry, companySize, companyMail, companyMobile, companySite, companyAddress, companyLocation, companyRegisterNumber, password, role)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (companyName, industry, companySize, companyMail, companyMobile, companySite,
+     companyAddress, companyLocation, companyRegisterNumber, password, role, microsoft_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
   const [result] = await pool.query(sql, [
@@ -33,6 +35,7 @@ const createCompany = async (companyData) => {
     companyRegisterNumber,
     password,
     role,
+    microsoftId,
   ]);
 
   return result;
@@ -74,15 +77,9 @@ const updateCompany = async (id, companyData) => {
 
   const sql = `
     UPDATE company_details SET
-    companyName = ?,
-    industry = ?,
-    companySize = ?,
-    companyMail = ?,
-    companyMobile = ?,
-    companySite = ?,
-    companyAddress = ?,
-    companyLocation = ?,
-    companyRegisterNumber = ?
+    companyName = ?, industry = ?, companySize = ?, companyMail = ?,
+    companyMobile = ?, companySite = ?, companyAddress = ?,
+    companyLocation = ?, companyRegisterNumber = ?
     WHERE id = ?
   `;
 

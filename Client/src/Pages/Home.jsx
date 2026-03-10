@@ -766,7 +766,7 @@ export const TrustedCompaniesSlider = memo(() => {
             Want to post a job and reach 50k+ candidates?
           </p>
           <Link
-            to="/company/login"
+            to="/login/company"
             className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--c-slate)] hover:text-[var(--c-slate-2)] transition-colors"
           >
             List your company <ChevronRight size={14} />

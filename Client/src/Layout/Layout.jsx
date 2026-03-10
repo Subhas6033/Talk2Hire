@@ -4,6 +4,8 @@ import { motion } from "motion/react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../Hooks/useAuthHook.js";
 import { useCompany } from "../Hooks/useCompanyAuthHook.js";
+import { useMicrosoftAuth } from "../Hooks/useMicrosoftCompanyAuthHook.js";
+import { useMicrosoftUserAuth } from "../Hooks/useMicrosoftAuth.js";
 
 const FULLSCREEN_ROUTES = ["/interview", "/interview/live"];
 
@@ -22,19 +24,30 @@ const Layout = ({ children, isNotFound = false }) => {
   } = useAuth();
   const { isAuthenticated: isCompanyAuth, hydrated: companyHydrated } =
     useCompany();
+  const { isAuthenticated: isMsCompanyAuth, hydrated: msCompanyHydrated } =
+    useMicrosoftAuth();
+  const { isAuthenticated: isMsUserAuth, hydrated: msUserHydrated } =
+    useMicrosoftUserAuth();
 
   const isFullscreen = FULLSCREEN_ROUTES.includes(pathname) || isNotFound;
-  const hydrated = userHydrated && companyHydrated;
-  const role = isCompanyAuth ? "company" : userRole;
+  const hydrated =
+    userHydrated && companyHydrated && msCompanyHydrated && msUserHydrated;
+
+  // Company takes priority, then user, then guest
+  const role =
+    isCompanyAuth || isMsCompanyAuth
+      ? "company"
+      : isUserAuth || isMsUserAuth
+        ? userRole
+        : "guest";
+
   const RoleNav = ROLE_NAV[role] ?? Nav;
 
-  const bgClass =
-    role === "company"
-      ? "min-h-screen bg-white text-gray-900 flex flex-col"
-      : "min-h-screen bg-white text-gray-900 flex flex-col";
-
   return (
-    <div className={bgClass} style={{ isolation: "isolate" }}>
+    <div
+      className="min-h-screen bg-white text-gray-900 flex flex-col"
+      style={{ isolation: "isolate" }}
+    >
       {!isFullscreen && hydrated && <RoleNav />}
 
       <motion.main

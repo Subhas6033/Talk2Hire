@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useCompany } from "../../Hooks/useCompanyAuthHook";
+import { useMicrosoftAuth } from "../../Hooks/useMicrosoftCompanyAuthHook";
 import {
   LayoutDashboard,
   Briefcase,
   Video,
-  Mail,
   LogOut,
   Bell,
   ChevronDown,
@@ -14,7 +14,22 @@ import {
 
 export default function CompanyNavbar() {
   const [profileOpen, setProfileOpen] = useState(false);
-  const { isAuthenticated, company, logout } = useCompany();
+
+  const {
+    isAuthenticated: isEmailAuth,
+    company: emailCompany,
+    logout: emailLogout,
+  } = useCompany();
+  const {
+    isAuthenticated: isMsAuth,
+    company: msCompany,
+    logout: msLogout,
+  } = useMicrosoftAuth();
+
+  // Merge — Microsoft takes priority if active
+  const isAuthenticated = isEmailAuth || isMsAuth;
+  const company = isMsAuth ? msCompany : emailCompany;
+
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -25,7 +40,12 @@ export default function CompanyNavbar() {
   ];
 
   const handleLogout = async () => {
-    await logout();
+    setProfileOpen(false);
+    if (isMsAuth) {
+      await msLogout();
+    } else {
+      await emailLogout();
+    }
     navigate("/login/company", { replace: true });
   };
 
@@ -45,10 +65,10 @@ export default function CompanyNavbar() {
                 className="h-12 w-12 rounded-full"
               />
               <div>
-                <span className="font-bold text-(--nav-ink) text-[15px] tracking-tight block">
+                <span className="font-bold text-gray-900 text-[15px] tracking-tight block">
                   Talk2Hire
                 </span>
-                <span className="text-[10px] text-(--nav-amber) font-semibold tracking-wide">
+                <span className="text-[10px] text-amber-600 font-semibold tracking-wide">
                   Business Portal
                 </span>
               </div>
@@ -84,23 +104,18 @@ export default function CompanyNavbar() {
           {/* ── Right Side ── */}
           {isAuthenticated ? (
             <div className="flex items-center gap-3">
-              {/* Notification bell */}
               <button className="relative w-9 h-9 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all">
                 <Bell size={18} />
-                {/* Notification dot */}
                 <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border-2 border-white" />
               </button>
 
-              {/* Divider */}
               <div className="w-px h-6 bg-gray-200" />
 
-              {/* Profile dropdown */}
               <div className="relative">
                 <button
                   onClick={() => setProfileOpen((p) => !p)}
                   className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl hover:bg-gray-100 transition-all"
                 >
-                  {/* Avatar */}
                   {company?.logo ? (
                     <img
                       src={company.logo}
@@ -131,17 +146,13 @@ export default function CompanyNavbar() {
                   />
                 </button>
 
-                {/* Dropdown menu */}
                 {profileOpen && (
                   <>
-                    {/* Backdrop */}
                     <div
                       className="fixed inset-0 z-10"
                       onClick={() => setProfileOpen(false)}
                     />
-
                     <div className="absolute right-0 top-full mt-2 w-56 bg-white border border-gray-200 rounded-2xl shadow-xl z-20 overflow-hidden">
-                      {/* Company info header */}
                       <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
                         <p className="text-xs font-semibold text-gray-800 truncate">
                           {company?.companyName ?? "Company"}
@@ -151,7 +162,6 @@ export default function CompanyNavbar() {
                         </p>
                       </div>
 
-                      {/* Menu items */}
                       <div className="p-1.5">
                         <button
                           onClick={() => {
@@ -175,7 +185,6 @@ export default function CompanyNavbar() {
                         </button>
                       </div>
 
-                      {/* Logout */}
                       <div className="p-1.5 border-t border-gray-100">
                         <button
                           onClick={handleLogout}
@@ -191,7 +200,6 @@ export default function CompanyNavbar() {
               </div>
             </div>
           ) : (
-            // ── Auth buttons (unauthenticated) ──
             <div className="flex items-center gap-2">
               <button
                 onClick={() => navigate("/login/company")}

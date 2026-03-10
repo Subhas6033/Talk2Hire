@@ -16,7 +16,7 @@ export const registerCompany = createAsyncThunk(
 );
 
 export const loginCompany = createAsyncThunk(
-  "company/login",
+  "/login/company",
   async ({ companyMail, password }, { rejectWithValue }) => {
     try {
       const response = await api.post(
