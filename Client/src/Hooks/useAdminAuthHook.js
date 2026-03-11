@@ -7,7 +7,7 @@ import {
   refreshAdminToken,
   clearError,
   clearAdmin,
-} from "../API/aminAuthApi";
+} from "../API/adminAuthApi";
 
 const useAdminAuth = () => {
   const dispatch = useDispatch();

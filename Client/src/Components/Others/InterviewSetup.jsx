@@ -1523,13 +1523,50 @@ const InterviewSetup = () => {
                         ) : (
                           <div className="space-y-4">
                             {/* Quote card */}
-                            <div className="is-panel p-5">
-                              <p className="font-dm text-[10px] tracking-[0.08em] uppercase text-stone-400 mb-3">
-                                Read this aloud
-                              </p>
-                              <p className="font-lora text-[#1C1917] text-base leading-relaxed italic">
+                            <div
+                              className="is-panel p-5"
+                              style={{
+                                background:
+                                  "linear-gradient(135deg,#eef2ff 0%,#e0e7ff 100%)",
+                                border: "1.5px solid #a5b4fc",
+                                borderRadius: "14px",
+                              }}
+                            >
+                              <div className="flex items-center gap-2 mb-3">
+                                <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+                                <p className="font-dm text-[10px] tracking-[0.08em] uppercase text-indigo-500 font-bold">
+                                  Read this aloud
+                                </p>
+                                <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+                              </div>
+                              <p
+                                className="font-lora text-base leading-relaxed italic"
+                                style={{
+                                  color: "#3730a3",
+                                  textShadow: "0 1px 2px rgba(79,70,229,0.08)",
+                                  lineHeight: "1.9",
+                                }}
+                              >
                                 {currentQuote}
                               </p>
+                              <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-indigo-200">
+                                <svg
+                                  className="w-3 h-3 text-indigo-400"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  stroke="currentColor"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
+                                  />
+                                </svg>
+                                <span className="font-dm text-[10px] text-indigo-400">
+                                  Speak clearly into your microphone
+                                </span>
+                              </div>
                             </div>
 
                             {/* Level meter card */}

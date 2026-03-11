@@ -11,7 +11,8 @@ import applicationReducer from "../API/ApplicationApi";
 import userReviewReducer from "../API/userReviewApi";
 import microsoftAuthReducer from "../API/microsoftAuthApi";
 import microsoftUserAuthReducer from "../API/microsoftUserApi";
-import adminAuthReducer from "../API/aminAuthApi";
+import adminAuthReducer from "../API/adminAuthApi";
+import blogReducer from "../API/blogApi";
 
 export const store = configureStore({
   reducer: {
@@ -27,6 +28,7 @@ export const store = configureStore({
     microsoftAuth: microsoftAuthReducer,
     microsoftUserAuth: microsoftUserAuthReducer,
     adminAuth: adminAuthReducer,
+    blog: blogReducer,
   },
 });
 

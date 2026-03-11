@@ -34,6 +34,7 @@ import CompanyMicrosoftCallback from "./Auth/CompanyMicrosoftCallback.jsx";
 import CompanyHome from "./CompanyHome.jsx";
 import AdminDashboard from "./AdminDashboard.jsx";
 import AdminLogin from "./Auth/AdminLogin.jsx";
+import BlogAdmin from "./BlogAdmin.jsx";
 
 export {
   Home,
@@ -72,4 +73,5 @@ export {
   CompanyHome,
   AdminDashboard,
   AdminLogin,
+  BlogAdmin,
 };

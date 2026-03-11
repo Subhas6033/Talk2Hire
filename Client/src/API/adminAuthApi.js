@@ -16,6 +16,29 @@ const deleteCookie = (name) => {
   document.cookie = `${name}=; path=/; max-age=0`;
 };
 
+const ADMIN_KEY = "adminProfile";
+
+const loadAdminFromStorage = () => {
+  try {
+    const raw = sessionStorage.getItem(ADMIN_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+
+const saveAdminToStorage = (admin) => {
+  try {
+    sessionStorage.setItem(ADMIN_KEY, JSON.stringify(admin));
+  } catch {}
+};
+
+const clearAdminFromStorage = () => {
+  try {
+    sessionStorage.removeItem(ADMIN_KEY);
+  } catch {}
+};
+
 export const loginAdmin = createAsyncThunk(
   "adminAuth/login",
   async ({ email, password }, { rejectWithValue }) => {
@@ -44,6 +67,7 @@ export const logoutAdmin = createAsyncThunk(
     } finally {
       deleteCookie("adminAccessToken");
       deleteCookie("adminRefreshToken");
+      clearAdminFromStorage();
     }
   },
 );
@@ -53,6 +77,7 @@ export const fetchAdminProfile = createAsyncThunk(
   async (_, { rejectWithValue }) => {
     try {
       const token = getCookie("adminAccessToken");
+      if (!token) return rejectWithValue("No token");
       const { data } = await axios.get(`${API}/profile`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -79,6 +104,7 @@ export const refreshAdminToken = createAsyncThunk(
     } catch (err) {
       deleteCookie("adminAccessToken");
       deleteCookie("adminRefreshToken");
+      clearAdminFromStorage();
       return rejectWithValue(
         err.response?.data?.message || "Token refresh failed.",
       );
@@ -89,7 +115,7 @@ export const refreshAdminToken = createAsyncThunk(
 const adminAuthSlice = createSlice({
   name: "adminAuth",
   initialState: {
-    admin: null,
+    admin: loadAdminFromStorage(),
     accessToken: getCookie("adminAccessToken") || null,
     loading: false,
     error: null,
@@ -103,6 +129,7 @@ const adminAuthSlice = createSlice({
       state.accessToken = null;
       deleteCookie("adminAccessToken");
       deleteCookie("adminRefreshToken");
+      clearAdminFromStorage();
     },
   },
   extraReducers: (builder) => {
@@ -115,11 +142,13 @@ const adminAuthSlice = createSlice({
         state.loading = false;
         state.admin = action.payload.data.admin;
         state.accessToken = action.payload.accessToken;
+        saveAdminToStorage(action.payload.data.admin);
       })
       .addCase(loginAdmin.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
       })
+
       .addCase(logoutAdmin.fulfilled, (state) => {
         state.admin = null;
         state.accessToken = null;
@@ -128,9 +157,18 @@ const adminAuthSlice = createSlice({
         state.admin = null;
         state.accessToken = null;
       })
+
       .addCase(fetchAdminProfile.fulfilled, (state, action) => {
         state.admin = action.payload.data.admin;
+        saveAdminToStorage(action.payload.data.admin);
       })
+      .addCase(fetchAdminProfile.rejected, (state) => {
+        if (!loadAdminFromStorage()) {
+          state.admin = null;
+          state.accessToken = null;
+        }
+      })
+
       .addCase(refreshAdminToken.fulfilled, (state, action) => {
         state.accessToken = action.payload.accessToken;
       })

@@ -21,6 +21,7 @@ const userReviewRoutes = require("./Routes/review.routes.js");
 const newsLetterRoutes = require("./Routes/newLetter.routes.js");
 const microsoftAuthRoutes = require("./Routes/microsoftauth.routes.js");
 const adminAuthRoutes = require("./Admin/routes/auth.admin.routes.js");
+const blogRoutes = require("./Blog/blog.routes.js");
 
 const app = express();
 
@@ -145,6 +146,7 @@ app.use("/api/auth/v1", microsoftAuthRoutes);
 
 // Admin Routes
 app.use("/api/v1/auth/admin", adminAuthRoutes);
+app.use("/api/v1/admin/blog", blogRoutes);
 
 // Health check endpoint
 app.get("/health", (req, res) => {

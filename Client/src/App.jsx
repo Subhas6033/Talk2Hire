@@ -48,6 +48,7 @@ import {
   CompanyHome,
   AdminDashboard,
   AdminLogin,
+  BlogAdmin,
 } from "./Pages/index.pages.js";
 import { InterviewSetup } from "./Components/index.js";
 import { useStreams } from "./Hooks/streamContext";
@@ -114,6 +115,7 @@ const App = () => {
                 <Route path="/companies" element={<CompanyPage />} />
                 <Route path="/companies/:id" element={<CompanyDetail />} />
                 <Route path="/blog" element={<Blog />} />
+                <Route path="/blog/:slug" element={<Blog />} />
                 <Route path="/careers" element={<Carrers />} />
                 <Route path="/salaries" element={<SalaryPage />} />
 
@@ -309,7 +311,14 @@ const App = () => {
                     </AdminRoute>
                   }
                 />
-
+                <Route
+                  path="/admin/blog"
+                  element={
+                    <AdminRoute>
+                      <BlogAdmin />
+                    </AdminRoute>
+                  }
+                />
                 {/* NOT FOUND */}
                 <Route
                   path="*"
