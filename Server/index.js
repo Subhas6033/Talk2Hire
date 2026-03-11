@@ -1,3 +1,4 @@
+require("dotenv").config();
 const http = require("http");
 const app = require("./app.js");
 const { pool } = require("./Config/database.config.js");

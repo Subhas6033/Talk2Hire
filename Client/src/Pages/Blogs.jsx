@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -20,9 +20,7 @@ import {
 } from "lucide-react";
 import { usePublicBlog } from "../Hooks/useBlogHook";
 
-/* ══════════════════════════════════════════
-   Design Tokens
-══════════════════════════════════════════ */
+// Design Tokens
 const TOKENS = `
   @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400;1,700&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&display=swap');
   :root {
@@ -171,9 +169,7 @@ const TOKENS = `
   .search-input:focus{outline:none;}
 `;
 
-/* ══════════════════════════════════════════
-   Category config
-══════════════════════════════════════════ */
+// Categoy Config
 const CATEGORIES = [
   {
     id: "all",
@@ -260,9 +256,7 @@ const fmtDate = (d) =>
       })
     : "";
 
-/* ══════════════════════════════════════════
-   Shared primitives
-══════════════════════════════════════════ */
+// Shared primitives
 const GridTexture = () => (
   <div
     className="absolute inset-0 pointer-events-none"
@@ -350,53 +344,233 @@ const PostSkeleton = () => (
   </div>
 );
 
-/* ══════════════════════════════════════════
-   ShareButton — Web Share API → clipboard fallback
-══════════════════════════════════════════ */
+// Share Button
 function ShareButton({ slug, title }) {
-  const [copied, setCopied] = useState(false);
+  const [state, setState] = useState("idle"); // "idle" | "open" | "copied"
+  const popupRef = useRef(null);
+  const url = `${window.location.origin}/blog/${slug}`;
+
+  // Close on outside click
+  useEffect(() => {
+    if (state !== "open") return;
+    const handler = (e) => {
+      if (popupRef.current && !popupRef.current.contains(e.target)) {
+        setState("idle");
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [state]);
 
   const handleShare = async () => {
-    const url = `${window.location.origin}/blog/${slug}`;
     // Mobile: native share sheet
     if (navigator.share) {
       try {
         await navigator.share({ title, url });
         return;
       } catch {
-        // user cancelled → fall through to clipboard
+        // user cancelled → show popup
       }
     }
-    // Desktop: copy to clipboard
+    setState("open");
+  };
+
+  const copyLink = async () => {
     try {
       await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
+      setState("copied");
+      setTimeout(() => setState("idle"), 2500);
     } catch {
       window.prompt("Copy this link:", url);
+      setState("idle");
     }
   };
 
+  const shareVia = (platform) => {
+    const encodedUrl = encodeURIComponent(url);
+    const encodedTitle = encodeURIComponent(title);
+    const links = {
+      twitter: `https://twitter.com/intent/tweet?text=${encodedTitle}&url=${encodedUrl}`,
+      linkedin: `https://www.linkedin.com/sharing/share-offsite/?url=${encodedUrl}`,
+      whatsapp: `https://wa.me/?text=${encodedTitle}%20${encodedUrl}`,
+    };
+    window.open(
+      links[platform],
+      "_blank",
+      "noopener,noreferrer,width=600,height=500",
+    );
+    setState("idle");
+  };
+
   return (
-    <motion.button
-      onClick={handleShare}
-      whileTap={{ scale: 0.88 }}
-      title={copied ? "Link copied!" : "Share article"}
-      className="w-9 h-9 rounded-xl border flex items-center justify-center cursor-pointer transition-all"
-      style={{
-        background: copied ? "var(--c-sage-l)" : "var(--c-white)",
-        borderColor: copied ? "var(--c-sage)" : "var(--c-border)",
-        color: copied ? "var(--c-sage)" : "var(--c-ink-40)",
-      }}
-    >
-      {copied ? <Check size={14} /> : <Share2 size={15} />}
-    </motion.button>
+    <div className="relative" ref={popupRef}>
+      {/* Trigger button */}
+      <motion.button
+        onClick={handleShare}
+        whileTap={{ scale: 0.88 }}
+        title="Share article"
+        className="w-9 h-9 rounded-xl border flex items-center justify-center cursor-pointer transition-all"
+        style={{
+          background: state === "copied" ? "var(--c-sage-l)" : "var(--c-white)",
+          borderColor: state === "copied" ? "var(--c-sage)" : "var(--c-border)",
+          color: state === "copied" ? "var(--c-sage)" : "var(--c-ink-40)",
+        }}
+      >
+        {state === "copied" ? <Check size={14} /> : <Share2 size={15} />}
+      </motion.button>
+
+      {/* Share Popup */}
+      <AnimatePresence>
+        {state === "open" && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.92, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.92, y: 8 }}
+            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+            className="absolute right-0 top-12 z-50 w-72 rounded-2xl border overflow-hidden"
+            style={{
+              background: "var(--c-white)",
+              borderColor: "var(--c-border)",
+              boxShadow: "var(--sh-lg)",
+            }}
+          >
+            {/* Header */}
+            <div
+              className="flex items-center justify-between px-4 py-3 border-b"
+              style={{ borderColor: "var(--c-border)" }}
+            >
+              <span
+                className="text-xs font-bold uppercase tracking-widest"
+                style={{ color: "var(--c-ink)" }}
+              >
+                Share Article
+              </span>
+              <motion.button
+                onClick={() => setState("idle")}
+                whileTap={{ scale: 0.9 }}
+                className="w-6 h-6 rounded-lg flex items-center justify-center cursor-pointer"
+                style={{
+                  background: "var(--c-ink-12)",
+                  color: "var(--c-ink-70)",
+                }}
+              >
+                <X size={12} />
+              </motion.button>
+            </div>
+
+            {/* Social share buttons */}
+            <div className="p-3 grid grid-cols-3 gap-2">
+              {[
+                {
+                  id: "twitter",
+                  label: "Twitter / X",
+                  bg: "#000",
+                  color: "#fff",
+                  icon: (
+                    <svg
+                      width="15"
+                      height="15"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                    >
+                      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.253 5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                    </svg>
+                  ),
+                },
+                {
+                  id: "linkedin",
+                  label: "LinkedIn",
+                  bg: "#0A66C2",
+                  color: "#fff",
+                  icon: (
+                    <svg
+                      width="15"
+                      height="15"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                    >
+                      <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
+                    </svg>
+                  ),
+                },
+                {
+                  id: "whatsapp",
+                  label: "WhatsApp",
+                  bg: "#25D366",
+                  color: "#fff",
+                  icon: (
+                    <svg
+                      width="15"
+                      height="15"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                    >
+                      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 0 0-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z" />
+                    </svg>
+                  ),
+                },
+              ].map((s) => (
+                <motion.button
+                  key={s.id}
+                  onClick={() => shareVia(s.id)}
+                  whileHover={{ y: -2 }}
+                  whileTap={{ scale: 0.94 }}
+                  className="flex flex-col items-center gap-1.5 py-3 rounded-xl cursor-pointer"
+                  style={{
+                    background: `${s.bg}12`,
+                    border: `1px solid ${s.bg}22`,
+                  }}
+                >
+                  <div
+                    className="w-8 h-8 rounded-lg flex items-center justify-center"
+                    style={{ background: s.bg, color: s.color }}
+                  >
+                    {s.icon}
+                  </div>
+                  <span
+                    className="text-[10px] font-semibold"
+                    style={{ color: "var(--c-ink-70)" }}
+                  >
+                    {s.label}
+                  </span>
+                </motion.button>
+              ))}
+            </div>
+
+            {/* Copy link row */}
+            <div
+              className="mx-3 mb-3 flex items-center gap-2 px-3 py-2.5 rounded-xl border"
+              style={{
+                background: "var(--c-cream)",
+                borderColor: "var(--c-border)",
+              }}
+            >
+              <span
+                className="flex-1 text-xs truncate font-mono"
+                style={{ color: "var(--c-ink-70)" }}
+              >
+                {url}
+              </span>
+              <motion.button
+                onClick={copyLink}
+                whileTap={{ scale: 0.92 }}
+                className="shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-all"
+                style={{
+                  background: "var(--c-slate)",
+                  color: "#fff",
+                }}
+              >
+                Copy
+              </motion.button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
-/* ══════════════════════════════════════════
-   Featured Post Card
-══════════════════════════════════════════ */
+// Post Card
 const FeaturedCard = ({ post, onRead }) => {
   const cat = CATEGORIES.find((c) => c.id === post.category);
   const { gradient } = getCategoryStyle(post.category);
@@ -508,9 +682,7 @@ const FeaturedCard = ({ post, onRead }) => {
   );
 };
 
-/* ══════════════════════════════════════════
-   Regular Post Card
-══════════════════════════════════════════ */
+// Regular Post Card
 const PostCard = ({ post, index, onRead }) => {
   const cat = CATEGORIES.find((c) => c.id === post.category);
   const { gradient, iconColor } = getCategoryStyle(post.category);
@@ -635,9 +807,111 @@ const PostCard = ({ post, index, onRead }) => {
   );
 };
 
-/* ══════════════════════════════════════════
-   Article Reader  (used inside /blog/:slug)
-══════════════════════════════════════════ */
+// Article Reader (Read inside /blog/:slug)
+const ArticleSEO = ({ post }) => {
+  const url = `https://talk2hire.com/blog/${post.slug}`;
+  const image = post.cover_image ?? "https://talk2hire.com/og-blog.png";
+
+  useEffect(() => {
+    document.title = `${post.title} | Talk2Hire Blog`;
+    return () => {
+      document.title =
+        "Blog | Talk2Hire — Career Tips, Interview Prep & Hiring Insights";
+    };
+  }, [post.title]);
+
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "BlogPosting",
+    headline: post.title,
+    description: post.excerpt,
+    url,
+    datePublished: post.published_at,
+    dateModified: post.updated_at ?? post.published_at,
+    image,
+    inLanguage: "en-US",
+    keywords: (post.tags ?? []).join(", "),
+    articleSection: post.category,
+    timeRequired: post.read_time ? `PT${post.read_time}M` : undefined,
+    author: {
+      "@type": "Person",
+      name: post.author_name ?? "Talk2Hire Team",
+      url: post.author_username
+        ? `https://talk2hire.com/authors/${post.author_username}`
+        : "https://talk2hire.com",
+    },
+    publisher: {
+      "@type": "Organization",
+      name: "Talk2Hire",
+      url: "https://talk2hire.com",
+      logo: { "@type": "ImageObject", url: "https://talk2hire.com/logo.png" },
+    },
+    mainEntityOfPage: { "@type": "WebPage", "@id": url },
+    breadcrumb: {
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        {
+          "@type": "ListItem",
+          position: 1,
+          name: "Home",
+          item: "https://talk2hire.com",
+        },
+        {
+          "@type": "ListItem",
+          position: 2,
+          name: "Blog",
+          item: "https://talk2hire.com/blog",
+        },
+        { "@type": "ListItem", position: 3, name: post.title, item: url },
+      ],
+    },
+  };
+
+  return (
+    <>
+      <meta name="description" content={post.excerpt} />
+      <link rel="canonical" href={url} />
+      <meta
+        name="robots"
+        content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1"
+      />
+      <meta property="og:type" content="article" />
+      <meta property="og:site_name" content="Talk2Hire" />
+      <meta property="og:title" content={post.title} />
+      <meta property="og:description" content={post.excerpt} />
+      <meta property="og:url" content={url} />
+      <meta property="og:image" content={image} />
+      <meta property="og:image:width" content="1200" />
+      <meta property="og:image:height" content="630" />
+      <meta property="og:image:alt" content={post.title} />
+      <meta property="article:published_time" content={post.published_at} />
+      <meta
+        property="article:modified_time"
+        content={post.updated_at ?? post.published_at}
+      />
+      <meta
+        property="article:author"
+        content={post.author_name ?? "Talk2Hire Team"}
+      />
+      <meta property="article:section" content={post.category} />
+      {(post.tags ?? []).map((t) => (
+        <meta key={t} property="article:tag" content={t} />
+      ))}
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta name="twitter:site" content="@talk2hire" />
+      <meta name="twitter:title" content={post.title} />
+      <meta name="twitter:description" content={post.excerpt} />
+      <meta name="twitter:image" content={image} />
+      <meta name="twitter:image:alt" content={post.title} />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
+    </>
+  );
+};
+
+// Article Reader
 const ArticleReader = ({ post, onBack, relatedPosts }) => {
   const navigate = useNavigate();
   const [liked, setLiked] = useState(false);
@@ -655,6 +929,8 @@ const ArticleReader = ({ post, onBack, relatedPosts }) => {
       className="min-h-screen"
       style={{ background: "var(--c-white)" }}
     >
+      {/* ── SEO ── */}
+      <ArticleSEO post={post} />
       {/* Reading progress bar */}
       <div
         className="fixed top-0 left-0 right-0 z-50 h-0.5"
@@ -965,9 +1241,7 @@ const ArticleReader = ({ post, onBack, relatedPosts }) => {
   );
 };
 
-/* ══════════════════════════════════════════
-   Blog List  —  route: /blog
-══════════════════════════════════════════ */
+// All the blog lists
 const BlogList = () => {
   const navigate = useNavigate();
   const [activeCategory, setActiveCategory] = useState("all");
@@ -1377,9 +1651,7 @@ const BlogList = () => {
   );
 };
 
-/* ══════════════════════════════════════════
-   Blog Post  —  route: /blog/:slug
-══════════════════════════════════════════ */
+// Blog Post
 const BlogPost = () => {
   const { slug } = useParams();
   const navigate = useNavigate();
@@ -1394,46 +1666,52 @@ const BlogPost = () => {
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" });
     loadPost(slug);
-    return () => clearActivePost();
+    // Don't clear on unmount — let the next page or navigation handle it
   }, [slug]);
 
   if (activePostLoading || !activePost) {
     return (
-      <div className="max-w-7xl mx-auto px-6 py-16 space-y-6 animate-pulse">
-        <div
-          className="h-8 w-32 rounded-full"
-          style={{ background: "var(--c-ink-12)" }}
-        />
-        <div
-          className="h-12 w-3/4 rounded-xl"
-          style={{ background: "var(--c-ink-12)" }}
-        />
-        <div
-          className="h-6 w-full rounded-xl"
-          style={{ background: "var(--c-ink-12)" }}
-        />
-        <div
-          className="h-60 rounded-3xl"
-          style={{ background: "var(--c-ink-12)" }}
-        />
-        {Array.from({ length: 6 }).map((_, i) => (
+      <>
+        <title>Loading... | Talk2Hire Blog</title>
+        <div className="max-w-7xl mx-auto px-6 py-16 space-y-6 animate-pulse">
           <div
-            key={i}
-            className="h-4 rounded-full"
-            style={{
-              background: "var(--c-ink-12)",
-              width: `${70 + (i % 3) * 10}%`,
-            }}
+            className="h-8 w-32 rounded-full"
+            style={{ background: "var(--c-ink-12)" }}
           />
-        ))}
-      </div>
+          <div
+            className="h-12 w-3/4 rounded-xl"
+            style={{ background: "var(--c-ink-12)" }}
+          />
+          <div
+            className="h-6 w-full rounded-xl"
+            style={{ background: "var(--c-ink-12)" }}
+          />
+          <div
+            className="h-60 rounded-3xl"
+            style={{ background: "var(--c-ink-12)" }}
+          />
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div
+              key={i}
+              className="h-4 rounded-full"
+              style={{
+                background: "var(--c-ink-12)",
+                width: `${70 + (i % 3) * 10}%`,
+              }}
+            />
+          ))}
+        </div>
+      </>
     );
   }
 
   return (
     <ArticleReader
       post={activePost}
-      onBack={() => navigate("/blog")}
+      onBack={() => {
+        clearActivePost(); // clear only when user explicitly navigates away
+        navigate("/blog");
+      }}
       relatedPosts={relatedPosts}
     />
   );
@@ -1441,15 +1719,77 @@ const BlogPost = () => {
 
 const Blog = () => {
   const { slug } = useParams();
+
+  const blogListJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "Blog",
+    name: "Talk2Hire Blog",
+    description:
+      "Expert career advice, interview tips, salary negotiation guides, and hiring insights from the Talk2Hire team and industry professionals.",
+    url: "https://talk2hire.com/blog",
+    publisher: {
+      "@type": "Organization",
+      name: "Talk2Hire",
+      url: "https://talk2hire.com",
+      logo: { "@type": "ImageObject", url: "https://talk2hire.com/logo.png" },
+    },
+  };
+
   return (
     <>
-      <title>
-        Blog | Talk2Hire — Career Tips, Interview Prep & Hiring Insights
-      </title>
-      <meta
-        name="description"
-        content="Expert career advice, interview tips, salary negotiation guides, and hiring insights from the Talk2Hire team and industry professionals."
-      />
+      {!slug && (
+        <>
+          <title>
+            Blog | Talk2Hire — Career Tips, Interview Prep & Hiring Insights
+          </title>
+          <meta
+            name="description"
+            content="Expert career advice, interview tips, salary negotiation guides, and hiring insights from the Talk2Hire team and industry professionals."
+          />
+          <link rel="canonical" href="https://talk2hire.com/blog" />
+          <meta property="og:type" content="website" />
+          <meta property="og:site_name" content="Talk2Hire" />
+          <meta
+            property="og:title"
+            content="Blog | Talk2Hire — Career Tips, Interview Prep & Hiring Insights"
+          />
+          <meta
+            property="og:description"
+            content="Expert career advice, interview tips, salary negotiation guides, and hiring insights."
+          />
+          <meta property="og:url" content="https://talk2hire.com/blog" />
+          <meta
+            property="og:image"
+            content="https://talk2hire.com/og-blog.png"
+          />
+          <meta property="og:image:width" content="1200" />
+          <meta property="og:image:height" content="630" />
+          <meta name="twitter:card" content="summary_large_image" />
+          <meta name="twitter:site" content="@talk2hire" />
+          <meta
+            name="twitter:title"
+            content="Blog | Talk2Hire — Career Tips, Interview Prep & Hiring Insights"
+          />
+          <meta
+            name="twitter:description"
+            content="Expert career advice, interview tips, salary negotiation guides, and hiring insights."
+          />
+          <meta
+            name="twitter:image"
+            content="https://talk2hire.com/og-blog.png"
+          />
+          <meta
+            name="robots"
+            content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1"
+          />
+          <meta name="referrer" content="origin-when-cross-origin" />
+          <script
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{ __html: JSON.stringify(blogListJsonLd) }}
+          />
+        </>
+      )}
+
       <style>{TOKENS}</style>
       <div className="blog-root">
         <AnimatePresence mode="wait">
