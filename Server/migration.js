@@ -1,9 +1,12 @@
 const { pool } = require("./Config/database.config.js");
 
 const MIGRATIONS = [
+  // Remove ENUM restriction — category can now be any free-text string
   {
-    table: "blog_details",
-    sql: `ALTER TABLE blog_details MODIFY cover_image TEXT;`,
+    table: "blog_details — free-text category",
+    sql: `ALTER TABLE blog_details
+          MODIFY COLUMN category VARCHAR(100) NULL DEFAULT NULL
+          COMMENT 'Post category — free text, no ENUM restriction'`,
   },
 ];
 

@@ -1,7 +1,5 @@
 const { pool } = require("../Config/database.config.js");
 
-const VALID_CATEGORIES = ["interview", "career", "ai", "salary", "resume"];
-
 const generateSlug = (title) => {
   return title
     .toLowerCase()
@@ -34,12 +32,6 @@ const BlogModel = {
       const slug = await makeUniqueSlug(connection, baseSlug);
       const publishedAt = data.status === "published" ? new Date() : null;
 
-      // Sanitize category — null if empty or not a valid ENUM value
-      const category =
-        data.category && VALID_CATEGORIES.includes(data.category)
-          ? data.category
-          : null;
-
       const [result] = await connection.query(
         `INSERT INTO blog_details
           (title, subtitle, slug, content, excerpt, cover_image,
@@ -53,7 +45,7 @@ const BlogModel = {
           data.content || null,
           data.excerpt || null,
           data.cover_image || null,
-          category,
+          data.category || null,
           data.tags ? JSON.stringify(data.tags) : null,
           data.status || "draft",
           data.word_count || 0,
@@ -178,8 +170,8 @@ const BlogModel = {
         SUM(status = 'published' AND deleted_at IS NULL) AS published,
         SUM(status = 'draft'     AND deleted_at IS NULL) AS draft,
         SUM(deleted_at IS NOT NULL)                      AS deleted,
-        COALESCE(SUM(CASE WHEN status = 'published' THEN views END), 0) AS total_views,
-        COALESCE(SUM(CASE WHEN deleted_at IS NULL THEN word_count END), 0) AS total_words
+        COALESCE(SUM(CASE WHEN status = 'published' THEN views END), 0)     AS total_views,
+        COALESCE(SUM(CASE WHEN deleted_at IS NULL THEN word_count END), 0)  AS total_words
       FROM blog_details
     `);
     return stats;
@@ -188,17 +180,16 @@ const BlogModel = {
   async update(id, data) {
     const connection = await pool.getConnection();
     try {
-      const fields = [];
+      const setParts = [];
       const params = [];
 
       if (data.title !== undefined) {
         const baseSlug = generateSlug(data.title);
         const slug = await makeUniqueSlug(connection, baseSlug, id);
-        fields.push("title = ?", "slug = ?");
+        setParts.push("title = ?", "slug = ?");
         params.push(data.title, slug);
       }
 
-      // All simple fields except category — handled separately below
       const simpleFields = [
         "subtitle",
         "content",
@@ -208,46 +199,40 @@ const BlogModel = {
         "read_time",
         "seo_title",
         "seo_description",
+        "category", // free text — no validation needed
       ];
       simpleFields.forEach((f) => {
         if (data[f] !== undefined) {
-          fields.push(`${f} = ?`);
+          setParts.push(`${f} = ?`);
           params.push(data[f] ?? null);
         }
       });
 
-      // Category — only update if it's a valid ENUM value, skip entirely otherwise
-      if (data.category !== undefined) {
-        if (data.category && VALID_CATEGORIES.includes(data.category)) {
-          fields.push("category = ?");
-          params.push(data.category);
-        } else if (data.category === null || data.category === "") {
-          // Explicit clear is allowed
-          fields.push("category = ?");
-          params.push(null);
-        }
-        // Any other invalid string → skip silently (don't touch the column)
-      }
-
       if (data.tags !== undefined) {
-        fields.push("tags = ?");
+        setParts.push("tags = ?");
         params.push(data.tags ? JSON.stringify(data.tags) : null);
       }
 
       if (data.status !== undefined) {
-        fields.push("status = ?");
+        setParts.push("status = ?");
         params.push(data.status);
-        if (data.status === "published")
-          fields.push("published_at = COALESCE(published_at, NOW())");
-        if (data.status === "deleted") fields.push("deleted_at = NOW()");
-        if (data.status === "draft") fields.push("deleted_at = NULL");
+
+        if (data.status === "published") {
+          setParts.push("published_at = COALESCE(published_at, NOW())");
+        }
+        if (data.status === "deleted") {
+          setParts.push("deleted_at = NOW()");
+        }
+        if (data.status === "draft") {
+          setParts.push("deleted_at = NULL");
+        }
       }
 
-      if (!fields.length) return false;
+      if (!setParts.length) return false;
 
       params.push(id);
       await connection.query(
-        `UPDATE blog_details SET ${fields.join(", ")} WHERE id = ?`,
+        `UPDATE blog_details SET ${setParts.join(", ")} WHERE id = ?`,
         params,
       );
       return true;
@@ -258,7 +243,8 @@ const BlogModel = {
 
   async softDelete(id) {
     const [result] = await pool.query(
-      `UPDATE blog_details SET status = 'deleted', deleted_at = NOW() WHERE id = ? AND deleted_at IS NULL`,
+      `UPDATE blog_details SET status = 'deleted', deleted_at = NOW()
+       WHERE id = ? AND deleted_at IS NULL`,
       [id],
     );
     return result.affectedRows > 0;
@@ -266,7 +252,8 @@ const BlogModel = {
 
   async restore(id) {
     const [result] = await pool.query(
-      `UPDATE blog_details SET status = 'draft', deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL`,
+      `UPDATE blog_details SET status = 'draft', deleted_at = NULL
+       WHERE id = ? AND deleted_at IS NOT NULL`,
       [id],
     );
     return result.affectedRows > 0;
@@ -289,7 +276,8 @@ const BlogModel = {
 
   async incrementViews(id) {
     await pool.query(
-      `UPDATE blog_details SET views = views + 1 WHERE id = ? AND status = 'published'`,
+      `UPDATE blog_details SET views = views + 1
+       WHERE id = ? AND status = 'published'`,
       [id],
     );
   },

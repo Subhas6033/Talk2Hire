@@ -2,25 +2,79 @@ import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import axios from "axios";
 
 const BASE = `${import.meta.env.VITE_BACKEND_URL}/api/v1/admin/blog`;
+const AUTH_BASE = `${import.meta.env.VITE_BACKEND_URL}/api/v1/auth/admin`;
 const PUBLIC_BASE = `${import.meta.env.VITE_BACKEND_URL}/api/v1/admin/blog/public`;
 
-const getAdminToken = () => {
-  const match = document.cookie.match(/(^| )adminAccessToken=([^;]+)/);
+// ── Cookie helpers ────────────────────────────────────────────────────────
+const getCookie = (name) => {
+  const match = document.cookie.match(new RegExp(`(^| )${name}=([^;]+)`));
   return match ? match[2] : null;
 };
+const setCookie = (name, value, maxAge) => {
+  document.cookie = `${name}=${value}; path=/; SameSite=Strict; max-age=${maxAge}`;
+};
+const deleteCookie = (name) => {
+  document.cookie = `${name}=; path=/; max-age=0`;
+};
 
-const authHeaders = () => ({
-  headers: { Authorization: `Bearer ${getAdminToken()}` },
+// ── Authenticated Axios instance with auto-refresh ────────────────────────
+const api = axios.create();
+
+api.interceptors.request.use((config) => {
+  const token = getCookie("adminAccessToken");
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
 });
 
+let _refreshPromise = null;
+
+api.interceptors.response.use(
+  (res) => res,
+  async (error) => {
+    const original = error.config;
+    if (error.response?.status !== 401 || original._retry) {
+      return Promise.reject(error);
+    }
+    original._retry = true;
+
+    if (!_refreshPromise) {
+      _refreshPromise = axios
+        .post(`${AUTH_BASE}/refresh-token`, {
+          refreshToken: getCookie("adminRefreshToken"),
+        })
+        .then(({ data }) => {
+          setCookie("adminAccessToken", data.accessToken, 900);
+          setCookie("adminRefreshToken", data.refreshToken, 604800);
+          return data.accessToken;
+        })
+        .catch((err) => {
+          deleteCookie("adminAccessToken");
+          deleteCookie("adminRefreshToken");
+          sessionStorage.removeItem("adminProfile");
+          window.location.href = "/admin/login";
+          return Promise.reject(err);
+        })
+        .finally(() => {
+          _refreshPromise = null;
+        });
+    }
+
+    try {
+      const newToken = await _refreshPromise;
+      original.headers.Authorization = `Bearer ${newToken}`;
+      return api(original);
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  },
+);
+
+// ── Thunks ────────────────────────────────────────────────────────────────
 export const fetchPosts = createAsyncThunk(
   "blog/fetchPosts",
   async (params = {}, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(`${BASE}/posts`, {
-        params,
-        ...authHeaders(),
-      });
+      const { data } = await api.get(`${BASE}/posts`, { params });
       return data;
     } catch (err) {
       return rejectWithValue(
@@ -34,7 +88,7 @@ export const fetchStats = createAsyncThunk(
   "blog/fetchStats",
   async (_, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(`${BASE}/stats`, authHeaders());
+      const { data } = await api.get(`${BASE}/stats`);
       return data.data;
     } catch (err) {
       return rejectWithValue(
@@ -48,11 +102,7 @@ export const createPost = createAsyncThunk(
   "blog/createPost",
   async (payload, { rejectWithValue }) => {
     try {
-      const { data } = await axios.post(
-        `${BASE}/posts`,
-        payload,
-        authHeaders(),
-      );
+      const { data } = await api.post(`${BASE}/posts`, payload);
       return data;
     } catch (err) {
       return rejectWithValue(
@@ -67,11 +117,7 @@ export const updatePost = createAsyncThunk(
   async ({ id, ...payload }, { rejectWithValue }) => {
     try {
       const { status: _ignored, ...safePayload } = payload;
-      const { data } = await axios.put(
-        `${BASE}/posts/${id}`,
-        safePayload,
-        authHeaders(),
-      );
+      const { data } = await api.put(`${BASE}/posts/${id}`, safePayload);
       return { id, ...safePayload, ...data.data };
     } catch (err) {
       return rejectWithValue(
@@ -85,7 +131,7 @@ export const publishPost = createAsyncThunk(
   "blog/publishPost",
   async (id, { rejectWithValue }) => {
     try {
-      await axios.patch(`${BASE}/posts/${id}/publish`, {}, authHeaders());
+      await api.patch(`${BASE}/posts/${id}/publish`, {});
       return id;
     } catch (err) {
       return rejectWithValue(
@@ -99,7 +145,7 @@ export const unpublishPost = createAsyncThunk(
   "blog/unpublishPost",
   async (id, { rejectWithValue }) => {
     try {
-      await axios.patch(`${BASE}/posts/${id}/unpublish`, {}, authHeaders());
+      await api.patch(`${BASE}/posts/${id}/unpublish`, {});
       return id;
     } catch (err) {
       return rejectWithValue(
@@ -113,7 +159,7 @@ export const softDeletePost = createAsyncThunk(
   "blog/softDeletePost",
   async (id, { rejectWithValue }) => {
     try {
-      await axios.delete(`${BASE}/posts/${id}/soft`, authHeaders());
+      await api.delete(`${BASE}/posts/${id}/soft`);
       return id;
     } catch (err) {
       return rejectWithValue(err.response?.data?.message || "Failed to delete");
@@ -125,7 +171,7 @@ export const restorePost = createAsyncThunk(
   "blog/restorePost",
   async (id, { rejectWithValue }) => {
     try {
-      await axios.patch(`${BASE}/posts/${id}/restore`, {}, authHeaders());
+      await api.patch(`${BASE}/posts/${id}/restore`, {});
       return id;
     } catch (err) {
       return rejectWithValue(
@@ -139,7 +185,7 @@ export const permanentDeletePost = createAsyncThunk(
   "blog/permanentDeletePost",
   async (id, { rejectWithValue }) => {
     try {
-      await axios.delete(`${BASE}/posts/${id}/permanent`, authHeaders());
+      await api.delete(`${BASE}/posts/${id}/permanent`);
       return id;
     } catch (err) {
       return rejectWithValue(
@@ -153,7 +199,7 @@ export const emptyTrash = createAsyncThunk(
   "blog/emptyTrash",
   async (_, { rejectWithValue }) => {
     try {
-      await axios.delete(`${BASE}/trash/empty`, authHeaders());
+      await api.delete(`${BASE}/trash/empty`);
       return true;
     } catch (err) {
       return rejectWithValue(
@@ -220,6 +266,7 @@ export const fetchPublicPostsByCategory = createAsyncThunk(
   },
 );
 
+// ── Slice (unchanged) ─────────────────────────────────────────────────────
 const blogSlice = createSlice({
   name: "blog",
   initialState: {
@@ -237,7 +284,6 @@ const blogSlice = createSlice({
     statsLoading: false,
     saving: false,
     error: null,
-
     publicPosts: [],
     publicPagination: { total: 0, page: 1, limit: 20, totalPages: 1 },
     publicLoading: false,
@@ -274,7 +320,6 @@ const blogSlice = createSlice({
         state.loading = false;
         state.error = payload;
       })
-
       .addCase(fetchStats.pending, (state) => {
         state.statsLoading = true;
       })
@@ -285,7 +330,6 @@ const blogSlice = createSlice({
       .addCase(fetchStats.rejected, (state) => {
         state.statsLoading = false;
       })
-
       .addCase(createPost.pending, (state) => {
         state.saving = true;
         state.error = null;
@@ -297,7 +341,6 @@ const blogSlice = createSlice({
         state.saving = false;
         state.error = payload;
       })
-
       .addCase(updatePost.pending, (state) => {
         state.saving = true;
       })
@@ -310,7 +353,6 @@ const blogSlice = createSlice({
         state.saving = false;
         state.error = payload;
       })
-
       .addCase(publishPost.fulfilled, (state, { payload: id }) => {
         const post = state.posts.find((p) => p.id === id);
         if (post) post.status = "published";
@@ -336,7 +378,6 @@ const blogSlice = createSlice({
       .addCase(emptyTrash.fulfilled, (state) => {
         state.posts = state.posts.filter((p) => p.status !== "deleted");
       })
-
       .addCase(fetchPublicPosts.pending, (state) => {
         state.publicLoading = true;
         state.publicError = null;
@@ -350,7 +391,6 @@ const blogSlice = createSlice({
         state.publicLoading = false;
         state.publicError = payload;
       })
-
       .addCase(fetchPublicPostBySlug.pending, (state) => {
         state.activePostLoading = true;
         state.publicError = null;
@@ -363,7 +403,6 @@ const blogSlice = createSlice({
         state.activePostLoading = false;
         state.publicError = payload;
       })
-
       .addCase(fetchRelatedPosts.pending, (state) => {
         state.relatedLoading = true;
       })
@@ -374,7 +413,6 @@ const blogSlice = createSlice({
       .addCase(fetchRelatedPosts.rejected, (state) => {
         state.relatedLoading = false;
       })
-
       .addCase(fetchPublicPostsByCategory.pending, (state) => {
         state.publicLoading = true;
         state.publicError = null;

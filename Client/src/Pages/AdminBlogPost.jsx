@@ -3,7 +3,98 @@ import { useBlog } from "../Hooks/useBlogHook";
 
 const TINYMCE_CDN =
   "https://cdnjs.cloudflare.com/ajax/libs/tinymce/6.8.3/tinymce.min.js";
-// Values must match the DB ENUM and the public Blog's category filter ids
+
+function convertMarkdownToHtml(md) {
+  if (!md) return "";
+  const codeBlocks = [];
+  let text = md.replace(/```([\w]*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    codeBlocks.push(
+      `<pre${lang ? ` data-language="${lang}"` : ""}><code>${code.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</code></pre>`,
+    );
+    return `\x00CB${codeBlocks.length - 1}\x00`;
+  });
+
+  const inline = (s) =>
+    s
+      .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1">')
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>")
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*([^*\n]+)\*/g, "<em>$1</em>")
+      .replace(/__(.+?)__/g, "<strong>$1</strong>")
+      .replace(/_([^_\n]+)_/g, "<em>$1</em>")
+      .replace(/~~(.+?)~~/g, "<del>$1</del>");
+
+  const lines = text.split("\n");
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const l = lines[i];
+    if (/^\x00CB\d+\x00$/.test(l.trim())) {
+      out.push(codeBlocks[+l.trim().replace(/\x00CB(\d+)\x00/, "$1")]);
+      i++;
+      continue;
+    }
+    const hm = l.match(/^(#{1,6})\s+(.+)$/);
+    if (hm) {
+      out.push(`<h${hm[1].length}>${inline(hm[2])}</h${hm[1].length}>`);
+      i++;
+      continue;
+    }
+    if (/^---+$/.test(l.trim())) {
+      out.push("<hr>");
+      i++;
+      continue;
+    }
+    if (/^>\s?/.test(l)) {
+      const bq = [];
+      while (i < lines.length && /^>\s?/.test(lines[i])) {
+        bq.push(lines[i].replace(/^>\s?/, ""));
+        i++;
+      }
+      out.push(
+        `<blockquote><p>${bq.map(inline).join("<br>")}</p></blockquote>`,
+      );
+      continue;
+    }
+    if (/^[-*+]\s/.test(l)) {
+      const items = [];
+      while (i < lines.length && /^[-*+]\s/.test(lines[i])) {
+        items.push(`<li>${inline(lines[i].replace(/^[-*+]\s+/, ""))}</li>`);
+        i++;
+      }
+      out.push(`<ul>${items.join("")}</ul>`);
+      continue;
+    }
+    if (/^\d+\.\s/.test(l)) {
+      const items = [];
+      while (i < lines.length && /^\d+\.\s/.test(lines[i])) {
+        items.push(`<li>${inline(lines[i].replace(/^\d+\.\s+/, ""))}</li>`);
+        i++;
+      }
+      out.push(`<ol>${items.join("")}</ol>`);
+      continue;
+    }
+    if (l.trim() === "") {
+      out.push("");
+      i++;
+      continue;
+    }
+    const para = [];
+    while (
+      i < lines.length &&
+      lines[i].trim() !== "" &&
+      !/^#{1,6}\s|^[-*+]\s|^\d+\.\s|^>\s|^---+$|^\x00CB/.test(lines[i])
+    ) {
+      para.push(inline(lines[i]));
+      i++;
+    }
+    if (para.length) out.push(`<p>${para.join("<br>")}</p>`);
+  }
+  return out.filter(Boolean).join("\n");
+}
+
 const CATEGORIES = [
   { value: "interview", label: "Interview Tips" },
   { value: "career", label: "Career Growth" },
@@ -111,165 +202,69 @@ function CheckRow({ label, ok }) {
   );
 }
 
-function PreviewModal({
-  title,
-  subtitle,
-  coverImage,
-  content,
-  tags,
-  category,
-  wordCount,
-  readTime,
-  onClose,
+export default function AdminBlogPost({
+  initialPost = null,
+  onBack,
+  onPreview,
 }) {
-  useEffect(() => {
-    const h = (e) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", h);
-    return () => document.removeEventListener("keydown", h);
-  }, [onClose]);
-
-  const html = `<!DOCTYPE html><html><head>
-  <meta charset="UTF-8">
-  <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <style>
-    *{box-sizing:border-box;margin:0;padding:0} body{font-family:'Lora',serif;color:#111827;background:#fff}
-    .wrap{max-width:700px;margin:0 auto;padding:52px 24px 80px}
-    .meta{display:flex;align-items:center;gap:10px;margin-bottom:24px;font-family:'Sora',sans-serif;font-size:13px;color:#6b7280}
-    .cat{background:#eef2ff;color:#4F6EF7;padding:3px 10px;border-radius:3px;font-weight:600;font-size:11px;text-transform:uppercase}
-    h1{font-family:'Sora',sans-serif;font-size:clamp(1.8rem,4vw,2.5rem);font-weight:700;color:#111827;line-height:1.2;margin-bottom:12px}
-    .sub{font-size:1.1rem;color:#6b7280;line-height:1.65;margin-bottom:28px;font-style:italic}
-    .cover{width:100%;height:360px;object-fit:cover;border-radius:6px;margin-bottom:40px;display:block}
-    .body{font-size:1.05rem;line-height:1.85;color:#1f2937} .body p{margin:0 0 1.25em}
-    .body h2{font-family:'Sora',sans-serif;font-size:1.4rem;font-weight:700;margin:2em 0 .6em}
-    .body blockquote{margin:1.5em 0;padding:14px 20px;border-left:3px solid #4F6EF7;background:#f8faff;font-style:italic}
-    .body a{color:#4F6EF7} .body code{background:#f3f4f6;padding:2px 6px;border-radius:3px;font-size:.85em;color:#b45309}
-    .body img{max-width:100%;border-radius:5px} .body ul,.body ol{padding-left:1.5em;margin:0 0 1.2em}
-    .tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:36px;padding-top:24px;border-top:1px solid #f3f4f6}
-    .tag{font-family:'Sora',sans-serif;font-size:11px;font-weight:600;color:#374151;background:#f3f4f6;padding:3px 10px;border-radius:3px}
-  </style></head><body><div class="wrap">
-  <div class="meta">${category ? `<span class="cat">${category}</span>` : ""}<span>${readTime} min read</span><span>·</span><span>${wordCount.toLocaleString()} words</span></div>
-  <h1>${title || "Untitled Post"}</h1>
-  ${subtitle ? `<p class="sub">${subtitle}</p>` : ""}
-  ${coverImage ? `<img class="cover" src="${coverImage}" alt="">` : ""}
-  <div class="body">${content}</div>
-  ${tags.length ? `<div class="tags">${tags.map((t) => `<span class="tag">#${t}</span>`).join("")}</div>` : ""}
-  </div></body></html>`;
-
-  return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 9999,
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
-      <div
-        style={{
-          background: "#111827",
-          height: 44,
-          flexShrink: 0,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "0 18px",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span
-            style={{
-              width: 7,
-              height: 7,
-              borderRadius: "50%",
-              background: "#10b981",
-              display: "inline-block",
-            }}
-          />
-          <span
-            style={{
-              color: "#d1d5db",
-              fontSize: 13,
-              fontFamily: "'Sora',sans-serif",
-            }}
-          >
-            Preview Mode
-          </span>
-        </div>
-        <button
-          onClick={onClose}
-          style={{
-            padding: "4px 14px",
-            border: "1px solid #374151",
-            borderRadius: 4,
-            background: "transparent",
-            color: "#d1d5db",
-            fontSize: 12,
-            cursor: "pointer",
-            fontFamily: "inherit",
-          }}
-        >
-          ✕ Close (Esc)
-        </button>
-      </div>
-      <iframe
-        srcDoc={html}
-        style={{ flex: 1, border: "none" }}
-        title="Preview"
-      />
-    </div>
-  );
-}
-
-export default function AdminBlogPost({ initialPost = null, onBack }) {
   const editorTextarea = useRef(null);
   const tinymce = useRef(null);
   const fileInputRef = useRef(null);
   const coverFileRef = useRef(null);
 
-  // ── THE FIX ──────────────────────────────────────────────────────────────
-  // Track the post id in a ref so it persists across re-renders without
-  // causing re-renders itself. After the first createPost succeeds we store
-  // the returned id here, and every subsequent save (including auto-save)
-  // uses updatePost(postId.current, ...) instead of createPost.
   const postId = useRef(initialPost?.id ?? null);
-  // ─────────────────────────────────────────────────────────────────────────
+
+  // Unique localStorage key per post (new vs existing)
+  const draftKey = `blog_draft_${initialPost?.id ?? "new"}`;
 
   const { createPost, updatePost, saving, error } = useBlog();
 
-  const [title, setTitle] = useState(initialPost?.title || "");
-  const [subtitle, setSubtitle] = useState(initialPost?.subtitle || "");
-  // Sanitize: only accept values that exist in CATEGORIES — old DB values get cleared
-  const VALID_CAT_VALUES = CATEGORIES.map((c) => c.value);
-  const [category, setCategory] = useState(
-    VALID_CAT_VALUES.includes(initialPost?.category)
-      ? initialPost.category
-      : "",
+  // Load persisted draft for non-editor fields before first render
+  const getPersistedDraft = () => {
+    try {
+      const raw = localStorage.getItem(draftKey);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const persisted = getPersistedDraft();
+
+  const [title, setTitle] = useState(
+    persisted?.title ?? initialPost?.title ?? "",
   );
+  const [subtitle, setSubtitle] = useState(
+    persisted?.subtitle ?? initialPost?.subtitle ?? "",
+  );
+
+  const VALID_CAT_VALUES = CATEGORIES.map((c) => c.value);
+  const [category, setCategory] = useState(() => {
+    const cat = persisted?.category ?? initialPost?.category ?? "";
+    return VALID_CAT_VALUES.includes(cat) ? cat : "";
+  });
   const [tags, setTags] = useState(() => {
+    if (persisted?.tags) return persisted.tags;
     if (!initialPost?.tags) return [];
     return Array.isArray(initialPost.tags)
       ? initialPost.tags
       : JSON.parse(initialPost.tags);
   });
   const [tagInput, setTagInput] = useState("");
-  const [coverImage, setCoverImage] = useState(initialPost?.cover_image || "");
+  const [coverImage, setCoverImage] = useState(
+    persisted?.coverImage ?? initialPost?.cover_image ?? "",
+  );
   const [wordCount, setWordCount] = useState(initialPost?.word_count || 0);
   const [readTime, setReadTime] = useState(initialPost?.read_time || 1);
   const [ready, setReady] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
-  const [status, setStatus] = useState(initialPost?.status || "draft");
+  const [status, setStatus] = useState(
+    persisted?.status ?? initialPost?.status ?? "draft",
+  );
   const [activeTab, setActiveTab] = useState("write");
-  const [showPreview, setShowPreview] = useState(false);
-  const [previewHTML, setPreviewHTML] = useState("");
   const [toast, setToast] = useState(null);
+  const [hasDraft, setHasDraft] = useState(!!persisted);
 
-  // Mirror every piece of form state into refs so callbacks that must be
-  // stable (doAutoSave, initEditor) can always read the latest value without
-  // being listed as dependencies — which would cause TinyMCE to re-init on
-  // every keystroke and produce the blinking effect.
   const titleRef = useRef(title);
   const subtitleRef = useRef(subtitle);
   const categoryRef = useRef(category);
@@ -304,6 +299,37 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
     statusRef.current = status;
   }, [status]);
 
+  // Save all current state to localStorage
+  const saveDraft = useCallback(() => {
+    try {
+      localStorage.setItem(
+        draftKey,
+        JSON.stringify({
+          title: titleRef.current,
+          subtitle: subtitleRef.current,
+          category: categoryRef.current,
+          tags: tagsRef.current,
+          coverImage: coverRef.current,
+          content: tinymce.current?.getContent() || "",
+          status: statusRef.current,
+        }),
+      );
+      setHasDraft(true);
+    } catch {}
+  }, [draftKey]);
+
+  const saveDraftRef = useRef(saveDraft);
+  useEffect(() => {
+    saveDraftRef.current = saveDraft;
+  }, [saveDraft]);
+
+  const clearDraft = useCallback(() => {
+    try {
+      localStorage.removeItem(draftKey);
+      setHasDraft(false);
+    } catch {}
+  }, [draftKey]);
+
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
@@ -311,30 +337,33 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
 
   const getContent = () => tinymce.current?.getContent() || "";
 
-  // buildPayload reads from refs — safe to call from any stable callback
-  const buildPayload = useCallback((overrideStatus) => {
-    const content = tinymce.current?.getContent() || "";
-    return {
-      title: titleRef.current,
-      subtitle: subtitleRef.current,
-      category: categoryRef.current,
-      tags: tagsRef.current,
-      cover_image: coverRef.current,
-      word_count: wordCountRef.current,
-      read_time: readTimeRef.current,
-      content,
-      excerpt:
-        subtitleRef.current || content.replace(/<[^>]+>/g, "").slice(0, 200),
-      status: overrideStatus || statusRef.current,
-    };
-  }, []); // no deps — reads via refs
+  const buildPayload = useCallback(
+    (overrideStatus) => {
+      const content = tinymce.current?.getContent() || "";
+      return {
+        title: titleRef.current,
+        subtitle: subtitleRef.current,
+        category: categoryRef.current,
+        tags: tagsRef.current,
+        cover_image: coverRef.current,
+        word_count: wordCountRef.current,
+        read_time: readTimeRef.current,
+        content,
+        excerpt:
+          subtitleRef.current || content.replace(/<[^>]+>/g, "").slice(0, 200),
+        status: overrideStatus || statusRef.current,
+        author_name: initialPost?.author_name || "Talk2Hire Team",
+        author_username: initialPost?.author_username || "",
+        published_at: initialPost?.published_at || null,
+        views: initialPost?.views || 0,
+      };
+    },
+    [initialPost],
+  );
 
-  // RTK dispatch returns { meta: { requestStatus: 'fulfilled'|'rejected' } }
-  // result.error is the action object, not a string — use this helper everywhere
   const isRejected = (result) => result?.meta?.requestStatus === "rejected";
   const errorMsg = (result) => result?.payload || "Something went wrong";
 
-  // Shared save logic — creates once, updates forever after
   const persistPost = useCallback(
     async (payload) => {
       let result;
@@ -351,9 +380,9 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
     [createPost, updatePost],
   );
 
-  // Stable forever — reads state via refs, never recreated on keystroke
   const doAutoSave = useCallback(async () => {
     if (!titleRef.current.trim()) return;
+    saveDraftRef.current();
     const result = await persistPost(buildPayload());
     if (!isRejected(result)) {
       setSavedAt(
@@ -372,6 +401,7 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
       showToast("Title is required", "error");
       return;
     }
+    saveDraftRef.current();
     const result = await persistPost(buildPayload());
     if (!isRejected(result)) {
       setSavedAt(
@@ -395,7 +425,6 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
     }
     const newStatus = statusRef.current === "published" ? "draft" : "published";
 
-    // Step 1: if post doesn't exist yet, create it first
     if (!postId.current) {
       const createResult = await persistPost(buildPayload());
       if (isRejected(createResult)) {
@@ -404,14 +433,12 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
       }
     }
 
-    // Step 2: save latest content without touching status
     const saveResult = await persistPost(buildPayload());
     if (isRejected(saveResult)) {
       showToast(errorMsg(saveResult), "error");
       return;
     }
 
-    // Step 3: flip status via dedicated endpoint
     const statusResult =
       newStatus === "published"
         ? await publishPost(postId.current)
@@ -419,12 +446,34 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
 
     if (!isRejected(statusResult)) {
       setStatus(newStatus);
+      // Update persisted draft status too
+      saveDraftRef.current();
       showToast(
         newStatus === "published" ? "Post published!" : "Moved to drafts",
       );
     } else {
       showToast(errorMsg(statusResult), "error");
     }
+  };
+
+  const openPreview = () => {
+    if (onPreview) {
+      saveDraftRef.current();
+      onPreview(buildPayload());
+    }
+  };
+
+  const exportHTML = () => {
+    const content = getContent();
+    const slug = (titleRef.current || "blog-post")
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9-]/g, "");
+    const doc = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>${titleRef.current || "Blog Post"}</title></head><body>${content}</body></html>`;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([doc], { type: "text/html" }));
+    a.download = `${slug}.html`;
+    a.click();
   };
 
   const initEditor = useCallback(() => {
@@ -507,19 +556,60 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
         tinymce.current = editor;
         editor.on("init", () => {
           setReady(true);
-          if (initialPost?.content) editor.setContent(initialPost.content);
+
+          // Try to restore from localStorage first (unsaved local changes)
+          let restoredFromDraft = false;
+          try {
+            const raw = localStorage.getItem(draftKey);
+            if (raw) {
+              const draft = JSON.parse(raw);
+              if (draft.content) {
+                editor.setContent(draft.content);
+                restoredFromDraft = true;
+              }
+            }
+          } catch {}
+
+          // Fall back to initialPost content if no local draft
+          if (!restoredFromDraft && initialPost?.content) {
+            const content = initialPost.content;
+            const looksWrapped =
+              /^<p>/i.test(content.trim()) &&
+              /<p>\s*#{1,6}\s|<p>\s*\*\*|<p>\s*[-*+]\s|<p>\s*\d+\.\s/i.test(
+                content,
+              );
+            const looksRaw =
+              !/<[a-z]/i.test(content.trim()) &&
+              /^#{1,6}\s|\*\*|^[-*+]\s/m.test(content);
+            if (looksWrapped || looksRaw) {
+              const stripped = looksWrapped
+                ? content
+                    .replace(/<br\s*\/?>/gi, "\n")
+                    .replace(/<\/p>\s*<p>/gi, "\n\n")
+                    .replace(/<[^>]+>/g, "")
+                    .replace(/&amp;/g, "&")
+                    .replace(/&lt;/g, "<")
+                    .replace(/&gt;/g, ">")
+                    .replace(/&nbsp;/g, " ")
+                : content;
+              editor.setContent(convertMarkdownToHtml(stripped));
+            } else {
+              editor.setContent(content);
+            }
+          }
         });
         editor.on("input change keyup SetContent", () => {
           const txt = editor.getContent({ format: "text" });
           const wc = txt.trim().split(/\s+/).filter(Boolean).length;
           setWordCount(wc);
           setReadTime(Math.max(1, Math.ceil(wc / 220)));
+          saveDraftRef.current();
           scheduleAutoSave();
         });
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialPost]); // scheduleAutoSave is stable (zero state deps) — omitting it prevents re-init on every keystroke
+  }, [initialPost, draftKey]);
 
   useEffect(() => {
     const existing = document.querySelector(`script[src="${TINYMCE_CDN}"]`);
@@ -546,7 +636,14 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
     if (["Enter", ","].includes(e.key) && tagInput.trim()) {
       e.preventDefault();
       const t = tagInput.trim().replace(/,$/, "");
-      if (t && !tags.includes(t) && tags.length < 10) setTags((p) => [...p, t]);
+      if (t && !tags.includes(t) && tags.length < 10) {
+        setTags((p) => {
+          const next = [...p, t];
+          tagsRef.current = next;
+          saveDraftRef.current();
+          return next;
+        });
+      }
       setTagInput("");
     }
   };
@@ -555,7 +652,11 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => setCoverImage(ev.target.result);
+    reader.onload = (ev) => {
+      setCoverImage(ev.target.result);
+      coverRef.current = ev.target.result;
+      saveDraftRef.current();
+    };
     reader.readAsDataURL(file);
     e.target.value = "";
   };
@@ -572,28 +673,11 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
             ? c
             : `<p>${c.replace(/\n\n+/g, "</p><p>").replace(/\n/g, "<br>")}</p>`,
         );
+        saveDraftRef.current();
       }
     };
     reader.readAsText(file);
     e.target.value = "";
-  };
-
-  const openPreview = () => {
-    setPreviewHTML(getContent());
-    setShowPreview(true);
-  };
-
-  const exportHTML = () => {
-    const content = getContent();
-    const slug = (title || "blog-post")
-      .toLowerCase()
-      .replace(/\s+/g, "-")
-      .replace(/[^a-z0-9-]/g, "");
-    const doc = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>${title || "Blog Post"}</title></head><body>${content}</body></html>`;
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([doc], { type: "text/html" }));
-    a.download = `${slug}.html`;
-    a.click();
   };
 
   const checklist = [
@@ -610,7 +694,7 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
     <>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Lora:ital,wght@0,400;1,400&display=swap');
-        .blog-editor-shell { height:100%;min-height:0;display:flex;flex-direction:column;font-family:'Sora',sans-serif;background:#fff;color:#111827 }
+        .blog-editor-shell{height:100%;min-height:0;display:flex;flex-direction:column;font-family:'Sora',sans-serif;background:#fff;color:#111827}
         .tox-tinymce{border:none!important;border-radius:0!important;box-shadow:none!important}
         .tox .tox-toolbar,.tox .tox-toolbar__primary{background:#fff!important;border-bottom:1px solid #f3f4f6!important;padding:4px 8px!important}
         .tox .tox-toolbar__group{border-right:1px solid #f0f0f0!important;padding:0 6px!important}
@@ -655,6 +739,7 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
         .drop-zone:hover{border-color:#93c5fd;background:#f8faff}
         .be-status{height:30px;flex-shrink:0;border-top:1px solid #f3f4f6;display:flex;align-items:center;gap:18px;padding:0 16px;font-size:12px;color:#9ca3af;background:#fff}
         .spinner{width:20px;height:20px;border:2.5px solid #e5e7eb;border-top-color:#6b7280;border-radius:50%;animation:spin .65s linear infinite}
+        .draft-banner{display:flex;align-items:center;justify-content:space-between;padding:7px 16px;background:#fffbeb;border-bottom:1px solid #fde68a;font-size:12px;color:#92400e;font-family:inherit;flex-shrink:0}
         @keyframes spin{to{transform:rotate(360deg)}}
         @keyframes fadeup{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
         .toast{position:fixed;bottom:24px;right:24px;z-index:9999;padding:10px 18px;border-radius:7px;font-size:13px;font-weight:500;font-family:'Sora',sans-serif;box-shadow:0 4px 16px rgba(0,0,0,.15);animation:fadeup .2s ease}
@@ -678,22 +763,51 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
         onChange={handleCoverFile}
       />
 
-      {showPreview && (
-        <PreviewModal
-          title={title}
-          subtitle={subtitle}
-          coverImage={coverImage}
-          content={previewHTML}
-          tags={tags}
-          category={category}
-          wordCount={wordCount}
-          readTime={readTime}
-          onClose={() => setShowPreview(false)}
-        />
-      )}
       {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
 
       <div className="blog-editor-shell">
+        {/* Draft restore banner */}
+        {hasDraft && (
+          <div className="draft-banner">
+            <span>✦ Unsaved changes restored from your last session.</span>
+            <button
+              onClick={() => {
+                clearDraft();
+                // Reload from server data
+                const content = initialPost?.content || "";
+                if (tinymce.current) tinymce.current.setContent(content);
+                setTitle(initialPost?.title || "");
+                setSubtitle(initialPost?.subtitle || "");
+                const cat = initialPost?.category || "";
+                setCategory(VALID_CAT_VALUES.includes(cat) ? cat : "");
+                setTags(
+                  Array.isArray(initialPost?.tags)
+                    ? initialPost.tags
+                    : initialPost?.tags
+                      ? JSON.parse(initialPost.tags)
+                      : [],
+                );
+                setCoverImage(initialPost?.cover_image || "");
+                setStatus(initialPost?.status || "draft");
+              }}
+              style={{
+                background: "none",
+                border: "1px solid #f59e0b",
+                borderRadius: 4,
+                padding: "2px 10px",
+                fontSize: 11,
+                color: "#92400e",
+                cursor: "pointer",
+                fontFamily: "inherit",
+                fontWeight: 600,
+              }}
+            >
+              Discard & reload saved
+            </button>
+          </div>
+        )}
+
+        {/* Top strip */}
         <div className="be-strip">
           <div style={{ display: "flex", alignItems: "stretch", height: 48 }}>
             <button
@@ -801,6 +915,7 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
 
         <div className="be-body">
           <div className="be-main">
+            {/* Write tab */}
             <div
               style={{ display: activeTab === "write" ? "contents" : "none" }}
             >
@@ -859,12 +974,14 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
               </div>
             </div>
 
+            {/* Settings tab */}
             {activeTab === "settings" && (
               <div
                 className="be-settings-scroll"
                 style={{ animation: "fadeup .2s ease" }}
               >
                 <div style={{ maxWidth: 520 }}>
+                  {/* Cover Image */}
                   <div style={{ marginBottom: 24 }}>
                     <label className="f-label">Cover Image</label>
                     {coverImage ? (
@@ -887,7 +1004,11 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
                           }}
                         />
                         <button
-                          onClick={() => setCoverImage("")}
+                          onClick={() => {
+                            setCoverImage("");
+                            coverRef.current = "";
+                            saveDraftRef.current();
+                          }}
                           style={{
                             position: "absolute",
                             top: 8,
@@ -948,11 +1069,16 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
                     <input
                       className="f-input"
                       value={coverImage.startsWith("data:") ? "" : coverImage}
-                      onChange={(e) => setCoverImage(e.target.value)}
+                      onChange={(e) => {
+                        setCoverImage(e.target.value);
+                        coverRef.current = e.target.value;
+                        saveDraftRef.current();
+                      }}
                       placeholder="https://example.com/image.jpg"
                     />
                   </div>
 
+                  {/* Category */}
                   <div style={{ marginBottom: 24 }}>
                     <label className="f-label">Category</label>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -960,9 +1086,14 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
                         <Chip
                           key={c.value}
                           active={category === c.value}
-                          onClick={() =>
-                            setCategory((x) => (x === c.value ? "" : c.value))
-                          }
+                          onClick={() => {
+                            setCategory((x) => {
+                              const next = x === c.value ? "" : c.value;
+                              categoryRef.current = next;
+                              saveDraftRef.current();
+                              return next;
+                            });
+                          }}
                         >
                           {c.label}
                         </Chip>
@@ -970,6 +1101,7 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
                     </div>
                   </div>
 
+                  {/* Tags */}
                   <div style={{ marginBottom: 24 }}>
                     <label className="f-label">
                       Tags{" "}
@@ -990,9 +1122,14 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
                           <TagPill
                             key={t}
                             label={t}
-                            onRemove={() =>
-                              setTags((p) => p.filter((x) => x !== t))
-                            }
+                            onRemove={() => {
+                              setTags((p) => {
+                                const next = p.filter((x) => x !== t);
+                                tagsRef.current = next;
+                                saveDraftRef.current();
+                                return next;
+                              });
+                            }}
                           />
                         ))}
                       </div>
@@ -1011,6 +1148,7 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
                     </div>
                   </div>
 
+                  {/* SEO Preview */}
                   <div
                     style={{
                       background: "#f9fafb",
@@ -1101,6 +1239,7 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
             )}
           </div>
 
+          {/* Right sidebar */}
           <div className="be-side">
             <span className="s-label">Publish Checklist</span>
             {checklist.map((c) => (
@@ -1233,6 +1372,7 @@ export default function AdminBlogPost({ initialPost = null, onBack }) {
           </div>
         </div>
 
+        {/* Status bar */}
         <div className="be-status">
           <span>{wordCount.toLocaleString()} words</span>
           <span>{readTime} min read</span>

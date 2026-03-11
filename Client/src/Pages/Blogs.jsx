@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion, AnimatePresence, useScroll, useSpring } from "motion/react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Search,
@@ -17,159 +17,137 @@ import {
   Calendar,
   Zap,
   Check,
+  ChevronUp,
+  List,
 } from "lucide-react";
 import { usePublicBlog } from "../Hooks/useBlogHook";
 
-// Design Tokens
+// ─── Design Tokens ────────────────────────────────────────────────────────────
 const TOKENS = `
-  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400;1,700&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400;1,700&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=Fira+Code:wght@400;500&display=swap');
   :root {
-    --c-cream:#faf9f7;--c-white:#ffffff;--c-ink:#0d0d12;
-    --c-ink-70:rgba(13,13,18,0.70);--c-ink-40:rgba(13,13,18,0.40);--c-ink-12:rgba(13,13,18,0.08);
-    --c-slate:#1e2235;--c-slate-2:#2d3352;--c-slate-3:#3d4570;
-    --c-amber:#d97706;--c-amber-l:#fef3c7;--c-amber-2:#f59e0b;--c-amber-3:#fde68a;
-    --c-sage:#059669;--c-sage-l:#d1fae5;
-    --c-violet:#7c3aed;--c-violet-l:#ede9fe;
-    --c-rose:#e11d48;--c-rose-l:#ffe4e6;
-    --c-sky:#0284c7;--c-sky-l:#e0f2fe;
+    --c-cream:#faf9f7; --c-white:#ffffff; --c-ink:#0d0d12;
+    --c-ink-70:rgba(13,13,18,0.70); --c-ink-40:rgba(13,13,18,0.40); --c-ink-12:rgba(13,13,18,0.08);
+    --c-slate:#1e2235; --c-slate-2:#2d3352; --c-slate-3:#3d4570;
+    --c-amber:#d97706; --c-amber-l:#fef3c7; --c-amber-2:#f59e0b; --c-amber-3:#fde68a;
+    --c-sage:#059669; --c-sage-l:#d1fae5;
+    --c-violet:#7c3aed; --c-violet-l:#ede9fe;
+    --c-rose:#e11d48; --c-rose-l:#ffe4e6;
+    --c-sky:#0284c7; --c-sky-l:#e0f2fe;
     --c-border:rgba(13,13,18,0.09);
     --sh-sm:0 1px 3px rgba(13,13,18,.07),0 1px 2px rgba(13,13,18,.05);
     --sh-md:0 4px 18px rgba(13,13,18,.08),0 2px 6px rgba(13,13,18,.05);
     --sh-lg:0 20px 60px rgba(13,13,18,.11),0 8px 20px rgba(13,13,18,.07);
+    --sh-xl:0 32px 80px rgba(13,13,18,.14),0 12px 28px rgba(13,13,18,.08);
   }
 
   /* ── Base ── */
-  .blog-root{font-family:'DM Sans',sans-serif;color:var(--c-ink);}
-  .blog-root h1,.blog-root h2,.blog-root h3,.blog-root h4{font-family:'Playfair Display',Georgia,serif;}
+  .blog-root { font-family:'DM Sans',sans-serif; color:var(--c-ink); }
+  .blog-root h1,.blog-root h2,.blog-root h3,.blog-root h4 { font-family:'Playfair Display',Georgia,serif; }
 
-  /* ══════════════════════════════════════
-     BLOG BODY — covers both HTML (rich
-     text editor) and rendered Markdown
-  ══════════════════════════════════════ */
+  /* ── Article root ── */
+  .article-root { font-family:'DM Sans',sans-serif; color:var(--c-ink); background:var(--c-white); min-height:100vh; overflow-x:hidden; }
+  .article-root h1,.article-root h2,.article-root h3,.article-root h4 { font-family:'Playfair Display',Georgia,serif; }
 
-  /* Headings */
-  .blog-body h1{font-size:clamp(1.75rem,3vw,2.25rem);font-weight:900;line-height:1.15;margin:2.5rem 0 1rem;color:var(--c-ink);font-family:'Playfair Display',serif;letter-spacing:-0.02em;}
-  .blog-body h2{font-size:clamp(1.35rem,2.5vw,1.75rem);font-weight:700;line-height:1.25;margin:2.25rem 0 0.875rem;color:var(--c-ink);font-family:'Playfair Display',serif;letter-spacing:-0.01em;}
-  .blog-body h3{font-size:1.2rem;font-weight:700;line-height:1.35;margin:1.75rem 0 0.625rem;color:var(--c-ink);font-family:'Playfair Display',serif;}
-  .blog-body h4{font-size:1.05rem;font-weight:700;line-height:1.4;margin:1.5rem 0 0.5rem;color:var(--c-ink);}
-  .blog-body h5{font-size:0.95rem;font-weight:700;line-height:1.4;margin:1.25rem 0 0.4rem;color:var(--c-ink-70);}
-  .blog-body h6{font-size:0.875rem;font-weight:700;line-height:1.4;margin:1rem 0 0.35rem;color:var(--c-ink-40);text-transform:uppercase;letter-spacing:0.06em;}
+  /* ── Reading progress bar ── */
+  .progress-bar { position:fixed; top:0; left:0; right:0; z-index:60; height:3px; background:var(--c-border); transform-origin:left; }
+  .progress-fill { height:100%; background:linear-gradient(90deg,var(--c-amber),var(--c-amber-2),var(--c-amber)); background-size:200% 100%; animation:shimmer 2s linear infinite; border-radius:0 2px 2px 0; }
+  @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
 
-  /* Heading anchors (markdown auto-generated) */
-  .blog-body h1 a,.blog-body h2 a,.blog-body h3 a,.blog-body h4 a{color:inherit;text-decoration:none;}
-  .blog-body h2:not(:first-child){padding-top:0.5rem;border-top:1px solid var(--c-border);}
+  /* ── Blog body ── */
+  .blog-body { font-size:1.0625rem; line-height:1.9; color:var(--c-ink-70); overflow-x:hidden; word-break:break-word; background:#fff; white-space:normal !important; font-family:'DM Sans',sans-serif !important; }
+  /* CRITICAL: prevent any parent <pre> or dark block styles from leaking in */
+  .blog-body p, .blog-body li, .blog-body h1, .blog-body h2, .blog-body h3, .blog-body h4,
+  .blog-body ul, .blog-body ol, .blog-body blockquote, .blog-body strong, .blog-body em {
+    background:transparent !important; white-space:normal !important;
+    font-family:inherit; color:inherit;
+  }
+  .blog-body * { max-width:100%; box-sizing:border-box; }
+  .blog-body h1,.blog-body h2,.blog-body h3,.blog-body h4 { font-family:'Playfair Display',serif; color:var(--c-ink); }
+  .blog-body h1 { font-size:clamp(1.75rem,3vw,2.25rem); font-weight:900; line-height:1.15; margin:2.5rem 0 1rem; letter-spacing:-0.02em; }
+  .blog-body h2 { font-size:clamp(1.35rem,2.5vw,1.75rem); font-weight:700; line-height:1.25; margin:2.25rem 0 0.875rem; padding-top:.5rem; border-top:1px solid var(--c-border); letter-spacing:-0.01em; }
+  .blog-body h3 { font-size:1.2rem; font-weight:700; line-height:1.35; margin:1.75rem 0 0.625rem; }
+  .blog-body h4 { font-size:1.05rem; font-weight:700; line-height:1.4; margin:1.5rem 0 0.5rem; }
+  .blog-body p { margin:0 0 1.35rem; white-space:normal; background:transparent; color:var(--c-ink-70); font-family:'DM Sans',sans-serif; }
+  .blog-body p:first-of-type { font-size:1.065rem; }
+  .blog-body p:last-child { margin-bottom:0; }
+  .blog-body strong { font-weight:700; color:var(--c-ink); }
+  .blog-body em { font-style:italic; }
+  .blog-body a { color:var(--c-sky); text-decoration:underline; text-underline-offset:3px; font-weight:500; transition:color .15s; }
+  .blog-body a:hover { color:var(--c-slate); }
+  .blog-body a:visited { color:var(--c-violet); }
+  .blog-body ul { margin:0 0 1.35rem 1.75rem; list-style:disc; }
+  .blog-body ol { margin:0 0 1.35rem 1.75rem; list-style:decimal; }
+  .blog-body li { margin-bottom:.55rem; line-height:1.8; color:var(--c-ink-70); padding-left:.25rem; }
+  .blog-body li::marker { color:var(--c-amber); font-weight:700; }
+  .blog-body blockquote { border-left:3px solid var(--c-amber); margin:2rem 0; padding:.9rem 1.4rem; background:var(--c-amber-l); border-radius:0 14px 14px 0; font-style:italic; color:var(--c-ink-70); }
+  .blog-body blockquote p { margin:0; color:inherit; }
+  /* inline code — never wrap in dark block */
+  .blog-body code { background:var(--c-ink-12); padding:.2em .45em; border-radius:6px; font-size:.875em; font-family:'Fira Code',ui-monospace,monospace; color:var(--c-violet); border:1px solid var(--c-border); white-space:normal; word-break:break-word; }
+  /* code blocks — dark, but constrained & scrollable, never overflow parent */
+  .blog-body pre { background:var(--c-slate); color:#e2e8f0; padding:1.375rem 1.625rem; border-radius:16px; overflow-x:auto; overflow-y:hidden; max-width:100%; margin:1.5rem 0; font-size:.875rem; line-height:1.75; border:1px solid rgba(255,255,255,.06); box-shadow:var(--sh-md); white-space:pre; }
+  .blog-body pre code { background:none; padding:0; border:none; color:inherit; white-space:pre; border-radius:0; font-size:inherit; word-break:normal; }
+  .blog-body hr { border:none; height:1px; background:linear-gradient(90deg,transparent,var(--c-border),transparent); margin:2.5rem 0; }
+  .blog-body img { max-width:100%; height:auto; border-radius:14px; margin:1.5rem auto; display:block; box-shadow:var(--sh-md); }
+  .blog-body table { width:100%; border-collapse:collapse; margin:1.5rem 0; font-size:.9rem; border-radius:12px; overflow:hidden; box-shadow:var(--sh-sm); display:block; overflow-x:auto; }
+  .blog-body thead { background:var(--c-slate); color:#fff; }
+  .blog-body th { font-weight:700; padding:.75rem 1.125rem; text-align:left; color:#fff; font-size:.8rem; text-transform:uppercase; letter-spacing:.05em; }
+  .blog-body td { padding:.75rem 1.125rem; border-bottom:1px solid var(--c-border); color:var(--c-ink-70); vertical-align:top; }
+  .blog-body tbody tr:last-child td { border-bottom:none; }
+  .blog-body tbody tr:nth-child(even) { background:rgba(13,13,18,.025); }
+  .blog-body tbody tr:hover { background:var(--c-amber-l); transition:background .15s; }
+  .blog-body mark { background-color:#fef08a; color:var(--c-ink); padding:.1em .25em; border-radius:3px; }
+  .blog-body s,.blog-body del { text-decoration:line-through; color:var(--c-ink-40); }
 
-  /* Paragraph & lead */
-  .blog-body p{margin-bottom:1.35rem;line-height:1.9;color:var(--c-ink-70);font-size:1rem;}
-  .blog-body p:first-of-type{font-size:1.065rem;color:var(--c-ink-70);}
-  .blog-body p:last-child{margin-bottom:0;}
+  /* ── Drop cap ── */
+  .drop-cap::first-letter { font-family:'Playfair Display',serif; font-size:4.2rem; font-weight:900; float:left; line-height:.82; margin:.08em .1em 0 0; color:var(--c-ink); letter-spacing:-.02em; }
 
-  /* Lists */
-  .blog-body ul{margin:0 0 1.35rem 1.75rem;list-style:disc;}
-  .blog-body ol{margin:0 0 1.35rem 1.75rem;list-style:decimal;}
-  .blog-body ul ul{list-style:circle;margin-top:0.4rem;margin-bottom:0.4rem;}
-  .blog-body ul ul ul{list-style:square;}
-  .blog-body ol ol{list-style:lower-alpha;margin-top:0.4rem;margin-bottom:0.4rem;}
-  .blog-body li{margin-bottom:0.5rem;line-height:1.8;color:var(--c-ink-70);padding-left:0.25rem;}
-  .blog-body li > p{margin-bottom:0.5rem;}
-  .blog-body li::marker{color:var(--c-amber);font-weight:700;}
+  /* ── ToC ── */
+  .toc-link { display:block; padding:6px 12px; border-radius:8px; font-size:.8rem; color:var(--c-ink-70); text-decoration:none; font-weight:500; border-left:2px solid transparent; transition:all .15s; cursor:pointer; }
+  .toc-link:hover,.toc-link.active { color:var(--c-amber); border-left-color:var(--c-amber); background:var(--c-amber-l); }
+  .toc-link.h3 { padding-left:24px; font-size:.75rem; }
 
-  /* Task lists (GFM) */
-  .blog-body input[type="checkbox"]{accent-color:var(--c-amber);margin-right:0.5rem;width:1rem;height:1rem;vertical-align:middle;cursor:default;}
-  .blog-body li:has(input[type="checkbox"]){list-style:none;margin-left:-1.25rem;}
+  /* ── Action buttons ── */
+  .action-btn { width:38px; height:38px; border-radius:12px; border:1px solid var(--c-border); display:flex; align-items:center; justify-content:center; cursor:pointer; background:var(--c-white); color:var(--c-ink-40); transition:all .15s; }
+  .action-btn:hover { border-color:var(--c-ink-40); color:var(--c-ink); }
+  .action-btn.liked { background:var(--c-rose-l); border-color:var(--c-rose); color:var(--c-rose); }
+  .action-btn.bookmarked { background:var(--c-amber-l); border-color:var(--c-amber); color:var(--c-amber); }
+  .action-btn.shared { background:var(--c-sage-l); border-color:var(--c-sage); color:var(--c-sage); }
 
-  /* Inline formatting */
-  .blog-body strong{font-weight:700;color:inherit;}
-  .blog-body em{font-style:italic;color:inherit;}
-  .blog-body strong em,.blog-body em strong{font-weight:700;font-style:italic;color:inherit;}
-  .blog-body u{text-decoration:underline;text-underline-offset:3px;color:inherit;}
-  .blog-body s,.blog-body del{text-decoration:line-through;color:var(--c-ink-40);}
-  .blog-body mark{background-color:#fef08a;color:var(--c-ink);padding:0.1em 0.25em;border-radius:3px;}
-  .blog-body sub{font-size:0.75em;vertical-align:sub;}
-  .blog-body sup{font-size:0.75em;vertical-align:super;}
+  /* ── Share popup ── */
+  .share-popup { position:absolute; right:0; top:50px; z-index:50; width:280px; background:var(--c-white); border:1px solid var(--c-border); border-radius:20px; overflow:hidden; box-shadow:var(--sh-xl); }
 
-  /* Inline spans — must NOT override editor-injected style attributes */
-  .blog-body span{color:inherit;background-color:inherit;}
+  /* ── Tag pill ── */
+  .tag-pill { display:inline-flex; align-items:center; gap:5px; padding:5px 12px; border-radius:10px; border:1px solid var(--c-border); font-size:.7rem; font-weight:600; color:var(--c-ink-70); background:var(--c-cream); transition:all .15s; }
+  .tag-pill:hover { border-color:var(--c-amber); color:var(--c-amber); background:var(--c-amber-l); }
 
-  /* Links */
-  .blog-body a{color:var(--c-sky);text-decoration:underline;text-underline-offset:3px;font-weight:500;transition:color 0.15s,opacity 0.15s;cursor:pointer;word-break:break-word;}
-  .blog-body a:hover{color:var(--c-slate);opacity:0.85;}
-  .blog-body a:visited{color:var(--c-violet);}
-  .blog-body a[target="_blank"]::after{content:" ↗";font-size:0.7em;opacity:0.6;vertical-align:super;}
+  /* ── Author card ── */
+  .author-card { background:linear-gradient(135deg,var(--c-cream) 0%,rgba(254,243,199,.6) 100%); border:1px solid var(--c-border); border-radius:24px; padding:2rem; box-shadow:var(--sh-sm); }
 
-  /* Blockquote */
-  .blog-body blockquote{border-left:3px solid var(--c-amber);margin:1.75rem 0;padding:0.875rem 1.375rem;background:var(--c-amber-l);border-radius:0 14px 14px 0;font-style:italic;color:var(--c-ink-70);position:relative;}
-  .blog-body blockquote p{margin-bottom:0;color:inherit;}
-  .blog-body blockquote p:not(:last-child){margin-bottom:0.75rem;}
-  .blog-body blockquote cite{display:block;margin-top:0.75rem;font-size:0.875rem;font-style:normal;font-weight:600;color:var(--c-amber);opacity:0.8;}
-  .blog-body blockquote blockquote{margin:0.75rem 0 0;background:rgba(217,119,6,0.08);}
+  /* ── Related card ── */
+  .related-card { background:var(--c-white); border:1px solid var(--c-border); border-radius:20px; padding:1.25rem; cursor:pointer; transition:transform .25s,box-shadow .25s; }
+  .related-card:hover { transform:translateY(-5px); box-shadow:var(--sh-lg); }
 
-  /* Inline code */
-  .blog-body code{background:var(--c-ink-12);padding:0.2em 0.45em;border-radius:6px;font-size:0.875em;font-family:ui-monospace,SFMono-Regular,'Cascadia Code',monospace;color:var(--c-violet);border:1px solid var(--c-border);white-space:nowrap;}
+  /* ── Scroll top ── */
+  .scroll-top { position:fixed; bottom:28px; right:28px; z-index:50; width:44px; height:44px; border-radius:14px; border:1px solid var(--c-border); background:var(--c-white); display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:var(--sh-md); color:var(--c-ink-70); transition:all .15s; }
+  .scroll-top:hover { background:var(--c-slate); color:#fff; border-color:var(--c-slate); transform:translateY(-2px); }
 
-  /* Code blocks */
-  .blog-body pre{background:var(--c-slate);color:#e2e8f0;padding:1.375rem 1.625rem;border-radius:16px;overflow-x:auto;margin:1.5rem 0;font-size:0.875rem;line-height:1.75;border:1px solid rgba(255,255,255,0.06);box-shadow:var(--sh-md);}
-  .blog-body pre code{background:none;padding:0;border:none;color:inherit;font-size:inherit;white-space:pre;border-radius:0;}
+  /* ── Hero cover ── */
+  .hero-cover { width:100%; height:480px; object-fit:cover; display:block; border-radius:24px; box-shadow:var(--sh-xl); }
+  .cover-placeholder { width:100%; height:480px; border-radius:24px; display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden; box-shadow:var(--sh-xl); }
 
-  /* Code block with language label */
-  .blog-body pre[data-language]::before{content:attr(data-language);display:block;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:rgba(255,255,255,0.35);margin-bottom:0.875rem;padding-bottom:0.5rem;border-bottom:1px solid rgba(255,255,255,0.08);}
+  /* ── Sidebar responsive ── */
+  @media(max-width:1100px) { .sidebar-sticky { display:none !important; } }
+  @media(max-width:680px) { .hero-cover,.cover-placeholder { height:280px; } }
 
-  /* Horizontal rule */
-  .blog-body hr{border:none;height:1px;background:linear-gradient(90deg,transparent,var(--c-border),transparent);margin:2.5rem 0;}
-
-  /* Images */
-  .blog-body img{max-width:100%;height:auto;border-radius:14px;margin:1.5rem auto;display:block;box-shadow:var(--sh-md);}
-  .blog-body figure{margin:1.75rem 0;text-align:center;}
-  .blog-body figcaption{font-size:0.8rem;color:var(--c-ink-40);margin-top:0.625rem;font-style:italic;text-align:center;}
-
-  /* Tables */
-  .blog-body table{width:100%;border-collapse:collapse;margin:1.5rem 0;font-size:0.9rem;border-radius:12px;overflow:hidden;box-shadow:var(--sh-sm);}
-  .blog-body thead{background:var(--c-slate);color:#fff;}
-  .blog-body th{font-weight:700;padding:0.75rem 1.125rem;text-align:left;color:#fff;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;}
-  .blog-body td{padding:0.75rem 1.125rem;border-bottom:1px solid var(--c-border);color:var(--c-ink-70);vertical-align:top;}
-  .blog-body tbody tr:last-child td{border-bottom:none;}
-  .blog-body tbody tr:nth-child(even){background:rgba(13,13,18,0.025);}
-  .blog-body tbody tr:hover{background:var(--c-amber-l);transition:background 0.15s;}
-
-  /* Definition lists */
-  .blog-body dl{margin:0 0 1.35rem;}
-  .blog-body dt{font-weight:700;color:var(--c-ink);margin-top:1rem;}
-  .blog-body dd{margin-left:1.5rem;color:var(--c-ink-70);line-height:1.8;}
-
-  /* Abbreviations */
-  .blog-body abbr[title]{text-decoration:underline dotted;cursor:help;text-underline-offset:3px;}
-
-  /* Keyboard keys */
-  .blog-body kbd{display:inline-block;padding:0.15em 0.5em;font-size:0.8em;font-family:ui-monospace,monospace;background:var(--c-white);border:1px solid var(--c-border);border-bottom-width:2px;border-radius:5px;color:var(--c-ink);box-shadow:0 1px 0 var(--c-border);}
-
-  /* Details / Summary (collapsible) */
-  .blog-body details{border:1px solid var(--c-border);border-radius:12px;padding:0.75rem 1.25rem;margin-bottom:1.25rem;background:var(--c-cream);}
-  .blog-body summary{font-weight:600;cursor:pointer;color:var(--c-ink);list-style:none;display:flex;align-items:center;gap:0.5rem;}
-  .blog-body summary::before{content:"▶";font-size:0.65rem;color:var(--c-amber);transition:transform 0.2s;}
-  .blog-body details[open] summary::before{transform:rotate(90deg);}
-  .blog-body details[open] summary{margin-bottom:0.75rem;}
-
-  /* Footnotes (markdown-it / remark) */
-  .blog-body .footnotes{margin-top:3rem;padding-top:1.5rem;border-top:1px solid var(--c-border);font-size:0.85rem;color:var(--c-ink-40);}
-  .blog-body .footnotes ol{margin-left:1.25rem;}
-  .blog-body .footnotes li{margin-bottom:0.25rem;}
-  .blog-body sup a[href^="#fn"]{color:var(--c-amber);text-decoration:none;font-weight:700;font-size:0.75em;}
-
-  /* Callout / admonition blocks (common in MDX / Notion exports) */
-  .blog-body .callout,.blog-body .admonition{border-radius:14px;padding:1rem 1.25rem;margin:1.5rem 0;display:flex;gap:0.875rem;align-items:flex-start;border:1px solid var(--c-border);}
-  .blog-body .callout-info,.blog-body .admonition-note{background:var(--c-sky-l);border-color:var(--c-sky);}
-  .blog-body .callout-warning,.blog-body .admonition-warning{background:var(--c-amber-l);border-color:var(--c-amber);}
-  .blog-body .callout-danger,.blog-body .admonition-danger{background:var(--c-rose-l);border-color:var(--c-rose);}
-  .blog-body .callout-success,.blog-body .admonition-tip{background:var(--c-sage-l);border-color:var(--c-sage);}
-
-  /* Utility */
-  .line-clamp-2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
-  .line-clamp-3{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
-  .search-input::placeholder{color:var(--c-ink-40);}
-  .search-input:focus{outline:none;}
+  /* ── Blog list helpers ── */
+  .line-clamp-2 { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .line-clamp-3 { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  .search-input::placeholder { color:var(--c-ink-40); }
+  .search-input:focus { outline:none; }
 `;
 
-// Categoy Config
+// ─── Constants ────────────────────────────────────────────────────────────────
 const CATEGORIES = [
   {
     id: "all",
@@ -209,34 +187,52 @@ const CATEGORIES = [
   },
 ];
 
-const CATEGORY_STYLE = {
+const CAT_MAP = {
   interview: {
+    label: "Interview Tips",
+    color: "var(--c-rose)",
+    bg: "var(--c-rose-l)",
     gradient: "linear-gradient(135deg,#ffe4e6 0%,#fecdd3 100%)",
     iconColor: "var(--c-rose)",
   },
   career: {
+    label: "Career Growth",
+    color: "var(--c-sage)",
+    bg: "var(--c-sage-l)",
     gradient: "linear-gradient(135deg,#d1fae5 0%,#a7f3d0 100%)",
     iconColor: "var(--c-sage)",
   },
   ai: {
+    label: "AI & Tech",
+    color: "var(--c-violet)",
+    bg: "var(--c-violet-l)",
     gradient: "linear-gradient(135deg,#ede9fe 0%,#ddd6fe 100%)",
     iconColor: "var(--c-violet)",
   },
   salary: {
+    label: "Salary & Offers",
+    color: "var(--c-amber)",
+    bg: "var(--c-amber-l)",
     gradient: "linear-gradient(135deg,#fef3c7 0%,#fde68a 100%)",
     iconColor: "var(--c-amber)",
   },
   resume: {
+    label: "Resume & Profile",
+    color: "var(--c-sky)",
+    bg: "var(--c-sky-l)",
     gradient: "linear-gradient(135deg,#e0f2fe 0%,#bae6fd 100%)",
     iconColor: "var(--c-sky)",
   },
   default: {
+    label: "",
+    color: "var(--c-ink-40)",
+    bg: "var(--c-ink-12)",
     gradient: "linear-gradient(135deg,#faf9f7 0%,#e5e7eb 100%)",
     iconColor: "var(--c-ink-40)",
   },
 };
 
-const getCategoryStyle = (cat) => CATEGORY_STYLE[cat] || CATEGORY_STYLE.default;
+const getCat = (id) => CAT_MAP[id] || CAT_MAP.default;
 const AVATAR_COLORS = [
   "#10b981",
   "#f59e0b",
@@ -247,16 +243,174 @@ const AVATAR_COLORS = [
 ];
 const avatarColor = (name = "") =>
   AVATAR_COLORS[name.charCodeAt(0) % AVATAR_COLORS.length];
-const fmtDate = (d) =>
+const fmtDate = (d, long = false) =>
   d
-    ? new Date(d).toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      })
+    ? new Date(d).toLocaleDateString(
+        "en-US",
+        long
+          ? { month: "long", day: "numeric", year: "numeric" }
+          : { month: "short", day: "numeric", year: "numeric" },
+      )
     : "";
 
-// Shared primitives
+// ─── Content processing (any format → safe HTML) ─────────────────────────────
+function processContent(raw) {
+  if (!raw) return "";
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+
+  // Case 1: Looks like real HTML (starts with a tag)
+  const isHtml = /^<[a-zA-Z]/.test(trimmed);
+
+  if (isHtml) {
+    // Check if it's HTML with markdown leaking inside <p> tags (TinyMCE output)
+    const hasLeakyMarkdown =
+      /<p[^>]*>\s*#{1,6}\s|<p[^>]*>\s*\*\*|<p[^>]*>\s*[-*+]\s|<p[^>]*>\s*\d+\.\s|<p[^>]*>\s*```/i.test(
+        trimmed,
+      );
+    if (!hasLeakyMarkdown) {
+      // Clean HTML — return as-is
+      return trimmed;
+    }
+    // Strip HTML to get back to plain text, then convert as markdown
+    const stripped = raw
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/p>\s*<p[^>]*>/gi, "\n\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&nbsp;/g, " ");
+    return markdownToHtml(stripped);
+  }
+
+  // Case 2: Plain text or markdown — always convert through markdownToHtml
+  // This handles: raw markdown, plain text paragraphs, mixed content
+  return markdownToHtml(trimmed);
+}
+function markdownToHtml(md) {
+  if (!md) return "";
+  const codeBlocks = [];
+  let protected_md = md.replace(
+    /```([\w]*)\n?([\s\S]*?)```/g,
+    (_, lang, code) => {
+      codeBlocks.push(
+        `<pre${lang ? ` data-language="${lang}"` : ""}><code>${code.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</code></pre>`,
+      );
+      return `\x00CODEBLOCK${codeBlocks.length - 1}\x00`;
+    },
+  );
+  const lines = protected_md.split("\n");
+  const result = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^\x00CODEBLOCK\d+\x00$/.test(line.trim())) {
+      result.push(
+        codeBlocks[
+          parseInt(line.trim().replace(/\x00CODEBLOCK(\d+)\x00/, "$1"))
+        ],
+      );
+      i++;
+      continue;
+    }
+    const hm = line.match(/^(#{1,6})\s+(.+)$/);
+    if (hm) {
+      result.push(`<h${hm[1].length}>${inlineMd(hm[2])}</h${hm[1].length}>`);
+      i++;
+      continue;
+    }
+    if (/^---+$|^\*\*\*+$/.test(line.trim())) {
+      result.push("<hr>");
+      i++;
+      continue;
+    }
+    if (/^>\s/.test(line)) {
+      const bq = [];
+      while (i < lines.length && /^>\s?/.test(lines[i])) {
+        bq.push(lines[i].replace(/^>\s?/, ""));
+        i++;
+      }
+      result.push(
+        `<blockquote><p>${bq.map(inlineMd).join("<br>")}</p></blockquote>`,
+      );
+      continue;
+    }
+    if (/^[-*+]\s/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^[-*+]\s/.test(lines[i])) {
+        items.push(`<li>${inlineMd(lines[i].replace(/^[-*+]\s+/, ""))}</li>`);
+        i++;
+      }
+      result.push(`<ul>${items.join("")}</ul>`);
+      continue;
+    }
+    if (/^\d+\.\s/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\d+\.\s/.test(lines[i])) {
+        items.push(`<li>${inlineMd(lines[i].replace(/^\d+\.\s+/, ""))}</li>`);
+        i++;
+      }
+      result.push(`<ol>${items.join("")}</ol>`);
+      continue;
+    }
+    if (line.trim() === "") {
+      result.push("");
+      i++;
+      continue;
+    }
+    const paraLines = [];
+    while (
+      i < lines.length &&
+      lines[i].trim() !== "" &&
+      !/^#{1,6}\s|^[-*+]\s|^\d+\.\s|^>\s|^---+$|^\*\*\*+$|^\x00CODEBLOCK/.test(
+        lines[i],
+      )
+    ) {
+      paraLines.push(inlineMd(lines[i]));
+      i++;
+    }
+    if (paraLines.length) result.push(`<p>${paraLines.join("<br>")}</p>`);
+  }
+  return result
+    .join("\n")
+    .replace(/(<\/p>)\n+(<p>)/g, "$1\n$2")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
+function inlineMd(text) {
+  return text
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1">')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*\n]+)\*/g, "<em>$1</em>")
+    .replace(/_([^_\n]+)_/g, "<em>$1</em>")
+    .replace(/~~(.+?)~~/g, "<del>$1</del>");
+}
+
+function extractHeadings(html) {
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  return Array.from(div.querySelectorAll("h2,h3")).map((n, i) => ({
+    id: `heading-${i}`,
+    level: n.tagName.toLowerCase(),
+    text: n.textContent.trim(),
+  }));
+}
+
+function injectHeadingIds(html) {
+  let i = 0;
+  return html.replace(
+    /<(h[23])([^>]*)>/gi,
+    (_, tag, attrs) => `<${tag}${attrs} id="heading-${i++}">`,
+  );
+}
+
+// ─── Shared primitives ────────────────────────────────────────────────────────
 const GridTexture = () => (
   <div
     className="absolute inset-0 pointer-events-none"
@@ -268,6 +422,7 @@ const GridTexture = () => (
     }}
   />
 );
+
 const CornerGlow = () => (
   <>
     <div
@@ -289,6 +444,7 @@ const CornerGlow = () => (
     />
   </>
 );
+
 const CategoryPill = ({ cat, active, onClick }) => (
   <motion.button
     onClick={onClick}
@@ -305,6 +461,7 @@ const CategoryPill = ({ cat, active, onClick }) => (
     {cat.label}
   </motion.button>
 );
+
 const ReadingTime = ({ time }) => (
   <span
     className="flex items-center gap-1 text-[11px]"
@@ -313,6 +470,7 @@ const ReadingTime = ({ time }) => (
     <Clock size={10} /> {time ? `${time} min read` : "—"}
   </span>
 );
+
 const ViewCount = ({ views }) => (
   <span
     className="flex items-center gap-1 text-[11px]"
@@ -321,6 +479,7 @@ const ViewCount = ({ views }) => (
     <Eye size={10} /> {views ?? 0}
   </span>
 );
+
 const PostSkeleton = () => (
   <div
     className="rounded-3xl border overflow-hidden animate-pulse"
@@ -344,33 +503,29 @@ const PostSkeleton = () => (
   </div>
 );
 
-// Share Button
-function ShareButton({ slug, title }) {
-  const [state, setState] = useState("idle"); // "idle" | "open" | "copied"
+// ─── Share Button ─────────────────────────────────────────────────────────────
+function ShareButton({ slug, title, disabled }) {
+  const [state, setState] = useState("idle");
   const popupRef = useRef(null);
   const url = `${window.location.origin}/blog/${slug}`;
 
-  // Close on outside click
   useEffect(() => {
     if (state !== "open") return;
     const handler = (e) => {
-      if (popupRef.current && !popupRef.current.contains(e.target)) {
+      if (popupRef.current && !popupRef.current.contains(e.target))
         setState("idle");
-      }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [state]);
 
   const handleShare = async () => {
-    // Mobile: native share sheet
+    if (disabled) return;
     if (navigator.share) {
       try {
         await navigator.share({ title, url });
         return;
-      } catch {
-        // user cancelled → show popup
-      }
+      } catch {}
     }
     setState("open");
   };
@@ -381,18 +536,19 @@ function ShareButton({ slug, title }) {
       setState("copied");
       setTimeout(() => setState("idle"), 2500);
     } catch {
-      window.prompt("Copy this link:", url);
+      window.prompt("Copy link:", url);
       setState("idle");
     }
   };
 
   const shareVia = (platform) => {
-    const encodedUrl = encodeURIComponent(url);
-    const encodedTitle = encodeURIComponent(title);
+    const enc = encodeURIComponent,
+      t = enc(title),
+      u = enc(url);
     const links = {
-      twitter: `https://twitter.com/intent/tweet?text=${encodedTitle}&url=${encodedUrl}`,
-      linkedin: `https://www.linkedin.com/sharing/share-offsite/?url=${encodedUrl}`,
-      whatsapp: `https://wa.me/?text=${encodedTitle}%20${encodedUrl}`,
+      twitter: `https://twitter.com/intent/tweet?text=${t}&url=${u}`,
+      linkedin: `https://www.linkedin.com/sharing/share-offsite/?url=${u}`,
+      whatsapp: `https://wa.me/?text=${t}%20${u}`,
     };
     window.open(
       links[platform],
@@ -402,39 +558,60 @@ function ShareButton({ slug, title }) {
     setState("idle");
   };
 
+  const SOCIALS = [
+    {
+      id: "twitter",
+      label: "Twitter / X",
+      bg: "#000",
+      color: "#fff",
+      icon: (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.253 5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+        </svg>
+      ),
+    },
+    {
+      id: "linkedin",
+      label: "LinkedIn",
+      bg: "#0A66C2",
+      color: "#fff",
+      icon: (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
+        </svg>
+      ),
+    },
+    {
+      id: "whatsapp",
+      label: "WhatsApp",
+      bg: "#25D366",
+      color: "#fff",
+      icon: (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 0 0-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z" />
+        </svg>
+      ),
+    },
+  ];
+
   return (
     <div className="relative" ref={popupRef}>
-      {/* Trigger button */}
-      <motion.button
+      <button
         onClick={handleShare}
-        whileTap={{ scale: 0.88 }}
-        title="Share article"
-        className="w-9 h-9 rounded-xl border flex items-center justify-center cursor-pointer transition-all"
-        style={{
-          background: state === "copied" ? "var(--c-sage-l)" : "var(--c-white)",
-          borderColor: state === "copied" ? "var(--c-sage)" : "var(--c-border)",
-          color: state === "copied" ? "var(--c-sage)" : "var(--c-ink-40)",
-        }}
+        className={`action-btn ${state === "copied" ? "shared" : ""}`}
+        title={disabled ? "Not available in preview" : "Share"}
       >
         {state === "copied" ? <Check size={14} /> : <Share2 size={15} />}
-      </motion.button>
-
-      {/* Share Popup */}
+      </button>
       <AnimatePresence>
         {state === "open" && (
           <motion.div
+            className="share-popup"
             initial={{ opacity: 0, scale: 0.92, y: 8 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.92, y: 8 }}
             transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-            className="absolute right-0 top-12 z-50 w-72 rounded-2xl border overflow-hidden"
-            style={{
-              background: "var(--c-white)",
-              borderColor: "var(--c-border)",
-              boxShadow: "var(--sh-lg)",
-            }}
           >
-            {/* Header */}
             <div
               className="flex items-center justify-between px-4 py-3 border-b"
               style={{ borderColor: "var(--c-border)" }}
@@ -445,76 +622,29 @@ function ShareButton({ slug, title }) {
               >
                 Share Article
               </span>
-              <motion.button
+              <button
                 onClick={() => setState("idle")}
-                whileTap={{ scale: 0.9 }}
-                className="w-6 h-6 rounded-lg flex items-center justify-center cursor-pointer"
                 style={{
+                  width: 24,
+                  height: 24,
+                  borderRadius: 8,
+                  border: "none",
                   background: "var(--c-ink-12)",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                   color: "var(--c-ink-70)",
                 }}
               >
                 <X size={12} />
-              </motion.button>
+              </button>
             </div>
-
-            {/* Social share buttons */}
             <div className="p-3 grid grid-cols-3 gap-2">
-              {[
-                {
-                  id: "twitter",
-                  label: "Twitter / X",
-                  bg: "#000",
-                  color: "#fff",
-                  icon: (
-                    <svg
-                      width="15"
-                      height="15"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
-                      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.253 5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                    </svg>
-                  ),
-                },
-                {
-                  id: "linkedin",
-                  label: "LinkedIn",
-                  bg: "#0A66C2",
-                  color: "#fff",
-                  icon: (
-                    <svg
-                      width="15"
-                      height="15"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
-                      <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
-                    </svg>
-                  ),
-                },
-                {
-                  id: "whatsapp",
-                  label: "WhatsApp",
-                  bg: "#25D366",
-                  color: "#fff",
-                  icon: (
-                    <svg
-                      width="15"
-                      height="15"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
-                      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 0 0-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z" />
-                    </svg>
-                  ),
-                },
-              ].map((s) => (
-                <motion.button
+              {SOCIALS.map((s) => (
+                <button
                   key={s.id}
                   onClick={() => shareVia(s.id)}
-                  whileHover={{ y: -2 }}
-                  whileTap={{ scale: 0.94 }}
                   className="flex flex-col items-center gap-1.5 py-3 rounded-xl cursor-pointer"
                   style={{
                     background: `${s.bg}12`,
@@ -533,11 +663,9 @@ function ShareButton({ slug, title }) {
                   >
                     {s.label}
                   </span>
-                </motion.button>
+                </button>
               ))}
             </div>
-
-            {/* Copy link row */}
             <div
               className="mx-3 mb-3 flex items-center gap-2 px-3 py-2.5 rounded-xl border"
               style={{
@@ -551,17 +679,13 @@ function ShareButton({ slug, title }) {
               >
                 {url}
               </span>
-              <motion.button
+              <button
                 onClick={copyLink}
-                whileTap={{ scale: 0.92 }}
-                className="shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-all"
-                style={{
-                  background: "var(--c-slate)",
-                  color: "#fff",
-                }}
+                className="shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer"
+                style={{ background: "var(--c-slate)", color: "#fff" }}
               >
                 Copy
-              </motion.button>
+              </button>
             </div>
           </motion.div>
         )}
@@ -570,10 +694,947 @@ function ShareButton({ slug, title }) {
   );
 }
 
-// Post Card
+// ─── Table of Contents ────────────────────────────────────────────────────────
+function TableOfContents({ headings, activeId }) {
+  if (!headings.length) return null;
+  return (
+    <div
+      style={{
+        background: "var(--c-white)",
+        border: "1px solid var(--c-border)",
+        borderRadius: 20,
+        padding: "1.25rem",
+        boxShadow: "var(--sh-sm)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          marginBottom: 12,
+        }}
+      >
+        <List size={14} style={{ color: "var(--c-amber)" }} />
+        <span
+          style={{
+            fontSize: ".7rem",
+            fontWeight: 700,
+            textTransform: "uppercase",
+            letterSpacing: ".1em",
+            color: "var(--c-ink-40)",
+          }}
+        >
+          Contents
+        </span>
+      </div>
+      <nav
+        style={{
+          maxHeight: "calc(100vh - 280px)",
+          overflowY: "auto",
+          overflowX: "hidden",
+          scrollbarWidth: "thin",
+          scrollbarColor: "var(--c-border) transparent",
+        }}
+      >
+        {headings.map((h) => (
+          <a
+            key={h.id}
+            href={`#${h.id}`}
+            className={`toc-link ${h.level === "h3" ? "h3" : ""} ${activeId === h.id ? "active" : ""}`}
+            onClick={(e) => {
+              e.preventDefault();
+              const el = document.getElementById(h.id);
+              if (!el) return;
+              const offset = 80;
+              const top =
+                el.getBoundingClientRect().top + window.scrollY - offset;
+              window.scrollTo({ top, behavior: "smooth" });
+            }}
+          >
+            {h.text}
+          </a>
+        ))}
+      </nav>
+    </div>
+  );
+}
+
+// ─── Reading Progress ─────────────────────────────────────────────────────────
+function ReadingProgress() {
+  const { scrollYProgress } = useScroll();
+  const scaleX = useSpring(scrollYProgress, { stiffness: 100, damping: 30 });
+  return (
+    <div className="progress-bar">
+      <motion.div
+        className="progress-fill"
+        style={{ scaleX, transformOrigin: "left" }}
+      />
+    </div>
+  );
+}
+
+// ─── SEO ──────────────────────────────────────────────────────────────────────
+const ArticleSEO = ({ post }) => {
+  const url = `https://talk2hire.com/blog/${post.slug}`;
+  const image = post.cover_image ?? "https://talk2hire.com/og-blog.png";
+  useEffect(() => {
+    document.title = `${post.title} | Talk2Hire Blog`;
+    return () => {
+      document.title =
+        "Blog | Talk2Hire — Career Tips, Interview Prep & Hiring Insights";
+    };
+  }, [post.title]);
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "BlogPosting",
+    headline: post.title,
+    description: post.excerpt,
+    url,
+    datePublished: post.published_at,
+    dateModified: post.updated_at ?? post.published_at,
+    image,
+    inLanguage: "en-US",
+    keywords: (post.tags ?? []).join(", "),
+    articleSection: post.category,
+    timeRequired: post.read_time ? `PT${post.read_time}M` : undefined,
+    author: {
+      "@type": "Person",
+      name: post.author_name ?? "Talk2Hire Team",
+      url: `https://talk2hire.com`,
+    },
+    publisher: {
+      "@type": "Organization",
+      name: "Talk2Hire",
+      url: "https://talk2hire.com",
+      logo: { "@type": "ImageObject", url: "https://talk2hire.com/logo.png" },
+    },
+    mainEntityOfPage: { "@type": "WebPage", "@id": url },
+  };
+  return (
+    <>
+      <meta name="description" content={post.excerpt} />
+      <link rel="canonical" href={url} />
+      <meta property="og:type" content="article" />
+      <meta property="og:title" content={post.title} />
+      <meta property="og:description" content={post.excerpt} />
+      <meta property="og:url" content={url} />
+      <meta property="og:image" content={image} />
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta name="twitter:title" content={post.title} />
+      <meta name="twitter:description" content={post.excerpt} />
+      <meta name="twitter:image" content={image} />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
+    </>
+  );
+};
+
+// ─── Article Reader (full polished version) ───────────────────────────────────
+const ArticleReader = ({ post, onBack, relatedPosts = [] }) => {
+  const navigate = useNavigate();
+  const [liked, setLiked] = useState(false);
+  const [bookmarked, setBookmarked] = useState(false);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const [activeHeadingId, setActiveHeadingId] = useState(null);
+  const [headings, setHeadings] = useState([]);
+  const [processedContent, setProcessedContent] = useState("");
+
+  const cat = getCat(post?.category);
+  const color = avatarColor(post?.author_name);
+
+  useEffect(() => {
+    if (!post?.content) return;
+    const html = processContent(post.content);
+    const injected = injectHeadingIds(html);
+    setProcessedContent(injected);
+    setTimeout(() => setHeadings(extractHeadings(html)), 50);
+  }, [post?.content]);
+
+  useEffect(() => {
+    const onScroll = () => {
+      setShowScrollTop(window.scrollY > 600);
+      for (let i = headings.length - 1; i >= 0; i--) {
+        const el = document.getElementById(headings[i].id);
+        if (el && el.getBoundingClientRect().top <= 120) {
+          setActiveHeadingId(headings[i].id);
+          return;
+        }
+      }
+      setActiveHeadingId(null);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [headings]);
+
+  if (!post) return null;
+  if (post.content && !processedContent)
+    return (
+      <div
+        style={{
+          minHeight: "60vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div
+          style={{
+            width: 32,
+            height: 32,
+            border: "3px solid var(--c-border)",
+            borderTopColor: "var(--c-amber)",
+            borderRadius: "50%",
+            animation: "spin 0.8s linear infinite",
+          }}
+        />
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      </div>
+    );
+
+  const p = {
+    title: post.title || "Untitled Post",
+    excerpt: post.excerpt || "",
+    author_name: post.author_name || "Talk2Hire Team",
+    author_username: post.author_username || "",
+    published_at: post.published_at,
+    read_time: post.read_time || 1,
+    views: post.views || 0,
+    tags: Array.isArray(post.tags) ? post.tags : [],
+    cover_image: post.cover_image || null,
+    category: post.category || "",
+    content: processedContent,
+    slug: post.slug || "",
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      transition={{ duration: 0.4 }}
+    >
+      <ArticleSEO post={post} />
+      <ReadingProgress />
+
+      <div className="article-root">
+        {/* Sticky nav */}
+        <div
+          style={{
+            position: "sticky",
+            top: 0,
+            zIndex: 50,
+            borderBottom: "1px solid var(--c-border)",
+            background: "rgba(255,255,255,0.90)",
+            backdropFilter: "blur(24px)",
+          }}
+        >
+          <div
+            style={{
+              maxWidth: 1200,
+              margin: "0 auto",
+              padding: "0 24px",
+              height: 56,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <motion.button
+              onClick={onBack}
+              whileHover={{ x: -3 }}
+              whileTap={{ scale: 0.96 }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                fontSize: ".875rem",
+                fontWeight: 600,
+                color: "var(--c-ink-70)",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                fontFamily: "'DM Sans',sans-serif",
+              }}
+            >
+              <ArrowLeft size={16} /> Back to Blog
+            </motion.button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button
+                onClick={() => setLiked(!liked)}
+                className={`action-btn ${liked ? "liked" : ""}`}
+                title="Like"
+              >
+                <Heart size={15} fill={liked ? "currentColor" : "none"} />
+              </button>
+              <button
+                onClick={() => setBookmarked(!bookmarked)}
+                className={`action-btn ${bookmarked ? "bookmarked" : ""}`}
+                title="Bookmark"
+              >
+                <Bookmark
+                  size={15}
+                  fill={bookmarked ? "currentColor" : "none"}
+                />
+              </button>
+              <ShareButton slug={p.slug} title={p.title} />
+            </div>
+          </div>
+        </div>
+
+        {/* Hero */}
+        <section style={{ background: "var(--c-white)", paddingTop: 48 }}>
+          <div style={{ maxWidth: 820, margin: "0 auto", padding: "0 40px" }}>
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.08 }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginBottom: 20,
+                  flexWrap: "wrap",
+                }}
+              >
+                {cat.label && (
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "5px 14px",
+                      borderRadius: 10,
+                      fontSize: ".7rem",
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                      letterSpacing: ".1em",
+                      background: cat.bg,
+                      color: cat.color,
+                      boxShadow: "var(--sh-sm)",
+                    }}
+                  >
+                    <Tag size={10} /> {cat.label}
+                  </span>
+                )}
+              </div>
+            </motion.div>
+
+            <motion.h1
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{
+                delay: 0.12,
+                duration: 0.65,
+                ease: [0.22, 1, 0.36, 1],
+              }}
+              style={{
+                fontSize: "clamp(28px,4.5vw,46px)",
+                fontWeight: 900,
+                lineHeight: 1.1,
+                letterSpacing: "-.02em",
+                color: "var(--c-ink)",
+                marginBottom: 20,
+                fontFamily: "'Playfair Display',serif",
+              }}
+            >
+              {p.title}
+            </motion.h1>
+
+            {p.excerpt && (
+              <motion.p
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.22 }}
+                style={{
+                  fontSize: "1.15rem",
+                  lineHeight: 1.7,
+                  color: "var(--c-ink-70)",
+                  fontWeight: 300,
+                  marginBottom: 28,
+                  fontStyle: "italic",
+                  fontFamily: "'Playfair Display',serif",
+                }}
+              >
+                {p.excerpt}
+              </motion.p>
+            )}
+
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.3 }}
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: 16,
+                paddingBottom: 28,
+                borderBottom: "1px solid var(--c-border)",
+                marginBottom: 40,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 14,
+                    background: color,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#fff",
+                    fontWeight: 700,
+                    fontSize: ".95rem",
+                    fontFamily: "'Playfair Display',serif",
+                  }}
+                >
+                  {p.author_name[0]}
+                </div>
+                <div>
+                  <div
+                    style={{
+                      fontSize: ".875rem",
+                      fontWeight: 700,
+                      color: "var(--c-ink)",
+                    }}
+                  >
+                    {p.author_name}
+                  </div>
+                  {p.author_username && (
+                    <div
+                      style={{ fontSize: ".75rem", color: "var(--c-ink-40)" }}
+                    >
+                      @{p.author_username}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 16,
+                  marginLeft: "auto",
+                  flexWrap: "wrap",
+                }}
+              >
+                {p.published_at && (
+                  <span
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 5,
+                      fontSize: ".75rem",
+                      color: "var(--c-ink-40)",
+                    }}
+                  >
+                    <Calendar size={12} /> {fmtDate(p.published_at, true)}
+                  </span>
+                )}
+                <span
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 5,
+                    fontSize: ".75rem",
+                    color: "var(--c-ink-40)",
+                  }}
+                >
+                  <Clock size={12} /> {p.read_time} min read
+                </span>
+                <span
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 5,
+                    fontSize: ".75rem",
+                    color: "var(--c-ink-40)",
+                  }}
+                >
+                  <Eye size={12} /> {p.views.toLocaleString()}
+                </span>
+              </div>
+            </motion.div>
+          </div>
+
+          {/* Cover image */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.97 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.18, duration: 0.65 }}
+            style={{
+              maxWidth: 980,
+              margin: "0 auto",
+              padding: "0 40px",
+              paddingBottom: 56,
+            }}
+          >
+            {p.cover_image ? (
+              <img src={p.cover_image} alt={p.title} className="hero-cover" />
+            ) : (
+              <div
+                className="cover-placeholder"
+                style={{ background: cat.gradient }}
+              >
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    opacity: 0.18,
+                    backgroundImage:
+                      "radial-gradient(circle,rgba(0,0,0,.06) 1px,transparent 1px)",
+                    backgroundSize: "20px 20px",
+                  }}
+                />
+                <div
+                  style={{
+                    width: 80,
+                    height: 80,
+                    borderRadius: 24,
+                    background: "rgba(255,255,255,.85)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backdropFilter: "blur(10px)",
+                    boxShadow: "var(--sh-lg)",
+                    position: "relative",
+                    zIndex: 1,
+                  }}
+                >
+                  <BookOpen size={38} style={{ color: cat.iconColor }} />
+                </div>
+              </div>
+            )}
+          </motion.div>
+        </section>
+
+        {/* Body + Sidebar */}
+        <section
+          style={{
+            background: "#ffffff",
+            paddingBottom: 80,
+            overflowX: "hidden",
+          }}
+        >
+          <div
+            style={{
+              maxWidth: 1400,
+              margin: "0 auto",
+              padding: "0 40px",
+              display: "grid",
+              gridTemplateColumns: "1fr min(820px,100%) 300px",
+              gap: "0 56px",
+              alignItems: "start",
+              minWidth: 0,
+            }}
+          >
+            <div />
+
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.38, duration: 0.6 }}
+              style={{ minWidth: 0, overflow: "hidden" }}
+            >
+              {p.content ? (
+                <div
+                  className="blog-body drop-cap"
+                  dangerouslySetInnerHTML={{ __html: p.content }}
+                />
+              ) : (
+                <div
+                  style={{
+                    padding: "3rem 2rem",
+                    textAlign: "center",
+                    background: "var(--c-cream)",
+                    borderRadius: 20,
+                    border: "2px dashed var(--c-border)",
+                    marginBottom: "2rem",
+                  }}
+                >
+                  <BookOpen
+                    size={32}
+                    style={{
+                      margin: "0 auto 12px",
+                      display: "block",
+                      opacity: 0.3,
+                      color: "var(--c-ink-40)",
+                    }}
+                  />
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: ".9rem",
+                      color: "var(--c-ink-40)",
+                      fontStyle: "italic",
+                    }}
+                  >
+                    No content.
+                  </p>
+                </div>
+              )}
+
+              {/* Tags */}
+              {p.tags.length > 0 && (
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: 8,
+                    marginTop: 48,
+                    paddingTop: 32,
+                    borderTop: "1px solid var(--c-border)",
+                  }}
+                >
+                  {p.tags.map((t) => (
+                    <span key={t} className="tag-pill">
+                      <Tag size={9} /> {t}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Author card */}
+              <motion.div
+                className="author-card"
+                style={{ marginTop: 40 }}
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.5 }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 16,
+                    marginBottom: 14,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 56,
+                      height: 56,
+                      borderRadius: 20,
+                      background: color,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      color: "#fff",
+                      fontWeight: 700,
+                      fontSize: "1.2rem",
+                      fontFamily: "'Playfair Display',serif",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {p.author_name[0]}
+                  </div>
+                  <div>
+                    <div
+                      style={{
+                        fontWeight: 700,
+                        fontSize: "1rem",
+                        color: "var(--c-ink)",
+                        fontFamily: "'Playfair Display',serif",
+                      }}
+                    >
+                      {p.author_name}
+                    </div>
+                    {p.author_username && (
+                      <div
+                        style={{
+                          fontSize: ".8rem",
+                          color: "var(--c-ink-40)",
+                          marginTop: 2,
+                        }}
+                      >
+                        @{p.author_username}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <p
+                  style={{
+                    fontSize: ".9rem",
+                    lineHeight: 1.75,
+                    color: "var(--c-ink-70)",
+                    margin: 0,
+                  }}
+                >
+                  A seasoned professional sharing real-world insights to help
+                  candidates navigate the modern job market with confidence and
+                  clarity.
+                </p>
+              </motion.div>
+
+              {/* Related posts */}
+              {relatedPosts.length > 0 && (
+                <div style={{ marginTop: 56 }}>
+                  <h3
+                    style={{
+                      fontSize: "1.5rem",
+                      fontWeight: 700,
+                      color: "var(--c-ink)",
+                      marginBottom: 20,
+                      fontFamily: "'Playfair Display',serif",
+                    }}
+                  >
+                    Related Articles
+                  </h3>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns:
+                        "repeat(auto-fill,minmax(240px,1fr))",
+                      gap: 16,
+                    }}
+                  >
+                    {relatedPosts.map((rp, i) => {
+                      const rc = getCat(rp.category);
+                      return (
+                        <motion.div
+                          key={rp.id}
+                          className="related-card"
+                          initial={{ opacity: 0, y: 16 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: 0.55 + i * 0.08 }}
+                          onClick={() => navigate(`/blog/${rp.slug}`)}
+                        >
+                          {rc.label && (
+                            <span
+                              style={{
+                                display: "inline-block",
+                                padding: "3px 10px",
+                                borderRadius: 8,
+                                fontSize: ".65rem",
+                                fontWeight: 700,
+                                textTransform: "uppercase",
+                                letterSpacing: ".08em",
+                                background: rc.bg,
+                                color: rc.color,
+                                marginBottom: 10,
+                              }}
+                            >
+                              {rc.label}
+                            </span>
+                          )}
+                          <h4
+                            style={{
+                              fontFamily: "'Playfair Display',serif",
+                              fontWeight: 700,
+                              fontSize: ".9rem",
+                              lineHeight: 1.4,
+                              color: "var(--c-ink)",
+                              marginBottom: 10,
+                              display: "-webkit-box",
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: "vertical",
+                              overflow: "hidden",
+                            }}
+                          >
+                            {rp.title}
+                          </h4>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 12,
+                            }}
+                          >
+                            <span
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 4,
+                                fontSize: ".7rem",
+                                color: "var(--c-ink-40)",
+                              }}
+                            >
+                              <Clock size={10} /> {rp.read_time}m
+                            </span>
+                            <span
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 4,
+                                fontSize: ".7rem",
+                                color: "var(--c-ink-40)",
+                              }}
+                            >
+                              <Eye size={10} /> {rp.views || 0}
+                            </span>
+                          </div>
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </motion.div>
+
+            {/* Sidebar */}
+            <div
+              className="sidebar-sticky"
+              style={{
+                position: "sticky",
+                top: 72,
+                display: "flex",
+                flexDirection: "column",
+                gap: 20,
+              }}
+            >
+              <motion.div
+                initial={{ opacity: 0, x: 16 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.45 }}
+              >
+                {/* Stats */}
+                <div
+                  style={{
+                    background: "var(--c-cream)",
+                    border: "1px solid var(--c-border)",
+                    borderRadius: 20,
+                    padding: "1.25rem",
+                    marginBottom: 20,
+                    boxShadow: "var(--sh-sm)",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 10,
+                    }}
+                  >
+                    {[
+                      { label: "Read time", value: `${p.read_time}m` },
+                      { label: "Views", value: p.views.toLocaleString() },
+                      { label: "Tags", value: p.tags.length },
+                      { label: "Category", value: cat.label || "—" },
+                    ].map((s) => (
+                      <div
+                        key={s.label}
+                        style={{
+                          background: "var(--c-white)",
+                          border: "1px solid var(--c-border)",
+                          borderRadius: 12,
+                          padding: "10px 12px",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: "1rem",
+                            fontWeight: 700,
+                            color: "var(--c-ink)",
+                            fontFamily: "'Playfair Display',serif",
+                          }}
+                        >
+                          {s.value}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: ".65rem",
+                            color: "var(--c-ink-40)",
+                            marginTop: 2,
+                            fontWeight: 500,
+                            textTransform: "uppercase",
+                            letterSpacing: ".06em",
+                          }}
+                        >
+                          {s.label}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div
+                  style={{
+                    background: "var(--c-white)",
+                    border: "1px solid var(--c-border)",
+                    borderRadius: 20,
+                    padding: "1.25rem",
+                    marginBottom: 20,
+                    boxShadow: "var(--sh-sm)",
+                  }}
+                >
+                  <p
+                    style={{
+                      fontSize: ".7rem",
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                      letterSpacing: ".1em",
+                      color: "var(--c-ink-40)",
+                      marginBottom: 12,
+                      margin: "0 0 12px",
+                    }}
+                  >
+                    Actions
+                  </p>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      onClick={() => setLiked(!liked)}
+                      className={`action-btn ${liked ? "liked" : ""}`}
+                      style={{ flex: 1, width: "auto" }}
+                      title="Like"
+                    >
+                      <Heart size={15} fill={liked ? "currentColor" : "none"} />
+                    </button>
+                    <button
+                      onClick={() => setBookmarked(!bookmarked)}
+                      className={`action-btn ${bookmarked ? "bookmarked" : ""}`}
+                      style={{ flex: 1, width: "auto" }}
+                      title="Bookmark"
+                    >
+                      <Bookmark
+                        size={15}
+                        fill={bookmarked ? "currentColor" : "none"}
+                      />
+                    </button>
+                    <ShareButton slug={p.slug} title={p.title} />
+                  </div>
+                </div>
+
+                {/* Table of contents */}
+                <TableOfContents
+                  headings={headings}
+                  activeId={activeHeadingId}
+                />
+              </motion.div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      {/* Scroll to top */}
+      <AnimatePresence>
+        {showScrollTop && (
+          <motion.button
+            className="scroll-top"
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.8 }}
+            onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+            title="Back to top"
+          >
+            <ChevronUp size={18} />
+          </motion.button>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+};
+
+// ─── Post Cards ───────────────────────────────────────────────────────────────
 const FeaturedCard = ({ post, onRead }) => {
   const cat = CATEGORIES.find((c) => c.id === post.category);
-  const { gradient } = getCategoryStyle(post.category);
+  const { gradient } = getCat(post.category);
   const color = avatarColor(post.author_name);
   return (
     <motion.div
@@ -639,7 +1700,10 @@ const FeaturedCard = ({ post, onRead }) => {
         </div>
         <h2
           className="text-xl sm:text-2xl font-bold leading-snug mb-3 line-clamp-2"
-          style={{ color: "var(--c-ink)" }}
+          style={{
+            color: "var(--c-ink)",
+            fontFamily: "'Playfair Display',serif",
+          }}
         >
           {post.title}
         </h2>
@@ -682,10 +1746,9 @@ const FeaturedCard = ({ post, onRead }) => {
   );
 };
 
-// Regular Post Card
 const PostCard = ({ post, index, onRead }) => {
   const cat = CATEGORIES.find((c) => c.id === post.category);
-  const { gradient, iconColor } = getCategoryStyle(post.category);
+  const { gradient, iconColor } = getCat(post.category);
   const color = avatarColor(post.author_name);
   return (
     <motion.div
@@ -746,7 +1809,10 @@ const PostCard = ({ post, index, onRead }) => {
       <div className="p-6 flex flex-col flex-1">
         <h3
           className="font-bold text-base leading-snug mb-2.5 line-clamp-2"
-          style={{ color: "var(--c-ink)" }}
+          style={{
+            color: "var(--c-ink)",
+            fontFamily: "'Playfair Display',serif",
+          }}
         >
           {post.title}
         </h3>
@@ -807,441 +1873,7 @@ const PostCard = ({ post, index, onRead }) => {
   );
 };
 
-// Article Reader (Read inside /blog/:slug)
-const ArticleSEO = ({ post }) => {
-  const url = `https://talk2hire.com/blog/${post.slug}`;
-  const image = post.cover_image ?? "https://talk2hire.com/og-blog.png";
-
-  useEffect(() => {
-    document.title = `${post.title} | Talk2Hire Blog`;
-    return () => {
-      document.title =
-        "Blog | Talk2Hire — Career Tips, Interview Prep & Hiring Insights";
-    };
-  }, [post.title]);
-
-  const jsonLd = {
-    "@context": "https://schema.org",
-    "@type": "BlogPosting",
-    headline: post.title,
-    description: post.excerpt,
-    url,
-    datePublished: post.published_at,
-    dateModified: post.updated_at ?? post.published_at,
-    image,
-    inLanguage: "en-US",
-    keywords: (post.tags ?? []).join(", "),
-    articleSection: post.category,
-    timeRequired: post.read_time ? `PT${post.read_time}M` : undefined,
-    author: {
-      "@type": "Person",
-      name: post.author_name ?? "Talk2Hire Team",
-      url: post.author_username
-        ? `https://talk2hire.com/authors/${post.author_username}`
-        : "https://talk2hire.com",
-    },
-    publisher: {
-      "@type": "Organization",
-      name: "Talk2Hire",
-      url: "https://talk2hire.com",
-      logo: { "@type": "ImageObject", url: "https://talk2hire.com/logo.png" },
-    },
-    mainEntityOfPage: { "@type": "WebPage", "@id": url },
-    breadcrumb: {
-      "@type": "BreadcrumbList",
-      itemListElement: [
-        {
-          "@type": "ListItem",
-          position: 1,
-          name: "Home",
-          item: "https://talk2hire.com",
-        },
-        {
-          "@type": "ListItem",
-          position: 2,
-          name: "Blog",
-          item: "https://talk2hire.com/blog",
-        },
-        { "@type": "ListItem", position: 3, name: post.title, item: url },
-      ],
-    },
-  };
-
-  return (
-    <>
-      <meta name="description" content={post.excerpt} />
-      <link rel="canonical" href={url} />
-      <meta
-        name="robots"
-        content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1"
-      />
-      <meta property="og:type" content="article" />
-      <meta property="og:site_name" content="Talk2Hire" />
-      <meta property="og:title" content={post.title} />
-      <meta property="og:description" content={post.excerpt} />
-      <meta property="og:url" content={url} />
-      <meta property="og:image" content={image} />
-      <meta property="og:image:width" content="1200" />
-      <meta property="og:image:height" content="630" />
-      <meta property="og:image:alt" content={post.title} />
-      <meta property="article:published_time" content={post.published_at} />
-      <meta
-        property="article:modified_time"
-        content={post.updated_at ?? post.published_at}
-      />
-      <meta
-        property="article:author"
-        content={post.author_name ?? "Talk2Hire Team"}
-      />
-      <meta property="article:section" content={post.category} />
-      {(post.tags ?? []).map((t) => (
-        <meta key={t} property="article:tag" content={t} />
-      ))}
-      <meta name="twitter:card" content="summary_large_image" />
-      <meta name="twitter:site" content="@talk2hire" />
-      <meta name="twitter:title" content={post.title} />
-      <meta name="twitter:description" content={post.excerpt} />
-      <meta name="twitter:image" content={image} />
-      <meta name="twitter:image:alt" content={post.title} />
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-      />
-    </>
-  );
-};
-
-// Article Reader
-const ArticleReader = ({ post, onBack, relatedPosts }) => {
-  const navigate = useNavigate();
-  const [liked, setLiked] = useState(false);
-  const [bookmarked, setBookmarked] = useState(false);
-  const cat = CATEGORIES.find((c) => c.id === post.category);
-  const { gradient, iconColor } = getCategoryStyle(post.category);
-  const color = avatarColor(post.author_name);
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -20 }}
-      transition={{ duration: 0.4 }}
-      className="min-h-screen"
-      style={{ background: "var(--c-white)" }}
-    >
-      {/* ── SEO ── */}
-      <ArticleSEO post={post} />
-      {/* Reading progress bar */}
-      <div
-        className="fixed top-0 left-0 right-0 z-50 h-0.5"
-        style={{ background: "var(--c-border)" }}
-      >
-        <motion.div
-          className="h-full"
-          style={{
-            background:
-              "linear-gradient(90deg,var(--c-amber),var(--c-amber-2))",
-          }}
-          initial={{ width: "0%" }}
-          animate={{ width: "100%" }}
-          transition={{ duration: 45, ease: "linear" }}
-        />
-      </div>
-
-      {/* Sticky nav */}
-      <div
-        className="sticky top-0 z-40 border-b"
-        style={{
-          background: "rgba(255,255,255,0.92)",
-          backdropFilter: "blur(20px)",
-          borderColor: "var(--c-border)",
-        }}
-      >
-        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
-          <motion.button
-            onClick={onBack}
-            whileHover={{ x: -3 }}
-            whileTap={{ scale: 0.96 }}
-            className="flex items-center gap-2 text-sm font-semibold cursor-pointer"
-            style={{ color: "var(--c-ink-70)" }}
-          >
-            <ArrowLeft size={16} /> Back to Blog
-          </motion.button>
-          <div className="flex items-center gap-2">
-            <motion.button
-              onClick={() => setLiked(!liked)}
-              whileTap={{ scale: 0.88 }}
-              className="w-9 h-9 rounded-xl border flex items-center justify-center cursor-pointer transition-all"
-              style={{
-                background: liked ? "var(--c-rose-l)" : "var(--c-white)",
-                borderColor: liked ? "var(--c-rose)" : "var(--c-border)",
-                color: liked ? "var(--c-rose)" : "var(--c-ink-40)",
-              }}
-            >
-              <Heart size={15} fill={liked ? "currentColor" : "none"} />
-            </motion.button>
-            <motion.button
-              onClick={() => setBookmarked(!bookmarked)}
-              whileTap={{ scale: 0.88 }}
-              className="w-9 h-9 rounded-xl border flex items-center justify-center cursor-pointer transition-all"
-              style={{
-                background: bookmarked ? "var(--c-amber-l)" : "var(--c-white)",
-                borderColor: bookmarked ? "var(--c-amber)" : "var(--c-border)",
-                color: bookmarked ? "var(--c-amber)" : "var(--c-ink-40)",
-              }}
-            >
-              <Bookmark size={15} fill={bookmarked ? "currentColor" : "none"} />
-            </motion.button>
-            {/* Functional share button */}
-            <ShareButton slug={post.slug} title={post.title} />
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-7xl mx-auto px-6 py-16">
-        {/* Header */}
-        <div className="mb-12">
-          <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-          >
-            <span
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-widest mb-6"
-              style={{ background: cat?.bg, color: cat?.color }}
-            >
-              <Tag size={10} /> {cat?.label ?? post.category}
-            </span>
-          </motion.div>
-          <motion.h1
-            className="leading-[1.1] tracking-tight mb-6"
-            style={{
-              fontSize: "clamp(28px,4.5vw,48px)",
-              fontWeight: 900,
-              color: "var(--c-ink)",
-            }}
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{
-              delay: 0.15,
-              duration: 0.6,
-              ease: [0.22, 1, 0.36, 1],
-            }}
-          >
-            {post.title}
-          </motion.h1>
-          <motion.p
-            className="text-lg leading-relaxed mb-8"
-            style={{ color: "var(--c-ink-70)", fontWeight: 300 }}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.25 }}
-          >
-            {post.excerpt}
-          </motion.p>
-          <motion.div
-            className="flex flex-wrap items-center gap-5 py-5 border-y"
-            style={{ borderColor: "var(--c-border)" }}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.3 }}
-          >
-            <div className="flex items-center gap-3">
-              <div
-                className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold"
-                style={{ backgroundColor: color }}
-              >
-                {(post.author_name ?? "A")[0]}
-              </div>
-              <div>
-                <p
-                  className="text-sm font-bold"
-                  style={{ color: "var(--c-ink)" }}
-                >
-                  {post.author_name ?? "Author"}
-                </p>
-                <p className="text-xs" style={{ color: "var(--c-ink-40)" }}>
-                  {post.author_username ? `@${post.author_username}` : ""}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-4 ml-auto">
-              <span
-                className="flex items-center gap-1.5 text-xs"
-                style={{ color: "var(--c-ink-40)" }}
-              >
-                <Calendar size={11} />
-                {fmtDate(post.published_at)}
-              </span>
-              <ReadingTime time={post.read_time} />
-              <ViewCount views={post.views} />
-            </div>
-          </motion.div>
-        </div>
-
-        {/* Cover image */}
-        <motion.div
-          className="rounded-3xl overflow-hidden mb-14 relative flex items-center justify-center"
-          style={{
-            background: post.cover_image ? undefined : gradient,
-            height: "240px",
-          }}
-          initial={{ opacity: 0, scale: 0.97 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.2, duration: 0.6 }}
-        >
-          {post.cover_image ? (
-            <img
-              src={post.cover_image}
-              alt={post.title}
-              className="w-full h-full object-cover"
-            />
-          ) : (
-            <>
-              <div
-                className="absolute inset-0 opacity-20"
-                style={{
-                  backgroundImage:
-                    "radial-gradient(circle,rgba(0,0,0,0.05) 1px,transparent 1px)",
-                  backgroundSize: "20px 20px",
-                }}
-              />
-              <div
-                className="w-20 h-20 rounded-3xl flex items-center justify-center border relative z-10"
-                style={{
-                  background: "rgba(255,255,255,0.85)",
-                  borderColor: "rgba(255,255,255,0.6)",
-                  backdropFilter: "blur(10px)",
-                  boxShadow: "var(--sh-lg)",
-                }}
-              >
-                <BookOpen size={38} style={{ color: iconColor }} />
-              </div>
-            </>
-          )}
-        </motion.div>
-
-        {/* Body */}
-        <motion.div
-          className="blog-body text-base"
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.35, duration: 0.6 }}
-          dangerouslySetInnerHTML={{ __html: post.content }}
-        />
-
-        {/* Tags */}
-        <div
-          className="flex flex-wrap gap-2 mt-12 pt-8 border-t"
-          style={{ borderColor: "var(--c-border)" }}
-        >
-          {(post.tags ?? []).map((t) => (
-            <span
-              key={t}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold"
-              style={{
-                background: "var(--c-cream)",
-                borderColor: "var(--c-border)",
-                color: "var(--c-ink-70)",
-              }}
-            >
-              <Tag size={10} /> {t}
-            </span>
-          ))}
-        </div>
-
-        {/* Author card */}
-        <motion.div
-          className="mt-10 p-7 rounded-3xl border"
-          style={{
-            background: "var(--c-cream)",
-            borderColor: "var(--c-border)",
-            boxShadow: "var(--sh-sm)",
-          }}
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.5 }}
-        >
-          <div className="flex items-center gap-4 mb-3">
-            <div
-              className="w-14 h-14 rounded-2xl flex items-center justify-center text-white text-lg font-bold"
-              style={{ backgroundColor: color }}
-            >
-              {(post.author_name ?? "A")[0]}
-            </div>
-            <div>
-              <p className="font-bold" style={{ color: "var(--c-ink)" }}>
-                {post.author_name ?? "Author"}
-              </p>
-              <p className="text-sm" style={{ color: "var(--c-ink-40)" }}>
-                {post.author_username ? `@${post.author_username}` : ""}
-              </p>
-            </div>
-          </div>
-          <p
-            className="text-sm leading-relaxed"
-            style={{ color: "var(--c-ink-70)" }}
-          >
-            A seasoned professional sharing real-world insights to help
-            candidates navigate the modern job market with confidence.
-          </p>
-        </motion.div>
-
-        {/* Related posts — clicking navigates to that slug URL */}
-        {relatedPosts.length > 0 && (
-          <div className="mt-16">
-            <h3
-              className="text-2xl font-bold mb-6"
-              style={{ color: "var(--c-ink)" }}
-            >
-              Related Articles
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-              {relatedPosts.map((rp, i) => {
-                const rc = CATEGORIES.find((c) => c.id === rp.category);
-                return (
-                  <motion.div
-                    key={rp.id}
-                    initial={{ opacity: 0, y: 16 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.55 + i * 0.08 }}
-                    whileHover={{ y: -4 }}
-                    onClick={() => navigate(`/blog/${rp.slug}`)}
-                    className="p-5 rounded-2xl border cursor-pointer"
-                    style={{
-                      background: "var(--c-white)",
-                      borderColor: "var(--c-border)",
-                      boxShadow: "var(--sh-sm)",
-                    }}
-                  >
-                    <span
-                      className="inline-block px-2 py-0.5 rounded-lg text-[10px] font-bold uppercase tracking-widest mb-3"
-                      style={{ background: rc?.bg, color: rc?.color }}
-                    >
-                      {rc?.label ?? rp.category}
-                    </span>
-                    <h4
-                      className="font-bold text-sm leading-snug mb-2 line-clamp-2"
-                      style={{ color: "var(--c-ink)" }}
-                    >
-                      {rp.title}
-                    </h4>
-                    <div className="flex items-center gap-2">
-                      <ReadingTime time={rp.read_time} />
-                      <ViewCount views={rp.views} />
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </div>
-    </motion.div>
-  );
-};
-
-// All the blog lists
+// ─── Blog List ────────────────────────────────────────────────────────────────
 const BlogList = () => {
   const navigate = useNavigate();
   const [activeCategory, setActiveCategory] = useState("all");
@@ -1255,8 +1887,6 @@ const BlogList = () => {
 
   const featured = posts[0] ?? null;
   const rest = posts.slice(1);
-
-  // Clicking any card navigates to /blog/:slug
   const handleRead = (post) => navigate(`/blog/${post.slug}`);
 
   return (
@@ -1313,6 +1943,7 @@ const BlogList = () => {
                 fontSize: "clamp(36px,5.5vw,64px)",
                 fontWeight: 900,
                 color: "var(--c-ink)",
+                fontFamily: "'Playfair Display',serif",
               }}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -1608,7 +2239,10 @@ const BlogList = () => {
               Put it into practice
             </span>
           </div>
-          <h2 className="text-4xl sm:text-5xl font-black text-white mb-4 tracking-tight leading-[1.06]">
+          <h2
+            className="text-4xl sm:text-5xl font-black text-white mb-4 tracking-tight leading-[1.06]"
+            style={{ fontFamily: "'Playfair Display',serif" }}
+          >
             Ready to ace your
             <br />
             next interview?
@@ -1651,7 +2285,7 @@ const BlogList = () => {
   );
 };
 
-// Blog Post
+// ─── Blog Post page ───────────────────────────────────────────────────────────
 const BlogPost = () => {
   const { slug } = useParams();
   const navigate = useNavigate();
@@ -1666,7 +2300,6 @@ const BlogPost = () => {
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" });
     loadPost(slug);
-    // Don't clear on unmount — let the next page or navigation handle it
   }, [slug]);
 
   if (activePostLoading || !activePost) {
@@ -1709,7 +2342,7 @@ const BlogPost = () => {
     <ArticleReader
       post={activePost}
       onBack={() => {
-        clearActivePost(); // clear only when user explicitly navigates away
+        clearActivePost();
         navigate("/blog");
       }}
       relatedPosts={relatedPosts}
@@ -1717,6 +2350,7 @@ const BlogPost = () => {
   );
 };
 
+// ─── Root Blog component ──────────────────────────────────────────────────────
 const Blog = () => {
   const { slug } = useParams();
 
@@ -1762,8 +2396,6 @@ const Blog = () => {
             property="og:image"
             content="https://talk2hire.com/og-blog.png"
           />
-          <meta property="og:image:width" content="1200" />
-          <meta property="og:image:height" content="630" />
           <meta name="twitter:card" content="summary_large_image" />
           <meta name="twitter:site" content="@talk2hire" />
           <meta
@@ -1782,7 +2414,6 @@ const Blog = () => {
             name="robots"
             content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1"
           />
-          <meta name="referrer" content="origin-when-cross-origin" />
           <script
             type="application/ld+json"
             dangerouslySetInnerHTML={{ __html: JSON.stringify(blogListJsonLd) }}

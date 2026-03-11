@@ -4,6 +4,8 @@ const {
   deleteFileFromFTP,
 } = require("../Upload/uploadOnFTP.js");
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 const isBase64Image = (str) =>
   typeof str === "string" && str.startsWith("data:");
 
@@ -32,7 +34,8 @@ const uploadCoverImage = async (base64DataUrl, postTitle = "cover") => {
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "-")
     .slice(0, 40);
-  const fileName = `${safeName}-${Date.now()}.${ext}`;
+  const timestamp = Date.now();
+  const fileName = `${timestamp}-${safeName}-${timestamp}.${ext}`;
   const fileBuffer = Buffer.from(parts.data, "base64");
 
   const result = await uploadFileToFTP(
@@ -42,6 +45,15 @@ const uploadCoverImage = async (base64DataUrl, postTitle = "cover") => {
   );
   return result.url;
 };
+
+// Normalize tags: accept array or comma-separated string, return clean array
+function normalizeTags(raw) {
+  if (!raw) return [];
+  const arr = Array.isArray(raw) ? raw : String(raw).split(",");
+  return arr.map((t) => String(t).trim()).filter(Boolean);
+}
+
+// ─── Controller ───────────────────────────────────────────────────────────────
 
 const BlogController = {
   async createPost(req, res) {
@@ -60,24 +72,12 @@ const BlogController = {
 
       const body = { ...req.body };
 
-      // Guard: strip invalid category values so they never hit the DB ENUM
-      const VALID_CATEGORIES = [
-        "interview",
-        "career",
-        "ai",
-        "salary",
-        "resume",
-      ];
-      if (
-        body.category !== undefined &&
-        body.category !== null &&
-        body.category !== "" &&
-        !VALID_CATEGORIES.includes(body.category)
-      ) {
-        console.warn(
-          `createPost: invalid category '${body.category}' stripped`,
-        );
-        body.category = null;
+      // Category — free text, pass through as-is (null if empty)
+      body.category = body.category?.trim() || null;
+
+      // Tags — normalise to a clean array
+      if (body.tags !== undefined) {
+        body.tags = normalizeTags(body.tags);
       }
 
       if (isBase64Image(body.cover_image)) {
@@ -179,27 +179,17 @@ const BlogController = {
 
       const body = { ...req.body };
 
-      // Strip status from a plain update — status changes go through /publish and /unpublish only
+      // Status changes go through /publish and /unpublish only
       delete body.status;
 
-      // Guard: strip invalid category values so they never hit the DB ENUM
-      const VALID_CATEGORIES = [
-        "interview",
-        "career",
-        "ai",
-        "salary",
-        "resume",
-      ];
-      if (
-        body.category !== undefined &&
-        body.category !== null &&
-        body.category !== "" &&
-        !VALID_CATEGORIES.includes(body.category)
-      ) {
-        console.warn(
-          `updatePost: invalid category '${body.category}' stripped`,
-        );
-        delete body.category; // don't update category if value is invalid
+      // Category — free text, pass through as-is (null if empty)
+      if (body.category !== undefined) {
+        body.category = body.category?.trim() || null;
+      }
+
+      // Tags — normalise to a clean array
+      if (body.tags !== undefined) {
+        body.tags = normalizeTags(body.tags);
       }
 
       if (isBase64Image(body.cover_image)) {
@@ -210,7 +200,7 @@ const BlogController = {
           );
         } catch (ftpErr) {
           console.error("Cover image upload failed:", ftpErr.message);
-          body.cover_image = post.cover_image;
+          body.cover_image = post.cover_image; // keep existing on FTP failure
         }
       }
 
@@ -264,10 +254,12 @@ const BlogController = {
     try {
       const deleted = await BlogModel.softDelete(req.params.id);
       if (!deleted)
-        return res.status(404).json({
-          success: false,
-          message: "Post not found or already deleted",
-        });
+        return res
+          .status(404)
+          .json({
+            success: false,
+            message: "Post not found or already deleted",
+          });
       return res
         .status(200)
         .json({ success: true, message: "Post moved to trash" });
