@@ -4,11 +4,8 @@ const { mistralResponse } = require("./mistral.controllers.js");
 const { ollama } = require("../Config/openai.config.js");
 const { Interview } = require("../Models/interview.models.js");
 const User = require("../Models/user.models.js");
-const Job = require("../Admin/models/job.models.js");
+const Job = require("../Models/job.models.js");
 
-// ---------------------------------------------------------------------------
-// Level definitions — single source of truth for thresholds and weights
-// ---------------------------------------------------------------------------
 const LEVELS = {
   entry: {
     level: "entry",
@@ -88,9 +85,6 @@ const CATEGORY_LABELS = {
     "Leadership (managing teams, mentoring, organizational decisions)",
 };
 
-// ---------------------------------------------------------------------------
-// Detect candidate level from raw resume text
-// ---------------------------------------------------------------------------
 function detectCandidateLevel(rawText) {
   let totalYears = 0;
 
@@ -126,9 +120,6 @@ function detectCandidateLevel(rawText) {
   return match ?? LEVELS.entry;
 }
 
-// ---------------------------------------------------------------------------
-// Deterministically pick the next category based on actual vs target distribution
-// ---------------------------------------------------------------------------
 function pickNextCategory(weights, history) {
   const totalQuestions = history.length + 1; // +1 for the question about to be asked
 
@@ -157,9 +148,6 @@ function pickNextCategory(weights, history) {
   return chosen;
 }
 
-// ---------------------------------------------------------------------------
-// JSON extraction helper
-// ---------------------------------------------------------------------------
 const extractJSON = (text) => {
   let cleaned = text
     .replace(/```json\n?/g, "")
@@ -177,9 +165,6 @@ const extractJSON = (text) => {
   return JSON.parse(cleaned.substring(jsonStart, jsonEnd + 1));
 };
 
-// ---------------------------------------------------------------------------
-// Extract resume text safely, uploading if needed
-// ---------------------------------------------------------------------------
 async function safeExtractResume({ user, req }) {
   if (user?.resume) {
     try {
@@ -231,9 +216,6 @@ async function safeExtractResume({ user, req }) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Generate the first question (always a fixed opener)
-// ---------------------------------------------------------------------------
 const generateQuestions = asyncHandler(async (req, res) => {
   if (!req.user?.id) throw new APIERR(401, "Unauthorized");
 
@@ -300,9 +282,6 @@ const generateQuestions = asyncHandler(async (req, res) => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// Generate the next question using enforced category distribution
-// ---------------------------------------------------------------------------
 const generateNextQuestion = asyncHandler(async (req, res) => {
   const { sessionId, resumeText, history, candidateLevel } = req.body;
 

@@ -2,23 +2,66 @@ const { pool } = require("./Config/database.config.js");
 
 const MIGRATIONS = [
   {
-    table: "company_details",
+    table: "admins",
     sql: `
-      ALTER TABLE company_details
-        ADD COLUMN IF NOT EXISTS microsoft_id VARCHAR(255) NULL
-          COMMENT 'Microsoft OAuth subject ID for SSO login'
-          AFTER companyRegisterNumber,
-        MODIFY COLUMN password VARCHAR(255) NULL;
-    `,
-  },
-  {
-    table: "users",
-    sql: `
-      ALTER TABLE users
-        ADD COLUMN IF NOT EXISTS microsoft_id VARCHAR(255) NULL
-          COMMENT 'Microsoft OAuth subject ID for SSO login'
-          AFTER role,
-        MODIFY COLUMN hashPassword VARCHAR(255) NULL;
+      CREATE TABLE IF NOT EXISTS admins (
+        id                  INT UNSIGNED        NOT NULL AUTO_INCREMENT,
+
+        fullName           VARCHAR(100)        NOT NULL,
+        email               VARCHAR(255)        NOT NULL,
+        username            VARCHAR(50)         NOT NULL,
+
+        hashPassword        VARCHAR(255)                 NULL
+          COMMENT 'Bcrypt hash; NULL when SSO-only account',
+        microsoft_id        VARCHAR(255)                 NULL
+          COMMENT 'Microsoft OAuth subject ID for SSO login',
+
+        role                ENUM(
+                              'super_admin',
+                              'admin',
+                              'moderator',
+                              'support'
+                            )                   NOT NULL DEFAULT 'admin',
+        permissions         JSON                         NULL
+          COMMENT 'Fine-grained permission flags, e.g. {"canDeleteUsers":true}',
+
+        status              ENUM(
+                              'active',
+                              'inactive',
+                              'suspended'
+                            )                   NOT NULL DEFAULT 'active',
+        is_email_verified   TINYINT(1)          NOT NULL DEFAULT 0,
+        failed_login_count  TINYINT UNSIGNED    NOT NULL DEFAULT 0,
+        locked_until        DATETIME                     NULL
+          COMMENT 'Account locked until this timestamp after repeated failures',
+
+        reset_token         VARCHAR(255)                 NULL,
+        reset_token_expiry  DATETIME                     NULL,
+
+        refresh_token       TEXT                         NULL,
+        last_login_at       DATETIME                     NULL,
+        last_login_ip       VARCHAR(45)                  NULL
+          COMMENT 'Supports IPv4 and IPv6',
+
+        created_at          DATETIME            NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at          DATETIME            NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                                         ON UPDATE CURRENT_TIMESTAMP,
+        deleted_at          DATETIME                     NULL
+          COMMENT 'Soft-delete timestamp; NULL means record is active',
+
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_admins_email      (email),
+        UNIQUE KEY uq_admins_username   (username),
+        UNIQUE KEY uq_admins_ms_id      (microsoft_id),
+
+        INDEX idx_admins_role           (role),
+        INDEX idx_admins_status         (status),
+        INDEX idx_admins_deleted_at     (deleted_at)
+
+      ) ENGINE=InnoDB
+        DEFAULT CHARSET=utf8mb4
+        COLLATE=utf8mb4_unicode_ci
+        COMMENT='Talk2Hire platform administrators';
     `,
   },
 ];
@@ -36,7 +79,8 @@ async function inspectTable(connection, tableName) {
   const [cols] = await connection.query(`
     SELECT ORDINAL_POSITION AS \`#\`, COLUMN_NAME AS \`Column\`,
            COLUMN_TYPE AS \`Type\`, IS_NULLABLE AS \`Nullable\`,
-           COLUMN_DEFAULT AS \`Default\`, COLUMN_KEY AS \`Key\`
+           COLUMN_DEFAULT AS \`Default\`, COLUMN_KEY AS \`Key\`,
+           COLUMN_COMMENT AS \`Comment\`
     FROM information_schema.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '${tableName}'
     ORDER BY ORDINAL_POSITION;
@@ -46,7 +90,7 @@ async function inspectTable(connection, tableName) {
   return true;
 }
 
-const inspect = async () => {
+const migrate = async () => {
   let connection;
   try {
     connection = await pool.getConnection();
@@ -64,22 +108,7 @@ const inspect = async () => {
     console.log();
 
     console.log("🔍 Verifying columns…\n");
-    await inspectTable(connection, "company_details");
-    await inspectTable(connection, "users");
-
-    const [msColCheck] = await connection.query(`
-      SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, ORDINAL_POSITION
-      FROM information_schema.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE()
-        AND COLUMN_NAME IN ('microsoft_id', 'password', 'hashPassword')
-        AND TABLE_NAME IN ('company_details', 'users')
-      ORDER BY TABLE_NAME, COLUMN_NAME;
-    `);
-
-    if (msColCheck.length > 0) {
-      console.log("\n✅ Verified columns:\n");
-      console.table(msColCheck);
-    }
+    await inspectTable(connection, "admins");
   } catch (err) {
     console.error("❌ Script failed:", err.message);
   } finally {
@@ -88,4 +117,4 @@ const inspect = async () => {
   }
 };
 
-inspect();
+migrate();

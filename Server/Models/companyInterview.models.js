@@ -1,5 +1,5 @@
-const { pool } = require("../../Config/database.config.js");
-const { APIERR } = require("../../Utils/index.utils.js");
+const { pool } = require("../Config/database.config.js");
+const { APIERR } = require("../Utils/index.utils.js");
 
 const CompanyInterview = {
   async findAll({ company_id, status, job_id, search } = {}) {

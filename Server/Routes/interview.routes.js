@@ -7,9 +7,7 @@ const {
   hireCandidate,
   rejectCandidate,
 } = require("../Controllers/interview.controllers.js");
-const {
-  companyAuthMiddleware,
-} = require("../../Middlewares/auth.middlewares.js");
+const { companyAuthMiddleware } = require("../Middlewares/auth.middlewares.js");
 
 router.use(companyAuthMiddleware);
 

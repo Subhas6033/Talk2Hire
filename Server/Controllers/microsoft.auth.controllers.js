@@ -1,13 +1,11 @@
-const { passport } = require("../../Service/passport.service.js");
+const { passport } = require("../Service/passport.service.js");
 const {
   APIRES,
   sendMail,
   buildCompanyWelcomeEmail,
-} = require("../../Utils/index.utils.js");
-const { updateRefreshToken } = require("../models/admin.model.js");
-const {
-  generateRefreshAndAccessTokens,
-} = require("../../Controllers/auth.controllers.js");
+} = require("../Utils/index.utils.js");
+const { updateRefreshToken } = require("../Models/admin.model.js");
+const { generateRefreshAndAccessTokens } = require("./auth.controllers.js");
 
 const FREE_EMAIL_DOMAINS = [
   "gmail.com",

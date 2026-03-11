@@ -1,30 +1,23 @@
-const { Router } = require("express");
+const express = require("express");
 const {
-  registerCompany,
-  loginCompany,
-  logoutCompany,
-  getCurrentCompany,
-  updateCompanyProfile,
-  updateCompanyLogoController,
-  uploadLogoMiddleware,
+  register,
+  login,
+  refreshToken,
+  logout,
+  getProfile,
 } = require("../Controllers/auth.admin.controllers.js");
 const {
-  companyAuthMiddleware,
+  adminAuthMiddleware,
+  requireRole,
 } = require("../../Middlewares/auth.middlewares.js");
 
-const router = Router();
+const router = express.Router();
 
-router
-  .post("/register", registerCompany)
-  .post("/login", loginCompany)
-  .post("/logout", logoutCompany)
-  .get("/me", companyAuthMiddleware, getCurrentCompany)
-  .patch("/update-details", companyAuthMiddleware, updateCompanyProfile)
-  .patch(
-    "/update-logo",
-    companyAuthMiddleware,
-    uploadLogoMiddleware,
-    updateCompanyLogoController,
-  );
+router.post("/register", register);
+router.post("/login", login);
+router.post("/refresh-token", refreshToken);
+
+router.post("/logout", adminAuthMiddleware, logout);
+router.get("/profile", adminAuthMiddleware, getProfile);
 
 module.exports = router;

@@ -79,3 +79,21 @@ export const RoleBasedRoute = ({ children, allowedRole }) => {
 
   return children;
 };
+
+export const AdminRoute = ({ children }) => {
+  const accessToken = useSelector((state) => state.adminAuth.accessToken);
+  const admin = useSelector((state) => state.adminAuth.admin);
+
+  const adminRoles = ["super_admin", "admin", "moderator", "support"];
+
+  if (!accessToken) {
+    return <Navigate to="/admin/login" replace />;
+  }
+
+  // admin object loads after token — only reject if loaded AND role is invalid
+  if (admin?.role && !adminRoles.includes(admin.role)) {
+    return <Navigate to="/admin/login" replace />;
+  }
+
+  return children;
+};

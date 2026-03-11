@@ -7,9 +7,7 @@ const {
   getRecentJobs,
   getRecentInterviews,
 } = require("../Controllers/companyDashboard.controllers.js");
-const {
-  companyAuthMiddleware,
-} = require("../../Middlewares/auth.middlewares.js");
+const { companyAuthMiddleware } = require("../Middlewares/auth.middlewares.js");
 
 router.use(companyAuthMiddleware);
 

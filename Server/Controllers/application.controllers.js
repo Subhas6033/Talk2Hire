@@ -1,4 +1,4 @@
-const { pool } = require("../../Config/database.config.js");
+const { pool } = require("../Config/database.config.js");
 
 const getMyApplications = async (req, res) => {
   try {

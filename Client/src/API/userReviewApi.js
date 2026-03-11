@@ -4,11 +4,11 @@ const apiBaseUrl = import.meta.env.VITE_BACKEND_URL;
 
 export const submitUserReview = createAsyncThunk(
   "review/submitUserReview",
-  async ({ fullName, email, subject, message }, { rejectWithValue }) => {
+  async ({ full_name, email, subject, message }, { rejectWithValue }) => {
     try {
       const { data } = await axios.post(
         `${apiBaseUrl}/api/v1/review/send-user-review`,
-        { fullName, email, subject, message },
+        { full_name, email, subject, message },
         {
           withCredentials: true,
           headers: { "Content-Type": "application/json" },

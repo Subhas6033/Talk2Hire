@@ -5,7 +5,7 @@ const {
   getCompanyByEmail,
   createCompany,
   getCompanyById,
-} = require("../Admin/models/admin.model.js");
+} = require("../Models/admin.model.js");
 const User = require("../Models/user.models.js");
 const { pool } = require("../Config/database.config.js");
 

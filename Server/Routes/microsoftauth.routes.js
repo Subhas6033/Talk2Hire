@@ -1,7 +1,5 @@
 const { Router } = require("express");
-const {
-  companyAuthMiddleware,
-} = require("../../Middlewares/auth.middlewares.js");
+const { companyAuthMiddleware } = require("../Middlewares/auth.middlewares.js");
 const {
   microsoftLogin,
   microsoftCallback,
@@ -9,7 +7,7 @@ const {
 const {
   userMicrosoftLogin,
   userMicrosoftCallback,
-} = require("../../Controllers/microsoftAuth.controllers.js");
+} = require("../Controllers/microsoftAuth.controllers.js");
 
 const router = Router();
 

@@ -1,7 +1,7 @@
-const Job = require("../models/job.models.js");
-const { APIERR, APIRES, asyncHandler } = require("../../Utils/index.utils.js");
-const { pool } = require("../../Config/database.config.js");
-const { sendJobAlertToAll } = require("../../News/newsLetter.controllers.js");
+const Job = require("../Models/job.models.js");
+const { APIERR, APIRES, asyncHandler } = require("../Utils/index.utils.js");
+const { pool } = require("../Config/database.config.js");
+const { sendJobAlertToAll } = require("../News/newsLetter.controllers.js");
 
 const createJob = asyncHandler(async (req, res) => {
   const {

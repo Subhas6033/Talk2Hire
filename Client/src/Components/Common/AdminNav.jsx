@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useSelector } from "react-redux";
+import useAdminAuth from "../../Hooks/useAdminAuthHook";
 
 const Icon = {
   Dashboard: () => (
@@ -157,7 +159,22 @@ const NAV = [
   { id: "settings", label: "Settings", icon: <Icon.Settings /> },
 ];
 
-function Avatar({ initials }) {
+const ROLE_COLORS = {
+  super_admin: "bg-purple-50 text-purple-600 border-purple-100",
+  admin: "bg-indigo-50 text-indigo-600 border-indigo-100",
+  moderator: "bg-amber-50 text-amber-600 border-amber-100",
+  support: "bg-emerald-50 text-emerald-600 border-emerald-100",
+};
+
+function Avatar({ name }) {
+  const initials =
+    name
+      ?.split(" ")
+      .map((n) => n[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2) || "AD";
+
   return (
     <span className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs shrink-0">
       {initials}
@@ -167,9 +184,17 @@ function Avatar({ initials }) {
 
 const AdminNav = ({ active, setActive }) => {
   const navigate = useNavigate();
+  const { logout } = useAdminAuth();
+  const admin = useSelector((state) => state.adminAuth.admin);
+
   const [mobileOpen, setMobileOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+
+  const displayName = admin?.full_name || "Admin";
+  const displayEmail = admin?.email || "";
+  const displayRole = admin?.role || "admin";
+  const roleStyle = ROLE_COLORS[displayRole] || ROLE_COLORS.admin;
 
   const notifs = [
     {
@@ -194,17 +219,26 @@ const AdminNav = ({ active, setActive }) => {
     setNotifOpen(false);
     setProfileOpen(false);
   };
+
   const handleNav = (id) => {
     setActive(id);
     closeAll();
     setMobileOpen(false);
+    navigate(`/admin/${id}`);
+  };
+
+  const handleLogout = async () => {
+    closeAll();
+    await logout();
   };
 
   return (
     <header className="bg-white border-b border-gray-100 shrink-0 relative z-40">
       <div className="flex items-center justify-between px-4 sm:px-6 h-16 gap-4">
-        {/* Logo */}
-        <div className="flex items-center gap-2.5 shrink-0 hover:cursor-pointer">
+        <div
+          className="flex items-center gap-2.5 shrink-0 hover:cursor-pointer"
+          onClick={() => navigate("/admin/dashboard")}
+        >
           <div
             className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-black text-sm"
             style={{ background: "linear-gradient(135deg, #4F6EF7, #7C3AED)" }}
@@ -214,12 +248,13 @@ const AdminNav = ({ active, setActive }) => {
           <span className="font-black text-gray-900 text-base tracking-tight hidden sm:block">
             Talk2Hire
           </span>
-          <span className="text-xs font-bold bg-indigo-50 text-indigo-600 border border-indigo-100 px-2 py-0.5 rounded-full">
-            Admin
+          <span
+            className={`text-xs font-bold border px-2 py-0.5 rounded-full capitalize ${roleStyle}`}
+          >
+            {displayRole.replace("_", " ")}
           </span>
         </div>
 
-        {/* Desktop nav links */}
         <nav className="hidden lg:flex items-center gap-0.5 flex-1 justify-center">
           {NAV.map(({ id, label, icon }) => {
             const isActive = active === id;
@@ -247,9 +282,7 @@ const AdminNav = ({ active, setActive }) => {
           })}
         </nav>
 
-        {/* Right side actions */}
         <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-          {/* Search — xl+ only */}
           <div className="hidden xl:flex relative">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
               <Icon.Search />
@@ -261,7 +294,6 @@ const AdminNav = ({ active, setActive }) => {
             />
           </div>
 
-          {/* Notifications */}
           <div className="relative">
             <button
               onClick={() => {
@@ -313,7 +345,6 @@ const AdminNav = ({ active, setActive }) => {
 
           <div className="w-px h-6 bg-gray-200 hidden sm:block" />
 
-          {/* Profile */}
           <div className="relative">
             <button
               onClick={() => {
@@ -322,13 +353,13 @@ const AdminNav = ({ active, setActive }) => {
               }}
               className="flex items-center gap-2 p-1 pr-2 rounded-xl hover:bg-gray-50 hover:cursor-pointer transition-all"
             >
-              <Avatar initials="AD" />
+              <Avatar name={displayName} />
               <div className="hidden md:block text-left">
                 <p className="text-sm font-bold text-gray-900 leading-tight">
-                  Admin
+                  {displayName}
                 </p>
-                <p className="text-xs text-gray-400 leading-tight">
-                  admin@talk2hire.com
+                <p className="text-xs text-gray-400 leading-tight truncate max-w-35">
+                  {displayEmail}
                 </p>
               </div>
               <span
@@ -341,10 +372,17 @@ const AdminNav = ({ active, setActive }) => {
             {profileOpen && (
               <div className="absolute right-0 top-11 w-52 bg-white rounded-2xl border border-gray-100 shadow-xl overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100">
-                  <p className="text-sm font-bold text-gray-900">Admin User</p>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    admin@talk2hire.com
+                  <p className="text-sm font-bold text-gray-900">
+                    {displayName}
                   </p>
+                  <p className="text-xs text-gray-400 mt-0.5 truncate">
+                    {displayEmail}
+                  </p>
+                  <span
+                    className={`inline-block text-xs font-bold border px-2 py-0.5 rounded-full mt-1.5 capitalize ${roleStyle}`}
+                  >
+                    {displayRole.replace("_", " ")}
+                  </span>
                 </div>
                 <div className="py-1.5">
                   {[
@@ -363,7 +401,7 @@ const AdminNav = ({ active, setActive }) => {
                 </div>
                 <div className="py-1.5 border-t border-gray-100">
                   <button
-                    onClick={() => navigate("/")}
+                    onClick={handleLogout}
                     className="w-full flex items-center gap-2.5 px-4 py-2 text-sm text-red-500 hover:bg-red-50 transition-colors"
                   >
                     <Icon.LogOut />
@@ -374,7 +412,6 @@ const AdminNav = ({ active, setActive }) => {
             )}
           </div>
 
-          {/* Mobile hamburger */}
           <button
             onClick={() => setMobileOpen((o) => !o)}
             className="lg:hidden p-2 text-gray-500 hover:bg-gray-100 rounded-xl transition-all"
@@ -384,7 +421,6 @@ const AdminNav = ({ active, setActive }) => {
         </div>
       </div>
 
-      {/* Mobile drawer */}
       {mobileOpen && (
         <div className="lg:hidden border-t border-gray-100 bg-white px-4 py-3 space-y-1">
           <div className="relative mb-3">
@@ -397,7 +433,6 @@ const AdminNav = ({ active, setActive }) => {
               className="pl-9 pr-4 py-2.5 text-sm bg-gray-50 border border-gray-200 rounded-xl w-full focus:outline-none focus:ring-2 focus:ring-indigo-200"
             />
           </div>
-
           {NAV.map(({ id, label, icon }) => {
             const isActive = active === id;
             return (

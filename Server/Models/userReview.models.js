@@ -1,27 +1,21 @@
 const { pool } = require("../Config/database.config.js");
 
 class Review {
-  /* ─────────────────────────────────────────────────────────────────────────
-     Save a new review
-     ───────────────────────────────────────────────────────────────────────── */
-  static async saveReview({ fullName, email, subject, message }) {
+  static async saveReview({ full_name, email, subject, message }) {
     const [result] = await pool.query(
       `INSERT INTO user_reviews (full_name, email, subject, message)
        VALUES (?, ?, ?, ?)`,
-      [fullName.trim(), email.trim(), subject.trim(), message.trim()],
+      [full_name.trim(), email.trim(), subject.trim(), message.trim()],
     );
 
     return await Review.findById(result.insertId);
   }
 
-  /* ─────────────────────────────────────────────────────────────────────────
-     Find a single review by ID
-     ───────────────────────────────────────────────────────────────────────── */
   static async findById(id) {
     const [[review]] = await pool.query(
       `SELECT
          id,
-         full_name   AS fullName,
+         full_name,
          email,
          subject,
          message,
@@ -36,14 +30,11 @@ class Review {
     return review || null;
   }
 
-  /* ─────────────────────────────────────────────────────────────────────────
-     Find all reviews (newest first, paginated)
-     ───────────────────────────────────────────────────────────────────────── */
   static async findAll({ limit = 20, offset = 0 } = {}) {
     const [reviews] = await pool.query(
       `SELECT
          id,
-         full_name   AS fullName,
+         full_name,
          email,
          subject,
          message,
@@ -62,14 +53,11 @@ class Review {
     return { reviews, total };
   }
 
-  /* ─────────────────────────────────────────────────────────────────────────
-     Find reviews by email
-     ───────────────────────────────────────────────────────────────────────── */
   static async findByEmail(email) {
     const [reviews] = await pool.query(
       `SELECT
          id,
-         full_name   AS fullName,
+         full_name,
          email,
          subject,
          message,
@@ -84,9 +72,6 @@ class Review {
     return reviews;
   }
 
-  /* ─────────────────────────────────────────────────────────────────────────
-     Delete a review by ID
-     ───────────────────────────────────────────────────────────────────────── */
   static async deleteById(id) {
     const [result] = await pool.query(`DELETE FROM user_reviews WHERE id = ?`, [
       id,

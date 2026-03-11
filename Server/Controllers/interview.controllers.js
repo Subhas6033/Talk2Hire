@@ -1,5 +1,5 @@
-const { CompanyInterview } = require("../models/companyInterview.models.js");
-const { asyncHandler, APIERR, APIRES } = require("../../Utils/index.utils.js");
+const { CompanyInterview } = require("../Models/companyInterview.models.js");
+const { asyncHandler, APIERR, APIRES } = require("../Utils/index.utils.js");
 
 const getAllInterviews = asyncHandler(async (req, res) => {
   const { status, job_id, search } = req.query;

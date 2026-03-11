@@ -10,16 +10,18 @@ const resultRouter = require("./Routes/result.routes.js");
 const videoUploadRoutes = require("./Routes/videoUpload.routes.js");
 const VideoProcessingJobs = require("./Jobs/videoProcessing.jobs.js");
 const hiringRoutes = require("./Routes/hiring.routes.js");
-const companyAuthRoutes = require("./Admin/routes/auth.admin.routes.js");
-const jobRoutes = require("./Admin/routes/job.routes.js");
-const companyDashboardRoutes = require("./Admin/routes/dashboard.routes.js");
-const companyInterviewRoutes = require("./Admin/routes/interview.routes.js");
+const companyAuthRoutes = require("./Routes/auth.admin.routes.js");
+const jobRoutes = require("./Routes/job.routes.js");
+const companyDashboardRoutes = require("./Routes/dashboard.routes.js");
+const companyInterviewRoutes = require("./Routes/interview.routes.js");
 const interviewVideoUpload = require("./Routes/interviewRecording.routes.js");
 const violationsRoutes = require("./Routes/violation.routes.js");
-const applicationRoutes = require("./Admin/routes/application.routes.js");
+const applicationRoutes = require("./Routes/application.routes.js");
 const userReviewRoutes = require("./Routes/review.routes.js");
 const newsLetterRoutes = require("./Routes/newLetter.routes.js");
-const microsoftAuthRoutes = require("./Admin/routes/microsoftauth.routes.js");
+const microsoftAuthRoutes = require("./Routes/microsoftauth.routes.js");
+const adminAuthRoutes = require("./Admin/routes/auth.admin.routes.js");
+
 const app = express();
 
 const allowedOrigins = [process.env.CORS_ORIGIN];
@@ -140,6 +142,9 @@ app.use("/api/v1/dashboard", companyDashboardRoutes);
 app.use("/api/v1/company/interview", companyInterviewRoutes);
 app.use("/api/v1/company/violation", violationsRoutes);
 app.use("/api/auth/v1", microsoftAuthRoutes);
+
+// Admin Routes
+app.use("/api/v1/auth/admin", adminAuthRoutes);
 
 // Health check endpoint
 app.get("/health", (req, res) => {

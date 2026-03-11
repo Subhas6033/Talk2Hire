@@ -2,12 +2,13 @@ import React from "react";
 import { Nav, Footer, CompanyNavbar, AdminNav } from "../Components/index.js";
 import { motion } from "motion/react";
 import { useLocation } from "react-router-dom";
+import { useSelector } from "react-redux";
 import { useAuth } from "../Hooks/useAuthHook.js";
 import { useCompany } from "../Hooks/useCompanyAuthHook.js";
 import { useMicrosoftAuth } from "../Hooks/useMicrosoftCompanyAuthHook.js";
 import { useMicrosoftUserAuth } from "../Hooks/useMicrosoftAuth.js";
 
-const FULLSCREEN_ROUTES = ["/interview", "/interview/live"];
+const FULLSCREEN_ROUTES = ["/interview", "/interview/live", "/admin/login"];
 
 const ROLE_NAV = {
   admin: AdminNav,
@@ -18,6 +19,15 @@ const ROLE_NAV = {
 
 const Layout = ({ children, isNotFound = false }) => {
   const { pathname } = useLocation();
+
+  const adminAccessToken = useSelector((state) => state.adminAuth.accessToken);
+
+  const adminActiveSection = pathname.split("/")[2] || "dashboard";
+  const [adminActive, setAdminActive] = React.useState(adminActiveSection);
+
+  React.useEffect(() => {
+    setAdminActive(pathname.split("/")[2] || "dashboard");
+  }, [pathname]);
 
   const {
     isAuthenticated: isUserAuth,
@@ -31,18 +41,19 @@ const Layout = ({ children, isNotFound = false }) => {
   const { isAuthenticated: isMsUserAuth, hydrated: msUserHydrated } =
     useMicrosoftUserAuth();
 
-  const isFullscreen = FULLSCREEN_ROUTES.includes(pathname) || isNotFound;
+  const isFullscreen =
+    FULLSCREEN_ROUTES.includes(pathname) ||
+    (isNotFound && !pathname.startsWith("/admin"));
   const hydrated =
     userHydrated && companyHydrated && msCompanyHydrated && msUserHydrated;
 
-  const role =
-    userRole === "admin"
-      ? "admin"
-      : isCompanyAuth || isMsCompanyAuth
-        ? "company"
-        : isUserAuth || isMsUserAuth
-          ? userRole
-          : "guest";
+  const role = adminAccessToken
+    ? "admin"
+    : isCompanyAuth || isMsCompanyAuth
+      ? "company"
+      : isUserAuth || isMsUserAuth
+        ? userRole
+        : "guest";
 
   const RoleNav = ROLE_NAV[role] ?? Nav;
   const showFooter = !isFullscreen && role !== "company" && role !== "admin";
@@ -52,7 +63,9 @@ const Layout = ({ children, isNotFound = false }) => {
       className="min-h-screen bg-white text-gray-900 flex flex-col"
       style={{ isolation: "isolate" }}
     >
-      {!isFullscreen && hydrated && <RoleNav />}
+      {!isFullscreen && hydrated && (
+        <RoleNav active={adminActive} setActive={setAdminActive} />
+      )}
 
       <motion.main
         className="flex-1 w-full"

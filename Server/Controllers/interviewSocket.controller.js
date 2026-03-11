@@ -9,7 +9,7 @@ const {
 const {
   runAnswerAnalysisDuringWait,
 } = require("./interviewRecording.controllers.js");
-const Job = require("../Admin/models/job.models.js");
+const Job = require("../Models/job.models.js");
 const { pool } = require("../Config/database.config.js");
 
 // Constants
@@ -17,10 +17,6 @@ const FACE_THROTTLE = 1000;
 const FACE_WINDOW = 3000;
 const MAX_FACE_WARN = 5;
 const NO_TRANSCRIPT_TIMEOUT_MS = 10_000;
-// FIX: reduced from 1000 → 400 ms.
-// The STT pre-warm (8 silence chunks × 10ms + network RTT ≈ 180ms) finishes
-// well within 400ms. The old 1-second gate added ~600ms of unnecessary silence
-// to the start of every listening window.
 const STT_GATE_DELAY_MS = 400;
 const PLAYBACK_DONE_TIMEOUT_MS = 10_000;
 const MAX_RETRY_ATTEMPTS = 3;

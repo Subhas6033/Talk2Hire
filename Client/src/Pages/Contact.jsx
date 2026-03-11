@@ -463,7 +463,7 @@ const ContactPage = () => {
 
   const onSubmit = (data) => {
     submitReview({
-      fullName: data.name,
+      full_name: data.name,
       email: data.email,
       subject: data.subject,
       message: data.message,

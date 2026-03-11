@@ -6,7 +6,11 @@ import { AnimatePresence, motion } from "motion/react";
 import { pageTransition } from "./Animations/CommonAnimation";
 import { ScrollToTop, OnboardingFlow } from "./Components/index";
 import { useSelector } from "react-redux";
-import { RoleBasedRoute, PublicRoute } from "./Security/ProtectedRoutes.jsx";
+import {
+  RoleBasedRoute,
+  PublicRoute,
+  AdminRoute,
+} from "./Security/ProtectedRoutes.jsx";
 import {
   Home,
   About,
@@ -43,6 +47,7 @@ import {
   CompanyMicrosoftCallback,
   CompanyHome,
   AdminDashboard,
+  AdminLogin,
 } from "./Pages/index.pages.js";
 import { InterviewSetup } from "./Components/index.js";
 import { useStreams } from "./Hooks/streamContext";
@@ -112,7 +117,6 @@ const App = () => {
                 <Route path="/careers" element={<Carrers />} />
                 <Route path="/salaries" element={<SalaryPage />} />
 
-                {/* Microsoft OAuth Callbacks — must be public, no auth wrapper */}
                 <Route
                   path="/user/microsoft/callback"
                   element={<UserMicrosoftCallback />}
@@ -122,7 +126,6 @@ const App = () => {
                   element={<CompanyMicrosoftCallback />}
                 />
 
-                {/* Legal pages */}
                 <Route path="/privacy" element={<Privacy />} />
                 <Route path="/terms" element={<Terms />} />
                 <Route path="/cookies" element={<Cookies />} />
@@ -285,13 +288,29 @@ const App = () => {
                     </RoleBasedRoute>
                   }
                 />
-                {/* Mobile Camera */}
+
                 <Route path="/mobile-camera" element={<MobileCameraPage />} />
 
-                {/* Admin Routes */}
-                <Route path="/admin" element={<AdminDashboard />} />
+                {/* ADMIN ROUTES */}
+                <Route path="/admin/login" element={<AdminLogin />} />
+                <Route
+                  path="/admin"
+                  element={
+                    <AdminRoute>
+                      <AdminDashboard />
+                    </AdminRoute>
+                  }
+                />
+                <Route
+                  path="/admin/dashboard"
+                  element={
+                    <AdminRoute>
+                      <AdminDashboard />
+                    </AdminRoute>
+                  }
+                />
 
-                {/* NOT FOUND PAGE */}
+                {/* NOT FOUND */}
                 <Route
                   path="*"
                   element={<NotFound404Wrapper setIsNotFound={setIsNotFound} />}

@@ -17,7 +17,7 @@ const {
 const {
   companyAuthMiddleware,
   authMiddleware,
-} = require("../../Middlewares/auth.middlewares.js");
+} = require("../Middlewares/auth.middlewares.js");
 
 router.get("/search", searchJobs);
 router.get("/public-jobs", getPublicJobs);

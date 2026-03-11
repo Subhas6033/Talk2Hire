@@ -1,5 +1,5 @@
-const Dashboard = require("../models/dashboard.models.js");
-const { asyncHandler, APIERR, APIRES } = require("../../Utils/index.utils.js");
+const Dashboard = require("../Models/dashboard.models.js");
+const { asyncHandler, APIERR, APIRES } = require("../Utils/index.utils.js");
 
 const getDashboard = asyncHandler(async (req, res) => {
   const companyId = req.company.id;

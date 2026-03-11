@@ -1,4 +1,4 @@
-const { pool } = require("../../Config/database.config.js");
+const { pool } = require("../Config/database.config.js");
 
 // ─── Job Model ────────────────────────────────────────────────
 const Job = {

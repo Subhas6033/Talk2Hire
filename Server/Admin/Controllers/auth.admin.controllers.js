@@ -1,365 +1,280 @@
-const { asyncHandler, APIERR, APIRES } = require("../../Utils/index.utils.js");
-const {
-  createCompany,
-  getCompanyByEmail,
-  getCompanyById,
-  updateRefreshToken,
-  updateCompany,
-  updateCompanyLogoUrl,
-} = require("../models/admin.model.js");
-const {
-  generateRefreshAndAccessTokens,
-} = require("../../Controllers/auth.controllers.js");
 const bcrypt = require("bcrypt");
-const multer = require("multer");
-const {
-  uploadFileMicro,
-} = require("../../Controllers/uploadFile.controllers.js");
-const { deleteFileFromFTP } = require("../../Upload/uploadOnFTP");
+const jwt = require("jsonwebtoken");
+const AdminModel = require("../models/admin.models.js");
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-  fileFilter: (req, file, cb) => {
-    const allowed = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-    if (allowed.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(
-        new APIERR(400, "Only JPEG, PNG, WEBP, and GIF images are allowed"),
-        false,
-      );
-    }
-  },
-  limits: { fileSize: 5 * 1024 * 1024 },
-});
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCK_DURATION_MINS = 30;
+const SALT_ROUNDS = 12;
 
-const uploadLogoMiddleware = upload.single("logo");
-
-const cookieOptions = {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production" ? true : false,
-  sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-  path: "/",
-};
-
-const registerCompany = asyncHandler(async (req, res) => {
-  const {
-    companyName,
-    industry,
-    companySize,
-    companyMail,
-    companyMobile,
-    companySite,
-    companyAddress,
-    companyLocation,
-    companyRegisterNumber,
-    password,
-  } = req.body;
-
-  if (
-    [
-      companyName,
-      industry,
-      companySize,
-      companyMail,
-      companyMobile,
-      companySite,
-      companyAddress,
-      companyLocation,
-      companyRegisterNumber,
-      password,
-    ].some((field) => !field || field.trim() === "")
-  ) {
-    throw new APIERR(400, "All fields are required");
-  }
-
-  const FREE_EMAIL_DOMAINS = [
-    "gmail.com",
-    "yahoo.com",
-    "hotmail.com",
-    "outlook.com",
-    "aol.com",
-    "icloud.com",
-    "protonmail.com",
-    "mail.com",
-    "yandex.com",
-    "gmx.com",
-    "zoho.com",
-    "live.com",
-  ];
-
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-  if (!emailRegex.test(companyMail)) {
-    throw new APIERR(400, "Invalid email format");
-  }
-
-  const domain = companyMail.split("@")[1].toLowerCase();
-
-  if (FREE_EMAIL_DOMAINS.includes(domain)) {
-    throw new APIERR(400, "Please use your company email address");
-  }
-
-  if (!/^\d{10}$/.test(companyMobile)) {
-    throw new APIERR(400, "Invalid mobile number format");
-  }
-
-  if (
-    !/^(https?:\/\/)?([\w-]+\.)+[\w-]+(\/[\w- ./?%&=]*)?$/.test(companySite)
-  ) {
-    throw new APIERR(400, "Invalid website URL format");
-  }
-
-  if (
-    password.length < 8 ||
-    !/[A-Z]/.test(password) ||
-    !/[a-z]/.test(password) ||
-    !/\d/.test(password) ||
-    !/[@$!%*?&]/.test(password)
-  ) {
-    throw new APIERR(
-      400,
-      "Password must be at least 8 characters long and include uppercase, lowercase, digit, and special characters",
-    );
-  }
-
-  const existingCompany = await getCompanyByEmail(companyMail);
-  if (existingCompany) {
-    throw new APIERR(409, "Company with this email already exists");
-  }
-
-  const hashedPassword = await bcrypt.hash(password, 10);
-
-  const result = await createCompany({
-    companyName,
-    industry,
-    companySize,
-    companyMail,
-    companyMobile,
-    companySite,
-    companyAddress,
-    companyLocation,
-    companyRegisterNumber,
-    password: hashedPassword,
-    role: "company",
+const generateTokens = (payload) => {
+  const accessToken = jwt.sign(payload, process.env.ACCESS_TOKEN_SECRET, {
+    expiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN || "15m",
   });
 
-  const newCompany = { id: result.insertId, companyMail, role: "company" };
-  const { accessToken, refreshToken } =
-    await generateRefreshAndAccessTokens(newCompany);
-  await updateRefreshToken(result.insertId, refreshToken);
-
-  return res
-    .status(201)
-    .cookie("accessToken", accessToken, {
-      ...cookieOptions,
-      maxAge: 24 * 60 * 60 * 1000,
-    })
-    .cookie("refreshToken", refreshToken, {
-      ...cookieOptions,
-      maxAge: 15 * 24 * 60 * 60 * 1000,
-    })
-    .json(
-      new APIRES(
-        201,
-        { id: result.insertId, role: "company" },
-        "Company created successfully",
-      ),
-    );
-});
-
-const loginCompany = asyncHandler(async (req, res) => {
-  const { companyMail, password } = req.body;
-
-  if (!companyMail || !password) {
-    throw new APIERR(400, "Please enter all the fields");
-  }
-
-  const isCompanyExist = await getCompanyByEmail(companyMail);
-  if (!isCompanyExist) {
-    throw new APIERR(404, "Sorry we can't find any company with this mail");
-  }
-
-  const isPasswordCorrect = await bcrypt.compare(
-    password,
-    isCompanyExist.password,
-  );
-  if (!isPasswordCorrect) {
-    throw new APIERR(401, "Incorrect password");
-  }
-
-  const { accessToken, refreshToken } = await generateRefreshAndAccessTokens({
-    id: isCompanyExist.id,
-    companyMail,
-    role: "company",
+  const refreshToken = jwt.sign(payload, process.env.REFRESH_TOKEN_SECRET, {
+    expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || "7d",
   });
 
-  await updateRefreshToken(isCompanyExist.id, refreshToken);
-
-  return res
-    .status(200)
-    .cookie("accessToken", accessToken, {
-      ...cookieOptions,
-      maxAge: 24 * 60 * 60 * 1000,
-    })
-    .cookie("refreshToken", refreshToken, {
-      ...cookieOptions,
-      maxAge: 15 * 24 * 60 * 60 * 1000,
-    })
-    .json(
-      new APIRES(
-        200,
-        {
-          id: isCompanyExist.id,
-          companyName: isCompanyExist.companyName,
-          companyMail: isCompanyExist.companyMail,
-          companyMobile: isCompanyExist.companyMobile,
-          companySite: isCompanyExist.companySite,
-          companyAddress: isCompanyExist.companyAddress,
-          companyLocation: isCompanyExist.companyLocation,
-          companyRegisterNumber: isCompanyExist.companyRegisterNumber,
-          companySize: isCompanyExist.companySize,
-          industry: isCompanyExist.industry,
-          logo: isCompanyExist.logo,
-          role: isCompanyExist.role,
-        },
-        "Successfully logged in as a company",
-      ),
-    );
-});
-
-const logoutCompany = asyncHandler(async (req, res) => {
-  if (req.company?.id) {
-    await updateRefreshToken(req.company.id, null);
-  }
-
-  const clearOptions = {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production" ? true : false,
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-    path: "/",
-  };
-
-  return res
-    .status(200)
-    .clearCookie("accessToken", clearOptions)
-    .clearCookie("refreshToken", clearOptions)
-    .json(new APIRES(200, {}, "Logged out successfully"));
-});
-
-const getCurrentCompany = asyncHandler(async (req, res) => {
-  const company = await getCompanyById(req.company.id);
-  if (!company) throw new APIERR(404, "Company not found");
-
-  const { password, refreshToken, ...safeCompany } = company;
-  return res
-    .status(200)
-    .json(new APIRES(200, safeCompany, "Company profile fetched successfully"));
-});
-
-const updateCompanyProfile = asyncHandler(async (req, res) => {
-  const companyId = req.company.id;
-  const {
-    companyName,
-    industry,
-    companySize,
-    companyMail,
-    companyMobile,
-    companySite,
-    companyAddress,
-    companyLocation,
-    companyRegisterNumber,
-  } = req.body;
-
-  const hasUpdate = [
-    companyName,
-    industry,
-    companySize,
-    companyMail,
-    companyMobile,
-    companySite,
-    companyAddress,
-    companyLocation,
-    companyRegisterNumber,
-  ].some((val) => val !== undefined && val !== null && val !== "");
-
-  if (!hasUpdate) throw new APIERR(400, "No valid fields provided for update");
-
-  const existing = await getCompanyById(companyId);
-  if (!existing) throw new APIERR(404, "Company not found");
-
-  if (companyMail && companyMail !== existing.companyMail) {
-    const emailTaken = await getCompanyByEmail(companyMail);
-    if (emailTaken && emailTaken.id !== companyId) {
-      throw new APIERR(409, "This email is already in use by another account");
-    }
-  }
-
-  const updatePayload = {
-    companyName: companyName ?? existing.companyName,
-    industry: industry ?? existing.industry,
-    companySize: companySize ?? existing.companySize,
-    companyMail: companyMail ?? existing.companyMail,
-    companyMobile: companyMobile ?? existing.companyMobile,
-    companySite: companySite ?? existing.companySite,
-    companyAddress: companyAddress ?? existing.companyAddress,
-    companyLocation: companyLocation ?? existing.companyLocation,
-    companyRegisterNumber:
-      companyRegisterNumber ?? existing.companyRegisterNumber,
-  };
-
-  const result = await updateCompany(companyId, updatePayload);
-  if (result.affectedRows === 0)
-    throw new APIERR(500, "Update failed — no rows were modified");
-
-  const updated = await getCompanyById(companyId);
-  const { password, refreshToken, ...safeUpdated } = updated;
-  return res
-    .status(200)
-    .json(new APIRES(200, safeUpdated, "Company profile updated successfully"));
-});
-
-const updateCompanyLogoController = asyncHandler(async (req, res) => {
-  if (!req.file) {
-    throw new APIERR(400, "No image file provided");
-  }
-
-  const companyId = req.company.id;
-
-  const existing = await getCompanyById(companyId);
-  if (!existing) throw new APIERR(404, "Company not found");
-  const ftpResult = await uploadFileMicro(
-    {
-      buffer: req.file.buffer,
-      originalname: req.file.originalname,
-      mimetype: req.file.mimetype,
-      size: req.file.size,
-    },
-    "/public/companyLogo",
-  );
-
-  const logoUrl = ftpResult.url;
-
-  // Persist the FTP URL in the database
-  await updateCompanyLogoUrl(companyId, logoUrl);
-
-  if (existing.logo) {
-    deleteFileFromFTP(existing.logo).catch((err) =>
-      console.warn("⚠️  Could not delete old logo from FTP:", err.message),
-    );
-  }
-
-  return res
-    .status(200)
-    .json(new APIRES(200, { logo: logoUrl }, "Logo updated successfully"));
-});
-
-module.exports = {
-  registerCompany,
-  loginCompany,
-  logoutCompany,
-  getCurrentCompany,
-  updateCompanyProfile,
-  updateCompanyLogoController,
-  uploadLogoMiddleware,
+  return { accessToken, refreshToken };
 };
+
+const getClientIp = (req) =>
+  req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
+  req.socket?.remoteAddress ||
+  null;
+
+const register = async (req, res) => {
+  try {
+    const { full_name, email, username, password, role } = req.body;
+
+    const missing = ["full_name", "email", "username", "password"].filter(
+      (f) => !req.body[f]?.toString().trim(),
+    );
+    if (missing.length) {
+      return res.status(400).json({
+        success: false,
+        message: `Missing required fields: ${missing.join(", ")}`,
+      });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid email format." });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 8 characters.",
+      });
+    }
+
+    const allowedRoles = ["super_admin", "admin", "moderator", "support"];
+    if (role && !allowedRoles.includes(role)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid role. Allowed: ${allowedRoles.join(", ")}`,
+      });
+    }
+
+    const [emailTaken, usernameTaken] = await Promise.all([
+      AdminModel.emailExists(email),
+      AdminModel.usernameExists(username),
+    ]);
+
+    if (emailTaken) {
+      return res
+        .status(409)
+        .json({ success: false, message: "Email is already registered." });
+    }
+    if (usernameTaken) {
+      return res
+        .status(409)
+        .json({ success: false, message: "Username is already taken." });
+    }
+
+    const hashPassword = await bcrypt.hash(password, SALT_ROUNDS);
+
+    const adminId = await AdminModel.create({
+      full_name: full_name.trim(),
+      email: email.toLowerCase().trim(),
+      username: username.trim(),
+      hashPassword,
+      role: role || "admin",
+    });
+
+    const newAdmin = await AdminModel.findById(adminId);
+
+    return res.status(201).json({
+      success: true,
+      message: "Admin registered successfully.",
+      data: { admin: AdminModel.sanitize(newAdmin) },
+    });
+  } catch (err) {
+    console.error("❌ [AdminController.register]:", err.message);
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal server error." });
+  }
+};
+
+const login = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Email and password are required." });
+    }
+
+    const admin = await AdminModel.findByEmail(email.toLowerCase().trim());
+
+    if (!admin) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid credentials." });
+    }
+
+    if (admin.status === "suspended") {
+      return res
+        .status(403)
+        .json({ success: false, message: "Account has been suspended." });
+    }
+
+    if (admin.status === "inactive") {
+      return res
+        .status(403)
+        .json({ success: false, message: "Account is inactive." });
+    }
+
+    if (admin.locked_until && new Date(admin.locked_until) > new Date()) {
+      const unlockAt = new Date(admin.locked_until).toISOString();
+      return res.status(423).json({
+        success: false,
+        message: `Account is locked until ${unlockAt}.`,
+      });
+    }
+
+    if (!admin.hashPassword) {
+      return res.status(401).json({
+        success: false,
+        message: "This account uses SSO login. Please sign in with Microsoft.",
+      });
+    }
+
+    const passwordMatch = await bcrypt.compare(password, admin.hashPassword);
+
+    if (!passwordMatch) {
+      await AdminModel.incrementFailedLogin(admin.id);
+
+      if (admin.failed_login_count + 1 >= MAX_FAILED_ATTEMPTS) {
+        await AdminModel.lockAccount(admin.id, LOCK_DURATION_MINS);
+        return res.status(423).json({
+          success: false,
+          message: `Too many failed attempts. Account locked for ${LOCK_DURATION_MINS} minutes.`,
+        });
+      }
+
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid credentials." });
+    }
+
+    const tokenPayload = { id: admin.id, email: admin.email, role: admin.role };
+    const { accessToken, refreshToken } = generateTokens(tokenPayload);
+
+    await Promise.all([
+      AdminModel.updateRefreshToken(admin.id, refreshToken),
+      AdminModel.updateLastLogin(admin.id, getClientIp(req)),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      message: "Login successful.",
+      accessToken,
+      refreshToken,
+      data: { admin: AdminModel.sanitize(admin) },
+    });
+  } catch (err) {
+    console.error("❌ [AdminController.login]:", err.message);
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal server error." });
+  }
+};
+
+const refreshToken = async (req, res) => {
+  try {
+    const { refreshToken: token } = req.body;
+
+    if (!token) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Refresh token is required." });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.REFRESH_TOKEN_SECRET);
+    } catch {
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid or expired refresh token." });
+    }
+
+    const admin = await AdminModel.findById(decoded.id);
+
+    if (!admin || admin.refresh_token !== token) {
+      return res.status(401).json({
+        success: false,
+        message: "Refresh token mismatch or revoked.",
+      });
+    }
+
+    if (admin.status !== "active") {
+      return res
+        .status(403)
+        .json({ success: false, message: "Account is no longer active." });
+    }
+
+    const tokenPayload = { id: admin.id, email: admin.email, role: admin.role };
+    const { accessToken, refreshToken: newRefreshToken } =
+      generateTokens(tokenPayload);
+
+    await AdminModel.updateRefreshToken(admin.id, newRefreshToken);
+
+    return res.status(200).json({
+      success: true,
+      message: "Token refreshed.",
+      accessToken,
+      refreshToken: newRefreshToken,
+    });
+  } catch (err) {
+    console.error("❌ [AdminController.refreshToken]:", err.message);
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal server error." });
+  }
+};
+
+const logout = async (req, res) => {
+  try {
+    await AdminModel.clearRefreshToken(req.admin.id);
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Logged out successfully." });
+  } catch (err) {
+    console.error("❌ [AdminController.logout]:", err.message);
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal server error." });
+  }
+};
+
+const getProfile = async (req, res) => {
+  try {
+    const admin = await AdminModel.findById(req.admin.id);
+
+    if (!admin) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Admin not found." });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: { admin: AdminModel.sanitize(admin) },
+    });
+  } catch (err) {
+    console.error("❌ [AdminController.getProfile]:", err.message);
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal server error." });
+  }
+};
+
+module.exports = { register, login, refreshToken, logout, getProfile };

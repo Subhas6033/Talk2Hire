@@ -49,6 +49,7 @@ const NAV_LINKS = {
     { label: "Terms of Service", to: "/terms" },
     { label: "Security", to: "/security" },
     { label: "Cookie Policy", to: "/cookies" },
+    { label: "Admin", to: "/admin/login" },
   ],
 };
 
