@@ -49,6 +49,10 @@ import {
   AdminDashboard,
   AdminLogin,
   BlogAdmin,
+  AdminUserManagement,
+  AdminCompanyManagement,
+  AdminJobManagement,
+  AdminProfile,
 } from "./Pages/index.pages.js";
 import { InterviewSetup } from "./Components/index.js";
 import { useStreams } from "./Hooks/streamContext";
@@ -312,10 +316,42 @@ const App = () => {
                   }
                 />
                 <Route
+                  path="/admin/users"
+                  element={
+                    <AdminRoute>
+                      <AdminUserManagement />
+                    </AdminRoute>
+                  }
+                />
+                <Route
+                  path="/admin/companies"
+                  element={
+                    <AdminRoute>
+                      <AdminCompanyManagement />
+                    </AdminRoute>
+                  }
+                />
+                <Route
+                  path="/admin/jobs"
+                  element={
+                    <AdminRoute>
+                      <AdminJobManagement />
+                    </AdminRoute>
+                  }
+                />
+                <Route
                   path="/admin/blog"
                   element={
                     <AdminRoute>
                       <BlogAdmin />
+                    </AdminRoute>
+                  }
+                />
+                <Route
+                  path="/admin/profile"
+                  element={
+                    <AdminRoute>
+                      <AdminProfile />
                     </AdminRoute>
                   }
                 />

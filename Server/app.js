@@ -22,6 +22,10 @@ const newsLetterRoutes = require("./Routes/newLetter.routes.js");
 const microsoftAuthRoutes = require("./Routes/microsoftauth.routes.js");
 const adminAuthRoutes = require("./Admin/routes/auth.admin.routes.js");
 const blogRoutes = require("./Blog/blog.routes.js");
+const statsRoutes = require("./Admin/routes/adminStats.routes.js");
+const adminUserManagementRoutes = require("./Admin/routes/adminUser.routes.js");
+const adminCompanyManagementRoutes = require("./Admin/routes/adminCompany.routes.js");
+const adminJobManagementRoutes = require("./Admin/routes/AdminJob.routes.js");
 
 const app = express();
 
@@ -152,6 +156,10 @@ app.use("/api/auth/v1", microsoftAuthRoutes);
 // Admin Routes
 app.use("/api/v1/auth/admin", adminAuthRoutes);
 app.use("/api/v1/admin/blog", blogRoutes);
+app.use("/api/v1/admin/stats", statsRoutes);
+app.use("/api/v1/admin/manage-user", adminUserManagementRoutes);
+app.use("/api/v1/admin/manage-company", adminCompanyManagementRoutes);
+app.use("/api/v1/admin/manage-jobs", adminJobManagementRoutes);
 
 // Health check endpoint
 app.get("/health", (req, res) => {
@@ -164,49 +172,6 @@ app.get("/health", (req, res) => {
 });
 
 VideoProcessingJobs.startScheduledJobs();
-/*
-// Background jobs for video processing
-const {
-  retryFailedUploads,
-  cleanupOldChunks,
-} = require("./Service/videoUpload.service.js");
-
-// Retry failed uploads every hour
-if (process.env.ENABLE_VIDEO_RETRY === "true") {
-  console.log(" Video retry service enabled (runs every hour)");
-
-  setInterval(
-    async () => {
-      try {
-        console.log("🔄 Running scheduled retry for failed video uploads...");
-        const result = await retryFailedUploads();
-        console.log(" Retry complete:", result);
-      } catch (error) {
-        console.error("❌ Scheduled retry failed:", error);
-      }
-    },
-    60 * 60 * 1000,
-  ); // Every hour
-}
-
-// Cleanup old chunks every day
-if (process.env.ENABLE_CHUNK_CLEANUP === "true") {
-  console.log(" Chunk cleanup service enabled (runs every 24 hours)");
-
-  setInterval(
-    async () => {
-      try {
-        console.log("🧹 Running scheduled cleanup for old video chunks...");
-        const result = await cleanupOldChunks(7); // Delete chunks older than 7 days
-        console.log(" Cleanup complete:", result);
-      } catch (error) {
-        console.error("❌ Scheduled cleanup failed:", error);
-      }
-    },
-    24 * 60 * 60 * 1000,
-  ); // Every 24 hours
-}
-*/
 
 // 404 Handler - Must be AFTER all routes but BEFORE error handler
 app.use((req, res) => {

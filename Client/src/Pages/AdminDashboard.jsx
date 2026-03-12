@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useAdminDashboard } from "../Hooks/useAdminDashboardHooks";
 
 const STYLES = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600;700&display=swap');
@@ -23,10 +24,6 @@ const STYLES = `
     from { opacity: 0; transform: translateY(8px); }
     to   { opacity: 1; transform: translateY(0); }
   }
-  @keyframes shimmer {
-    from { background-position: -200% center; }
-    to   { background-position: 200% center; }
-  }
   .anim-fade-up   { animation: fadeUp 0.55s cubic-bezier(0.16,1,0.3,1) both; }
   .anim-fade-in   { animation: fadeIn 0.4s ease both; }
 `;
@@ -35,6 +32,11 @@ function useCountUp(target, duration = 1400, delay = 0) {
   const [val, setVal] = useState(0);
   const ref = useRef(null);
   const started = useRef(false);
+
+  useEffect(() => {
+    started.current = false;
+    setVal(0);
+  }, [target]);
 
   useEffect(() => {
     const el = ref.current;
@@ -65,6 +67,7 @@ function useCountUp(target, duration = 1400, delay = 0) {
 }
 
 function SparkLine({ data, color = "#6366f1", height = 44 }) {
+  if (!data || data.length < 2) return null;
   const w = 160;
   const max = Math.max(...data),
     min = Math.min(...data);
@@ -157,126 +160,6 @@ function StatCard({
   );
 }
 
-const USERS = [
-  {
-    name: "Sarah Chen",
-    role: "Candidate",
-    plan: null,
-    status: "Active",
-    init: "SC",
-    time: "2h ago",
-  },
-  {
-    name: "Marcus Johnson",
-    role: "Candidate",
-    plan: null,
-    status: "Active",
-    init: "MJ",
-    time: "5h ago",
-  },
-  {
-    name: "Stripe Inc.",
-    role: "Company",
-    plan: "Enterprise",
-    status: "Active",
-    init: "ST",
-    time: "8h ago",
-  },
-  {
-    name: "Priya Nair",
-    role: "Candidate",
-    plan: null,
-    status: "Inactive",
-    init: "PN",
-    time: "1d ago",
-  },
-  {
-    name: "Alex Rivera",
-    role: "Candidate",
-    plan: null,
-    status: "Pending",
-    init: "AR",
-    time: "1d ago",
-  },
-  {
-    name: "Notion",
-    role: "Company",
-    plan: "Growth",
-    status: "Active",
-    init: "NO",
-    time: "2d ago",
-  },
-];
-
-const ACTIVITY = [
-  {
-    label: "New signup",
-    name: "Emma Wilson",
-    detail: "Candidate account created",
-    color: "bg-indigo-500",
-    time: "3m",
-  },
-  {
-    label: "Plan upgraded",
-    name: "Stripe Inc.",
-    detail: "Moved to Enterprise plan",
-    color: "bg-violet-500",
-    time: "18m",
-  },
-  {
-    label: "Post published",
-    name: "Admin",
-    detail: "Blog: AI in Modern Hiring",
-    color: "bg-cyan-500",
-    time: "1h",
-  },
-  {
-    label: "Interviews done",
-    name: "System",
-    detail: "48 sessions completed today",
-    color: "bg-emerald-500",
-    time: "2h",
-  },
-  {
-    label: "Account flagged",
-    name: "Priya Nair",
-    detail: "Unusual login activity detected",
-    color: "bg-amber-500",
-    time: "3h",
-  },
-  {
-    label: "Job posted",
-    name: "Atlassian",
-    detail: "4 new engineering roles live",
-    color: "bg-rose-500",
-    time: "5h",
-  },
-];
-
-const WEEK = [
-  { day: "M", val: 42 },
-  { day: "T", val: 67 },
-  { day: "W", val: 55 },
-  { day: "T", val: 89 },
-  { day: "F", val: 73 },
-  { day: "S", val: 31 },
-  { day: "S", val: 48 },
-];
-
-const PLANS = [
-  { name: "Enterprise", n: 42, pct: 28, color: "#6366f1" },
-  { name: "Growth", n: 76, pct: 51, color: "#8b5cf6" },
-  { name: "Starter", n: 30, pct: 21, color: "#e5e7eb" },
-];
-
-const COUNTRIES = [
-  { flag: "🇺🇸", name: "United States", pct: 44 },
-  { flag: "🇮🇳", name: "India", pct: 22 },
-  { flag: "🇬🇧", name: "United Kingdom", pct: 14 },
-  { flag: "🇩🇪", name: "Germany", pct: 9 },
-  { flag: "🇨🇦", name: "Canada", pct: 7 },
-];
-
 function StatusPill({ status }) {
   const map = {
     Active: "bg-emerald-50 text-emerald-700 border-emerald-100",
@@ -304,7 +187,7 @@ function InitAvatar({ init, size = 8 }) {
     ["bg-amber-100", "text-amber-700"],
     ["bg-rose-100", "text-rose-700"],
   ];
-  const [bg, txt] = palette[init.charCodeAt(0) % palette.length];
+  const [bg, txt] = palette[(init?.charCodeAt(0) ?? 0) % palette.length];
   return (
     <span
       className={`w-${size} h-${size} rounded-full ${bg} ${txt} flex items-center justify-center text-xs font-bold shrink-0`}
@@ -343,22 +226,60 @@ function SectionCard({
   );
 }
 
+function SkeletonCard() {
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 p-5 flex flex-col gap-3">
+      <div className="h-3 w-24 bg-gray-100 rounded animate-pulse" />
+      <div className="h-9 w-32 bg-gray-100 rounded animate-pulse" />
+      <div className="h-10 w-full bg-gray-50 rounded animate-pulse" />
+    </div>
+  );
+}
+
+const ACTIVITY_COLOR_MAP = {
+  interview: "bg-emerald-500",
+  signup: "bg-indigo-500",
+  plan: "bg-violet-500",
+  blog: "bg-cyan-500",
+  job: "bg-rose-500",
+  flag: "bg-amber-500",
+};
+
 const AdminDashboard = () => {
   const [period, setPeriod] = useState("7d");
-  const maxBar = Math.max(...WEEK.map((w) => w.val));
+  const {
+    stats,
+    weeklyScreenings = [],
+    planBreakdown = [],
+    recentActivity = [],
+    activityFeed = [],
+    loading,
+  } = useAdminDashboard();
+
+  const maxBar =
+    weeklyScreenings.length > 0
+      ? Math.max(...weeklyScreenings.map((w) => w.val), 1)
+      : 1;
+  const todayDow = new Date().getDay();
 
   return (
     <div className="dash-root min-h-screen bg-[#f8f9fb] p-5 sm:p-7 lg:p-9">
       <style>{STYLES}</style>
 
-      {/* Header */}
       <div className="anim-fade-up flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-8">
         <div>
           <p className="text-xs font-medium text-gray-400 uppercase tracking-widest mb-1">
             Overview
           </p>
           <h1 className="display-font text-3xl sm:text-4xl text-gray-900 leading-none">
-            Good morning, Admin.
+            {(() => {
+              const h = new Date().getHours();
+              return h < 12
+                ? "Good morning, Admin."
+                : h < 17
+                  ? "Good afternoon, Admin."
+                  : "Good evening, Admin.";
+            })()}
           </h1>
           <p className="text-sm text-gray-500 mt-2">
             {new Date().toLocaleDateString("en-US", {
@@ -373,11 +294,7 @@ const AdminDashboard = () => {
             <button
               key={p}
               onClick={() => setPeriod(p)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                period === p
-                  ? "bg-gray-900 text-white shadow-sm"
-                  : "text-gray-500 hover:text-gray-800"
-              }`}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${period === p ? "bg-gray-900 text-white shadow-sm" : "text-gray-500 hover:text-gray-800"}`}
             >
               {p}
             </button>
@@ -387,47 +304,48 @@ const AdminDashboard = () => {
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
-        <StatCard
-          label="Total Users"
-          value={2841}
-          sub="12% this week"
-          positive
-          spark={[8, 12, 10, 15, 18, 14, 20, 22, 19, 25, 23, 30]}
-          color="#6366f1"
-          delay={60}
-        />
-        <StatCard
-          label="Companies"
-          value={148}
-          sub="8% this week"
-          positive
-          spark={[2, 3, 3, 4, 5, 4, 6, 7, 6, 8, 7, 9]}
-          color="#8b5cf6"
-          delay={120}
-        />
-        <StatCard
-          label="Active Jobs"
-          value={394}
-          sub="21% this week"
-          positive
-          spark={[5, 8, 6, 10, 9, 13, 11, 15, 12, 17, 14, 19]}
-          color="#06b6d4"
-          delay={180}
-        />
-        <StatCard
-          label="Blog Posts"
-          value={36}
-          sub="2 this week"
-          positive={false}
-          spark={[12, 10, 14, 11, 16, 13, 18, 15, 20, 17, 22, 19]}
-          color="#f43f5e"
-          delay={240}
-        />
+        {loading || !stats ? (
+          [0, 1, 2, 3].map((i) => <SkeletonCard key={i} />)
+        ) : (
+          <>
+            <StatCard
+              label="Total Users"
+              value={stats.totalUsers}
+              sub={stats.usersWeeklyGrowth}
+              positive
+              color="#6366f1"
+              delay={60}
+            />
+            <StatCard
+              label="Companies"
+              value={stats.totalCompanies}
+              sub={stats.companiesWeeklyGrowth}
+              positive
+              color="#8b5cf6"
+              delay={120}
+            />
+            <StatCard
+              label="Active Jobs"
+              value={stats.totalJobs}
+              sub={stats.jobsWeeklyGrowth}
+              positive
+              color="#06b6d4"
+              delay={180}
+            />
+            <StatCard
+              label="Blog Posts"
+              value={stats.totalBlogs}
+              sub={`${stats.blogsWeeklyChange} this week`}
+              positive={stats.blogsWeeklyChange >= 0}
+              color="#f43f5e"
+              delay={240}
+            />
+          </>
+        )}
       </div>
 
       {/* Middle row */}
       <div className="grid lg:grid-cols-5 gap-6 mb-6">
-        {/* Bar chart */}
         <SectionCard
           title="Weekly Screenings"
           sub="Candidates interviewed per day"
@@ -435,115 +353,118 @@ const AdminDashboard = () => {
           delay={300}
           className="lg:col-span-3"
         >
-          <div className="flex items-end gap-2 h-36 mb-3">
-            {WEEK.map((w, i) => {
-              const pct = w.val / maxBar;
-              const isToday = i === 3;
-              return (
-                <div
-                  key={i}
-                  className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end"
-                >
-                  {isToday && (
-                    <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded-full">
-                      {w.val}
-                    </span>
-                  )}
-                  <div
-                    className="w-full relative"
-                    style={{ height: `${pct * 100}%` }}
-                  >
+          {loading ? (
+            <div className="h-36 w-full bg-gray-50 rounded-xl animate-pulse" />
+          ) : (
+            <>
+              <div className="flex items-end gap-2 h-36 mb-3">
+                {weeklyScreenings.map((w, i) => {
+                  const pct = w.val / maxBar;
+                  const isToday = i === todayDow;
+                  return (
                     <div
-                      className={`w-full h-full rounded-xl origin-bottom ${isToday ? "bg-indigo-500" : "bg-gray-100 hover:bg-indigo-200"} transition-colors duration-200`}
-                      style={{
-                        animation: `barGrow 0.6s cubic-bezier(0.34,1.56,0.64,1) ${i * 70 + 300}ms both`,
-                      }}
-                    />
-                  </div>
-                  <span
-                    className={`text-[10px] font-medium ${isToday ? "text-indigo-600 font-bold" : "text-gray-400"}`}
-                  >
-                    {w.day}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-          <div className="flex items-center gap-4 pt-4 border-t border-gray-50 text-xs text-gray-400">
-            <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-sm bg-indigo-500 inline-block" />{" "}
-              Today
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-sm bg-gray-100 inline-block" />{" "}
-              Previous
-            </span>
-            <span className="ml-auto">Updated just now</span>
-          </div>
+                      key={i}
+                      className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end"
+                    >
+                      {isToday && w.val > 0 && (
+                        <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded-full">
+                          {w.val}
+                        </span>
+                      )}
+                      <div
+                        className="w-full relative"
+                        style={{ height: `${Math.max(pct * 100, 4)}%` }}
+                      >
+                        <div
+                          className={`w-full h-full rounded-xl origin-bottom ${isToday ? "bg-indigo-500" : "bg-gray-100 hover:bg-indigo-200"} transition-colors duration-200`}
+                          style={{
+                            animation: `barGrow 0.6s cubic-bezier(0.34,1.56,0.64,1) ${i * 70 + 300}ms both`,
+                          }}
+                        />
+                      </div>
+                      <span
+                        className={`text-[10px] font-medium ${isToday ? "text-indigo-600 font-bold" : "text-gray-400"}`}
+                      >
+                        {w.day}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex items-center gap-4 pt-4 border-t border-gray-50 text-xs text-gray-400">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-sm bg-indigo-500 inline-block" />{" "}
+                  Today
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-sm bg-gray-100 inline-block" />{" "}
+                  Previous
+                </span>
+                <span className="ml-auto">Updated just now</span>
+              </div>
+            </>
+          )}
         </SectionCard>
 
-        {/* Plan breakdown */}
         <SectionCard
           title="Plan Breakdown"
           sub="Subscription distribution"
           delay={360}
           className="lg:col-span-2"
         >
-          <div className="space-y-5 mb-6">
-            {PLANS.map(({ name, n, pct, color }, i) => (
-              <div key={name}>
-                <div className="flex items-center justify-between text-xs mb-1.5">
-                  <span className="font-medium text-gray-700 flex items-center gap-2">
-                    <span
-                      className="w-2 h-2 rounded-full inline-block"
-                      style={{ background: color }}
-                    />
-                    {name}
-                  </span>
-                  <span className="text-gray-400">
-                    {n} · <b className="text-gray-600">{pct}%</b>
-                  </span>
+          {loading ? (
+            <div className="space-y-4">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="space-y-1.5">
+                  <div className="h-3 w-32 bg-gray-100 rounded animate-pulse" />
+                  <div className="h-2 w-full bg-gray-100 rounded animate-pulse" />
                 </div>
-                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all"
-                    style={{
-                      background: color,
-                      width: `${pct}%`,
-                      animation: `lineGrow 0.8s ease ${500 + i * 100}ms both`,
-                    }}
-                  />
-                </div>
+              ))}
+            </div>
+          ) : (
+            <>
+              <div className="space-y-5 mb-6">
+                {planBreakdown.map(({ name, n, pct, color }, i) => (
+                  <div key={name}>
+                    <div className="flex items-center justify-between text-xs mb-1.5">
+                      <span className="font-medium text-gray-700 flex items-center gap-2">
+                        <span
+                          className="w-2 h-2 rounded-full inline-block"
+                          style={{ background: color }}
+                        />
+                        {name}
+                      </span>
+                      <span className="text-gray-400">
+                        {n} · <b className="text-gray-600">{pct}%</b>
+                      </span>
+                    </div>
+                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all"
+                        style={{
+                          background: color,
+                          width: `${pct}%`,
+                          animation: `lineGrow 0.8s ease ${500 + i * 100}ms both`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
 
-          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">
-            Top regions
-          </p>
-          <div className="space-y-2.5">
-            {COUNTRIES.map(({ flag, name, pct }) => (
-              <div key={name} className="flex items-center gap-2 text-xs">
-                <span className="text-sm w-5">{flag}</span>
-                <span className="flex-1 text-gray-600 truncate">{name}</span>
-                <div className="w-16 h-1 bg-gray-100 rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-indigo-300"
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-                <span className="text-gray-500 font-medium w-6 text-right">
-                  {pct}%
-                </span>
-              </div>
-            ))}
-          </div>
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3">
+                Top regions
+              </p>
+              <p className="text-xs text-gray-400 italic">
+                Region data coming soon
+              </p>
+            </>
+          )}
         </SectionCard>
       </div>
 
       {/* Bottom row */}
       <div className="grid lg:grid-cols-5 gap-6">
-        {/* Recent users table */}
         <SectionCard
           title="Recent Activity"
           sub="Latest user & company signups"
@@ -551,46 +472,74 @@ const AdminDashboard = () => {
           delay={420}
           className="lg:col-span-3"
         >
-          <div className="divide-y divide-gray-50">
-            {USERS.map((u, i) => (
-              <div
-                key={u.name}
-                className="flex items-center gap-3 py-3 group hover:bg-gray-50 -mx-2 px-2 rounded-xl transition-colors"
-                style={{ animation: `fadeUp 0.4s ease ${480 + i * 50}ms both` }}
-              >
-                <InitAvatar init={u.init} size={8} />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-gray-900 truncate">
-                    {u.name}
-                  </p>
-                  <p className="text-xs text-gray-400">
-                    {u.role}
-                    {u.plan ? ` · ${u.plan}` : ""}
-                  </p>
+          {loading ? (
+            <div className="divide-y divide-gray-50">
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="flex items-center gap-3 py-3">
+                  <div className="w-8 h-8 rounded-full bg-gray-100 animate-pulse shrink-0" />
+                  <div className="flex-1 space-y-1.5">
+                    <div className="h-3 w-32 bg-gray-100 rounded animate-pulse" />
+                    <div className="h-2.5 w-20 bg-gray-50 rounded animate-pulse" />
+                  </div>
                 </div>
-                <StatusPill status={u.status} />
-                <span className="text-xs text-gray-400 hidden sm:block w-12 text-right shrink-0">
-                  {u.time}
-                </span>
-                <button className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-600 transition-all p-1 rounded-lg hover:bg-white">
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    className="w-3.5 h-3.5"
-                  >
-                    <circle cx="12" cy="12" r="1" />
-                    <circle cx="19" cy="12" r="1" />
-                    <circle cx="5" cy="12" r="1" />
-                  </svg>
-                </button>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-50">
+              {recentActivity.map((u, i) => (
+                <div
+                  key={i}
+                  className="flex items-center gap-3 py-3 group hover:bg-gray-50 -mx-2 px-2 rounded-xl transition-colors"
+                  style={{
+                    animation: `fadeUp 0.4s ease ${480 + i * 50}ms both`,
+                  }}
+                >
+                  {u.avatar ? (
+                    <img
+                      src={u.avatar}
+                      alt={u.name}
+                      className="w-8 h-8 rounded-full object-cover shrink-0"
+                    />
+                  ) : (
+                    <InitAvatar init={u.init} size={8} />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-gray-900 truncate">
+                      {u.name}
+                    </p>
+                    <p className="text-xs text-gray-400">
+                      {u.role}
+                      {u.plan ? ` · ${u.plan}` : ""}
+                    </p>
+                  </div>
+                  <StatusPill status={u.status} />
+                  <span className="text-xs text-gray-400 hidden sm:block w-12 text-right shrink-0">
+                    {u.time}
+                  </span>
+                  <button className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-600 transition-all p-1 rounded-lg hover:bg-white">
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      className="w-3.5 h-3.5"
+                    >
+                      <circle cx="12" cy="12" r="1" />
+                      <circle cx="19" cy="12" r="1" />
+                      <circle cx="5" cy="12" r="1" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+              {recentActivity.length === 0 && (
+                <p className="text-xs text-gray-400 py-4 text-center">
+                  No recent activity yet
+                </p>
+              )}
+            </div>
+          )}
         </SectionCard>
 
-        {/* Live activity feed */}
         <SectionCard
           title="Live Feed"
           sub="Platform events in real-time"
@@ -598,34 +547,58 @@ const AdminDashboard = () => {
           delay={480}
           className="lg:col-span-2"
         >
-          <div className="space-y-1">
-            {ACTIVITY.map((a, i) => (
-              <div
-                key={i}
-                className="flex items-start gap-3 p-2.5 rounded-xl hover:bg-gray-50 transition-colors cursor-default"
-                style={{ animation: `fadeUp 0.4s ease ${540 + i * 55}ms both` }}
-              >
-                <span
-                  className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${a.color}`}
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 mb-0.5">
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                      {a.label}
-                    </span>
-                    <span className="text-[10px] text-gray-300">·</span>
-                    <span className="text-[10px] text-gray-400">{a.time}</span>
+          {loading ? (
+            <div className="space-y-2">
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="flex items-start gap-3 p-2.5">
+                  <div className="w-2 h-2 rounded-full bg-gray-100 mt-1.5 shrink-0 animate-pulse" />
+                  <div className="flex-1 space-y-1.5">
+                    <div className="h-2.5 w-24 bg-gray-100 rounded animate-pulse" />
+                    <div className="h-3 w-32 bg-gray-100 rounded animate-pulse" />
+                    <div className="h-2.5 w-40 bg-gray-50 rounded animate-pulse" />
                   </div>
-                  <p className="text-xs font-semibold text-gray-800">
-                    {a.name}
-                  </p>
-                  <p className="text-xs text-gray-400 leading-snug">
-                    {a.detail}
-                  </p>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {activityFeed.map((a, i) => (
+                <div
+                  key={i}
+                  className="flex items-start gap-3 p-2.5 rounded-xl hover:bg-gray-50 transition-colors cursor-default"
+                  style={{
+                    animation: `fadeUp 0.4s ease ${540 + i * 55}ms both`,
+                  }}
+                >
+                  <span
+                    className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${ACTIVITY_COLOR_MAP[a.type] ?? a.color ?? "bg-gray-400"}`}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                        {a.label}
+                      </span>
+                      <span className="text-[10px] text-gray-300">·</span>
+                      <span className="text-[10px] text-gray-400">
+                        {a.time}
+                      </span>
+                    </div>
+                    <p className="text-xs font-semibold text-gray-800">
+                      {a.name}
+                    </p>
+                    <p className="text-xs text-gray-400 leading-snug">
+                      {a.detail}
+                    </p>
+                  </div>
+                </div>
+              ))}
+              {activityFeed.length === 0 && (
+                <p className="text-xs text-gray-400 py-4 text-center">
+                  No recent events
+                </p>
+              )}
+            </div>
+          )}
         </SectionCard>
       </div>
     </div>

@@ -14,6 +14,10 @@ import microsoftUserAuthReducer from "../API/microsoftUserApi";
 import adminAuthReducer from "../API/adminAuthApi";
 import blogReducer from "../API/blogApi";
 import userProfileReducer from "../API/userProfileApi";
+import adminStatsReducer from "../API/adminDashboardApi";
+import adminUserManagementReducer from "../API/adminUserManageApi";
+import adminCompanyManagementReducer from "../API/adminCompanyManageApi";
+import adminJobManagementReducer from "../API/AdminJobManageApi";
 
 export const store = configureStore({
   reducer: {
@@ -32,6 +36,10 @@ export const store = configureStore({
     adminAuth: adminAuthReducer,
     blog: blogReducer,
     profile: userProfileReducer,
+    adminDashboard: adminStatsReducer,
+    adminUsers: adminUserManagementReducer,
+    adminCompanies: adminCompanyManagementReducer,
+    adminJobs: adminJobManagementReducer,
   },
 });
 

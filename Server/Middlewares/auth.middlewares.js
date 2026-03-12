@@ -1,7 +1,6 @@
 const jwt = require("jsonwebtoken");
 const { APIERR } = require("../Utils/index.utils");
 
-// ─── Generic Auth ─────────────────────────────────────────────
 const authMiddleware = (req, res, next) => {
   try {
     let token;
@@ -12,36 +11,23 @@ const authMiddleware = (req, res, next) => {
       token = req.headers.authorization.split(" ")[1];
     }
 
-    if (!token) {
-      throw new APIERR(401, "Authentication required. Please login.");
-    }
+    if (!token) throw new APIERR(401, "Authentication required. Please login.");
 
     const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
 
-    req.user = {
-      id: decoded.id,
-      email: decoded.email,
-      role: decoded.role,
-    };
-
-    console.log("✅ Authenticated user:", req.user.id);
+    req.user = { id: decoded.id, email: decoded.email, role: decoded.role };
 
     next();
   } catch (error) {
-    if (error.name === "TokenExpiredError") {
+    if (error.name === "TokenExpiredError")
       return next(new APIERR(401, "Token expired. Please login again."));
-    }
-    if (error.name === "JsonWebTokenError") {
+    if (error.name === "JsonWebTokenError")
       return next(new APIERR(401, "Invalid token. Please login again."));
-    }
-    if (error instanceof APIERR) {
-      return next(error);
-    }
+    if (error instanceof APIERR) return next(error);
     next(new APIERR(401, "Unauthorized access."));
   }
 };
 
-// ─── Company Auth ─────────────────────────────────────────────
 const companyAuthMiddleware = (req, res, next) => {
   try {
     let token;
@@ -52,112 +38,76 @@ const companyAuthMiddleware = (req, res, next) => {
       token = req.headers.authorization.split(" ")[1];
     }
 
-    if (!token) {
-      throw new APIERR(401, "Authentication required. Please login.");
-    }
+    if (!token) throw new APIERR(401, "Authentication required. Please login.");
 
     const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
 
-    if (decoded.role !== "company") {
+    if (decoded.role !== "company")
       throw new APIERR(403, "Access denied. Company accounts only.");
-    }
 
-    req.company = {
-      id: decoded.id,
-      email: decoded.email,
-      role: decoded.role,
-    };
-
-    console.log("✅ Authenticated company:", req.company.id);
+    req.company = { id: decoded.id, email: decoded.email, role: decoded.role };
 
     next();
   } catch (error) {
-    if (error.name === "TokenExpiredError") {
+    if (error.name === "TokenExpiredError")
       return next(new APIERR(401, "Token expired. Please login again."));
-    }
-    if (error.name === "JsonWebTokenError") {
+    if (error.name === "JsonWebTokenError")
       return next(new APIERR(401, "Invalid token. Please login again."));
-    }
-    if (error instanceof APIERR) {
-      return next(error);
-    }
+    if (error instanceof APIERR) return next(error);
     next(new APIERR(401, "Unauthorized access."));
   }
 };
 
-// ─── Admin Auth ───────────────────────────────────────────────
 const adminAuthMiddleware = (req, res, next) => {
   try {
     let token;
 
-    if (req.cookies?.accessToken) {
+    if (req.cookies?.adminAccessToken) {
+      token = req.cookies.adminAccessToken;
+    } else if (req.cookies?.accessToken) {
       token = req.cookies.accessToken;
     } else if (req.headers.authorization?.startsWith("Bearer ")) {
       token = req.headers.authorization.split(" ")[1];
     }
 
-    if (!token) {
-      throw new APIERR(401, "Authentication required. Please login.");
-    }
-    console.log("AUTH HEADER:", req.headers.authorization);
-    console.log("COOKIES:", req.cookies);
+    if (!token) throw new APIERR(401, "Authentication required. Please login.");
+
     const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
 
     const adminRoles = ["super_admin", "admin", "moderator", "support"];
 
-    if (!adminRoles.includes(decoded.role)) {
+    if (!adminRoles.includes(decoded.role))
       throw new APIERR(403, "Access denied. Admin accounts only.");
-    }
 
-    req.admin = {
-      id: decoded.id,
-      email: decoded.email,
-      role: decoded.role,
-    };
-
-    console.log("✅ Authenticated admin:", req.admin.id, `[${req.admin.role}]`);
+    req.admin = { id: decoded.id, email: decoded.email, role: decoded.role };
 
     next();
   } catch (error) {
-    if (error.name === "TokenExpiredError") {
+    if (error.name === "TokenExpiredError")
       return next(new APIERR(401, "Token expired. Please login again."));
-    }
-    if (error.name === "JsonWebTokenError") {
+    if (error.name === "JsonWebTokenError")
       return next(new APIERR(401, "Invalid token. Please login again."));
-    }
-    if (error instanceof APIERR) {
-      return next(error);
-    }
+    if (error instanceof APIERR) return next(error);
     next(new APIERR(401, "Unauthorized access."));
   }
 };
-
-// ─── Require Role ─────────────────────────────────────────────
 
 const requireRole =
   (...roles) =>
   (req, res, next) => {
     try {
-      if (!req.admin) {
+      if (!req.admin)
         throw new APIERR(401, "Authentication required. Please login.");
-      }
 
-      if (!roles.includes(req.admin.role)) {
+      if (!roles.includes(req.admin.role))
         throw new APIERR(
           403,
           `Access denied. Required role(s): ${roles.join(", ")}.`,
         );
-      }
-
-      console.log(
-        `✅ Role authorised: ${req.admin.role} for [${roles.join(", ")}]`,
-      );
 
       next();
     } catch (error) {
-      if (error instanceof APIERR) {
-        return next(error);
-      }
+      if (error instanceof APIERR) return next(error);
       next(new APIERR(403, "Forbidden."));
     }
   };

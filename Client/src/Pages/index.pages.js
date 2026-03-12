@@ -35,6 +35,10 @@ import CompanyHome from "./CompanyHome.jsx";
 import AdminDashboard from "./AdminDashboard.jsx";
 import AdminLogin from "./Auth/AdminLogin.jsx";
 import BlogAdmin from "./BlogAdmin.jsx";
+import AdminUserManagement from "./AdminUserManagement.jsx";
+import AdminCompanyManagement from "./AdminCompanyManage.jsx";
+import AdminJobManagement from "./AdminJobManagement.jsx";
+import AdminProfile from "./AdminProfile.jsx";
 
 export {
   Home,
@@ -74,4 +78,8 @@ export {
   AdminDashboard,
   AdminLogin,
   BlogAdmin,
+  AdminUserManagement,
+  AdminCompanyManagement,
+  AdminJobManagement,
+  AdminProfile,
 };

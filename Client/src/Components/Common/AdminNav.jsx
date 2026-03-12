@@ -154,9 +154,8 @@ const NAV = [
   { id: "dashboard", label: "Dashboard", icon: <Icon.Dashboard /> },
   { id: "users", label: "Users", icon: <Icon.Users /> },
   { id: "companies", label: "Companies", icon: <Icon.Building /> },
-  { id: "blog", label: "Blog", icon: <Icon.Blog /> },
   { id: "jobs", label: "Jobs", icon: <Icon.Jobs /> },
-  { id: "settings", label: "Settings", icon: <Icon.Settings /> },
+  { id: "blog", label: "Blog", icon: <Icon.Blog /> },
 ];
 
 const ROLE_COLORS = {
@@ -385,19 +384,18 @@ const AdminNav = ({ active, setActive }) => {
                   </span>
                 </div>
                 <div className="py-1.5">
-                  {[
-                    { label: "Profile", icon: <Icon.Users /> },
-                    { label: "Settings", icon: <Icon.Settings /> },
-                  ].map(({ label, icon }) => (
-                    <button
-                      key={label}
-                      onClick={() => handleNav(label.toLowerCase())}
-                      className="w-full flex items-center gap-2.5 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors"
-                    >
-                      <span className="text-gray-400">{icon}</span>
-                      {label}
-                    </button>
-                  ))}
+                  {[{ label: "Profile", icon: <Icon.Users /> }].map(
+                    ({ label, icon }) => (
+                      <button
+                        key={label}
+                        onClick={() => handleNav(label.toLowerCase())}
+                        className="w-full flex items-center gap-2.5 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors"
+                      >
+                        <span className="text-gray-400">{icon}</span>
+                        {label}
+                      </button>
+                    ),
+                  )}
                 </div>
                 <div className="py-1.5 border-t border-gray-100">
                   <button
