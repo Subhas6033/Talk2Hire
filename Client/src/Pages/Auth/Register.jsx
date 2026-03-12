@@ -804,7 +804,7 @@ const RegistrationForm = () => {
                       <div className="flex-1 relative">
                         <button
                           disabled={isBusy}
-                          className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-white border-2 border-slate-200 hover:border-red-300 text-slate-700 font-semibold text-sm shadow-sm transition-all disabled:opacity-60 disabled:cursor-not-allowed pointer-events-none"
+                          className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-white border-2 border-slate-200 hover:border-red-300 text-slate-700 font-semibold text-sm shadow-sm transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                           {googleLoading ? (
                             <>
