@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence, useInView } from "motion/react";
+import { useProfile } from "../Hooks/userProfileHook";
 
-// ─── Icons ───────────────────────────────────────────────────────────────────
 const Icon = ({ d, size = 20, className = "", strokeWidth = 1.8 }) => (
   <svg
     width={size}
@@ -118,9 +118,17 @@ const Icons = {
     />
   ),
   X: (p) => <Icon {...p} d="M18 6 6 18M6 6l12 12" />,
+  User: (p) => (
+    <Icon
+      {...p}
+      d={[
+        "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2",
+        "M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8z",
+      ]}
+    />
+  ),
 };
 
-// ─── Animated Counter ────────────────────────────────────────────────────────
 const AnimatedNumber = ({ value, suffix = "", prefix = "" }) => {
   const [display, setDisplay] = useState(0);
   const ref = useRef(null);
@@ -151,7 +159,6 @@ const AnimatedNumber = ({ value, suffix = "", prefix = "" }) => {
   );
 };
 
-// ─── Score Ring ───────────────────────────────────────────────────────────────
 const ScoreRing = ({ score, size = 60 }) => {
   const r = (size - 8) / 2;
   const circ = 2 * Math.PI * r;
@@ -197,51 +204,17 @@ const ScoreRing = ({ score, size = 60 }) => {
   );
 };
 
-// ─── Skill Bar ────────────────────────────────────────────────────────────────
-const SkillBar = ({ skill, level, trend, index }) => {
-  const ref = useRef(null);
-  const inView = useInView(ref, { once: true });
-  const trendColor =
-    trend === "up"
-      ? "text-green-500"
-      : trend === "down"
-        ? "text-red-400"
-        : "text-slate-400";
-  const trendArrow = trend === "up" ? "↑" : trend === "down" ? "↓" : "→";
+const SkillTag = ({ skill, index }) => (
+  <motion.span
+    initial={{ opacity: 0, scale: 0.85 }}
+    animate={{ opacity: 1, scale: 1 }}
+    transition={{ delay: index * 0.05, duration: 0.35 }}
+    className="px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-700 text-xs font-semibold"
+  >
+    {skill}
+  </motion.span>
+);
 
-  return (
-    <motion.div
-      ref={ref}
-      initial={{ opacity: 0, x: -12 }}
-      animate={inView ? { opacity: 1, x: 0 } : {}}
-      transition={{ delay: index * 0.08, duration: 0.5 }}
-    >
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-sm font-semibold text-gray-700">{skill}</span>
-        <div className="flex items-center gap-1.5">
-          <span className="text-sm font-bold text-gray-900">{level}%</span>
-          <span className={`text-xs font-bold ${trendColor}`}>
-            {trendArrow}
-          </span>
-        </div>
-      </div>
-      <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
-        <motion.div
-          initial={{ width: 0 }}
-          animate={inView ? { width: `${level}%` } : {}}
-          transition={{
-            duration: 1,
-            delay: index * 0.1 + 0.2,
-            ease: "easeOut",
-          }}
-          className="h-full rounded-full bg-linear-to-r from-indigo-500 to-violet-500"
-        />
-      </div>
-    </motion.div>
-  );
-};
-
-// ─── Stat Card ────────────────────────────────────────────────────────────────
 const StatCard = ({
   label,
   value,
@@ -264,13 +237,16 @@ const StatCard = ({
         {label}
       </p>
       <p
-        className={`text-4xl font-extrabold leading-none ${colorClass}`}
-        style={{ fontFamily: "'Syne', sans-serif" }}
+        className="text-4xl font-extrabold leading-none"
+        style={{
+          fontFamily: "'Syne', sans-serif",
+          color: colorClass.replace("text-", ""),
+        }}
       >
         {typeof value === "number" ? (
           <AnimatedNumber value={value} suffix={suffix} prefix={prefix} />
         ) : (
-          value
+          <span className={colorClass}>{value ?? "—"}</span>
         )}
       </p>
     </div>
@@ -283,8 +259,13 @@ const StatCard = ({
   </motion.div>
 );
 
-// ─── Score Badge ─────────────────────────────────────────────────────────────
 const ScoreBadge = ({ score }) => {
+  if (score == null)
+    return (
+      <span className="px-3.5 py-1.5 rounded-xl border-2 text-slate-400 bg-slate-50 border-slate-200 text-base font-extrabold">
+        —
+      </span>
+    );
   const cls =
     score >= 80
       ? "text-green-500 bg-green-50 border-green-200"
@@ -295,7 +276,7 @@ const ScoreBadge = ({ score }) => {
     <div className={`px-3.5 py-1.5 rounded-xl border-2 ${cls}`}>
       <span
         className="text-base font-extrabold"
-        style={{ fontFamily: "'Syne', sans-serif" }}
+        style={{ fontFamily: "'Roboto Mono', monospace" }}
       >
         {score}%
       </span>
@@ -303,125 +284,109 @@ const ScoreBadge = ({ score }) => {
   );
 };
 
-// ─── Dashboard ────────────────────────────────────────────────────────────────
+const PageSkeleton = () => (
+  <div
+    className="min-h-screen bg-linear-to-br from-slate-50 to-indigo-50/60 px-6 py-10"
+    style={{ fontFamily: "'DM Sans', sans-serif" }}
+  >
+    <div className="max-w-7xl mx-auto flex flex-col gap-7">
+      <div className="h-10 bg-slate-200 rounded-xl w-48 animate-pulse" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {[1, 2, 3, 4].map((i) => (
+          <div
+            key={i}
+            className="bg-white rounded-2xl px-7 py-6 h-28 animate-pulse border border-slate-100"
+          />
+        ))}
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <div className="lg:col-span-2 bg-white rounded-3xl p-7 h-72 animate-pulse border border-slate-100" />
+        <div className="bg-white rounded-3xl p-7 h-72 animate-pulse border border-slate-100" />
+      </div>
+    </div>
+  </div>
+);
+
+const formatDuration = (seconds) => {
+  if (!seconds) return "—";
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+};
+
+const formatDate = (dateStr) => {
+  if (!dateStr) return "—";
+  return new Date(dateStr).toLocaleDateString("en-US", {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+  });
+};
+
 const Dashboard = () => {
   const [selectedInterview, setSelectedInterview] = useState(null);
   const [hoveredRow, setHoveredRow] = useState(null);
   const navigate = useNavigate();
 
+  const {
+    profile,
+    loading,
+    interviews,
+    interviewsLoading,
+    loadProfile,
+    loadInterviews,
+  } = useProfile();
+
+  useEffect(() => {
+    loadProfile();
+    loadInterviews({ page: 1, limit: 10 });
+  }, []);
+
+  if (loading && !profile) return <PageSkeleton />;
+
+  const cvSkills = profile?.cvSkills || [];
+
   const stats = [
     {
       label: "Total Interviews",
-      value: 12,
+      value: profile?.totalInterview ?? 0,
       colorClass: "text-indigo-500",
       iconBgClass: "bg-indigo-50",
       IconComp: Icons.MessageSquare,
     },
     {
-      label: "Average Score",
-      value: 78,
-      suffix: "%",
+      label: "Last Score",
+      value: profile?.interviewScore ?? null,
+      suffix: profile?.interviewScore != null ? "%" : "",
       colorClass: "text-green-500",
       iconBgClass: "bg-green-50",
       IconComp: Icons.Trophy,
     },
     {
-      label: "Improvement",
-      value: 15,
-      prefix: "+",
-      suffix: "%",
+      label: "Performance",
+      value: profile?.performance ?? "—",
       colorClass: "text-amber-500",
       iconBgClass: "bg-amber-50",
       IconComp: Icons.TrendingUp,
     },
     {
-      label: "Total Time",
-      value: "8h 45m",
+      label: "Avg. Time",
+      value: profile?.averageTime ?? "—",
       colorClass: "text-blue-500",
       iconBgClass: "bg-blue-50",
       IconComp: Icons.Clock,
     },
   ];
 
-  const interviews = [
-    {
-      id: 1,
-      role: "Senior Frontend Developer",
-      date: "Feb 05, 2024",
-      score: 85,
-      duration: "45 min",
-      questions: 10,
-      correctAnswers: 8,
-      strengths: ["React Hooks", "State Management", "Performance"],
-      improvements: ["Testing", "Accessibility"],
-      feedback:
-        "Great understanding of React fundamentals. Focus on testing strategies and accessibility patterns.",
-    },
-    {
-      id: 2,
-      role: "Full Stack Developer",
-      date: "Feb 03, 2024",
-      score: 72,
-      duration: "50 min",
-      questions: 12,
-      correctAnswers: 9,
-      strengths: ["API Design", "Database", "Node.js"],
-      improvements: ["Security", "Scalability"],
-      feedback:
-        "Solid backend knowledge. Consider learning more about security best practices and system design.",
-    },
-    {
-      id: 3,
-      role: "React Developer",
-      date: "Feb 01, 2024",
-      score: 68,
-      duration: "40 min",
-      questions: 8,
-      correctAnswers: 5,
-      strengths: ["Component Design", "JSX"],
-      improvements: ["Hooks", "Context API", "Custom Hooks"],
-      feedback:
-        "Good start with React. Practice more with advanced hooks patterns and Context API.",
-    },
-  ];
-
-  const skills = [
-    { skill: "React", level: 85, trend: "up" },
-    { skill: "JavaScript", level: 78, trend: "up" },
-    { skill: "Node.js", level: 72, trend: "stable" },
-    { skill: "TypeScript", level: 65, trend: "up" },
-    { skill: "System Design", level: 58, trend: "down" },
-  ];
-
   return (
     <>
-      {/* Basic SEO */}
-      <title>Your Interview Dashboard | Talk2Hire Careers Portal</title>
-
-      <meta
-        name="description"
-        content="Track your interview performance, review AI feedback, and monitor your skill progress inside your Talk2Hire dashboard."
-      />
-
-      {/*  CRITICAL — Prevent indexing */}
+      <title>Your Interview Dashboard | Talk2Hire</title>
       <meta name="robots" content="noindex, nofollow, noarchive, nosnippet" />
 
-      <meta name="googlebot" content="noindex, nofollow" />
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&family=Roboto+Mono:ital,wght@0,100..700;1,100..700&family=Sour+Gummy:ital,wght@0,100..900;1,100..900&display=swap');
+      `}</style>
 
-      <link rel="canonical" href="https://talk2hire.com/dashboard" />
-
-      {/* Open Graph (private safe) */}
-      <meta property="og:title" content="Your Dashboard | Talk2Hire" />
-      <meta
-        property="og:description"
-        content="Private interview performance dashboard."
-      />
-      <meta property="og:type" content="website" />
-      <meta property="og:url" content="https://talk2hire.com/dashboard" />
-
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap');`}</style>
-
-      {/* Main Components Starts from here */}
       <div
         className="min-h-screen bg-linear-to-br from-slate-50 to-indigo-50/60 px-6 py-10"
         style={{ fontFamily: "'DM Sans', sans-serif" }}
@@ -439,7 +404,10 @@ const Dashboard = () => {
                 <div className="w-9 h-9 rounded-xl bg-linear-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-md shadow-indigo-200">
                   <Icons.Brain size={18} className="text-white" />
                 </div>
-                <span className="text-xs font-bold tracking-widest uppercase text-indigo-500">
+                <span
+                  className="text-xs font-bold tracking-widest uppercase text-indigo-500"
+                  style={{ fontFamily: "'Roboto Mono', monospace" }}
+                >
                   Interview Prep
                 </span>
               </div>
@@ -447,7 +415,9 @@ const Dashboard = () => {
                 className="text-4xl font-extrabold text-slate-900 leading-tight"
                 style={{ fontFamily: "'Syne', sans-serif" }}
               >
-                Your Dashboard
+                {profile?.fullName
+                  ? `Hey, ${profile.fullName.split(" ")[0]}`
+                  : "Your Dashboard"}
               </h1>
               <p className="text-slate-500 text-sm mt-1.5">
                 Track your progress and sharpen your interview edge
@@ -460,7 +430,10 @@ const Dashboard = () => {
               <button className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold text-indigo-500 bg-white border-2 border-indigo-100 hover:bg-indigo-50 transition-colors">
                 <Icons.Share size={14} /> Share
               </button>
-              <button className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white bg-linear-to-r from-indigo-500 to-violet-600 hover:opacity-90 hover:-translate-y-0.5 transition-all shadow-lg shadow-indigo-200">
+              <button
+                onClick={() => navigate("/jobs")}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white bg-linear-to-r from-indigo-500 to-violet-600 hover:opacity-90 hover:-translate-y-0.5 transition-all shadow-lg shadow-indigo-200"
+              >
                 <Icons.Target size={16} /> New Interview
               </button>
             </div>
@@ -499,60 +472,81 @@ const Dashboard = () => {
                 </button>
               </div>
 
-              <div className="flex flex-col gap-3">
-                {interviews.map((iv, i) => (
-                  <motion.div
-                    key={iv.id}
-                    initial={{ opacity: 0, x: -16 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.4 + i * 0.1, duration: 0.45 }}
-                    whileHover={{ x: 3 }}
-                    onHoverStart={() => setHoveredRow(iv.id)}
-                    onHoverEnd={() => setHoveredRow(null)}
-                    onClick={() => setSelectedInterview(iv)}
-                    className={`flex items-center justify-between px-5 py-4 rounded-2xl cursor-pointer transition-colors border-2 ${
-                      hoveredRow === iv.id
-                        ? "bg-slate-50 border-indigo-100"
-                        : "bg-slate-50/50 border-slate-100"
-                    }`}
+              {interviewsLoading ? (
+                <div className="flex flex-col gap-3">
+                  {[1, 2, 3].map((i) => (
+                    <div
+                      key={i}
+                      className="h-20 rounded-2xl bg-slate-50 animate-pulse"
+                    />
+                  ))}
+                </div>
+              ) : interviews.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3 text-slate-400">
+                  <Icons.MessageSquare size={36} className="text-slate-200" />
+                  <p className="text-sm font-semibold">No interviews yet</p>
+                  <button
+                    onClick={() => navigate("/jobs")}
+                    className="text-xs font-bold text-indigo-500 hover:underline"
                   >
-                    <div className="flex-1 min-w-0">
-                      <h3
-                        className="font-bold text-slate-900 text-sm mb-1.5 truncate"
-                        style={{ fontFamily: "'Syne', sans-serif" }}
-                      >
-                        {iv.role}
-                      </h3>
-                      <div className="flex items-center gap-4 flex-wrap">
-                        {[
-                          { Icon: Icons.Calendar, label: iv.date },
-                          { Icon: Icons.Clock, label: iv.duration },
-                          {
-                            Icon: Icons.MessageSquare,
-                            label: `${iv.questions}Q`,
-                          },
-                        ].map(({ Icon, label }, j) => (
-                          <span
-                            key={j}
-                            className="flex items-center gap-1 text-xs text-slate-400 font-medium"
-                          >
-                            <Icon size={11} /> {label}
-                          </span>
-                        ))}
+                    Start your first interview →
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {interviews.slice(0, 5).map((iv, i) => (
+                    <motion.div
+                      key={iv.id}
+                      initial={{ opacity: 0, x: -16 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.4 + i * 0.1, duration: 0.45 }}
+                      whileHover={{ x: 3 }}
+                      onHoverStart={() => setHoveredRow(iv.id)}
+                      onHoverEnd={() => setHoveredRow(null)}
+                      onClick={() => setSelectedInterview(iv)}
+                      className={`flex items-center justify-between px-5 py-4 rounded-2xl cursor-pointer transition-colors border-2 ${hoveredRow === iv.id ? "bg-slate-50 border-indigo-100" : "bg-slate-50/50 border-slate-100"}`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <h3
+                          className="font-bold text-slate-900 text-sm mb-1.5 truncate"
+                          style={{ fontFamily: "'Syne', sans-serif" }}
+                        >
+                          {iv.jobTitle || "Interview"}
+                        </h3>
+                        <div className="flex items-center gap-4 flex-wrap">
+                          {[
+                            {
+                              Icon: Icons.Calendar,
+                              label: formatDate(iv.createdAt),
+                            },
+                            {
+                              Icon: Icons.Clock,
+                              label: formatDuration(iv.duration),
+                            },
+                            { Icon: Icons.User, label: iv.companyName || "—" },
+                          ].map(({ Icon, label }, j) => (
+                            <span
+                              key={j}
+                              className="flex items-center gap-1 text-xs text-slate-400 font-medium"
+                            >
+                              <Icon size={11} /> {label}
+                            </span>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-3 ml-4 shrink-0">
-                      <ScoreBadge score={iv.score} />
-                      <motion.div
-                        animate={{ x: hoveredRow === iv.id ? 3 : 0 }}
-                        className="text-slate-300"
-                      >
-                        <Icons.ChevronRight size={18} />
-                      </motion.div>
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
+                      <div className="flex items-center gap-3 ml-4 shrink-0">
+                        <ScoreBadge score={iv.score} />
+                        <motion.div
+                          animate={{ x: hoveredRow === iv.id ? 3 : 0 }}
+                          className="text-slate-300"
+                        >
+                          <Icons.ChevronRight size={18} />
+                        </motion.div>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
             </motion.div>
 
             {/* Skill Progress */}
@@ -570,28 +564,24 @@ const Dashboard = () => {
                   className="text-lg font-bold text-slate-900"
                   style={{ fontFamily: "'Syne', sans-serif" }}
                 >
-                  Skill Progress
+                  Your Skills
                 </span>
               </div>
-              <div className="flex flex-col gap-5">
-                {skills.map((s, i) => (
-                  <SkillBar key={i} {...s} index={i} />
-                ))}
-              </div>
-              <div className="mt-6 pt-5 border-t border-slate-100 flex items-center gap-4 flex-wrap">
-                {[
-                  ["bg-green-500", "Improving"],
-                  ["bg-slate-400", "Stable"],
-                  ["bg-red-400", "Declining"],
-                ].map(([bg, label]) => (
-                  <div key={label} className="flex items-center gap-1.5">
-                    <div className={`w-2 h-2 rounded-full ${bg}`} />
-                    <span className="text-xs text-slate-400 font-semibold">
-                      {label}
-                    </span>
-                  </div>
-                ))}
-              </div>
+
+              {cvSkills.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-8 gap-2 text-slate-400">
+                  <Icons.BarChart size={32} className="text-slate-200" />
+                  <p className="text-sm font-semibold text-center">
+                    Upload your resume to see skill breakdown
+                  </p>
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {cvSkills.map((skill, i) => (
+                    <SkillTag key={skill} skill={skill} index={i} />
+                  ))}
+                </div>
+              )}
             </motion.div>
           </div>
 
@@ -664,19 +654,32 @@ const Dashboard = () => {
               {/* Modal Header */}
               <div className="flex justify-between items-start mb-7">
                 <div>
-                  <span className="text-xs font-bold tracking-widest uppercase text-indigo-500 mb-2 block">
+                  <span
+                    className="text-xs font-bold tracking-widest uppercase text-indigo-500 mb-2 block"
+                    style={{ fontFamily: "'Roboto Mono', monospace" }}
+                  >
                     Interview Details
                   </span>
                   <h2
                     className="text-xl font-extrabold text-slate-900"
                     style={{ fontFamily: "'Syne', sans-serif" }}
                   >
-                    {selectedInterview.role}
+                    {selectedInterview.jobTitle || "Interview"}
                   </h2>
-                  <div className="flex gap-4 mt-1.5">
+                  <div className="flex gap-4 mt-1.5 flex-wrap">
                     {[
-                      { Icon: Icons.Calendar, v: selectedInterview.date },
-                      { Icon: Icons.Clock, v: selectedInterview.duration },
+                      {
+                        Icon: Icons.Calendar,
+                        v: formatDate(selectedInterview.createdAt),
+                      },
+                      {
+                        Icon: Icons.Clock,
+                        v: formatDuration(selectedInterview.duration),
+                      },
+                      {
+                        Icon: Icons.User,
+                        v: selectedInterview.companyName || "—",
+                      },
                     ].map(({ Icon, v }, i) => (
                       <span
                         key={i}
@@ -688,7 +691,9 @@ const Dashboard = () => {
                   </div>
                 </div>
                 <div className="flex items-center gap-3 ml-4 shrink-0">
-                  <ScoreRing score={selectedInterview.score} size={60} />
+                  {selectedInterview.score != null && (
+                    <ScoreRing score={selectedInterview.score} size={60} />
+                  )}
                   <motion.button
                     whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.9 }}
@@ -700,95 +705,83 @@ const Dashboard = () => {
                 </div>
               </div>
 
-              {/* Stats row */}
-              <div className="grid grid-cols-2 gap-3 mb-6">
-                {[
-                  {
-                    label: "Questions Asked",
-                    value: selectedInterview.questions,
-                    colorClass: "text-slate-900",
-                  },
-                  {
-                    label: "Correct Answers",
-                    value: selectedInterview.correctAnswers,
-                    colorClass: "text-green-500",
-                  },
-                ].map((s, i) => (
-                  <div
-                    key={i}
-                    className="p-4 rounded-2xl bg-slate-50 border border-slate-100"
-                  >
-                    <p className="text-xs text-slate-400 font-semibold mb-1">
-                      {s.label}
-                    </p>
-                    <p
-                      className={`text-3xl font-extrabold ${s.colorClass}`}
-                      style={{ fontFamily: "'Syne', sans-serif" }}
-                    >
-                      {s.value}
-                    </p>
+              {/* Skills used */}
+              {selectedInterview.skills?.length > 0 && (
+                <div className="mb-5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Icons.Award size={16} className="text-indigo-500" />
+                    <span className="font-bold text-slate-900 text-sm">
+                      Skills Assessed
+                    </span>
                   </div>
-                ))}
-              </div>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedInterview.skills.map((s, i) => (
+                      <motion.span
+                        key={i}
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ delay: i * 0.07 }}
+                        className="px-3 py-1 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-semibold"
+                      >
+                        {s}
+                      </motion.span>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Strengths */}
-              <div className="mb-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <Icons.Check size={16} className="text-green-500" />
-                  <span className="font-bold text-slate-900 text-sm">
-                    Strengths
-                  </span>
+              {selectedInterview.strengths && (
+                <div className="mb-5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Icons.Check size={16} className="text-green-500" />
+                    <span className="font-bold text-slate-900 text-sm">
+                      Strengths
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-700 leading-relaxed">
+                    {selectedInterview.strengths}
+                  </p>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {selectedInterview.strengths.map((s, i) => (
-                    <motion.span
-                      key={i}
-                      initial={{ opacity: 0, scale: 0.8 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ delay: i * 0.07 }}
-                      className="px-3 py-1 rounded-full bg-green-50 border border-green-200 text-green-700 text-xs font-semibold"
-                    >
-                      {s}
-                    </motion.span>
-                  ))}
-                </div>
-              </div>
+              )}
 
               {/* Improvements */}
-              <div className="mb-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <Icons.Alert size={16} className="text-amber-500" />
-                  <span className="font-bold text-slate-900 text-sm">
-                    Areas to Improve
-                  </span>
+              {selectedInterview.improvements && (
+                <div className="mb-5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Icons.Alert size={16} className="text-amber-500" />
+                    <span className="font-bold text-slate-900 text-sm">
+                      Areas to Improve
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-700 leading-relaxed">
+                    {selectedInterview.improvements}
+                  </p>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {selectedInterview.improvements.map((s, i) => (
-                    <motion.span
-                      key={i}
-                      initial={{ opacity: 0, scale: 0.8 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ delay: i * 0.07 }}
-                      className="px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold"
-                    >
-                      {s}
-                    </motion.span>
-                  ))}
-                </div>
-              </div>
+              )}
 
-              {/* AI Feedback */}
-              <div className="p-5 rounded-2xl bg-linear-to-br from-indigo-50 to-violet-50 border-2 border-indigo-100">
-                <div className="flex items-center gap-2 mb-2.5">
-                  <Icons.Award size={16} className="text-indigo-500" />
-                  <span className="font-bold text-indigo-700 text-sm">
-                    AI Feedback
-                  </span>
+              {/* AI Summary */}
+              {selectedInterview.summary && (
+                <div className="p-5 rounded-2xl bg-linear-to-br from-indigo-50 to-violet-50 border-2 border-indigo-100">
+                  <div className="flex items-center gap-2 mb-2.5">
+                    <Icons.Brain size={16} className="text-indigo-500" />
+                    <span className="font-bold text-indigo-700 text-sm">
+                      AI Summary
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-700 leading-relaxed">
+                    {selectedInterview.summary}
+                  </p>
                 </div>
-                <p className="text-sm text-slate-700 leading-relaxed">
-                  {selectedInterview.feedback}
-                </p>
-              </div>
+              )}
+
+              {!selectedInterview.strengths &&
+                !selectedInterview.improvements &&
+                !selectedInterview.summary && (
+                  <div className="p-5 rounded-2xl bg-slate-50 border border-slate-100 text-center text-slate-400 text-sm">
+                    No detailed feedback available for this interview.
+                  </div>
+                )}
             </motion.div>
           </motion.div>
         )}

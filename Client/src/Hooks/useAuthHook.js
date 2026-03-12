@@ -2,8 +2,10 @@ import { useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import {
   loginUser,
+  googleLoginUser,
   logoutUser,
   clearError,
+  clearGoogleError,
   updateUser,
   updateUserLocal,
   getCurrentUser,
@@ -29,37 +31,29 @@ export const useAuth = () => {
   const dispatch = useDispatch();
 
   const {
-    // ── Core auth ─────────────────────────────────────────────────────────────
     user,
     isAuthenticated,
     loading,
     error,
     hydrated,
-
-    // ── Forgot-password ───────────────────────────────────────────────────────
     forgotPasswordLoading,
     forgotPasswordError,
     forgotPasswordSuccess,
     forgotPasswordEmail,
-
-    // ── OTP (forgot-password flow) ────────────────────────────────────────────
     otpLoading,
     otpError,
     otpVerified,
-
-    // ── Registration wizard ───────────────────────────────────────────────────
+    googleLoading,
+    googleError,
     regStep,
     regLoading,
     regError,
     regSessionId,
     regExtractedData,
     regMaskedEmail,
-
-    // ── Autofill email ────────────────────────────────────────────────────────
     pendingAutofillEmail,
   } = useSelector((state) => state.auth);
 
-  // ── Reset-password local state ─────────────────────────────────────────────
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordError, setPasswordError] = useState(null);
   const [passwordReset, setPasswordReset] = useState(false);
@@ -90,23 +84,16 @@ export const useAuth = () => {
   };
 
   return {
-    // ── Auth state ────────────────────────────────────────────────────────────
     user,
     isAuthenticated,
     hydrated,
     role: user?.role ?? "guest",
-
-    // ── Main loading / error ──────────────────────────────────────────────────
     loading,
     error,
-
-    // ── Forgot-password state ─────────────────────────────────────────────────
     forgotPasswordLoading,
     forgotPasswordError,
     forgotPasswordSuccess,
     forgotPasswordEmail,
-
-    // ── OTP + reset-password state ────────────────────────────────────────────
     otpLoading,
     otpError,
     otpVerified,
@@ -115,20 +102,18 @@ export const useAuth = () => {
     passwordReset,
     verifyPasswordLoading: otpLoading || passwordLoading,
     verifyPasswordError: otpError || passwordError,
-
-    // ── Registration wizard state ─────────────────────────────────────────────
+    googleLoading,
+    googleError,
     regStep,
     regLoading,
     regError,
     regSessionId,
     regExtractedData,
     regMaskedEmail,
-
-    // ── Autofill email ────────────────────────────────────────────────────────
     pendingAutofillEmail,
-
-    // ── Actions ───────────────────────────────────────────────────────────────
     login: (data) => dispatch(loginUser(data)),
+    loginWithGoogle: (credentialResponse) =>
+      dispatch(googleLoginUser(credentialResponse)),
     logout: () => dispatch(logoutUser()),
     updateUser: (data) => dispatch(updateUser(data)),
     getCurrentUser: () => dispatch(getCurrentUser()),
@@ -137,8 +122,6 @@ export const useAuth = () => {
     verifyOtp: (email, otp) => dispatch(verifyOtpThunk({ email, otp })),
     updatePassword,
     resetState,
-
-    // ── Registration wizard actions ───────────────────────────────────────────
     regUploadResume: (formData) => dispatch(regUploadResume(formData)),
     regPollStatus: (sessionId) => dispatch(regPollStatus(sessionId)),
     regSendOtp: (sessionId) => dispatch(regSendOtp(sessionId)),
@@ -147,14 +130,11 @@ export const useAuth = () => {
     regComplete: (data) => dispatch(regComplete(data)),
     clearRegistration: () => dispatch(clearRegistration()),
     setRegStep: (step) => dispatch(setRegStep(step)),
-
-    // ── Autofill email actions ────────────────────────────────────────────────
     setPendingAutofillEmail: (email) =>
       dispatch(setPendingAutofillEmail(email)),
     clearPendingAutofillEmail: () => dispatch(clearPendingAutofillEmail()),
-
-    // ── Utility ───────────────────────────────────────────────────────────────
     clearError: () => dispatch(clearError()),
+    clearGoogleError: () => dispatch(clearGoogleError()),
     updateUserLocal: (data) => dispatch(updateUserLocal(data)),
     clearSession: () => dispatch(clearSession()),
     clearForgotPassword: () => dispatch(clearForgotPassword()),

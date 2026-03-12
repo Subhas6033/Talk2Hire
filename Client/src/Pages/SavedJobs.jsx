@@ -1,7 +1,7 @@
-import { useState, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence, useInView } from "motion/react";
+import { useSavedJobs } from "../Hooks/useJobHook";
 
-// ─── Icon primitive ───────────────────────────────────────────────────────────
 const Icon = ({
   d,
   size = 18,
@@ -84,15 +84,6 @@ const Ic = {
   Send: (p) => (
     <Icon {...p} d={["M22 2L11 13", "M22 2L15 22l-4-9-9-4 20-7z"]} />
   ),
-  Link: (p) => (
-    <Icon
-      {...p}
-      d={[
-        "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71",
-        "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71",
-      ]}
-    />
-  ),
   Share: (p) => (
     <Icon
       {...p}
@@ -149,22 +140,12 @@ const Ic = {
       ]}
     />
   ),
-  TrendingUp: (p) => <Icon {...p} d="m23 6-9.5 9.5-5-5L1 18" />,
   Award: (p) => (
     <Icon
       {...p}
       d={[
         "M12 15a7 7 0 1 0 0-14 7 7 0 0 0 0 14z",
         "M8.21 13.89 7 23l5-3 5 3-1.21-9.12",
-      ]}
-    />
-  ),
-  Eye: (p) => (
-    <Icon
-      {...p}
-      d={[
-        "M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z",
-        "M12 12a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
       ]}
     />
   ),
@@ -182,190 +163,102 @@ const Ic = {
       ]}
     />
   ),
+  ChevronLeft: (p) => <Icon {...p} d="m15 18-6-6 6-6" />,
+  ChevronRight: (p) => <Icon {...p} d="m9 18 6-6-6-6" />,
 };
 
-// ─── Data ─────────────────────────────────────────────────────────────────────
-const JOBS = [
-  {
-    id: 1,
-    company: "Stripe",
-    role: "Senior Frontend Engineer",
-    location: "San Francisco, CA",
-    type: "Full-time",
-    salary: "$160k–$200k",
-    remote: true,
-    logo: "S",
-    logoColor: "from-[#635BFF] to-[#7B73FF]",
-    savedDate: "2 days ago",
-    match: 97,
-    applicants: "142",
-    tags: ["React", "TypeScript", "GraphQL"],
-    desc: "Build and maintain Stripe's web infrastructure. Work on high-impact, user-facing products.",
-  },
-  {
-    id: 2,
-    company: "Linear",
-    role: "Product Engineer",
-    location: "Remote",
-    type: "Full-time",
-    salary: "$140k–$170k",
-    remote: true,
-    logo: "L",
-    logoColor: "from-slate-800 to-slate-700",
-    savedDate: "3 days ago",
-    match: 92,
-    applicants: "89",
-    tags: ["React", "GraphQL", "Electron"],
-    desc: "Shape the future of project management tools. Work closely with design and ship fast.",
-  },
-  {
-    id: 3,
-    company: "Vercel",
-    role: "UI Engineer",
-    location: "Remote",
-    type: "Full-time",
-    salary: "$130k–$160k",
-    remote: true,
-    logo: "V",
-    logoColor: "from-black to-slate-800",
-    savedDate: "4 days ago",
-    match: 88,
-    applicants: "203",
-    tags: ["Next.js", "CSS", "TypeScript"],
-    desc: "Design and implement beautiful, performant UI components used by millions of developers.",
-  },
-  {
-    id: 4,
-    company: "Figma",
-    role: "Frontend Software Engineer",
-    location: "New York, NY",
-    type: "Full-time",
-    salary: "$150k–$185k",
-    remote: false,
-    logo: "F",
-    logoColor: "from-[#F24E1E] to-[#FF7262]",
-    savedDate: "5 days ago",
-    match: 85,
-    applicants: "317",
-    tags: ["React", "WebGL", "Canvas"],
-    desc: "Work on Figma's core canvas engine and plugin ecosystem powering modern design workflows.",
-  },
-  {
-    id: 5,
-    company: "Retool",
-    role: "Staff Frontend Engineer",
-    location: "San Francisco, CA",
-    type: "Full-time",
-    salary: "$170k–$210k",
-    remote: true,
-    logo: "R",
-    logoColor: "from-[#3D5AFE] to-[#536DFE]",
-    savedDate: "1 week ago",
-    match: 82,
-    applicants: "61",
-    tags: ["React", "TypeScript", "SQL"],
-    desc: "Lead frontend architecture for Retool's internal tools platform used by 100k+ companies.",
-  },
-  {
-    id: 6,
-    company: "Notion",
-    role: "Software Engineer, Web",
-    location: "San Francisco, CA",
-    type: "Full-time",
-    salary: "$140k–$165k",
-    remote: false,
-    logo: "N",
-    logoColor: "from-slate-900 to-slate-700",
-    savedDate: "1 week ago",
-    match: 79,
-    applicants: "445",
-    tags: ["React", "TypeScript"],
-    desc: "Build collaborative editing experiences for Notion's web app, serving millions of users.",
-  },
-  {
-    id: 7,
-    company: "Craft.io",
-    role: "Frontend Developer",
-    location: "Remote",
-    type: "Full-time",
-    salary: "$100k–$130k",
-    remote: true,
-    logo: "C",
-    logoColor: "from-teal-600 to-teal-500",
-    savedDate: "1 week ago",
-    match: 74,
-    applicants: "58",
-    tags: ["Vue", "TypeScript"],
-    desc: "Join Craft.io's frontend team and help build the next generation of product planning tools.",
-  },
-  {
-    id: 8,
-    company: "Loom",
-    role: "React Native Developer",
-    location: "Remote",
-    type: "Contract",
-    salary: "$95/hr",
-    remote: true,
-    logo: "L",
-    logoColor: "from-[#625DF5] to-[#8B5CF6]",
-    savedDate: "2 weeks ago",
-    match: 71,
-    applicants: "74",
-    tags: ["React Native", "Mobile"],
-    desc: "Build Loom's mobile apps, enabling async video communication for teams worldwide.",
-  },
-  {
-    id: 9,
-    company: "Planetscale",
-    role: "Developer Advocate",
-    location: "Remote",
-    type: "Full-time",
-    salary: "$120k–$145k",
-    remote: true,
-    logo: "P",
-    logoColor: "from-rose-600 to-rose-500",
-    savedDate: "2 weeks ago",
-    match: 68,
-    applicants: "39",
-    tags: ["MySQL", "Next.js", "Writing"],
-    desc: "Educate and inspire developers with content, demos, and community engagement.",
-  },
+const FILTERS = [
+  "All",
+  "Full-time",
+  "Contract",
+  "Part-time",
+  "Remote",
+  "On-site",
 ];
 
-const FILTERS = ["All", "Full-time", "Contract", "Remote", "On-site"];
+const typeColor = (type) => {
+  if (!type) return "bg-slate-50 border-slate-100 text-slate-500";
+  const t = type.toLowerCase();
+  if (t.includes("remote"))
+    return "bg-emerald-50 border-emerald-100 text-emerald-600";
+  if (t.includes("full")) return "bg-blue-50 border-blue-100 text-blue-600";
+  if (t.includes("contract"))
+    return "bg-amber-50 border-amber-100 text-amber-600";
+  if (t.includes("part"))
+    return "bg-purple-50 border-purple-100 text-purple-600";
+  return "bg-slate-50 border-slate-100 text-slate-500";
+};
 
-// ─── Match badge ──────────────────────────────────────────────────────────────
-const MatchBadge = ({ pct }) => {
-  const color =
-    pct >= 90
-      ? "text-emerald-600 bg-emerald-50 border-emerald-200"
-      : pct >= 75
-        ? "text-blue-600 bg-blue-50 border-blue-200"
-        : "text-slate-500 bg-slate-50 border-slate-200";
+const logoLetter = (name) => (name ? name.charAt(0).toUpperCase() : "?");
+
+const logoGradients = [
+  "from-[#635BFF] to-[#7B73FF]",
+  "from-slate-800 to-slate-700",
+  "from-black to-slate-800",
+  "from-[#F24E1E] to-[#FF7262]",
+  "from-[#3D5AFE] to-[#536DFE]",
+  "from-teal-600 to-teal-500",
+  "from-rose-600 to-rose-500",
+  "from-[#625DF5] to-[#8B5CF6]",
+];
+
+const getGradient = (name) => {
+  if (!name) return logoGradients[0];
+  const code = name.charCodeAt(0) % logoGradients.length;
+  return logoGradients[code];
+};
+
+const Logo = ({
+  companyName,
+  companyLogo,
+  size = "w-12 h-12",
+  text = "text-xl",
+}) => {
+  if (companyLogo) {
+    return (
+      <div
+        className={`${size} rounded-2xl overflow-hidden shrink-0 shadow-sm bg-white border border-slate-100 flex items-center justify-center`}
+      >
+        <img
+          src={companyLogo}
+          alt={companyName}
+          className="w-full h-full object-contain p-1"
+        />
+      </div>
+    );
+  }
   return (
-    <span
-      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-xs font-bold ${color}`}
+    <div
+      className={`${size} rounded-2xl bg-linear-to-br ${getGradient(companyName)} flex items-center justify-center text-white font-black ${text} shrink-0 shadow-sm`}
+      style={{ fontFamily: "'Cabinet Grotesk', sans-serif" }}
     >
-      <Ic.Zap size={10} /> {pct}% match
-    </span>
+      {logoLetter(companyName)}
+    </div>
   );
 };
 
-// ─── Company logo ─────────────────────────────────────────────────────────────
-const Logo = ({ logo, logoColor, size = "w-12 h-12", text = "text-xl" }) => (
-  <div
-    className={`${size} rounded-2xl bg-linear-to-br ${logoColor} flex items-center justify-center text-white font-black ${text} shrink-0 shadow-sm`}
-    style={{ fontFamily: "'Cabinet Grotesk', sans-serif" }}
-  >
-    {logo}
+const SkeletonCard = () => (
+  <div className="bg-white rounded-3xl border border-slate-100 p-6 flex flex-col gap-5 animate-pulse">
+    <div className="flex items-start justify-between gap-3">
+      <div className="w-12 h-12 rounded-2xl bg-slate-100" />
+      <div className="w-20 h-6 rounded-full bg-slate-100" />
+    </div>
+    <div className="flex flex-col gap-2">
+      <div className="h-4 bg-slate-100 rounded w-3/4" />
+      <div className="h-3 bg-slate-100 rounded w-1/2" />
+    </div>
+    <div className="flex gap-2">
+      <div className="h-6 w-24 rounded-full bg-slate-100" />
+      <div className="h-6 w-20 rounded-full bg-slate-100" />
+    </div>
   </div>
 );
 
-// ─── Grid Card ────────────────────────────────────────────────────────────────
 const GridCard = ({ job, index, onUnsave, onSelect }) => {
   const ref = useRef(null);
   const inView = useInView(ref, { once: true, margin: "-30px" });
   const [hovered, setHovered] = useState(false);
+  const skills = Array.isArray(job.skills) ? job.skills : [];
 
   return (
     <motion.div
@@ -389,11 +282,16 @@ const GridCard = ({ job, index, onUnsave, onSelect }) => {
       }}
       onClick={() => onSelect(job)}
     >
-      {/* Top row */}
       <div className="flex items-start justify-between gap-3">
-        <Logo logo={job.logo} logoColor={job.logoColor} />
+        <Logo companyName={job.companyName} companyLogo={job.companyLogo} />
         <div className="flex items-center gap-1.5">
-          <MatchBadge pct={job.match} />
+          {job.type && (
+            <span
+              className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-bold ${typeColor(job.type)}`}
+            >
+              {job.type}
+            </span>
+          )}
           <motion.button
             whileTap={{ scale: 0.85 }}
             onClick={(e) => {
@@ -407,63 +305,64 @@ const GridCard = ({ job, index, onUnsave, onSelect }) => {
         </div>
       </div>
 
-      {/* Role info */}
       <div className="flex-1">
         <h3
           className="font-bold text-slate-900 text-base leading-snug mb-1"
           style={{ fontFamily: "'Cabinet Grotesk', sans-serif" }}
         >
-          {job.role}
+          {job.title}
         </h3>
         <p className="text-sm font-semibold text-slate-500 mb-3">
-          {job.company}
+          {job.companyName || "—"}
         </p>
         <p className="text-xs text-slate-400 leading-relaxed line-clamp-2">
-          {job.desc}
+          {job.description || ""}
         </p>
       </div>
 
-      {/* Meta chips */}
       <div className="flex flex-wrap gap-1.5">
-        <span className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-50 border border-slate-100 text-xs font-medium text-slate-500">
-          <Ic.MapPin size={10} /> {job.location}
-        </span>
-        <span className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-50 border border-slate-100 text-xs font-medium text-slate-500">
-          <Ic.DollarSign size={10} /> {job.salary}
-        </span>
-        {job.remote && (
-          <span className="px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-100 text-xs font-semibold text-emerald-600">
-            Remote
+        {job.location && (
+          <span className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-50 border border-slate-100 text-xs font-medium text-slate-500">
+            <Ic.MapPin size={10} /> {job.location}
+          </span>
+        )}
+        {job.salary && (
+          <span className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-50 border border-slate-100 text-xs font-medium text-slate-500">
+            <Ic.DollarSign size={10} /> {job.salary}
+          </span>
+        )}
+        {job.experience && (
+          <span className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-50 border border-slate-100 text-xs font-medium text-slate-500">
+            <Ic.Award size={10} /> {job.experience}
           </span>
         )}
       </div>
 
-      {/* Tags */}
-      <div className="flex flex-wrap gap-1.5">
-        {job.tags.slice(0, 3).map((t) => (
-          <span
-            key={t}
-            className="px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-600 text-xs font-semibold"
-          >
-            {t}
-          </span>
-        ))}
-        {job.tags.length > 3 && (
-          <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-400 text-xs font-semibold">
-            +{job.tags.length - 3}
-          </span>
-        )}
-      </div>
+      {skills.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {skills.slice(0, 3).map((t) => (
+            <span
+              key={t}
+              className="px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-600 text-xs font-semibold"
+            >
+              {t}
+            </span>
+          ))}
+          {skills.length > 3 && (
+            <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-400 text-xs font-semibold">
+              +{skills.length - 3}
+            </span>
+          )}
+        </div>
+      )}
 
-      {/* Footer */}
       <div className="flex items-center justify-between pt-4 border-t border-slate-50">
         <div className="flex items-center gap-3 text-xs text-slate-400">
-          <span className="flex items-center gap-1">
-            <Ic.Clock size={11} /> {job.savedDate}
-          </span>
-          <span className="flex items-center gap-1">
-            <Ic.Users size={11} /> {job.applicants}
-          </span>
+          {job.department && (
+            <span className="flex items-center gap-1">
+              <Ic.Briefcase size={11} /> {job.department}
+            </span>
+          )}
         </div>
         <motion.div
           animate={{ x: hovered ? 3 : 0 }}
@@ -476,11 +375,11 @@ const GridCard = ({ job, index, onUnsave, onSelect }) => {
   );
 };
 
-// ─── List Row ─────────────────────────────────────────────────────────────────
 const ListRow = ({ job, index, onUnsave, onSelect }) => {
   const ref = useRef(null);
   const inView = useInView(ref, { once: true, margin: "-20px" });
   const [hovered, setHovered] = useState(false);
+  const skills = Array.isArray(job.skills) ? job.skills : [];
 
   return (
     <motion.div
@@ -495,63 +394,78 @@ const ListRow = ({ job, index, onUnsave, onSelect }) => {
       onHoverStart={() => setHovered(true)}
       onHoverEnd={() => setHovered(false)}
       onClick={() => onSelect(job)}
-      className={`group flex items-center gap-5 p-5 bg-white rounded-2xl border cursor-pointer transition-all ${
-        hovered ? "border-indigo-200 shadow-md" : "border-slate-100 shadow-sm"
-      }`}
+      className={`group flex items-center gap-4 p-4 sm:p-5 bg-white rounded-2xl border cursor-pointer transition-all ${hovered ? "border-indigo-200 shadow-md" : "border-slate-100 shadow-sm"}`}
     >
       <Logo
-        logo={job.logo}
-        logoColor={job.logoColor}
+        companyName={job.companyName}
+        companyLogo={job.companyLogo}
         size="w-11 h-11"
         text="text-lg"
       />
 
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 min-w-0">
           <h3
             className="font-bold text-slate-900 text-sm truncate"
             style={{ fontFamily: "'Cabinet Grotesk', sans-serif" }}
           >
-            {job.role}
+            {job.title}
           </h3>
-          <span className="text-slate-300 hidden sm:inline">·</span>
-          <span className="text-sm font-semibold text-slate-500 hidden sm:inline">
-            {job.company}
-          </span>
+          {job.companyName && (
+            <span className="text-slate-300 hidden sm:inline shrink-0">·</span>
+          )}
+          {job.companyName && (
+            <span className="text-sm font-semibold text-slate-400 hidden sm:inline truncate shrink-0 max-w-30">
+              {job.companyName}
+            </span>
+          )}
         </div>
-        <div className="flex items-center gap-3 mt-1 flex-wrap">
-          <span className="text-xs text-slate-400 flex items-center gap-1">
-            <Ic.MapPin size={10} /> {job.location}
-          </span>
-          <span className="text-xs text-slate-400 flex items-center gap-1">
-            <Ic.DollarSign size={10} /> {job.salary}
-          </span>
-          {job.remote && (
-            <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-              Remote
+        <div className="flex items-center gap-2 mt-1.5 flex-nowrap overflow-hidden">
+          {job.location && (
+            <span className="text-xs text-slate-400 flex items-center gap-1 shrink-0">
+              <Ic.MapPin size={10} />{" "}
+              <span className="truncate max-w-20">{job.location}</span>
+            </span>
+          )}
+          {job.salary && (
+            <span className="text-xs text-slate-400 flex items-center gap-1 shrink-0">
+              <Ic.DollarSign size={10} />{" "}
+              <span className="truncate max-w-20">{job.salary}</span>
+            </span>
+          )}
+          {job.experience && (
+            <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full shrink-0 whitespace-nowrap">
+              {job.experience}
             </span>
           )}
         </div>
       </div>
 
-      <div className="hidden md:flex items-center gap-1.5 flex-wrap">
-        {job.tags.slice(0, 2).map((t) => (
+      <div className="hidden lg:flex items-center gap-1.5 shrink-0">
+        {skills.slice(0, 2).map((t) => (
           <span
             key={t}
-            className="px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-600 text-xs font-semibold"
+            className="px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-600 text-xs font-semibold whitespace-nowrap"
           >
             {t}
           </span>
         ))}
+        {skills.length > 2 && (
+          <span className="px-2 py-1 rounded-lg bg-slate-100 text-slate-400 text-xs font-semibold">
+            +{skills.length - 2}
+          </span>
+        )}
       </div>
 
-      <div className="hidden sm:block">
-        <MatchBadge pct={job.match} />
-      </div>
-
-      <div className="text-xs text-slate-400 hidden lg:block whitespace-nowrap">
-        {job.savedDate}
-      </div>
+      {job.type && (
+        <div className="hidden sm:block shrink-0">
+          <span
+            className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-bold whitespace-nowrap ${typeColor(job.type)}`}
+          >
+            {job.type}
+          </span>
+        </div>
+      )}
 
       <div className="flex items-center gap-1.5 shrink-0">
         <motion.button
@@ -572,156 +486,232 @@ const ListRow = ({ job, index, onUnsave, onSelect }) => {
   );
 };
 
-// ─── Detail Modal ─────────────────────────────────────────────────────────────
-const DetailModal = ({ job, onClose, onUnsave }) => (
-  <motion.div
-    className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-6 bg-slate-900/20 backdrop-blur-md"
-    initial={{ opacity: 0 }}
-    animate={{ opacity: 1 }}
-    exit={{ opacity: 0 }}
-    onClick={onClose}
-  >
+const DetailModal = ({ job, onClose, onUnsave }) => {
+  const skills = Array.isArray(job.skills) ? job.skills : [];
+  const [copied, setCopied] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  const handleApply = () => {
+    window.location.href = `/interview?jobId=${job.id}`;
+  };
+
+  const handleShare = async () => {
+    const url = `${window.location.origin}/jobs/${job.id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      if (navigator.share)
+        navigator.share({
+          title: job.title,
+          text: `${job.title} at ${job.companyName}`,
+          url,
+        });
+    }
+  };
+
+  const handleDelete = async () => {
+    await onUnsave(job.id);
+    onClose();
+  };
+
+  const meta = [
+    job.location && { Icon: Ic.MapPin, label: "Location", v: job.location },
+    job.type && { Icon: Ic.Briefcase, label: "Type", v: job.type },
+    job.salary && { Icon: Ic.DollarSign, label: "Salary", v: job.salary },
+    job.experience && {
+      Icon: Ic.Award,
+      label: "Experience",
+      v: job.experience,
+    },
+    job.department && {
+      Icon: Ic.Building,
+      label: "Department",
+      v: job.department,
+    },
+  ].filter(Boolean);
+
+  return (
     <motion.div
-      className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto"
-      initial={{ opacity: 0, y: 60 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 60 }}
-      transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-      onClick={(e) => e.stopPropagation()}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
     >
-      {/* Handle for mobile */}
-      <div className="flex justify-center pt-3 pb-1 sm:hidden">
-        <div className="w-10 h-1 rounded-full bg-slate-200" />
-      </div>
+      <motion.div
+        className="bg-white w-full rounded-2xl shadow-2xl overflow-hidden flex flex-col md:flex-row"
+        style={{ maxWidth: 1100, maxHeight: "78vh" }}
+        initial={{ opacity: 0, scale: 0.94, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.94, y: 20 }}
+        transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* ── Left sidebar ── */}
+        <div className="md:w-64 shrink-0 bg-linear-to-b from-slate-900 to-indigo-950 p-6 flex flex-col gap-5 relative overflow-hidden">
+          <div className="absolute -top-8 -right-8 w-32 h-32 rounded-full bg-white/5 pointer-events-none" />
+          <div className="absolute bottom-16 -left-6 w-24 h-24 rounded-full bg-indigo-500/10 pointer-events-none" />
 
-      {/* Header */}
-      <div className="px-7 pt-5 pb-6 border-b border-slate-100">
-        <div className="flex items-start justify-between gap-3 mb-5">
-          <Logo
-            logo={job.logo}
-            logoColor={job.logoColor}
-            size="w-14 h-14"
-            text="text-2xl"
-          />
-          <div className="flex items-center gap-2">
-            <MatchBadge pct={job.match} />
-            <button
-              onClick={onClose}
-              className="p-2 rounded-xl bg-slate-100 text-slate-400 hover:text-slate-600 hover:bg-slate-200 transition-colors"
-            >
-              <Ic.X size={16} />
-            </button>
-          </div>
-        </div>
-        <h2
-          className="text-2xl font-black text-slate-900 leading-tight mb-1"
-          style={{ fontFamily: "'Cabinet Grotesk', sans-serif" }}
-        >
-          {job.role}
-        </h2>
-        <p className="text-base font-semibold text-slate-500">{job.company}</p>
-
-        <div className="flex flex-wrap gap-2 mt-4">
-          {[
-            { Icon: Ic.MapPin, v: job.location },
-            { Icon: Ic.Briefcase, v: job.type },
-            { Icon: Ic.DollarSign, v: job.salary },
-            { Icon: Ic.Clock, v: `Saved ${job.savedDate}` },
-            { Icon: Ic.Users, v: `${job.applicants} applicants` },
-          ].map(({ Icon, v }, i) => (
-            <span
-              key={i}
-              className="flex items-center gap-1.5 text-xs font-medium text-slate-500 bg-slate-50 border border-slate-100 px-3 py-1.5 rounded-full"
-            >
-              <Icon size={11} /> {v}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      <div className="px-7 py-6 space-y-6">
-        {/* Description */}
-        <div>
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">
-            About the Role
-          </p>
-          <p className="text-sm text-slate-600 leading-relaxed">
-            {job.desc} This is a unique opportunity to join a world-class team
-            and make a significant impact on a product used by millions. You'll
-            collaborate with talented engineers, designers, and product
-            managers.
-          </p>
-        </div>
-
-        {/* Tags */}
-        <div>
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">
-            Tech Stack
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {job.tags.map((t) => (
+          {/* Logo + title */}
+          <div className="relative z-10 flex flex-col gap-3">
+            <Logo
+              companyName={job.companyName}
+              companyLogo={job.companyLogo}
+              size="w-14 h-14"
+              text="text-xl"
+            />
+            <div>
+              <h2
+                className="text-lg font-black text-white leading-snug"
+                style={{ fontFamily: "'Cabinet Grotesk', sans-serif" }}
+              >
+                {job.title}
+              </h2>
+              <p className="text-indigo-300 text-xs font-semibold mt-0.5">
+                {job.companyName}
+              </p>
+            </div>
+            {job.type && (
               <span
-                key={t}
-                className="px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-700 text-sm font-semibold"
+                className={`self-start inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-bold ${typeColor(job.type)}`}
               >
-                {t}
+                {job.type}
               </span>
-            ))}
+            )}
           </div>
-        </div>
 
-        {/* Why it matches */}
-        <div className="p-4 rounded-2xl bg-linear-to-br from-indigo-50 to-violet-50 border border-indigo-100">
-          <div className="flex items-center gap-2 mb-2.5">
-            <Ic.Sparkles size={14} className="text-indigo-500" />
-            <span className="text-xs font-bold text-indigo-600 uppercase tracking-widest">
-              Why it matches you
-            </span>
-          </div>
-          <div className="space-y-2">
-            {[
-              "Your React & TypeScript skills align with requirements",
-              "Remote-friendly matches your preferences",
-              "Salary range fits your expectations",
-            ].map((r, i) => (
-              <div
-                key={i}
-                className="flex items-start gap-2 text-xs text-indigo-700"
-              >
-                <Ic.Check
-                  size={12}
-                  className="text-indigo-400 mt-0.5 shrink-0"
-                />
-                {r}
+          {/* Meta list */}
+          <div className="relative z-10 flex flex-col gap-2.5 flex-1">
+            {meta.map(({ Icon, v }, i) => (
+              <div key={i} className="flex items-center gap-2.5">
+                <div className="w-6 h-6 rounded-md bg-white/10 flex items-center justify-center shrink-0">
+                  <Icon size={11} className="text-slate-300" />
+                </div>
+                <span className="text-xs text-slate-300 font-medium truncate">
+                  {v}
+                </span>
               </div>
             ))}
           </div>
+
+          {/* Actions */}
+          <div className="relative z-10 flex flex-col gap-2">
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.97 }}
+              onClick={handleApply}
+              className="flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-bold transition-colors"
+            >
+              <Ic.Send size={13} /> Apply Now
+            </motion.button>
+            <div className="flex gap-2">
+              <motion.button
+                whileTap={{ scale: 0.95 }}
+                onClick={handleShare}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-colors border border-white/10"
+              >
+                {copied ? (
+                  <>
+                    <Ic.Check size={12} /> Copied!
+                  </>
+                ) : (
+                  <>
+                    <Ic.Share size={12} /> Share
+                  </>
+                )}
+              </motion.button>
+              {!showDeleteConfirm ? (
+                <motion.button
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-xs font-bold transition-colors border border-rose-500/20"
+                >
+                  <Ic.Trash size={12} /> Remove
+                </motion.button>
+              ) : (
+                <motion.button
+                  initial={{ scale: 0.9 }}
+                  animate={{ scale: 1 }}
+                  onClick={handleDelete}
+                  className="flex-1 flex items-center justify-center py-2 rounded-xl bg-rose-500 hover:bg-rose-400 text-white text-xs font-bold transition-colors"
+                >
+                  Confirm?
+                </motion.button>
+              )}
+            </div>
+          </div>
         </div>
 
-        {/* Actions */}
-        <div className="flex gap-3">
-          <button className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-slate-900 text-white text-sm font-bold hover:bg-slate-800 transition-colors shadow-sm">
-            <Ic.Send size={14} /> Apply Now
-          </button>
-          <button className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl bg-white border-2 border-slate-200 text-slate-600 text-sm font-bold hover:border-slate-300 hover:bg-slate-50 transition-colors">
-            <Ic.Share size={14} />
-          </button>
-          <button
-            onClick={() => {
-              onUnsave(job.id);
-              onClose();
-            }}
-            className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl bg-white border-2 border-rose-200 text-rose-400 text-sm font-bold hover:bg-rose-50 transition-colors"
-          >
-            <Ic.Trash size={14} />
-          </button>
+        {/* ── Right content panel ── */}
+        <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+          {/* Header bar */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+              Job Details
+            </span>
+            <button
+              onClick={onClose}
+              className="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-200 transition-colors"
+            >
+              <Ic.X size={14} />
+            </button>
+          </div>
+
+          {/* Scrollable body */}
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+            {job.description && (
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">
+                  About the Role
+                </p>
+                <p className="text-sm text-slate-600 leading-relaxed">
+                  {job.description}
+                </p>
+              </div>
+            )}
+
+            {skills.length > 0 && (
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">
+                  Skills Required
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {skills.map((t, i) => (
+                    <motion.span
+                      key={t}
+                      initial={{ opacity: 0, scale: 0.85 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ delay: i * 0.04 }}
+                      className="px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-700 text-xs font-semibold"
+                    >
+                      {t}
+                    </motion.span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="p-4 rounded-xl bg-linear-to-br from-indigo-50 to-violet-50 border border-indigo-100">
+              <div className="flex items-center gap-2 mb-1.5">
+                <Ic.Sparkles size={12} className="text-indigo-500" />
+                <span className="text-xs font-bold text-indigo-600 uppercase tracking-widest">
+                  AI Interview Available
+                </span>
+              </div>
+              <p className="text-xs text-indigo-700 leading-relaxed">
+                Practice with an AI-powered mock interview for this role before
+                applying.
+              </p>
+            </div>
+          </div>
         </div>
-      </div>
+      </motion.div>
     </motion.div>
-  </motion.div>
-);
+  );
+};
 
-// ─── Empty state ──────────────────────────────────────────────────────────────
 const EmptyState = () => (
   <motion.div
     initial={{ opacity: 0, y: 16 }}
@@ -744,128 +734,86 @@ const EmptyState = () => (
   </motion.div>
 );
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
 const SavedJobs = () => {
-  const [jobs, setJobs] = useState(JOBS);
   const [view, setView] = useState("grid");
   const [search, setSearch] = useState("");
   const [activeFilter, setActiveFilter] = useState("All");
   const [selectedJob, setSelectedJob] = useState(null);
-  const [sortBy, setSortBy] = useState("match");
+  const [sortBy, setSortBy] = useState("recent");
+  const [localJobs, setLocalJobs] = useState([]);
 
-  const unsave = (id) => {
-    setJobs((j) => j.filter((j) => j.id !== id));
+  const {
+    savedJobs,
+    savedPagination,
+    loadingList,
+    loadSavedJobs,
+    removeSavedJob,
+  } = useSavedJobs();
+
+  useEffect(() => {
+    loadSavedJobs({ page: 1, limit: 50 });
+  }, []);
+
+  useEffect(() => {
+    setLocalJobs(savedJobs);
+  }, [savedJobs]);
+
+  const unsave = async (id) => {
+    setLocalJobs((prev) => prev.filter((j) => j.id !== id));
     if (selectedJob?.id === id) setSelectedJob(null);
+    await removeSavedJob(id);
   };
 
-  const filtered = jobs
+  const filtered = localJobs
     .filter((j) => {
-      if (activeFilter === "Remote") return j.remote;
-      if (activeFilter === "On-site") return !j.remote;
+      if (activeFilter === "Remote")
+        return (
+          j.location?.toLowerCase().includes("remote") ||
+          j.type?.toLowerCase().includes("remote")
+        );
+      if (activeFilter === "On-site")
+        return (
+          !j.location?.toLowerCase().includes("remote") &&
+          !j.type?.toLowerCase().includes("remote")
+        );
       if (activeFilter !== "All") return j.type === activeFilter;
       return true;
     })
     .filter(
       (j) =>
         !search ||
-        [j.role, j.company, j.location, ...j.tags].some((v) =>
-          v.toLowerCase().includes(search.toLowerCase()),
-        ),
+        [
+          j.title,
+          j.companyName,
+          j.location,
+          j.department,
+          ...(Array.isArray(j.skills) ? j.skills : []),
+        ]
+          .filter(Boolean)
+          .some((v) => v.toLowerCase().includes(search.toLowerCase())),
     )
     .sort((a, b) => {
-      if (sortBy === "match") return b.match - a.match;
-      if (sortBy === "recent") return 0;
-      if (sortBy === "salary") return parseInt(b.salary) - parseInt(a.salary);
+      if (sortBy === "recent")
+        return new Date(b.posted || 0) - new Date(a.posted || 0);
+      if (sortBy === "title")
+        return (a.title || "").localeCompare(b.title || "");
       return 0;
     });
 
-  const remoteCount = jobs.filter((j) => j.remote).length;
-  const avgMatch = jobs.length
-    ? Math.round(jobs.reduce((s, j) => s + j.match, 0) / jobs.length)
-    : 0;
+  const remoteCount = localJobs.filter(
+    (j) =>
+      j.location?.toLowerCase().includes("remote") ||
+      j.type?.toLowerCase().includes("remote"),
+  ).length;
+
+  const uniqueDepts = [
+    ...new Set(localJobs.map((j) => j.department).filter(Boolean)),
+  ].length;
 
   return (
     <>
       <title>Saved Jobs | Talk2Hire Careers Portal</title>
-
-      {/* Description */}
-      <meta
-        name="description"
-        content="View and manage your saved job opportunities on Talk2Hire. Track AI match scores, review job details, and apply quickly."
-      />
-
-      {/* Private Dashboard Page */}
       <meta name="robots" content="noindex, nofollow, noarchive" />
-
-      {/* Canonical */}
-      <link rel="canonical" href="https://talk2hire.com/saved" />
-
-      {/* Theme Color */}
-      <meta name="theme-color" content="#7C3AED" />
-
-      {/* Open Graph */}
-      <meta property="og:type" content="website" />
-      <meta property="og:site_name" content="Talk2Hire" />
-      <meta property="og:title" content="Saved Jobs | Talk2Hire" />
-      <meta
-        property="og:description"
-        content="Access your saved job listings, AI match scores, and application insights within Talk2Hire."
-      />
-      <meta property="og:url" content="https://talk2hire.com/saved" />
-      <meta
-        property="og:image"
-        content="https://talk2hire.com/talk2hirelogo.png"
-      />
-
-      {/* Twitter */}
-      <meta name="twitter:card" content="summary_large_image" />
-      <meta name="twitter:title" content="Saved Jobs | Talk2Hire" />
-      <meta
-        name="twitter:description"
-        content="Track and manage your saved job opportunities with AI-powered insights."
-      />
-      <meta
-        name="twitter:image"
-        content="https://talk2hire.com/talk2hirelogo.png"
-      />
-
-      {/* Structured Data */}
-      <script type="application/ld+json">
-        {JSON.stringify({
-          "@context": "https://schema.org",
-          "@type": "WebApplication",
-          name: "Talk2Hire Saved Jobs Dashboard",
-          url: "https://talk2hire.com/saved",
-          applicationCategory: "BusinessApplication",
-          operatingSystem: "Web",
-          isPartOf: {
-            "@type": "WebApplication",
-            name: "Talk2Hire",
-            url: "https://talk2hire.com/",
-          },
-          publisher: {
-            "@type": "Organization",
-            name: "QuantamHash Corporation",
-            address: {
-              "@type": "PostalAddress",
-              streetAddress: "800 N King Street, Suite 304",
-              addressLocality: "Wilmington",
-              addressRegion: "DE",
-              postalCode: "19801",
-              addressCountry: "US",
-            },
-          },
-          description:
-            "Private dashboard page where users manage saved jobs, review AI match scores, and apply to opportunities within Talk2Hire.",
-          featureList: [
-            "View saved job listings",
-            "AI-powered job match scoring",
-            "Filter by remote or job type",
-            "Search saved jobs",
-            "Quick apply functionality",
-          ],
-        })}
-      </script>
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Cabinet+Grotesk:wght@400;500;700;800;900&family=Satoshi:wght@400;500;600;700&display=swap');
@@ -878,11 +826,10 @@ const SavedJobs = () => {
         className="min-h-screen bg-linear-to-b from-white to-slate-50/80"
         style={{ fontFamily: "'Satoshi', sans-serif" }}
       >
-        {/* ══ Header ══ */}
+        {/* Header */}
         <div className="bg-white border-b border-slate-100 sticky top-0 z-40 backdrop-blur-sm">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex items-center justify-between h-16 gap-4">
-              {/* Brand */}
               <div className="flex items-center gap-3 shrink-0">
                 <div className="w-8 h-8 rounded-xl bg-linear-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-sm shadow-indigo-200">
                   <Ic.Bookmark size={14} className="text-white" fill="white" />
@@ -895,7 +842,6 @@ const SavedJobs = () => {
                 </span>
               </div>
 
-              {/* Search */}
               <div className="relative flex-1 max-w-xs sm:max-w-sm">
                 <Ic.Search
                   size={14}
@@ -922,7 +868,6 @@ const SavedJobs = () => {
                 </AnimatePresence>
               </div>
 
-              {/* Right controls */}
               <div className="flex items-center gap-2 shrink-0">
                 <div className="relative hidden sm:block">
                   <select
@@ -930,9 +875,8 @@ const SavedJobs = () => {
                     onChange={(e) => setSortBy(e.target.value)}
                     className="pl-3 pr-7 py-2 rounded-xl bg-slate-50 border-2 border-slate-100 text-sm font-semibold text-slate-500 focus:outline-none focus:border-indigo-200 cursor-pointer"
                   >
-                    <option value="match">Best match</option>
                     <option value="recent">Most recent</option>
-                    <option value="salary">Salary</option>
+                    <option value="title">Title A–Z</option>
                   </select>
                   <Ic.ChevronDown
                     size={13}
@@ -959,7 +903,7 @@ const SavedJobs = () => {
         </div>
 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-          {/* ══ Hero stats row ══ */}
+          {/* Stats */}
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
@@ -969,7 +913,7 @@ const SavedJobs = () => {
               {[
                 {
                   label: "Saved",
-                  value: jobs.length,
+                  value: localJobs.length,
                   Icon: Ic.Bookmark,
                   color: "text-indigo-600",
                   bg: "bg-indigo-50",
@@ -984,16 +928,16 @@ const SavedJobs = () => {
                   border: "border-emerald-100",
                 },
                 {
-                  label: "Avg Match",
-                  value: `${avgMatch}%`,
+                  label: "Departments",
+                  value: uniqueDepts,
                   Icon: Ic.Sparkles,
                   color: "text-violet-600",
                   bg: "bg-violet-50",
                   border: "border-violet-100",
                 },
                 {
-                  label: "New Today",
-                  value: 3,
+                  label: "Showing",
+                  value: filtered.length,
                   Icon: Ic.Bell,
                   color: "text-amber-600",
                   bg: "bg-amber-50",
@@ -1017,7 +961,7 @@ const SavedJobs = () => {
                       className="text-xl font-black text-slate-900 leading-none"
                       style={{ fontFamily: "'Cabinet Grotesk', sans-serif" }}
                     >
-                      {value}
+                      {loadingList ? "—" : value}
                     </p>
                     <p className="text-xs font-semibold text-slate-400 mt-0.5">
                       {label}
@@ -1028,7 +972,7 @@ const SavedJobs = () => {
             </div>
           </motion.div>
 
-          {/* ══ Filter bar ══ */}
+          {/* Filter bar */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -1040,24 +984,9 @@ const SavedJobs = () => {
                 key={f}
                 whileTap={{ scale: 0.95 }}
                 onClick={() => setActiveFilter(f)}
-                className={`px-4 py-2 rounded-xl text-sm font-bold transition-all border-2 ${
-                  activeFilter === f
-                    ? "bg-slate-900 border-slate-900 text-white shadow-sm"
-                    : "bg-white border-slate-100 text-slate-500 hover:border-slate-200 hover:text-slate-700"
-                }`}
+                className={`px-4 py-2 rounded-xl text-sm font-bold transition-all border-2 ${activeFilter === f ? "bg-slate-900 border-slate-900 text-white shadow-sm" : "bg-white border-slate-100 text-slate-500 hover:border-slate-200 hover:text-slate-700"}`}
               >
                 {f}
-                {f !== "All" && (
-                  <span
-                    className={`ml-1.5 text-xs ${activeFilter === f ? "opacity-60" : "text-slate-400"}`}
-                  >
-                    {f === "Remote"
-                      ? jobs.filter((j) => j.remote).length
-                      : f === "On-site"
-                        ? jobs.filter((j) => !j.remote).length
-                        : jobs.filter((j) => j.type === f).length}
-                  </span>
-                )}
               </motion.button>
             ))}
             <span className="ml-auto text-xs font-semibold text-slate-400">
@@ -1065,9 +994,15 @@ const SavedJobs = () => {
             </span>
           </motion.div>
 
-          {/* ══ Job listings ══ */}
+          {/* Job listings */}
           <AnimatePresence mode="wait">
-            {filtered.length === 0 ? (
+            {loadingList ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
+                {[1, 2, 3, 4, 5, 6].map((i) => (
+                  <SkeletonCard key={i} />
+                ))}
+              </div>
+            ) : filtered.length === 0 ? (
               <EmptyState key="empty" />
             ) : view === "grid" ? (
               <motion.div
@@ -1108,15 +1043,14 @@ const SavedJobs = () => {
             )}
           </AnimatePresence>
 
-          {/* ══ Bottom CTA ══ */}
-          {jobs.length > 0 && (
+          {/* Bottom CTA */}
+          {filtered.length > 0 && filtered[0] && (
             <motion.div
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.5 }}
               className="relative overflow-hidden rounded-3xl bg-slate-900 px-8 sm:px-12 py-10 flex flex-col sm:flex-row items-center justify-between gap-6"
             >
-              {/* Decorative */}
               <div className="absolute -right-8 -top-8 w-40 h-40 rounded-full bg-white/5 pointer-events-none" />
               <div className="absolute right-24 -bottom-10 w-24 h-24 rounded-full bg-white/3 pointer-events-none" />
               <div className="absolute left-0 top-0 w-1 h-full bg-linear-to-b from-indigo-500 to-violet-600 rounded-full" />
@@ -1125,18 +1059,18 @@ const SavedJobs = () => {
                 <div className="flex items-center gap-2 justify-center sm:justify-start mb-2">
                   <Ic.Sparkles size={14} className="text-indigo-400" />
                   <span className="text-xs font-bold text-indigo-400 uppercase tracking-widest">
-                    AI Recommendation
+                    Top Pick
                   </span>
                 </div>
                 <h3
                   className="text-xl sm:text-2xl font-black text-white mb-1"
                   style={{ fontFamily: "'Cabinet Grotesk', sans-serif" }}
                 >
-                  You're a strong fit for {filtered[0]?.company || "Stripe"}
+                  {filtered[0].title} at {filtered[0].companyName}
                 </h3>
                 <p className="text-slate-400 text-sm">
-                  Your profile matches {filtered[0]?.match || 97}% of the
-                  requirements. Apply before the deadline.
+                  {filtered[0].location || "—"}
+                  {filtered[0].type ? ` · ${filtered[0].type}` : ""}
                 </p>
               </div>
               <motion.button
@@ -1146,14 +1080,13 @@ const SavedJobs = () => {
                 style={{ fontFamily: "'Cabinet Grotesk', sans-serif" }}
                 onClick={() => setSelectedJob(filtered[0])}
               >
-                <Ic.Zap size={16} /> Quick Apply
+                <Ic.Zap size={16} /> View Details
               </motion.button>
             </motion.div>
           )}
         </div>
       </div>
 
-      {/* ══ Detail Modal ══ */}
       <AnimatePresence>
         {selectedJob && (
           <DetailModal

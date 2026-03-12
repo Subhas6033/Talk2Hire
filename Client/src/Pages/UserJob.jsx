@@ -18,7 +18,6 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { usePublicJobs } from "../Hooks/useJobHook";
 
-// ─── Constants ────────────────────────────────────────────────
 const DEPARTMENTS = [
   "Engineering",
   "Design",
@@ -46,9 +45,6 @@ const EXPERIENCES = [
   "7+ years",
 ];
 
-const JOBS_PER_PAGE = 9;
-
-// ─── Helpers ──────────────────────────────────────────────────
 const parseSkills = (skills) => {
   if (Array.isArray(skills)) return skills;
   if (typeof skills === "string") {
@@ -77,7 +73,6 @@ const timeAgo = (dateStr) => {
   return `${Math.floor(days / 30)}mo ago`;
 };
 
-// ─── Animated counter ─────────────────────────────────────────
 const useCountUp = (target, duration = 800) => {
   const [count, setCount] = useState(0);
   useEffect(() => {
@@ -96,7 +91,6 @@ const useCountUp = (target, duration = 800) => {
   return count;
 };
 
-// ─── Company Avatar ───────────────────────────────────────────
 const PALETTES = [
   { bg: "#EEF2FF", text: "#4F46E5", border: "#C7D2FE" },
   { bg: "#F0FDF4", text: "#16A34A", border: "#BBF7D0" },
@@ -106,7 +100,6 @@ const PALETTES = [
   { bg: "#FFF1F2", text: "#E11D48", border: "#FECDD3" },
 ];
 
-// ─── Single CompanyAvatar — logo if available, else first letter ──
 const CompanyAvatar = ({ name, logo, index, size = 48 }) => {
   const pal = PALETTES[index % PALETTES.length];
   const initial = name ? name.trim()[0].toUpperCase() : "C";
@@ -153,7 +146,6 @@ const CompanyAvatar = ({ name, logo, index, size = 48 }) => {
   );
 };
 
-// ─── Type badge config ────────────────────────────────────────
 const TYPE_STYLES = {
   "Full-time": { bg: "#F0FDF4", text: "#15803D", border: "#BBF7D0" },
   "Part-time": { bg: "#EFF6FF", text: "#2563EB", border: "#BFDBFE" },
@@ -162,7 +154,6 @@ const TYPE_STYLES = {
   Remote: { bg: "#F0FDFA", text: "#0D9488", border: "#99F6E4" },
 };
 
-// ─── Job Card ─────────────────────────────────────────────────
 const JobCard = ({ job, index, onClick, animDelay }) => {
   const [hovered, setHovered] = useState(false);
   const skills = parseSkills(job.skills);
@@ -188,7 +179,6 @@ const JobCard = ({ job, index, onClick, animDelay }) => {
         animation: `fadeUp 0.4s ease ${animDelay}ms both`,
       }}
     >
-      {/* Hover top accent bar */}
       <div
         className="absolute top-0 left-0 right-0 h-0.75 rounded-t-2xl"
         style={{
@@ -198,7 +188,6 @@ const JobCard = ({ job, index, onClick, animDelay }) => {
         }}
       />
 
-      {/* Top row */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3 flex-1 min-w-0">
           <CompanyAvatar
@@ -238,7 +227,6 @@ const JobCard = ({ job, index, onClick, animDelay }) => {
         </div>
       </div>
 
-      {/* Description */}
       {job.description && (
         <p
           className="text-xs text-gray-500 m-0"
@@ -254,7 +242,6 @@ const JobCard = ({ job, index, onClick, animDelay }) => {
         </p>
       )}
 
-      {/* Type + dept badges */}
       <div className="flex flex-wrap gap-1.5">
         <span
           className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border"
@@ -278,7 +265,6 @@ const JobCard = ({ job, index, onClick, animDelay }) => {
         )}
       </div>
 
-      {/* Skills */}
       {skills.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {skills.slice(0, 4).map((sk) => (
@@ -297,7 +283,6 @@ const JobCard = ({ job, index, onClick, animDelay }) => {
         </div>
       )}
 
-      {/* Footer */}
       <div className="flex items-center justify-between text-xs text-gray-400 pt-3.5 border-t border-gray-100 mt-0.5">
         <div className="flex items-center gap-3">
           {job.location && (
@@ -319,7 +304,6 @@ const JobCard = ({ job, index, onClick, animDelay }) => {
   );
 };
 
-// ─── Filter Pill ──────────────────────────────────────────────
 const FilterPill = ({ label, value, onChange, options, placeholder }) => {
   const active = !!value;
   return (
@@ -354,7 +338,6 @@ const FilterPill = ({ label, value, onChange, options, placeholder }) => {
   );
 };
 
-// ─── Pagination ───────────────────────────────────────────────
 const Pagination = ({ currentPage, totalPages, onPageChange }) => {
   if (totalPages <= 1) return null;
 
@@ -381,7 +364,6 @@ const Pagination = ({ currentPage, totalPages, onPageChange }) => {
         disabled={currentPage === 1}
         className="w-9 h-9 rounded-xl border border-gray-200 bg-white flex items-center justify-center text-sm font-semibold transition-all duration-150 disabled:opacity-35 disabled:cursor-not-allowed hover:bg-gray-50 cursor-pointer"
         style={{ fontFamily: "'DM Sans', sans-serif" }}
-        title="Previous"
       >
         <ChevronLeft size={16} color="#6B7280" />
       </button>
@@ -422,7 +404,6 @@ const Pagination = ({ currentPage, totalPages, onPageChange }) => {
         disabled={currentPage === totalPages}
         className="w-9 h-9 rounded-xl border border-gray-200 bg-white flex items-center justify-center text-sm font-semibold transition-all duration-150 disabled:opacity-35 disabled:cursor-not-allowed hover:bg-gray-50 cursor-pointer"
         style={{ fontFamily: "'DM Sans', sans-serif" }}
-        title="Next"
       >
         <ChevronRight size={16} color="#6B7280" />
       </button>
@@ -430,7 +411,6 @@ const Pagination = ({ currentPage, totalPages, onPageChange }) => {
   );
 };
 
-// ─── Skeleton Card ────────────────────────────────────────────
 const SkeletonCard = ({ delay = 0 }) => (
   <div
     className="bg-white border border-gray-100 rounded-2xl p-6 flex flex-col gap-4"
@@ -457,18 +437,17 @@ const SkeletonCard = ({ delay = 0 }) => (
   </div>
 );
 
-// ─── Main Page ────────────────────────────────────────────────
 const UserJob = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [showFilters, setShowFilters] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
   const [mounted, setMounted] = useState(false);
   const gridRef = useRef(null);
 
   const {
     jobs,
     total,
+    pagination,
     isFetching,
     error,
     q,
@@ -481,13 +460,14 @@ const UserJob = () => {
     setType,
     experience,
     setExperience,
+    page,
+    setPage,
     resetFilters,
     hasActiveFilters,
   } = usePublicJobs();
 
   const totalCount = useCountUp(total, 600);
 
-  // Sync URL params into hook on first mount
   useEffect(() => {
     const urlQ = searchParams.get("q");
     const urlLocation = searchParams.get("location");
@@ -496,25 +476,19 @@ const UserJob = () => {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    setCurrentPage(1);
-  }, [q, department, location, type, experience]);
-
-  useEffect(() => {
     const t = setTimeout(() => setMounted(true), 50);
     return () => clearTimeout(t);
   }, []);
 
-  const handlePageChange = useCallback((page) => {
-    setCurrentPage(page);
-    gridRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, []);
-
-  const totalPages = Math.ceil(jobs.length / JOBS_PER_PAGE);
-  const paginatedJobs = jobs.slice(
-    (currentPage - 1) * JOBS_PER_PAGE,
-    currentPage * JOBS_PER_PAGE,
+  const handlePageChange = useCallback(
+    (newPage) => {
+      setPage(newPage);
+      gridRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    },
+    [setPage],
   );
 
+  const totalPages = pagination?.totalPages ?? 0;
   const activeFilterCount = [department, location, type, experience].filter(
     Boolean,
   ).length;
@@ -522,29 +496,19 @@ const UserJob = () => {
   return (
     <>
       <title>Browse Job Openings | Talk2Hire Careers Portal</title>
-
-      {/* Meta Basics */}
       <meta charSet="UTF-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
       <meta
         name="description"
         content="Explore the latest job openings across engineering, design, marketing, and more on Talk2Hire. Filter by location, experience, and job type to find your next opportunity."
       />
-
       <meta
         name="keywords"
         content="jobs, hiring, careers, engineering jobs, remote jobs, marketing jobs, Talk2Hire jobs"
       />
-
       <meta name="robots" content="index, follow" />
-
-      {/* Canonical */}
       <link rel="canonical" href="https://talk2hire.com/jobs" />
-
       <meta name="theme-color" content="#4F46E5" />
-
-      {/* Open Graph */}
       <meta property="og:type" content="website" />
       <meta property="og:site_name" content="Talk2Hire" />
       <meta property="og:title" content="Browse Job Openings | Talk2Hire" />
@@ -557,8 +521,6 @@ const UserJob = () => {
         property="og:image"
         content="https://talk2hire.com/talk2hirelogo.png"
       />
-
-      {/* Twitter */}
       <meta name="twitter:card" content="summary_large_image" />
       <meta name="twitter:title" content="Browse Job Openings | Talk2Hire" />
       <meta
@@ -569,8 +531,6 @@ const UserJob = () => {
         name="twitter:image"
         content="https://talk2hire.com/talk2hirelogo.png"
       />
-
-      {/* Structured Data */}
       <script type="application/ld+json">
         {JSON.stringify({
           "@context": "https://schema.org",
@@ -615,11 +575,7 @@ const UserJob = () => {
         @keyframes fadeUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes slideDown { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
-        input:focus, select:focus {
-          outline: none !important;
-          box-shadow: 0 0 0 3px rgba(99,102,241,0.12) !important;
-          border-color: #6366F1 !important;
-        }
+        input:focus, select:focus { outline: none !important; box-shadow: 0 0 0 3px rgba(99,102,241,0.12) !important; border-color: #6366F1 !important; }
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: #F9FAFB; }
         ::-webkit-scrollbar-thumb { background: #E5E7EB; border-radius: 99px; }
@@ -634,7 +590,6 @@ const UserJob = () => {
           transition: "opacity 0.3s",
         }}
       >
-        {/* ── Decorative background ── */}
         <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
           <div
             className="absolute -top-28 -right-28 w-150 h-150 rounded-full"
@@ -660,7 +615,6 @@ const UserJob = () => {
           />
         </div>
 
-        {/* ── Header ── */}
         <header
           className="sticky top-0 z-50 border-b border-black/6"
           style={{
@@ -670,7 +624,6 @@ const UserJob = () => {
           }}
         >
           <div className="max-w-7xl mx-auto px-4 sm:px-6">
-            {/* Title row */}
             <div
               className="flex items-center justify-between py-4 sm:py-5"
               style={{ animation: "fadeUp 0.5s ease both" }}
@@ -706,7 +659,6 @@ const UserJob = () => {
                   </p>
                 </div>
               </div>
-
               {hasActiveFilters && (
                 <button
                   onClick={resetFilters}
@@ -719,7 +671,6 @@ const UserJob = () => {
               )}
             </div>
 
-            {/* Search + filter toggle */}
             <div
               className="flex gap-2 sm:gap-2.5 pb-4"
               style={{ animation: "fadeUp 0.5s ease 0.08s both" }}
@@ -750,7 +701,6 @@ const UserJob = () => {
                   </button>
                 )}
               </div>
-
               <button
                 onClick={() => setShowFilters(!showFilters)}
                 className="flex items-center gap-2 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl text-sm font-semibold cursor-pointer transition-all duration-200 whitespace-nowrap border"
@@ -780,7 +730,6 @@ const UserJob = () => {
               </button>
             </div>
 
-            {/* Filter panel */}
             {showFilters && (
               <div
                 className="px-4 sm:px-5 pt-4 pb-5 bg-gray-50 border border-gray-200 rounded-2xl mb-4"
@@ -834,9 +783,7 @@ const UserJob = () => {
           </div>
         </header>
 
-        {/* ── Main content ── */}
         <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 pb-16 relative z-10">
-          {/* Results meta */}
           {!isFetching && !error && jobs.length > 0 && (
             <div
               className="flex flex-wrap items-center justify-between gap-2 mb-5 sm:mb-6"
@@ -845,29 +792,26 @@ const UserJob = () => {
               <p className="m-0 text-sm text-gray-500 font-medium">
                 Showing{" "}
                 <strong className="text-gray-900">
-                  {(currentPage - 1) * JOBS_PER_PAGE + 1}–
-                  {Math.min(currentPage * JOBS_PER_PAGE, jobs.length)}
+                  {(page - 1) * 9 + 1}–{Math.min(page * 9, total)}
                 </strong>{" "}
-                of <strong className="text-gray-900">{jobs.length}</strong> jobs
+                of <strong className="text-gray-900">{total}</strong> jobs
                 {hasActiveFilters && (
                   <span className="text-indigo-500"> (filtered)</span>
                 )}
               </p>
               {totalPages > 1 && (
                 <p className="m-0 text-sm text-gray-400">
-                  Page {currentPage} of {totalPages}
+                  Page {page} of {totalPages}
                 </p>
               )}
             </div>
           )}
 
-          {/* Grid scroll anchor */}
           <div ref={gridRef} style={{ scrollMarginTop: 120 }} />
 
-          {/* States */}
           {isFetching ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
-              {[...Array(JOBS_PER_PAGE)].map((_, i) => (
+              {[...Array(9)].map((_, i) => (
                 <SkeletonCard key={i} delay={i * 60} />
               ))}
             </div>
@@ -921,11 +865,11 @@ const UserJob = () => {
           ) : (
             <>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
-                {paginatedJobs.map((job, i) => (
+                {jobs.map((job, i) => (
                   <JobCard
                     key={job.id}
                     job={job}
-                    index={(currentPage - 1) * JOBS_PER_PAGE + i}
+                    index={(page - 1) * 9 + i}
                     onClick={() => navigate(`/jobs/${job.id}`)}
                     animDelay={Math.min(i * 55, 350)}
                   />
@@ -933,14 +877,14 @@ const UserJob = () => {
               </div>
 
               <Pagination
-                currentPage={currentPage}
+                currentPage={page}
                 totalPages={totalPages}
                 onPageChange={handlePageChange}
               />
 
               {totalPages > 1 && (
                 <p className="text-center mt-5 text-xs text-gray-300 font-medium">
-                  {jobs.length} total positions · {JOBS_PER_PAGE} per page
+                  {total} total positions · 9 per page
                 </p>
               )}
             </>

@@ -41,8 +41,6 @@ const createJob = asyncHandler(async (req, res) => {
     skills: Array.isArray(skills) ? skills : [],
   });
 
-  // ── Send job alert emails to all newsletter subscribers ──────────────────
-  // Only send alerts for active/published jobs, not drafts
   if (status !== "draft") {
     sendJobAlertToAll({
       id: job.id,
@@ -56,7 +54,6 @@ const createJob = asyncHandler(async (req, res) => {
       console.error("[createJob] Newsletter alert failed:", err.message),
     );
   }
-  // ─────────────────────────────────────────────────────────────────────────
 
   return res.status(201).json(new APIRES(201, job, "Job posted successfully"));
 });
@@ -83,20 +80,17 @@ const getAllJobs = asyncHandler(async (req, res) => {
 
 const getJobCounts = asyncHandler(async (req, res) => {
   const counts = await Job.getCounts(req.company.id);
-
   return res
     .status(200)
     .json(new APIRES(200, counts, "Job counts fetched successfully"));
 });
 
-const getJobById = asyncHandler(async (req, res) => {
+const getCompanyJobById = asyncHandler(async (req, res) => {
   const { id } = req.params;
-
   if (!id || isNaN(id)) throw new APIERR(400, "Invalid job ID");
 
   const job = await Job.findById(Number(id));
   if (!job) throw new APIERR(404, "Job not found");
-
   if (job.company_id !== req.company.id)
     throw new APIERR(
       403,
@@ -108,12 +102,10 @@ const getJobById = asyncHandler(async (req, res) => {
 
 const updateJob = asyncHandler(async (req, res) => {
   const { id } = req.params;
-
   if (!id || isNaN(id)) throw new APIERR(400, "Invalid job ID");
 
   const existing = await Job.findById(Number(id));
   if (!existing) throw new APIERR(404, "Job not found");
-
   if (existing.company_id !== req.company.id)
     throw new APIERR(
       403,
@@ -130,7 +122,6 @@ const updateJob = asyncHandler(async (req, res) => {
     throw new APIERR(400, "Description cannot be empty");
 
   const updatedJob = await Job.update(Number(id), req.body);
-
   return res
     .status(200)
     .json(new APIRES(200, updatedJob, "Job updated successfully"));
@@ -138,18 +129,15 @@ const updateJob = asyncHandler(async (req, res) => {
 
 const toggleJobStatus = asyncHandler(async (req, res) => {
   const { id } = req.params;
-
   if (!id || isNaN(id)) throw new APIERR(400, "Invalid job ID");
 
   const existing = await Job.findById(Number(id));
   if (!existing) throw new APIERR(404, "Job not found");
-
   if (existing.company_id !== req.company.id)
     throw new APIERR(
       403,
       "Access denied. This job belongs to another company.",
     );
-
   if (existing.status === "draft")
     throw new APIERR(
       400,
@@ -157,13 +145,11 @@ const toggleJobStatus = asyncHandler(async (req, res) => {
     );
 
   const updatedJob = await Job.toggleStatus(Number(id));
-
   const message =
     updatedJob.status === "active"
       ? "Job activated successfully"
       : "Job deactivated successfully";
 
-  // ── Also notify subscribers when a job is toggled TO active ──────────────
   if (updatedJob.status === "active") {
     sendJobAlertToAll({
       id: updatedJob.id,
@@ -177,24 +163,20 @@ const toggleJobStatus = asyncHandler(async (req, res) => {
       console.error("[toggleJobStatus] Newsletter alert failed:", err.message),
     );
   }
-  // ─────────────────────────────────────────────────────────────────────────
 
   return res.status(200).json(new APIRES(200, updatedJob, message));
 });
 
 const incrementApplicants = asyncHandler(async (req, res) => {
   const { id } = req.params;
-
   if (!id || isNaN(id)) throw new APIERR(400, "Invalid job ID");
 
   const existing = await Job.findById(Number(id));
   if (!existing) throw new APIERR(404, "Job not found");
-
   if (existing.status !== "active")
     throw new APIERR(400, "Cannot apply to a job that is not active");
 
   await Job.incrementApplicants(Number(id));
-
   return res
     .status(200)
     .json(new APIRES(200, null, "Application submitted successfully"));
@@ -202,12 +184,10 @@ const incrementApplicants = asyncHandler(async (req, res) => {
 
 const deleteJob = asyncHandler(async (req, res) => {
   const { id } = req.params;
-
   if (!id || isNaN(id)) throw new APIERR(400, "Invalid job ID");
 
   const existing = await Job.findById(Number(id));
   if (!existing) throw new APIERR(404, "Job not found");
-
   if (existing.company_id !== req.company.id)
     throw new APIERR(
       403,
@@ -225,7 +205,6 @@ const deleteJob = asyncHandler(async (req, res) => {
 
 const getPublicJobs = asyncHandler(async (req, res) => {
   const { search, department, location, type, experience } = req.query;
-
   const jobs = await Job.findAllPublic({
     search,
     department,
@@ -233,7 +212,6 @@ const getPublicJobs = asyncHandler(async (req, res) => {
     type,
     experience,
   });
-
   return res
     .status(200)
     .json(
@@ -243,17 +221,6 @@ const getPublicJobs = asyncHandler(async (req, res) => {
         "Jobs fetched successfully",
       ),
     );
-});
-
-const getPublicJobById = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  if (!id || isNaN(id)) throw new APIERR(400, "Invalid job ID");
-
-  const job = await Job.findById(Number(id));
-  if (!job) throw new APIERR(404, "Job not found");
-  if (job.status !== "active") throw new APIERR(404, "Job not found");
-
-  return res.status(200).json(new APIRES(200, job, "Job fetched successfully"));
 });
 
 const searchJobs = async (req, res) => {
@@ -301,39 +268,18 @@ const searchJobs = async (req, res) => {
 
     const whereSQL = `WHERE ${conditions.join(" AND ")}`;
 
-    const dataSQL = `
-      SELECT
-        j.id,
-        j.company_id,
-        j.title,
-        j.department,
-        j.location,
-        j.type,
-        j.experience,
-        j.salary,
-        j.description,
-        j.skills,
-        j.status,
-        j.applicants,
-        j.posted        AS posted,
-        c.companyName   AS companyName,
-        c.logo          AS companyLogo
-      FROM jobs j
-      LEFT JOIN company_details c ON c.id = j.company_id
-      ${whereSQL}
-      ORDER BY j.posted DESC
-      LIMIT ? OFFSET ?
-    `;
-
-    const countSQL = `
-      SELECT COUNT(*) AS total
-      FROM jobs j
-      ${whereSQL}
-    `;
-
     const [[jobs], [[{ total }]]] = await Promise.all([
-      pool.query(dataSQL, [...params, limitNum, offset]),
-      pool.query(countSQL, params),
+      pool.query(
+        `SELECT j.id, j.company_id, j.title, j.department, j.location, j.type,
+                j.experience, j.salary, j.description, j.skills, j.status,
+                j.applicants, j.posted AS posted,
+                c.companyName AS companyName, c.logo AS companyLogo
+         FROM jobs j
+         LEFT JOIN company_details c ON c.id = j.company_id
+         ${whereSQL} ORDER BY j.posted DESC LIMIT ? OFFSET ?`,
+        [...params, limitNum, offset],
+      ),
+      pool.query(`SELECT COUNT(*) AS total FROM jobs j ${whereSQL}`, params),
     ]);
 
     const totalPages = Math.ceil(total / limitNum);
@@ -366,27 +312,14 @@ const searchJobs = async (req, res) => {
 const getJob = async (req, res) => {
   try {
     const { id } = req.params;
-
     const [[job]] = await pool.query(
-      `SELECT
-        j.id,
-        j.company_id,
-        j.title,
-        j.department,
-        j.location,
-        j.type
-       FROM jobs j
-       WHERE j.id = ?
-       LIMIT 1`,
+      `SELECT j.id, j.company_id, j.title, j.department, j.location, j.type FROM jobs j WHERE j.id = ? LIMIT 1`,
       [id],
     );
-
-    if (!job) {
+    if (!job)
       return res
         .status(404)
         .json({ success: false, message: "Job not found." });
-    }
-
     return res.status(200).json({ success: true, data: job });
   } catch (err) {
     console.error("[getJobById]", err);
@@ -398,17 +331,160 @@ const getJob = async (req, res) => {
   }
 };
 
+// ─── Shared helpers ───────────────────────────────────────────
+
+const shapeJob = (row) => ({
+  id: row.id,
+  title: row.title,
+  description: row.description,
+  department: row.department,
+  location: row.location,
+  type: row.type,
+  experience: row.experience,
+  salary: row.salary,
+  status: row.status,
+  skills: (() => {
+    if (!row.skills) return [];
+    try {
+      return JSON.parse(row.skills);
+    } catch {
+      return row.skills
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+  })(),
+  companyName: row.companyName || null,
+  companyLogo: row.companyLogo || null,
+  posted: row.created_at,
+});
+
+const JOB_SELECT = `
+  j.id, j.title, j.description, j.department, j.location,
+  j.type, j.experience, j.salary, j.status, j.skills, j.created_at,
+  c.companyName AS companyName,
+  c.logo   AS companyLogo
+  FROM jobs j
+  LEFT JOIN company_details c ON c.id = j.company_id
+`;
+
+// ─── Public job detail (with company join) ────────────────────
+
+const getJobById = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const [rows] = await pool.execute(
+    `SELECT ${JOB_SELECT} WHERE j.id = ? AND j.status = 'active'`,
+    [id],
+  );
+
+  if (!rows[0]) throw new APIERR(404, "Job not found");
+  res
+    .status(200)
+    .json(new APIRES(200, shapeJob(rows[0]), "Job fetched successfully"));
+});
+
+// ─── Saved jobs ───────────────────────────────────────────────
+
+const saveJob = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+  const { jobId } = req.params;
+
+  const [jobCheck] = await pool.execute(
+    `SELECT id FROM jobs WHERE id = ? AND status = 'active'`,
+    [jobId],
+  );
+  if (!jobCheck[0]) throw new APIERR(404, "Job not found");
+
+  await pool.execute(
+    `INSERT IGNORE INTO saved_jobs (user_id, job_id) VALUES (?, ?)`,
+    [userId, jobId],
+  );
+  res
+    .status(200)
+    .json(new APIRES(200, { saved: true }, "Job saved successfully"));
+});
+
+const unsaveJob = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+  const { jobId } = req.params;
+
+  await pool.execute(
+    `DELETE FROM saved_jobs WHERE user_id = ? AND job_id = ?`,
+    [userId, jobId],
+  );
+  res
+    .status(200)
+    .json(new APIRES(200, { saved: false }, "Job removed from saved"));
+});
+
+const getSavedJobs = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const limit = Math.min(50, parseInt(req.query.limit) || 10);
+  const offset = (page - 1) * limit;
+
+  const [[{ total }]] = await pool.execute(
+    `SELECT COUNT(*) AS total FROM saved_jobs WHERE user_id = ?`,
+    [userId],
+  );
+
+  const [rows] = await pool.execute(
+    `SELECT ${JOB_SELECT}
+     INNER JOIN saved_jobs sj ON sj.job_id = j.id
+     WHERE sj.user_id = ?
+     ORDER BY sj.created_at DESC
+     LIMIT ? OFFSET ?`,
+    [userId, limit, offset],
+  );
+
+  res.status(200).json(
+    new APIRES(
+      200,
+      {
+        jobs: rows.map(shapeJob),
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+          hasNext: page * limit < total,
+          hasPrev: page > 1,
+        },
+      },
+      "Saved jobs fetched successfully",
+    ),
+  );
+});
+
+const checkSavedJob = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+  const { jobId } = req.params;
+
+  const [rows] = await pool.execute(
+    `SELECT id FROM saved_jobs WHERE user_id = ? AND job_id = ?`,
+    [userId, jobId],
+  );
+  res
+    .status(200)
+    .json(new APIRES(200, { saved: rows.length > 0 }, "Check complete"));
+});
+
 module.exports = {
   createJob,
   getAllJobs,
-  getJobById,
+  getCompanyJobById,
   getJobCounts,
   updateJob,
   toggleJobStatus,
   incrementApplicants,
   deleteJob,
   getPublicJobs,
-  getPublicJobById,
+  getJobById,
   getJob,
   searchJobs,
+  saveJob,
+  unsaveJob,
+  getSavedJobs,
+  checkSavedJob,
 };

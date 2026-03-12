@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { Eye, EyeOff } from "lucide-react";
@@ -8,14 +8,10 @@ import { useMicrosoftUserAuth } from "../../Hooks/useMicrosoftAuth";
 import { useSelector } from "react-redux";
 import { Modal } from "../../Components/index";
 import { FormField } from "../../Components/Common/Input";
-import { useEffect } from "react";
+import { GoogleLogin } from "@react-oauth/google";
 
 const Loader = () => (
   <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-indigo-300 border-t-indigo-600" />
-);
-
-const MsLoader = () => (
-  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-blue-300 border-t-blue-600" />
 );
 
 const DotGrid = () => (
@@ -79,7 +75,6 @@ const GhostBtn = ({ children, className = "", ...props }) => (
   </button>
 );
 
-// Microsoft logo SVG
 const MicrosoftLogo = ({ size = 18 }) => (
   <svg
     width={size}
@@ -94,6 +89,27 @@ const MicrosoftLogo = ({ size = 18 }) => (
   </svg>
 );
 
+const GoogleLogo = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24">
+    <path
+      fill="#4285F4"
+      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+    />
+    <path
+      fill="#34A853"
+      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+    />
+    <path
+      fill="#FBBC05"
+      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"
+    />
+    <path
+      fill="#EA4335"
+      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+    />
+  </svg>
+);
+
 const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -102,6 +118,9 @@ const Login = () => {
     login,
     loading,
     error,
+    googleLoading,
+    googleError,
+    loginWithGoogle,
     forgotPassword,
     forgotPasswordLoading,
     forgotPasswordError,
@@ -109,11 +128,11 @@ const Login = () => {
     forgotPasswordEmail,
     clearForgotPassword,
     clearPendingAutofillEmail,
+    clearGoogleError,
   } = useAuth();
 
   const { loginWithMicrosoft, redirecting: msRedirecting } =
     useMicrosoftUserAuth();
-
   const pendingEmail = useSelector((state) => state.auth.pendingAutofillEmail);
   const navigate = useNavigate();
 
@@ -141,6 +160,7 @@ const Login = () => {
 
   const onSubmit = async (data) => {
     try {
+      sessionStorage.removeItem("showOnboarding");
       const result = await login({
         email: data.email,
         password: data.password,
@@ -152,6 +172,23 @@ const Login = () => {
       });
     } catch (err) {
       console.error("Login failed:", err);
+    }
+  };
+
+  const handleGoogleSuccess = async (credentialResponse) => {
+    try {
+      sessionStorage.removeItem("showOnboarding");
+      const result = await loginWithGoogle(credentialResponse).unwrap();
+      const role = result?.data?.role;
+      if (result?.data?.isNewUser) {
+        navigate("/signup", { replace: true });
+      } else {
+        navigate(role === "company" ? "/company/dashboard" : "/", {
+          replace: true,
+        });
+      }
+    } catch (err) {
+      console.error("Google login failed:", err);
     }
   };
 
@@ -174,6 +211,8 @@ const Login = () => {
       console.error("Error sending reset mail:", err);
     }
   };
+
+  const isBusy = loading || googleLoading || msRedirecting;
 
   return (
     <>
@@ -243,24 +282,59 @@ const Login = () => {
             </motion.div>
 
             <motion.div {...fadeUp(0.16)}>
-              {/* Microsoft login button */}
-              <button
-                onClick={loginWithMicrosoft}
-                disabled={msRedirecting || loading}
-                className="w-full flex items-center justify-center gap-3 py-3 px-4 mb-5 rounded-xl bg-white border-[1.5px] border-slate-200 text-slate-700 text-sm font-semibold hover:border-blue-400 hover:bg-blue-50/50 hover:text-blue-700 transition-all duration-200 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {msRedirecting ? (
-                  <>
-                    <span className="ms-spinner" /> Redirecting to Microsoft…
-                  </>
-                ) : (
-                  <>
-                    <MicrosoftLogo /> Continue with Microsoft
-                  </>
-                )}
-              </button>
+              <div className="flex gap-3 mb-5">
+                <button
+                  onClick={loginWithMicrosoft}
+                  disabled={isBusy}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 px-3 rounded-xl bg-white border-[1.5px] border-slate-200 text-slate-700 text-sm font-semibold hover:border-blue-400 hover:bg-blue-50/50 hover:text-blue-700 transition-all duration-200 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {msRedirecting ? (
+                    <>
+                      <span className="ms-spinner" /> <span>Redirecting…</span>
+                    </>
+                  ) : (
+                    <>
+                      <MicrosoftLogo /> <span>Microsoft</span>
+                    </>
+                  )}
+                </button>
 
-              {/* OR divider */}
+                <div className="flex-1 relative">
+                  <button
+                    disabled={isBusy}
+                    className="w-full flex items-center justify-center gap-2 py-3 px-3 rounded-xl bg-white border-[1.5px] border-slate-200 text-slate-700 text-sm font-semibold hover:border-red-300 hover:bg-red-50/50 hover:text-red-700 transition-all duration-200 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed pointer-events-none"
+                  >
+                    {googleLoading ? (
+                      <>
+                        <Loader /> <span>Signing in…</span>
+                      </>
+                    ) : (
+                      <>
+                        <GoogleLogo /> <span>Google</span>
+                      </>
+                    )}
+                  </button>
+                  <div
+                    className="absolute inset-0 opacity-0 overflow-hidden"
+                    style={{ borderRadius: "0.75rem" }}
+                  >
+                    <GoogleLogin
+                      onSuccess={handleGoogleSuccess}
+                      onError={() => clearGoogleError()}
+                      useOneTap={false}
+                      width="500"
+                      size="large"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {googleError && (
+                <p className="text-center text-xs font-medium text-red-500 mb-3 -mt-3">
+                  {googleError}
+                </p>
+              )}
+
               <div className="flex items-center gap-3 mb-5">
                 <hr className="flex-1 border-slate-200" />
                 <span className="text-[10px] text-slate-400 tracking-widest uppercase font-medium">
@@ -325,8 +399,7 @@ const Login = () => {
                 >
                   {loading ? (
                     <>
-                      <Loader />
-                      Signing in…
+                      <Loader /> Signing in…
                     </>
                   ) : (
                     "Sign In"
@@ -375,7 +448,6 @@ const Login = () => {
           </div>
         </motion.div>
 
-        {/* Forgot password modal — unchanged */}
         <Modal
           isOpen={isModalOpen}
           onClose={handleCloseModal}
@@ -401,8 +473,7 @@ const Login = () => {
               >
                 {forgotPasswordLoading ? (
                   <>
-                    <Loader />
-                    Sending…
+                    <Loader /> Sending…
                   </>
                 ) : (
                   "Send reset link"

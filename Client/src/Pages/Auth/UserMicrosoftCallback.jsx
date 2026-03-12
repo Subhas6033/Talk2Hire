@@ -91,6 +91,7 @@ const UserMicrosoftCallback = () => {
 
   useEffect(() => {
     fetchSession()
+      .unwrap()
       .then(() => {
         if (isNewUser) sessionStorage.setItem("showOnboarding", "true");
       })

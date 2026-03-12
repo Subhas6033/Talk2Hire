@@ -125,6 +125,11 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
+app.use((req, res, next) => {
+  res.setHeader("Cross-Origin-Opener-Policy", "unsafe-none");
+  next();
+});
+
 // Routes
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/questions", questionRoutes);

@@ -33,6 +33,22 @@ export const loginUser = createAsyncThunk(
   },
 );
 
+export const googleLoginUser = createAsyncThunk(
+  "auth/googleLogin",
+  async (credentialResponse, { rejectWithValue }) => {
+    try {
+      const response = await api.post(
+        "/auth/google",
+        { token: credentialResponse.credential },
+        { withCredentials: true },
+      );
+      return response.data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.message || error.message);
+    }
+  },
+);
+
 export const logoutUser = createAsyncThunk(
   "auth/logout",
   async (_, { rejectWithValue }) => {
@@ -256,6 +272,8 @@ const defaultState = () => ({
   otpLoading: false,
   otpError: null,
   otpVerified: false,
+  googleLoading: false,
+  googleError: null,
   regStep: "idle",
   regLoading: false,
   regError: null,
@@ -280,6 +298,9 @@ const authSlice = createSlice({
     },
     clearError: (state) => {
       state.error = null;
+    },
+    clearGoogleError: (state) => {
+      state.googleError = null;
     },
     updateUserLocal: (state, action) => {
       if (state.user) {
@@ -364,17 +385,33 @@ const authSlice = createSlice({
         state.hydrated = true;
       })
 
+      .addCase(googleLoginUser.pending, (state) => {
+        state.googleLoading = true;
+        state.googleError = null;
+      })
+      .addCase(googleLoginUser.fulfilled, (state, action) => {
+        state.googleLoading = false;
+        state.user = action.payload.data;
+        state.isAuthenticated = true;
+        state.hydrated = true;
+        state.lastVerified = Date.now();
+        saveAuthState(state.user, state.isAuthenticated);
+      })
+      .addCase(googleLoginUser.rejected, (state, action) => {
+        state.googleLoading = false;
+        state.googleError = action.payload;
+      })
+
       .addCase(logoutUser.pending, (state) => {
         state.loading = true;
       })
       .addCase(logoutUser.fulfilled, (state) => {
         const pending = state.pendingAutofillEmail;
         Object.assign(state, defaultState(), { hydrated: true });
-        state.pendingAutofillEmail = pending; // defaultState() already reads localStorage, but be explicit
+        state.pendingAutofillEmail = pending;
         localStorage.removeItem("authState");
       })
       .addCase(logoutUser.rejected, (state) => {
-        // Same — preserve it even on logout failure
         const pending = state.pendingAutofillEmail;
         Object.assign(state, defaultState(), { hydrated: true });
         state.pendingAutofillEmail = pending;
@@ -536,6 +573,7 @@ const authSlice = createSlice({
 export const {
   setAuthHydrated,
   clearError,
+  clearGoogleError,
   updateUserLocal,
   clearSession,
   clearForgotPassword,

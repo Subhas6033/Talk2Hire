@@ -1033,6 +1033,153 @@ const updateProfile = asyncHandler(async (req, res) => {
     .json(new APIRES(200, updatedUser, "Profile updated successfully"));
 });
 
+const getProfileStats = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+
+  const [userRows] = await pool.execute(
+    `SELECT id, fullName, email, role, resume, resume_upload_status,
+            profile_image_path, skills, interview_selected_skills
+     FROM users WHERE id = ?`,
+    [userId],
+  );
+  if (!userRows[0]) throw new APIERR(404, "User not found");
+  const user = userRows[0];
+
+  const [[{ total }]] = await pool.execute(
+    `SELECT COUNT(*) AS total FROM interviews WHERE user_id = ?`,
+    [userId],
+  );
+
+  const [lastRows] = await pool.execute(
+    `SELECT score, duration FROM interviews
+     WHERE user_id = ? AND score IS NOT NULL
+     ORDER BY created_at DESC LIMIT 1`,
+    [userId],
+  );
+  const last = lastRows[0] ?? null;
+
+  const [[avgRow]] = await pool.execute(
+    `SELECT AVG(score) AS avgScore, AVG(duration) AS avgSeconds
+     FROM interviews WHERE user_id = ? AND score IS NOT NULL`,
+    [userId],
+  );
+
+  const cvSkills = (user.skills || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const interviewSkills = user.interview_selected_skills
+    ? JSON.parse(user.interview_selected_skills)
+    : [];
+
+  const lastScore = last?.score != null ? Math.round(last.score) : null;
+
+  const avgSec = avgRow?.avgSeconds ? Math.round(avgRow.avgSeconds) : null;
+  const averageTime = avgSec
+    ? avgSec >= 60
+      ? `${Math.floor(avgSec / 60)}m ${avgSec % 60}s`
+      : `${avgSec}s`
+    : null;
+
+  const avgScore = avgRow?.avgScore ? Math.round(avgRow.avgScore) : null;
+  const performance =
+    avgScore === null
+      ? null
+      : avgScore >= 80
+        ? "Excellent"
+        : avgScore >= 60
+          ? "Good"
+          : avgScore >= 40
+            ? "Average"
+            : "Needs Improvement";
+
+  res.status(200).json(
+    new APIRES(
+      200,
+      {
+        id: user.id,
+        fullName: user.fullName,
+        email: user.email,
+        role: user.role,
+        resume: user.resume,
+        resume_upload_status: user.resume_upload_status,
+        profile_image_path: user.profile_image_path,
+        cvSkills,
+        interviewSkills,
+        totalInterview: Number(total),
+        interviewScore: lastScore,
+        averageTime,
+        performance,
+      },
+      "Profile stats retrieved successfully",
+    ),
+  );
+});
+
+const getUserInterviews = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const limit = Math.min(20, parseInt(req.query.limit) || 10);
+  const offset = (page - 1) * limit;
+
+  const [[{ total }]] = await pool.execute(
+    `SELECT COUNT(*) AS total FROM interviews WHERE user_id = ?`,
+    [userId],
+  );
+
+  const [rows] = await pool.execute(
+    `SELECT 
+     i.id, i.job_id, i.candidate_name, i.duration, i.score,
+     i.skills, i.summary, i.strengths, i.improvements,
+     i.created_at,
+     j.title AS jobTitle,
+     c.companyName AS companyName
+   FROM interviews i
+   LEFT JOIN jobs j ON j.id = i.job_id
+   LEFT JOIN company_details c ON c.id = j.company_id
+   WHERE i.user_id = ?
+   ORDER BY i.created_at DESC
+   LIMIT ? OFFSET ?`,
+    [userId, limit, offset],
+  );
+
+  const interviews = rows.map((r) => ({
+    id: r.id,
+    jobId: r.job_id,
+    jobTitle: r.jobTitle || "Interview",
+    companyName: r.companyName || null,
+    candidateName: r.candidate_name,
+    duration: r.duration,
+    score: r.score != null ? Math.round(r.score) : null,
+    skills: r.skills
+      ? r.skills
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [],
+    summary: r.summary || null,
+    strengths: r.strengths || null,
+    improvements: r.improvements || null,
+    createdAt: r.created_at,
+  }));
+
+  res.status(200).json(
+    new APIRES(
+      200,
+      {
+        interviews,
+        pagination: {
+          total: Number(total),
+          page,
+          limit,
+          totalPages: Math.ceil(Number(total) / limit),
+        },
+      },
+      "Interviews retrieved successfully",
+    ),
+  );
+});
+
 async function processSkillExtraction({
   ftpUrl,
   mimeType,
@@ -1103,4 +1250,6 @@ module.exports = {
   updateProfile,
   checkResumeStatus,
   getCVSkills,
+  getProfileStats,
+  getUserInterviews,
 };

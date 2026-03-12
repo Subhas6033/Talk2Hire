@@ -4,7 +4,7 @@ import { setupInterceptors } from "../API/Setupinterceptor";
 import interviewReducer from "../API/interviewApi";
 import hiringReducer from "../API/hiringApi";
 import companyReducer from "../API/companyAuthApi";
-import jobReducer from "../API/jobApi";
+import { jobReducer, savedJobReducer, saveJob } from "../API/jobApi";
 import dashboardReducer from "../API/companyDashboardApi";
 import companyInterviewReducer from "../API/companyInterviewApi";
 import applicationReducer from "../API/ApplicationApi";
@@ -13,6 +13,7 @@ import microsoftAuthReducer from "../API/microsoftAuthApi";
 import microsoftUserAuthReducer from "../API/microsoftUserApi";
 import adminAuthReducer from "../API/adminAuthApi";
 import blogReducer from "../API/blogApi";
+import userProfileReducer from "../API/userProfileApi";
 
 export const store = configureStore({
   reducer: {
@@ -21,6 +22,7 @@ export const store = configureStore({
     hiring: hiringReducer,
     company: companyReducer,
     jobs: jobReducer,
+    savedJobs: savedJobReducer,
     dashboard: dashboardReducer,
     companyInterviews: companyInterviewReducer,
     applications: applicationReducer,
@@ -29,6 +31,7 @@ export const store = configureStore({
     microsoftUserAuth: microsoftUserAuthReducer,
     adminAuth: adminAuthReducer,
     blog: blogReducer,
+    profile: userProfileReducer,
   },
 });
 

@@ -1,77 +1,106 @@
-import { useState, useRef, useEffect } from "react";
-import { useAuth } from "../Hooks/useAuthHook";
-import { useMicrosoftUserAuth } from "../Hooks/useMicrosoftAuth";
+import { useRef, useEffect, useState } from "react";
+import { useProfile } from "../Hooks/userProfileHook";
 import { Button, Modal, PreviousInterview } from "../Components/index";
 import { FormField } from "../Components/Common/Input";
 
+// ─── Small helpers ────────────────────────────────────────────────────────────
+
+const Spinner = ({ size = 16, className = "" }) => (
+  <svg
+    style={{ width: size, height: size }}
+    className={`animate-spin ${className}`}
+    viewBox="0 0 24 24"
+    fill="none"
+  >
+    <circle
+      className="opacity-25"
+      cx="12"
+      cy="12"
+      r="10"
+      stroke="currentColor"
+      strokeWidth="4"
+    />
+    <path
+      className="opacity-75"
+      fill="currentColor"
+      d="M4 12a8 8 0 018-8v8H4z"
+    />
+  </svg>
+);
+
+const SkeletonBlock = ({ className = "" }) => (
+  <div className={`animate-pulse rounded-xl bg-slate-200 ${className}`} />
+);
+
+// ─── ProfilePage ──────────────────────────────────────────────────────────────
+
 const ProfilePage = () => {
-  const { user: emailUser, updateUser, getCurrentUser } = useAuth();
-  const { user: msUser } = useMicrosoftUserAuth();
+  const { profile, loading, updating, updateError, loadProfile, uploadFiles } =
+    useProfile();
 
-  // Use whichever auth source has the user
-  const user = emailUser || msUser;
-
-  const [isModalOpen, setModalOpen] = useState(false);
-  const [isResumeModalOpen, setResumeModalOpen] = useState(false);
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [error, setError] = useState("");
-  const [resumeError, setResumeError] = useState("");
-  const [uploading, setUploading] = useState(false);
+  // local UI state
+  const [mounted, setMounted] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [selectedResume, setSelectedResume] = useState(null);
-  const [mounted, setMounted] = useState(false);
+  const [resumeError, setResumeError] = useState("");
+  const [isPasswordModalOpen, setPasswordModalOpen] = useState(false);
+  const [isResumeModalOpen, setResumeModalOpen] = useState(false);
+
+  // password fields (UI only — wire to your change-password endpoint as needed)
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordError, setPasswordError] = useState("");
 
   const fileInputRef = useRef();
   const resumeInputRef = useRef();
 
+  // Load profile on mount
   useEffect(() => {
+    loadProfile();
     const t = setTimeout(() => setMounted(true), 60);
     return () => clearTimeout(t);
   }, []);
 
+  // Sync preview URL with fresh profile image
   useEffect(() => {
-    if (user?.profile_image_path) setPreviewUrl(user.profile_image_path);
-  }, [user?.profile_image_path]);
+    if (profile?.profile_image_path) setPreviewUrl(profile.profile_image_path);
+  }, [profile?.profile_image_path]);
 
-  if (!user) return null;
+  // ── Image handlers ─────────────────────────────────────────────────────────
 
-  const firstLetter = user.fullName?.charAt(0)?.toUpperCase();
-
+  const handleImageFile = (file) => {
+    if (!file) return;
+    setSelectedImage(file);
+    setPreviewUrl(URL.createObjectURL(file));
+  };
+  const handleImageChange = (e) => handleImageFile(e.target.files[0]);
   const handleDragOver = (e) => e.preventDefault();
   const handleDrop = (e) => {
     e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (file) {
-      setSelectedImage(file);
-      setPreviewUrl(URL.createObjectURL(file));
-    }
+    handleImageFile(e.dataTransfer.files[0]);
   };
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setSelectedImage(file);
-      setPreviewUrl(URL.createObjectURL(file));
-    }
-  };
+
   const handleUploadImage = async () => {
     if (!selectedImage) return;
-    setUploading(true);
+    const fd = new FormData();
+    fd.append("profileImage", selectedImage);
     try {
-      const formData = new FormData();
-      formData.append("profileImage", selectedImage);
-      await updateUser(formData).unwrap();
-      await getCurrentUser();
+      await uploadFiles(fd).unwrap();
       setSelectedImage(null);
-    } catch (err) {
-      console.error(err);
-      setError("Failed to upload profile image");
-    } finally {
-      setUploading(false);
+    } catch {
+      // updateError from Redux is shown in the UI
     }
   };
+
+  const cancelImageChange = () => {
+    setSelectedImage(null);
+    setPreviewUrl(profile?.profile_image_path || null);
+  };
+
+  // ── Resume handlers ────────────────────────────────────────────────────────
+
   const handleResumeChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -86,47 +115,78 @@ const ProfilePage = () => {
     setResumeError("");
     setSelectedResume(file);
   };
+
   const handleUploadResume = async () => {
     if (!selectedResume) {
       setResumeError("Please select a resume file");
       return;
     }
-    setUploading(true);
-    setResumeError("");
+    const fd = new FormData();
+    fd.append("resume", selectedResume);
     try {
-      const formData = new FormData();
-      formData.append("resume", selectedResume);
-      await updateUser(formData).unwrap();
+      await uploadFiles(fd).unwrap();
       setSelectedResume(null);
       setResumeModalOpen(false);
     } catch (err) {
-      setResumeError(err.message || "Failed to upload resume");
-    } finally {
-      setUploading(false);
+      setResumeError(err?.message || "Failed to upload resume");
     }
   };
+
+  // ── Password handler (UI-only shell — plug in your endpoint) ──────────────
+
   const handlePasswordUpdate = () => {
-    setError("");
+    setPasswordError("");
     if (!currentPassword || !newPassword || !confirmPassword) {
-      setError("All fields are required");
+      setPasswordError("All fields are required");
       return;
     }
     if (newPassword !== confirmPassword) {
-      setError("New passwords do not match");
+      setPasswordError("New passwords do not match");
       return;
     }
+    // TODO: dispatch your change-password thunk here
     setCurrentPassword("");
     setNewPassword("");
     setConfirmPassword("");
-    setModalOpen(false);
+    setPasswordModalOpen(false);
   };
+
+  // ── Loading skeleton ───────────────────────────────────────────────────────
+
+  if (loading && !profile) {
+    return (
+      <div
+        className="min-h-screen"
+        style={{
+          background:
+            "linear-gradient(145deg,#f5f3ff 0%,#fafafa 35%,#f0fdf4 100%)",
+        }}
+      >
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+          <SkeletonBlock className="h-10 w-48" />
+          <SkeletonBlock className="h-44 w-full rounded-3xl" />
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {[...Array(4)].map((_, i) => (
+              <SkeletonBlock key={i} className="h-28" />
+            ))}
+          </div>
+          <SkeletonBlock className="h-64 w-full rounded-3xl" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!profile) return null;
+
+  const firstLetter = profile.fullName?.charAt(0)?.toUpperCase();
+
+  // ── Derived display values ─────────────────────────────────────────────────
 
   const stats = [
     {
       label: "Interviews Given",
-      value: user.totalInterview || "0",
+      value: profile.totalInterview ?? 0,
       gradient: "from-violet-500 to-purple-600",
-      softBg: "bg-violet-50",
       border: "border-violet-100",
       text: "text-violet-600",
       icon: (
@@ -147,9 +207,9 @@ const ProfilePage = () => {
     },
     {
       label: "Last Score",
-      value: user.interviewScore || "N/A",
+      value:
+        profile.interviewScore != null ? `${profile.interviewScore}%` : "N/A",
       gradient: "from-amber-400 to-orange-500",
-      softBg: "bg-amber-50",
       border: "border-amber-100",
       text: "text-amber-600",
       icon: (
@@ -170,9 +230,8 @@ const ProfilePage = () => {
     },
     {
       label: "Avg. Time",
-      value: user.averageTime || "N/A",
+      value: profile.averageTime ?? "N/A",
       gradient: "from-sky-400 to-blue-600",
-      softBg: "bg-sky-50",
       border: "border-sky-100",
       text: "text-sky-600",
       icon: (
@@ -193,9 +252,8 @@ const ProfilePage = () => {
     },
     {
       label: "Performance",
-      value: user.performance || "N/A",
+      value: profile.performance ?? "N/A",
       gradient: "from-emerald-400 to-teal-600",
-      softBg: "bg-emerald-50",
       border: "border-emerald-100",
       text: "text-emerald-600",
       icon: (
@@ -219,41 +277,44 @@ const ProfilePage = () => {
   const bioFields = [
     {
       label: "Full Name",
-      value: user.fullName,
+      value: profile.fullName,
       accentColor: "bg-violet-400",
-      lightBg: "bg-violet-50/60",
     },
     {
       label: "Email Address",
-      value: user.email,
+      value: profile.email,
       accentColor: "bg-blue-400",
-      lightBg: "bg-blue-50/60",
     },
     {
       label: "Total Interviews",
-      value: user.totalInterview || "0",
+      value: profile.totalInterview ?? 0,
       accentColor: "bg-purple-400",
-      lightBg: "bg-purple-50/60",
     },
     {
       label: "Last Score",
-      value: user.interviewScore || "N/A",
+      value:
+        profile.interviewScore != null ? `${profile.interviewScore}%` : "N/A",
       accentColor: "bg-amber-400",
-      lightBg: "bg-amber-50/60",
     },
     {
       label: "Average Time",
-      value: user.averageTime || "N/A",
+      value: profile.averageTime ?? "N/A",
       accentColor: "bg-sky-400",
-      lightBg: "bg-sky-50/60",
     },
     {
       label: "Overall Performance",
-      value: user.performance || "N/A",
+      value: profile.performance ?? "N/A",
       accentColor: "bg-emerald-400",
-      lightBg: "bg-emerald-50/60",
     },
   ];
+
+  const anim = (delay) => ({
+    opacity: mounted ? 1 : 0,
+    transform: mounted ? "translateY(0)" : "translateY(20px)",
+    transition: `all 0.7s ease-out ${delay}ms`,
+  });
+
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <>
@@ -263,77 +324,36 @@ const ProfilePage = () => {
         content="Manage your Talk2Hire account, update your resume, track interview performance, and monitor your AI interview progress."
       />
       <meta name="robots" content="noindex, nofollow, noarchive" />
-      <link rel="canonical" href="https://talk2hire.com/profile" />
-      <meta name="theme-color" content="#7C3AED" />
-      <meta property="og:type" content="profile" />
-      <meta property="og:site_name" content="Talk2Hire" />
-      <meta property="og:title" content="My Profile | Talk2Hire" />
-      <meta
-        property="og:description"
-        content="Access your interview statistics, update resume, manage password, and review previous AI interviews."
-      />
-      <meta property="og:url" content="https://talk2hire.com/profile" />
-      <meta
-        property="og:image"
-        content="https://talk2hire.com/talk2hirelogo.png"
-      />
-      <meta name="twitter:card" content="summary_large_image" />
-      <meta name="twitter:title" content="My Profile | Talk2Hire" />
-      <meta
-        name="twitter:description"
-        content="Track performance and manage your AI interview journey."
-      />
-      <meta
-        name="twitter:image"
-        content="https://talk2hire.com/talk2hirelogo.png"
-      />
 
       <div
         className="min-h-screen"
         style={{
           background:
-            "linear-gradient(145deg, #f5f3ff 0%, #fafafa 35%, #f0fdf4 100%)",
+            "linear-gradient(145deg,#f5f3ff 0%,#fafafa 35%,#f0fdf4 100%)",
         }}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12 space-y-6 sm:space-y-8">
-          <div
-            className="transition-all duration-700 ease-out"
-            style={{
-              opacity: mounted ? 1 : 0,
-              transform: mounted ? "translateY(0)" : "translateY(16px)",
-              transitionDelay: "60ms",
-            }}
-          >
-            <div className="flex items-center gap-3 mb-1">
-              <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">
-                My Profile
-              </h1>
-            </div>
-            <p className="text-sm text-gray-500 pl-4">
+          {/* ── Page title ── */}
+          <div style={anim(60)}>
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">
+              My Profile
+            </h1>
+            <p className="text-sm text-gray-500 pl-4 mt-1">
               Manage your account, resume, and preferences.
             </p>
           </div>
 
+          {/* ── Hero banner ── */}
           <div
             className="rounded-2xl sm:rounded-3xl overflow-hidden shadow-xl border border-violet-200/40"
             style={{
               background:
-                "linear-gradient(135deg, #6d28d9 0%, #7c3aed 45%, #4f46e5 100%)",
-              opacity: mounted ? 1 : 0,
-              transform: mounted ? "translateY(0)" : "translateY(20px)",
-              transition: "all 0.7s ease-out",
-              transitionDelay: "130ms",
+                "linear-gradient(135deg,#6d28d9 0%,#7c3aed 45%,#4f46e5 100%)",
+              ...anim(130),
             }}
           >
-            <div
-              className="absolute inset-0 opacity-10 pointer-events-none"
-              style={{
-                backgroundImage:
-                  "radial-gradient(circle at 20% 50%, white 0%, transparent 60%)",
-              }}
-            />
-
             <div className="relative px-5 sm:px-8 lg:px-10 pt-7 pb-6 flex flex-col sm:flex-row items-center sm:items-end gap-5 sm:gap-8">
+              {/* Avatar */}
               <div className="relative shrink-0 group">
                 <div
                   className="relative w-24 h-24 sm:w-28 sm:h-28 rounded-2xl overflow-hidden cursor-pointer border-4 border-white/25 shadow-2xl hover:border-white/50 hover:scale-105 transition-all duration-300"
@@ -387,40 +407,25 @@ const ProfilePage = () => {
                 onChange={handleImageChange}
               />
 
+              {/* Name / email */}
               <div className="flex-1 text-center sm:text-left pb-1 min-w-0">
                 <h2 className="text-xl sm:text-2xl lg:text-3xl font-black text-white tracking-tight leading-tight">
-                  {user.fullName}
+                  {profile.fullName}
                 </h2>
                 <p className="text-purple-200 text-sm mt-1 truncate">
-                  {user.email}
+                  {profile.email}
                 </p>
+
+                {/* Image action buttons */}
                 {selectedImage && (
                   <div className="flex gap-2 mt-3 justify-center sm:justify-start flex-wrap">
                     <button
                       onClick={handleUploadImage}
-                      disabled={uploading}
+                      disabled={updating}
                       className="flex items-center gap-1.5 px-4 py-2 bg-white text-violet-700 text-xs font-bold rounded-xl hover:bg-violet-50 transition-all duration-200 shadow-lg disabled:opacity-60 hover:scale-105 active:scale-95"
                     >
-                      {uploading ? (
-                        <svg
-                          className="animate-spin w-3.5 h-3.5"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                        >
-                          <circle
-                            className="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                          />
-                          <path
-                            className="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8v8H4z"
-                          />
-                        </svg>
+                      {updating ? (
+                        <Spinner size={14} />
                       ) : (
                         <svg
                           className="w-3.5 h-3.5"
@@ -436,15 +441,12 @@ const ProfilePage = () => {
                           />
                         </svg>
                       )}
-                      {uploading ? "Saving…" : "Save Photo"}
+                      {updating ? "Saving…" : "Save Photo"}
                     </button>
                     <button
-                      onClick={() => {
-                        setSelectedImage(null);
-                        setPreviewUrl(user?.profile_image_path || null);
-                      }}
-                      disabled={uploading}
-                      className="px-4 py-2 bg-white/20 hover:bg-white/30 text-white text-xs font-bold rounded-xl transition-all duration-200 disabled:opacity-60 hover:scale-105 active:scale-95 border border-white/20"
+                      onClick={cancelImageChange}
+                      disabled={updating}
+                      className="px-4 py-2 bg-white/20 hover:bg-white/30 text-white text-xs font-bold rounded-xl transition-all duration-200 disabled:opacity-60 border border-white/20"
                     >
                       Cancel
                     </button>
@@ -455,12 +457,16 @@ const ProfilePage = () => {
                     Click avatar to change photo
                   </p>
                 )}
+                {updateError && (
+                  <p className="text-red-300 text-xs mt-2">{updateError}</p>
+                )}
               </div>
 
+              {/* Action buttons */}
               <div className="flex flex-row sm:flex-col lg:flex-row gap-2 shrink-0 pb-1 flex-wrap justify-center">
                 <button
-                  onClick={() => setModalOpen(true)}
-                  className="flex items-center gap-2 px-4 sm:px-5 py-2.5 bg-white/15 hover:bg-white/25 text-white text-xs font-bold rounded-xl border border-white/30 hover:border-white/50 backdrop-blur-sm transition-all duration-200 hover:scale-105 active:scale-95 shadow-sm"
+                  onClick={() => setPasswordModalOpen(true)}
+                  className="flex items-center gap-2 px-4 sm:px-5 py-2.5 bg-white/15 hover:bg-white/25 text-white text-xs font-bold rounded-xl border border-white/30 hover:border-white/50 backdrop-blur-sm transition-all duration-200 hover:scale-105 active:scale-95"
                 >
                   <svg
                     className="w-3.5 h-3.5 shrink-0"
@@ -501,17 +507,13 @@ const ProfilePage = () => {
             <div className="h-1 bg-linear-to-r from-violet-300/40 via-white/20 to-indigo-300/40" />
           </div>
 
+          {/* ── Stat cards ── */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
             {stats.map((stat, i) => (
               <div
                 key={stat.label}
                 className={`relative bg-white rounded-2xl border ${stat.border} shadow-sm overflow-hidden group hover:shadow-lg hover:-translate-y-1 cursor-default transition-all duration-300`}
-                style={{
-                  opacity: mounted ? 1 : 0,
-                  transform: mounted ? "translateY(0)" : "translateY(20px)",
-                  transition: "all 0.6s ease-out",
-                  transitionDelay: `${220 + i * 80}ms`,
-                }}
+                style={anim(220 + i * 80)}
               >
                 <div className={`h-1 w-full bg-linear-to-r ${stat.gradient}`} />
                 <div className="p-4 sm:p-5">
@@ -531,19 +533,15 @@ const ProfilePage = () => {
             ))}
           </div>
 
+          {/* ── Bio & Details ── */}
           <div
             className="bg-white rounded-2xl sm:rounded-3xl border border-gray-100 shadow-sm overflow-hidden"
-            style={{
-              opacity: mounted ? 1 : 0,
-              transform: mounted ? "translateY(0)" : "translateY(20px)",
-              transition: "all 0.7s ease-out",
-              transitionDelay: "500ms",
-            }}
+            style={anim(500)}
           >
             <div
               className="px-5 sm:px-6 py-4 border-b border-gray-100 flex items-center gap-3"
               style={{
-                background: "linear-gradient(90deg, #f5f3ff 0%, #fdf4ff 100%)",
+                background: "linear-gradient(90deg,#f5f3ff 0%,#fdf4ff 100%)",
               }}
             >
               <div className="w-8 h-8 rounded-xl bg-linear-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-sm">
@@ -574,13 +572,8 @@ const ProfilePage = () => {
               {bioFields.map((item, i) => (
                 <div
                   key={item.label}
-                  className="flex items-center gap-3 p-3.5 sm:p-4 rounded-xl border border-gray-100 hover:border-gray-200 hover:bg-gray-50 hover:shadow-sm transition-all duration-200 group cursor-default"
-                  style={{
-                    opacity: mounted ? 1 : 0,
-                    transform: mounted ? "translateY(0)" : "translateY(12px)",
-                    transition: "all 0.5s ease-out",
-                    transitionDelay: `${520 + i * 60}ms`,
-                  }}
+                  className="flex items-center gap-3 p-3.5 sm:p-4 rounded-xl border border-gray-100 hover:border-gray-200 hover:bg-gray-50 hover:shadow-sm transition-all duration-200 cursor-default"
+                  style={anim(520 + i * 60)}
                 >
                   <div
                     className={`w-1.5 h-10 rounded-full ${item.accentColor} shrink-0`}
@@ -598,28 +591,23 @@ const ProfilePage = () => {
             </div>
           </div>
 
-          <div
-            style={{
-              opacity: mounted ? 1 : 0,
-              transform: mounted ? "translateY(0)" : "translateY(20px)",
-              transition: "all 0.7s ease-out",
-              transitionDelay: "700ms",
-            }}
-          >
+          {/* ── Previous interviews ── */}
+          <div style={anim(700)}>
             <PreviousInterview />
           </div>
         </div>
       </div>
 
+      {/* ── Password modal ── */}
       <Modal
-        isOpen={isModalOpen}
-        onClose={() => setModalOpen(false)}
+        isOpen={isPasswordModalOpen}
+        onClose={() => setPasswordModalOpen(false)}
         title="Update Password"
         size="sm"
         footer={
           <button
             onClick={handlePasswordUpdate}
-            className="inline-flex items-center gap-2 px-6 h-10 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] text-white text-sm font-semibold shadow-[0_4px_16px_rgba(79,70,229,0.25)] hover:shadow-[0_6px_20px_rgba(79,70,229,0.32)] transition-all duration-200 cursor-pointer"
+            className="inline-flex items-center gap-2 px-6 h-10 rounded-xl bg-[#4F46E5] hover:bg-[#4338CA] text-white text-sm font-semibold shadow transition-all duration-200 cursor-pointer"
           >
             <svg
               className="w-4 h-4"
@@ -656,9 +644,8 @@ const ProfilePage = () => {
             type="password"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
-            error={error && confirmPassword !== newPassword ? error : ""}
           />
-          {error && (
+          {passwordError && (
             <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-xl">
               <svg
                 className="w-4 h-4 text-red-500 shrink-0"
@@ -673,12 +660,15 @@ const ProfilePage = () => {
                   d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                 />
               </svg>
-              <p className="text-red-600 text-sm font-medium">{error}</p>
+              <p className="text-red-600 text-sm font-medium">
+                {passwordError}
+              </p>
             </div>
           )}
         </div>
       </Modal>
 
+      {/* ── Resume modal ── */}
       <Modal
         isOpen={isResumeModalOpen}
         onClose={() => {
@@ -692,29 +682,11 @@ const ProfilePage = () => {
           <div className="flex gap-3">
             <button
               onClick={handleUploadResume}
-              disabled={uploading || !selectedResume}
+              disabled={updating || !selectedResume}
               className="flex items-center gap-2 px-6 py-2.5 bg-linear-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700 text-white text-sm font-bold rounded-xl shadow-md transition-all duration-200 hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
             >
-              {uploading ? (
-                <svg
-                  className="animate-spin w-4 h-4"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8v8H4z"
-                  />
-                </svg>
+              {updating ? (
+                <Spinner size={14} className="text-white" />
               ) : (
                 <svg
                   className="w-4 h-4"
@@ -730,7 +702,7 @@ const ProfilePage = () => {
                   />
                 </svg>
               )}
-              {uploading ? "Uploading…" : "Upload Resume"}
+              {updating ? "Uploading…" : "Upload Resume"}
             </button>
             <button
               onClick={() => {
@@ -738,7 +710,7 @@ const ProfilePage = () => {
                 setSelectedResume(null);
                 setResumeError("");
               }}
-              disabled={uploading}
+              disabled={updating}
               className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-bold rounded-xl transition-all duration-200 disabled:opacity-50 hover:scale-105 active:scale-95"
             >
               Cancel
@@ -794,7 +766,7 @@ const ProfilePage = () => {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <div className="w-14 h-14 mx-auto rounded-2xl bg-linear-to-br from-violet-100 to-purple-100 border border-violet-200 group-hover:from-violet-200 group-hover:to-purple-200 flex items-center justify-center transition-all duration-200 group-hover:scale-110">
+                  <div className="w-14 h-14 mx-auto rounded-2xl bg-linear-to-br from-violet-100 to-purple-100 border border-violet-200 flex items-center justify-center group-hover:scale-110 transition-transform duration-200">
                     <svg
                       className="w-7 h-7 text-violet-500"
                       fill="none"
@@ -819,6 +791,7 @@ const ProfilePage = () => {
               )}
             </div>
           </div>
+
           {resumeError && (
             <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-xl">
               <svg
@@ -837,8 +810,9 @@ const ProfilePage = () => {
               <p className="text-red-600 text-sm font-medium">{resumeError}</p>
             </div>
           )}
-          {user?.resume &&
-            user?.resume_upload_status === "completed" &&
+
+          {profile?.resume &&
+            profile?.resume_upload_status === "completed" &&
             !selectedResume && (
               <div className="flex items-center gap-3 p-3 bg-linear-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl">
                 <div className="w-8 h-8 rounded-lg bg-linear-to-br from-emerald-400 to-teal-500 flex items-center justify-center shrink-0 shadow-sm">

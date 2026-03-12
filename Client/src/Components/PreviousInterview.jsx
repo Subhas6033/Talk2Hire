@@ -1,91 +1,149 @@
-import { useState } from "react";
-import { Button } from ".";
+import { useEffect, useState } from "react";
+import { useProfile } from "../Hooks/userProfileHook";
 
-const PreviousInterview = () => {
-  const [history] = useState([
-    {
-      slNo: 1,
-      date: "2026-01-20",
-      totalTime: "35m 12s",
-      attempted: 25,
-      totalQuestions: 30,
-      accuracy: "83%",
-    },
-    {
-      slNo: 2,
-      date: "2026-01-18",
-      totalTime: "28m 45s",
-      attempted: 20,
-      totalQuestions: 25,
-      accuracy: "80%",
-    },
-    {
-      slNo: 3,
-      date: "2026-01-15",
-      totalTime: "42m 10s",
-      attempted: 28,
-      totalQuestions: 30,
-      accuracy: "93%",
-    },
-    {
-      slNo: 4,
-      date: "2026-01-10",
-      totalTime: "30m 05s",
-      attempted: 22,
-      totalQuestions: 25,
-      accuracy: "88%",
-    },
-    {
-      slNo: 5,
-      date: "2026-01-08",
-      totalTime: "36m 45s",
-      attempted: 26,
-      totalQuestions: 30,
-      accuracy: "87%",
-    },
-  ]);
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 3;
-  const indexOfLast = currentPage * itemsPerPage;
-  const indexOfFirst = indexOfLast - itemsPerPage;
-  const currentItems = history.slice(indexOfFirst, indexOfLast);
-  const totalPages = Math.ceil(history.length / itemsPerPage);
-
-  const getAccuracyColor = (accuracy) => {
-    const val = parseInt(accuracy);
-    if (val >= 90)
-      return {
-        bar: "from-emerald-400 to-teal-500",
-        text: "text-emerald-700",
-        bg: "bg-emerald-50 border-emerald-200",
-      };
-    if (val >= 80)
-      return {
-        bar: "from-blue-400 to-sky-500",
-        text: "text-blue-700",
-        bg: "bg-blue-50 border-blue-200",
-      };
+const scoreColor = (score) => {
+  if (score === null)
     return {
-      bar: "from-amber-400 to-orange-500",
-      text: "text-amber-700",
-      bg: "bg-amber-50 border-amber-200",
+      bar: "bg-slate-300",
+      text: "text-slate-500",
+      ring: "ring-slate-200",
     };
-  };
+  if (score >= 80)
+    return {
+      bar: "bg-emerald-500",
+      text: "text-emerald-600",
+      ring: "ring-emerald-200",
+    };
+  if (score >= 60)
+    return { bar: "bg-blue-500", text: "text-blue-600", ring: "ring-blue-200" };
+  if (score >= 40)
+    return {
+      bar: "bg-amber-500",
+      text: "text-amber-600",
+      ring: "ring-amber-200",
+    };
+  return { bar: "bg-rose-500", text: "text-rose-600", ring: "ring-rose-200" };
+};
+
+const formatDate = (iso) => {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("en-US", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+};
+
+const formatDuration = (secs) => {
+  if (!secs) return "—";
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+};
+
+// ─── Download helper ──────────────────────────────────────────────────────────
+
+const downloadReport = (interview) => {
+  const score = interview.score != null ? `${interview.score}%` : "N/A";
+  const skills = interview.skills?.join(", ") || "N/A";
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8"/>
+  <title>Interview Report — ${interview.jobTitle}</title>
+  <style>
+    body{font-family:Arial,sans-serif;max-width:720px;margin:40px auto;color:#1e293b;line-height:1.6}
+    h1{font-size:22px;margin-bottom:4px}
+    .sub{color:#64748b;font-size:14px;margin-bottom:28px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:28px}
+    .card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px}
+    .card label{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;margin-bottom:4px}
+    .card span{font-size:15px;font-weight:700}
+    .score-val{color:${interview.score >= 80 ? "#059669" : interview.score >= 60 ? "#2563eb" : interview.score >= 40 ? "#d97706" : "#dc2626"}}
+    section{margin-bottom:24px}
+    section h2{font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#475569;border-bottom:1px solid #e2e8f0;padding-bottom:6px;margin-bottom:12px}
+    p{margin:0;font-size:14px;color:#334155}
+    .skills{display:flex;flex-wrap:wrap;gap:6px}
+    .skill{background:#ede9fe;color:#6d28d9;font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px}
+    .footer{margin-top:40px;font-size:12px;color:#94a3b8;text-align:center}
+  </style>
+</head>
+<body>
+  <h1>${interview.jobTitle}${interview.companyName ? ` — ${interview.companyName}` : ""}</h1>
+  <div class="sub">Interview Report · ${formatDate(interview.createdAt)}</div>
+
+  <div class="grid">
+    <div class="card"><label>Score</label><span class="score-val">${score}</span></div>
+    <div class="card"><label>Duration</label><span>${formatDuration(interview.duration)}</span></div>
+    <div class="card"><label>Candidate</label><span>${interview.candidateName || "—"}</span></div>
+    <div class="card"><label>Date</label><span>${formatDate(interview.createdAt)}</span></div>
+  </div>
+
+  ${interview.summary ? `<section><h2>Summary</h2><p>${interview.summary}</p></section>` : ""}
+  ${interview.strengths ? `<section><h2>Strengths</h2><p>${interview.strengths}</p></section>` : ""}
+  ${interview.improvements ? `<section><h2>Areas for Improvement</h2><p>${interview.improvements}</p></section>` : ""}
+
+  ${
+    interview.skills?.length
+      ? `
+  <section>
+    <h2>Skills Assessed</h2>
+    <div class="skills">${interview.skills.map((s) => `<span class="skill">${s}</span>`).join("")}</div>
+  </section>`
+      : ""
+  }
+
+  <div class="footer">Generated by Talk2Hire · talk2hire.com</div>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `interview-report-${interview.jobTitle.replace(/\s+/g, "-").toLowerCase()}-${interview.id}.html`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+// ─── View Modal ───────────────────────────────────────────────────────────────
+
+const ViewModal = ({ interview, onClose }) => {
+  if (!interview) return null;
+  const colors = scoreColor(interview.score);
 
   return (
-    <div className="bg-white rounded-2xl sm:rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-      {/* Header */}
-      <div
-        className="px-5 sm:px-6 py-4 border-b border-gray-100 flex items-center justify-between flex-wrap gap-3"
-        style={{
-          background: "linear-gradient(90deg, #f5f3ff 0%, #fdf4ff 100%)",
-        }}
-      >
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-linear-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-sm">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(15,23,42,0.55)", backdropFilter: "blur(4px)" }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+        {/* Header */}
+        <div
+          className="px-7 py-5 border-b border-slate-100 flex items-start justify-between gap-4 shrink-0"
+          style={{ background: "linear-gradient(90deg,#f5f3ff,#fdf4ff)" }}
+        >
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold text-violet-500 uppercase tracking-widest mb-1">
+              Interview Report
+            </p>
+            <h2 className="text-lg font-black text-slate-800 truncate">
+              {interview.jobTitle}
+            </h2>
+            {interview.companyName && (
+              <p className="text-sm text-slate-500">{interview.companyName}</p>
+            )}
+          </div>
+          <button
+            onClick={onClose}
+            className="shrink-0 w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 flex items-center justify-center transition-colors"
+          >
             <svg
-              className="w-4 h-4 text-white"
+              className="w-4 h-4 text-slate-500"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -94,180 +152,352 @@ const PreviousInterview = () => {
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 strokeWidth={2}
-                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+                d="M6 18L18 6M6 6l12 12"
               />
             </svg>
-          </div>
-          <div>
-            <h3 className="text-sm font-bold text-gray-800">
-              Previous Interviews
-            </h3>
-            <p className="text-xs text-gray-400">
-              {history.length} sessions recorded
-            </p>
-          </div>
+          </button>
         </div>
-        {/* Pagination */}
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-400 font-medium hidden sm:block">
-            Page {currentPage} of {totalPages}
-          </span>
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-              disabled={currentPage === 1}
-              className="w-8 h-8 flex items-center justify-center rounded-lg bg-white border border-gray-200 text-gray-500 hover:border-violet-300 hover:text-violet-600 hover:bg-violet-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 hover:scale-105 active:scale-95"
-            >
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
+
+        {/* Body */}
+        <div className="overflow-y-auto flex-1 px-7 py-6 space-y-6">
+          {/* Stat row */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              {
+                label: "Score",
+                value: interview.score != null ? `${interview.score}%` : "N/A",
+                colorClass: colors.text,
+              },
+              { label: "Duration", value: formatDuration(interview.duration) },
+              { label: "Date", value: formatDate(interview.createdAt) },
+              { label: "Candidate", value: interview.candidateName || "—" },
+            ].map(({ label, value, colorClass }) => (
+              <div
+                key={label}
+                className="bg-slate-50 rounded-2xl p-3 border border-slate-100"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M15 19l-7-7 7-7"
-                />
-              </svg>
-            </button>
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-              <button
-                key={page}
-                onClick={() => setCurrentPage(page)}
-                className={`w-8 h-8 flex items-center justify-center rounded-lg text-xs font-bold transition-all duration-200 hover:scale-105 active:scale-95 ${
-                  currentPage === page
-                    ? "bg-linear-to-br from-violet-500 to-purple-600 text-white shadow-md"
-                    : "bg-white border border-gray-200 text-gray-500 hover:border-violet-300 hover:text-violet-600"
-                }`}
-              >
-                {page}
-              </button>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">
+                  {label}
+                </p>
+                <p
+                  className={`text-sm font-black ${colorClass || "text-slate-800"}`}
+                >
+                  {value}
+                </p>
+              </div>
             ))}
-            <button
-              onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
-              disabled={currentPage === totalPages}
-              className="w-8 h-8 flex items-center justify-center rounded-lg bg-white border border-gray-200 text-gray-500 hover:border-violet-300 hover:text-violet-600 hover:bg-violet-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 hover:scale-105 active:scale-95"
-            >
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 5l7 7-7 7"
-                />
-              </svg>
-            </button>
           </div>
+
+          {/* Score bar */}
+          {interview.score != null && (
+            <div>
+              <div className="flex justify-between text-xs font-semibold text-slate-500 mb-2">
+                <span>Performance Score</span>
+                <span>{interview.score}%</span>
+              </div>
+              <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-700 ${colors.bar}`}
+                  style={{ width: `${interview.score}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Summary */}
+          {interview.summary && (
+            <Section title="Summary" icon="📋">
+              {interview.summary}
+            </Section>
+          )}
+
+          {/* Strengths */}
+          {interview.strengths && (
+            <Section title="Strengths" icon="✅" accent="emerald">
+              {interview.strengths}
+            </Section>
+          )}
+
+          {/* Improvements */}
+          {interview.improvements && (
+            <Section title="Areas for Improvement" icon="🎯" accent="amber">
+              {interview.improvements}
+            </Section>
+          )}
+
+          {/* Skills */}
+          {interview.skills?.length > 0 && (
+            <div>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">
+                Skills Assessed
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {interview.skills.map((s) => (
+                  <span
+                    key={s}
+                    className="px-3 py-1 bg-violet-50 text-violet-700 text-xs font-semibold rounded-full border border-violet-100"
+                  >
+                    {s}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-7 py-4 border-t border-slate-100 flex justify-end gap-3 shrink-0">
+          <button
+            onClick={onClose}
+            className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold rounded-xl transition-colors"
+          >
+            Close
+          </button>
+          <button
+            onClick={() => downloadReport(interview)}
+            className="flex items-center gap-2 px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white text-sm font-bold rounded-xl transition-colors shadow-sm"
+          >
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+              />
+            </svg>
+            Download Report
+          </button>
         </div>
       </div>
+    </div>
+  );
+};
 
-      {/* ── Desktop Table ── */}
-      <div className="hidden sm:block overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-100">
-              {[
-                "#",
-                "Date",
-                "Duration",
-                "Attempted",
-                "Total Q's",
-                "Accuracy",
-                "Actions",
-              ].map((h) => (
-                <th
-                  key={h}
-                  className="px-4 lg:px-6 py-3.5 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest first:pl-5 sm:first:pl-6"
-                >
-                  {h}
-                </th>
+const Section = ({ title, icon, accent, children }) => {
+  const bg =
+    accent === "emerald"
+      ? "bg-emerald-50 border-emerald-100"
+      : accent === "amber"
+        ? "bg-amber-50 border-amber-100"
+        : "bg-slate-50 border-slate-100";
+  return (
+    <div className={`rounded-2xl p-4 border ${bg}`}>
+      <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">
+        {icon} {title}
+      </p>
+      <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
+        {children}
+      </p>
+    </div>
+  );
+};
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
+const PreviousInterview = () => {
+  const {
+    interviews,
+    interviewsPagination,
+    interviewsLoading,
+    interviewsError,
+    loadInterviews,
+  } = useProfile();
+
+  const [selectedInterview, setSelectedInterview] = useState(null);
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    loadInterviews({ page, limit: 10 });
+  }, [page]);
+
+  const EmptyState = () => (
+    <div className="flex flex-col items-center justify-center py-16 text-center">
+      <div className="w-16 h-16 rounded-2xl bg-violet-50 border border-violet-100 flex items-center justify-center mb-4">
+        <svg
+          className="w-7 h-7 text-violet-300"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={1.5}
+            d="M15 10l4.553-2.069A1 1 0 0121 8.867v6.266a1 1 0 01-1.447.902L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+          />
+        </svg>
+      </div>
+      <p className="text-sm font-bold text-slate-600">No interviews yet</p>
+      <p className="text-xs text-slate-400 mt-1">
+        Your completed interviews will appear here
+      </p>
+    </div>
+  );
+
+  return (
+    <>
+      <div className="bg-white rounded-2xl sm:rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+        {/* Section header */}
+        <div
+          className="px-5 sm:px-6 py-4 border-b border-gray-100 flex items-center justify-between"
+          style={{
+            background: "linear-gradient(90deg,#f5f3ff 0%,#fdf4ff 100%)",
+          }}
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-linear-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-sm">
+              <svg
+                className="w-4 h-4 text-white"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 10l4.553-2.069A1 1 0 0121 8.867v6.266a1 1 0 01-1.447.902L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+                />
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-gray-800">
+                Previous Interviews
+              </h2>
+              <p className="text-xs text-gray-400">
+                {interviewsPagination
+                  ? `${interviewsPagination.total} total`
+                  : "Your interview history"}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="p-4 sm:p-6">
+          {interviewsLoading ? (
+            <div className="space-y-3">
+              {[...Array(3)].map((_, i) => (
+                <div
+                  key={i}
+                  className="h-20 animate-pulse bg-slate-100 rounded-2xl"
+                />
               ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-50">
-            {currentItems.map((item, i) => {
-              const acc = getAccuracyColor(item.accuracy);
-              return (
-                <tr
-                  key={item.slNo}
-                  className="group hover:bg-gray-50/80 transition-colors duration-150"
-                  style={{ animationDelay: `${i * 60}ms` }}
-                >
-                  <td className="pl-5 sm:pl-6 pr-4 py-4">
-                    <div className="w-7 h-7 rounded-lg bg-linear-to-br from-violet-100 to-purple-100 border border-violet-200 flex items-center justify-center">
-                      <span className="text-xs font-black text-violet-600">
-                        {item.slNo}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-4 lg:px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-                      <span className="text-sm font-semibold text-gray-700">
-                        {item.date}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-4 lg:px-6 py-4">
-                    <div className="flex items-center gap-1.5">
-                      <svg
-                        className="w-3.5 h-3.5 text-sky-400"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                        />
-                      </svg>
-                      <span className="text-sm font-semibold text-gray-700">
-                        {item.totalTime}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-4 lg:px-6 py-4">
-                    <span className="text-sm font-bold text-gray-800">
-                      {item.attempted}
-                    </span>
-                    <span className="text-xs text-gray-400">
-                      /{item.totalQuestions}
-                    </span>
-                  </td>
-                  <td className="px-4 lg:px-6 py-4">
-                    <span className="text-sm font-semibold text-gray-600">
-                      {item.totalQuestions}
-                    </span>
-                  </td>
-                  <td className="px-4 lg:px-6 py-4">
-                    <div className="flex items-center gap-2.5">
-                      <div className="flex-1 max-w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full bg-linear-to-r ${acc.bar} rounded-full transition-all duration-700`}
-                          style={{ width: item.accuracy }}
-                        />
-                      </div>
+            </div>
+          ) : interviewsError ? (
+            <div className="flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-2xl">
+              <svg
+                className="w-5 h-5 text-red-500 shrink-0"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              <p className="text-sm text-red-600 font-medium">
+                {interviewsError}
+              </p>
+            </div>
+          ) : interviews.length === 0 ? (
+            <EmptyState />
+          ) : (
+            <div className="space-y-3">
+              {interviews.map((interview) => {
+                const colors = scoreColor(interview.score);
+                return (
+                  <div
+                    key={interview.id}
+                    className="flex items-center gap-4 p-4 rounded-2xl border border-gray-100 hover:border-violet-200 hover:bg-violet-50/30 transition-all duration-200 group"
+                  >
+                    {/* Score ring */}
+                    <div
+                      className={`shrink-0 w-12 h-12 rounded-2xl flex flex-col items-center justify-center bg-white border-2 ring-2 ${colors.ring} border-transparent shadow-sm`}
+                    >
                       <span
-                        className={`text-xs font-black px-2 py-0.5 rounded-lg border ${acc.bg} ${acc.text}`}
+                        className={`text-sm font-black leading-none ${colors.text}`}
                       >
-                        {item.accuracy}
+                        {interview.score != null ? interview.score : "—"}
                       </span>
+                      {interview.score != null && (
+                        <span className="text-[9px] font-bold text-slate-400 leading-none mt-0.5">
+                          pts
+                        </span>
+                      )}
                     </div>
-                  </td>
-                  <td className="px-4 lg:px-6 py-4">
-                    <div className="flex items-center gap-1.5">
-                      <button className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-50 hover:bg-violet-100 text-violet-700 text-xs font-bold rounded-lg border border-violet-200 transition-all duration-200 hover:scale-105 active:scale-95 hover:shadow-sm">
+
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-slate-800 truncate">
+                        {interview.jobTitle}
+                      </p>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        {interview.companyName && (
+                          <span className="text-xs text-slate-500">
+                            {interview.companyName}
+                          </span>
+                        )}
+                        <span className="text-xs text-slate-400">
+                          {formatDate(interview.createdAt)}
+                        </span>
+                        {interview.duration && (
+                          <span className="text-xs text-slate-400">
+                            · {formatDuration(interview.duration)}
+                          </span>
+                        )}
+                      </div>
+                      {/* Skill chips — show max 3 */}
+                      {interview.skills?.length > 0 && (
+                        <div className="flex gap-1.5 mt-2 flex-wrap">
+                          {interview.skills.slice(0, 3).map((s) => (
+                            <span
+                              key={s}
+                              className="text-[10px] font-semibold px-2 py-0.5 bg-violet-50 text-violet-600 rounded-full border border-violet-100"
+                            >
+                              {s}
+                            </span>
+                          ))}
+                          {interview.skills.length > 3 && (
+                            <span className="text-[10px] font-semibold px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full">
+                              +{interview.skills.length - 3}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Score bar (desktop) */}
+                    {interview.score != null && (
+                      <div className="hidden sm:flex flex-col gap-1 w-24 shrink-0">
+                        <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${colors.bar}`}
+                            style={{ width: `${interview.score}%` }}
+                          />
+                        </div>
+                        <span className="text-[10px] text-slate-400 text-right">
+                          {interview.score}%
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Action buttons */}
+                    <div className="flex gap-2 shrink-0">
+                      <button
+                        onClick={() => setSelectedInterview(interview)}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-slate-200 hover:border-violet-300 hover:bg-violet-50 text-slate-600 hover:text-violet-700 text-xs font-bold transition-all duration-150 shadow-sm"
+                      >
                         <svg
-                          className="w-3 h-3"
+                          className="w-3.5 h-3.5"
                           fill="none"
                           viewBox="0 0 24 24"
                           stroke="currentColor"
@@ -285,11 +515,14 @@ const PreviousInterview = () => {
                             d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
                           />
                         </svg>
-                        View
+                        <span className="hidden sm:inline">View</span>
                       </button>
-                      <button className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 hover:bg-gray-100 text-gray-600 text-xs font-bold rounded-lg border border-gray-200 transition-all duration-200 hover:scale-105 active:scale-95 hover:shadow-sm">
+                      <button
+                        onClick={() => downloadReport(interview)}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold transition-all duration-150 shadow-sm"
+                      >
                         <svg
-                          className="w-3 h-3"
+                          className="w-3.5 h-3.5"
                           fill="none"
                           viewBox="0 0 24 24"
                           stroke="currentColor"
@@ -301,142 +534,52 @@ const PreviousInterview = () => {
                             d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
                           />
                         </svg>
-                        Download
+                        <span className="hidden sm:inline">Download</span>
                       </button>
                     </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      {/* ── Mobile Cards ── */}
-      <div className="sm:hidden p-4 space-y-3">
-        {currentItems.map((item, i) => {
-          const acc = getAccuracyColor(item.accuracy);
-          return (
-            <div
-              key={item.slNo}
-              className="bg-gray-50 rounded-2xl border border-gray-100 p-4 space-y-3 hover:shadow-sm transition-all duration-200"
-              style={{ animationDelay: `${i * 80}ms` }}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 rounded-lg bg-linear-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-sm">
-                    <span className="text-xs font-black text-white">
-                      #{item.slNo}
-                    </span>
                   </div>
-                  <span className="text-sm font-bold text-gray-800">
-                    {item.date}
-                  </span>
-                </div>
-                <span
-                  className={`text-xs font-black px-2.5 py-1 rounded-lg border ${acc.bg} ${acc.text}`}
-                >
-                  {item.accuracy}
-                </span>
-              </div>
+                );
+              })}
+            </div>
+          )}
 
-              <div className="grid grid-cols-3 gap-2 text-center">
-                {[
-                  { label: "Duration", value: item.totalTime, icon: "⏱" },
-                  {
-                    label: "Attempted",
-                    value: `${item.attempted}/${item.totalQuestions}`,
-                    icon: "📝",
-                  },
-                  { label: "Accuracy", value: item.accuracy, icon: "🎯" },
-                ].map((stat) => (
-                  <div
-                    key={stat.label}
-                    className="bg-white rounded-xl border border-gray-100 p-2.5"
-                  >
-                    <p className="text-lg">{stat.icon}</p>
-                    <p className="text-xs font-black text-gray-800 mt-0.5">
-                      {stat.value}
-                    </p>
-                    <p className="text-[10px] text-gray-400">{stat.label}</p>
-                  </div>
-                ))}
-              </div>
-
-              {/* Accuracy bar */}
-              <div className="flex items-center gap-2">
-                <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full bg-linear-to-r ${acc.bar} rounded-full`}
-                    style={{ width: item.accuracy }}
-                  />
-                </div>
-                <span className="text-xs text-gray-400 font-semibold w-8 text-right">
-                  {item.accuracy}
-                </span>
-              </div>
-
+          {/* Pagination */}
+          {interviewsPagination && interviewsPagination.totalPages > 1 && (
+            <div className="flex items-center justify-between mt-6 pt-5 border-t border-slate-100">
+              <p className="text-xs text-slate-500">
+                Page {interviewsPagination.page} of{" "}
+                {interviewsPagination.totalPages}
+              </p>
               <div className="flex gap-2">
-                <button className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-violet-50 hover:bg-violet-100 text-violet-700 text-xs font-bold rounded-xl border border-violet-200 transition-all duration-200 active:scale-95">
-                  <svg
-                    className="w-3.5 h-3.5"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                    />
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-                    />
-                  </svg>
-                  View
+                <button
+                  disabled={page <= 1 || interviewsLoading}
+                  onClick={() => setPage((p) => p - 1)}
+                  className="px-4 py-2 text-xs font-bold rounded-xl border border-slate-200 hover:border-violet-300 hover:bg-violet-50 text-slate-600 hover:text-violet-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  ← Previous
                 </button>
-                <button className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-bold rounded-xl border border-gray-200 transition-all duration-200 active:scale-95">
-                  <svg
-                    className="w-3.5 h-3.5"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-                    />
-                  </svg>
-                  Download
+                <button
+                  disabled={
+                    page >= interviewsPagination.totalPages || interviewsLoading
+                  }
+                  onClick={() => setPage((p) => p + 1)}
+                  className="px-4 py-2 text-xs font-bold rounded-xl bg-violet-600 hover:bg-violet-700 text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Next →
                 </button>
               </div>
             </div>
-          );
-        })}
-      </div>
-
-      {/* Footer */}
-      <div className="px-5 sm:px-6 py-3 border-t border-gray-50 flex items-center justify-between">
-        <span className="text-xs text-gray-400">
-          Showing {indexOfFirst + 1}–{Math.min(indexOfLast, history.length)} of{" "}
-          {history.length}
-        </span>
-        <div className="flex gap-1">
-          {Array.from({ length: totalPages }, (_, i) => (
-            <div
-              key={i}
-              className={`w-1.5 h-1.5 rounded-full transition-all duration-200 ${i + 1 === currentPage ? "bg-violet-500 w-4" : "bg-gray-200"}`}
-            />
-          ))}
+          )}
         </div>
       </div>
-    </div>
+
+      {selectedInterview && (
+        <ViewModal
+          interview={selectedInterview}
+          onClose={() => setSelectedInterview(null)}
+        />
+      )}
+    </>
   );
 };
 

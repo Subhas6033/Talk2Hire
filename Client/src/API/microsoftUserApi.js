@@ -31,7 +31,7 @@ export const initiateMicrosoftUserLogin = createAsyncThunk(
   "microsoftUserAuth/initiateLogin",
   async (_, { rejectWithValue }) => {
     try {
-      window.location.href = "/api/auth/v1/user/microsoft";
+      window.location.href = `${import.meta.env.VITE_BACKEND_URL}/api/auth/v1/user/microsoft`;
       return null;
     } catch (err) {
       return rejectWithValue(err.message);

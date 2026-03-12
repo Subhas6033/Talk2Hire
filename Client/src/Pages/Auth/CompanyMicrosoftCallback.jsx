@@ -129,12 +129,14 @@ const CompanyMicrosoftCallback = () => {
       return;
     }
 
-    fetchSession().catch((err) => {
-      const message = isUserFriendlyError(err)
-        ? getFriendlyMessage(err)
-        : "Something went wrong. Please try again.";
-      setErrorMessage(message);
-    });
+    fetchSession()
+      .unwrap()
+      .catch((err) => {
+        const message = isUserFriendlyError(err)
+          ? getFriendlyMessage(err)
+          : "Something went wrong. Please try again.";
+        setErrorMessage(message);
+      });
   }, []);
 
   useEffect(() => {

@@ -3,12 +3,9 @@ import axios from "axios";
 
 const BASE_URL = `${import.meta.env.VITE_BACKEND_URL}/api/v1/jobs`;
 
-const api = axios.create({
-  baseURL: BASE_URL,
-  withCredentials: true,
-});
+const api = axios.create({ baseURL: BASE_URL, withCredentials: true });
 
-// ─── Async Thunks ─────────────────────────────────────────────
+// ─── Admin Thunks ─────────────────────────────────────────────
 
 export const fetchJobs = createAsyncThunk(
   "jobs/fetchAll",
@@ -20,9 +17,8 @@ export const fetchJobs = createAsyncThunk(
       if (filters.department && filters.department !== "all")
         params.department = filters.department;
       if (filters.search) params.search = filters.search;
-
       const { data } = await api.get("", { params });
-      return data.data; // { jobs, counts, total }
+      return data.data;
     } catch (err) {
       return rejectWithValue(
         err.response?.data?.message || "Failed to fetch jobs",
@@ -42,12 +38,10 @@ export const fetchPublicJobs = createAsyncThunk(
       if (filters.department?.trim())
         params.department = filters.department.trim();
       if (filters.experience?.trim())
-        params.experience = filters.experience.trim(); // ← ADD
+        params.experience = filters.experience.trim();
       if (filters.page) params.page = filters.page;
       if (filters.limit) params.limit = filters.limit;
-
       const { data } = await api.get("/search", { params });
-
       return {
         jobs: data.data.jobs,
         total: data.data.pagination.total,
@@ -131,46 +125,109 @@ export const toggleJobStatus = createAsyncThunk(
   },
 );
 
-// ─── Initial State ────────────────────────────────────────────
+// ─── Saved Jobs Thunks ────────────────────────────────────────
 
-const initialState = {
-  jobs: [],
-
-  // Public job listing
-  publicJobs: [],
-  publicTotal: 0,
-  publicPagination: {
-    total: 0,
-    page: 1,
-    limit: 9,
-    totalPages: 0,
-    hasNext: false,
-    hasPrev: false,
+export const fetchJobDetail = createAsyncThunk(
+  "savedJobs/fetchJobDetail",
+  async (id, { rejectWithValue }) => {
+    try {
+      const { data } = await api.get(`/public/${id}`);
+      return data.data;
+    } catch (err) {
+      return rejectWithValue(
+        err.response?.data?.message || "Failed to fetch job",
+      );
+    }
   },
+);
 
-  selectedJob: null,
-  counts: { all: 0, active: 0, closed: 0, draft: 0 },
-  total: 0,
-
-  loading: {
-    fetch: false,
-    fetchPublic: false,
-    create: false,
-    update: false,
-    delete: false,
-    toggle: false,
+export const checkSavedJob = createAsyncThunk(
+  "savedJobs/check",
+  async (jobId, { rejectWithValue }) => {
+    try {
+      const { data } = await api.get(`/saved-jobs/check/${jobId}`);
+      return data.data.saved;
+    } catch {
+      return rejectWithValue(false);
+    }
   },
+);
 
-  mutatingId: null,
-  error: null,
-  successMessage: null,
-};
+export const saveJob = createAsyncThunk(
+  "savedJobs/save",
+  async (jobId, { rejectWithValue }) => {
+    try {
+      await api.post(`/saved-jobs/${jobId}`);
+      return true;
+    } catch (err) {
+      return rejectWithValue(
+        err.response?.data?.message || "Failed to save job",
+      );
+    }
+  },
+);
 
-// ─── Slice ────────────────────────────────────────────────────
+export const unsaveJob = createAsyncThunk(
+  "savedJobs/unsave",
+  async (jobId, { rejectWithValue }) => {
+    try {
+      await api.delete(`/saved-jobs/${jobId}`);
+      return false;
+    } catch (err) {
+      return rejectWithValue(
+        err.response?.data?.message || "Failed to unsave job",
+      );
+    }
+  },
+);
+
+export const fetchSavedJobs = createAsyncThunk(
+  "savedJobs/fetchAll",
+  async ({ page = 1, limit = 10 } = {}, { rejectWithValue }) => {
+    try {
+      const { data } = await api.get("/saved-jobs", {
+        params: { page, limit },
+      });
+      return data.data;
+    } catch (err) {
+      return rejectWithValue(
+        err.response?.data?.message || "Failed to fetch saved jobs",
+      );
+    }
+  },
+);
+
+// ─── Jobs Slice ───────────────────────────────────────────────
 
 const jobSlice = createSlice({
   name: "jobs",
-  initialState,
+  initialState: {
+    jobs: [],
+    publicJobs: [],
+    publicTotal: 0,
+    publicPagination: {
+      total: 0,
+      page: 1,
+      limit: 9,
+      totalPages: 0,
+      hasNext: false,
+      hasPrev: false,
+    },
+    selectedJob: null,
+    counts: { all: 0, active: 0, closed: 0, draft: 0 },
+    total: 0,
+    loading: {
+      fetch: false,
+      fetchPublic: false,
+      create: false,
+      update: false,
+      delete: false,
+      toggle: false,
+    },
+    mutatingId: null,
+    error: null,
+    successMessage: null,
+  },
   reducers: {
     clearError: (state) => {
       state.error = null;
@@ -183,7 +240,6 @@ const jobSlice = createSlice({
     },
   },
   extraReducers: (builder) => {
-    // ── Fetch All (admin) ──────────────────────────────────
     builder
       .addCase(fetchJobs.pending, (s) => {
         s.loading.fetch = true;
@@ -200,8 +256,6 @@ const jobSlice = createSlice({
         s.error = payload;
       });
 
-    // ── Fetch Public Jobs ──────────────────────────────────
-    // Each call replaces the list (server handles pagination).
     builder
       .addCase(fetchPublicJobs.pending, (s) => {
         s.loading.fetchPublic = true;
@@ -218,7 +272,6 @@ const jobSlice = createSlice({
         s.error = payload;
       });
 
-    // ── Fetch By ID ────────────────────────────────────────
     builder
       .addCase(fetchJobById.pending, (s) => {
         s.loading.fetch = true;
@@ -233,7 +286,6 @@ const jobSlice = createSlice({
         s.error = payload;
       });
 
-    // ── Create ─────────────────────────────────────────────
     builder
       .addCase(createJob.pending, (s) => {
         s.loading.create = true;
@@ -253,7 +305,6 @@ const jobSlice = createSlice({
         s.error = payload;
       });
 
-    // ── Update ─────────────────────────────────────────────
     builder
       .addCase(updateJob.pending, (s, { meta }) => {
         s.loading.update = true;
@@ -273,7 +324,6 @@ const jobSlice = createSlice({
         s.error = payload;
       });
 
-    // ── Delete ─────────────────────────────────────────────
     builder
       .addCase(deleteJob.pending, (s, { meta }) => {
         s.loading.delete = true;
@@ -297,7 +347,6 @@ const jobSlice = createSlice({
         s.error = payload;
       });
 
-    // ── Toggle Status ──────────────────────────────────────
     builder
       .addCase(toggleJobStatus.pending, (s, { meta }) => {
         s.loading.toggle = true;
@@ -322,4 +371,98 @@ const jobSlice = createSlice({
 });
 
 export const { clearError, clearSuccess, clearSelectedJob } = jobSlice.actions;
-export default jobSlice.reducer;
+export const jobReducer = jobSlice.reducer;
+
+// ─── Saved Jobs Slice ─────────────────────────────────────────
+
+const savedJobSlice = createSlice({
+  name: "savedJobs",
+  initialState: {
+    currentJob: null,
+    isSaved: false,
+    savedJobs: [],
+    savedPagination: null,
+    loading: { detail: false, toggle: false, list: false, check: false },
+    error: null,
+  },
+  reducers: {
+    clearCurrentJob: (s) => {
+      s.currentJob = null;
+      s.isSaved = false;
+    },
+    clearSavedError: (s) => {
+      s.error = null;
+    },
+  },
+  extraReducers: (builder) => {
+    builder
+      .addCase(fetchJobDetail.pending, (s) => {
+        s.loading.detail = true;
+        s.error = null;
+      })
+      .addCase(fetchJobDetail.fulfilled, (s, { payload }) => {
+        s.loading.detail = false;
+        s.currentJob = payload;
+      })
+      .addCase(fetchJobDetail.rejected, (s, { payload }) => {
+        s.loading.detail = false;
+        s.error = payload;
+      });
+
+    builder
+      .addCase(checkSavedJob.pending, (s) => {
+        s.loading.check = true;
+      })
+      .addCase(checkSavedJob.fulfilled, (s, { payload }) => {
+        s.loading.check = false;
+        s.isSaved = payload;
+      })
+      .addCase(checkSavedJob.rejected, (s) => {
+        s.loading.check = false;
+      });
+
+    builder
+      .addCase(saveJob.pending, (s) => {
+        s.loading.toggle = true;
+      })
+      .addCase(saveJob.fulfilled, (s) => {
+        s.loading.toggle = false;
+        s.isSaved = true;
+      })
+      .addCase(saveJob.rejected, (s, { payload }) => {
+        s.loading.toggle = false;
+        s.error = payload;
+      });
+
+    builder
+      .addCase(unsaveJob.pending, (s) => {
+        s.loading.toggle = true;
+      })
+      .addCase(unsaveJob.fulfilled, (s) => {
+        s.loading.toggle = false;
+        s.isSaved = false;
+      })
+      .addCase(unsaveJob.rejected, (s, { payload }) => {
+        s.loading.toggle = false;
+        s.error = payload;
+      });
+
+    builder
+      .addCase(fetchSavedJobs.pending, (s) => {
+        s.loading.list = true;
+        s.error = null;
+      })
+      .addCase(fetchSavedJobs.fulfilled, (s, { payload }) => {
+        s.loading.list = false;
+        s.savedJobs = payload.jobs;
+        s.savedPagination = payload.pagination;
+      })
+      .addCase(fetchSavedJobs.rejected, (s, { payload }) => {
+        s.loading.list = false;
+        s.error = payload;
+      });
+  },
+});
+
+export const { clearCurrentJob, clearSavedError } = savedJobSlice.actions;
+export const savedJobReducer = savedJobSlice.reducer;

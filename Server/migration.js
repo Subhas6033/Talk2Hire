@@ -1,12 +1,9 @@
 const { pool } = require("./Config/database.config.js");
 
 const MIGRATIONS = [
-  // Remove ENUM restriction — category can now be any free-text string
   {
-    table: "blog_details — free-text category",
-    sql: `ALTER TABLE blog_details
-          MODIFY COLUMN category VARCHAR(100) NULL DEFAULT NULL
-          COMMENT 'Post category — free text, no ENUM restriction'`,
+    table: "users",
+    sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id VARCHAR(255) NULL DEFAULT NULL COMMENT 'Google OAuth sub ID' AFTER id`,
   },
 ];
 
@@ -52,7 +49,7 @@ const migrate = async () => {
     console.log();
 
     console.log("🔍 Verifying columns…\n");
-    await inspectTable(connection, "blog_details");
+    await inspectTable(connection, "users");
   } catch (err) {
     console.error("❌ Script failed:", err.message);
   } finally {
