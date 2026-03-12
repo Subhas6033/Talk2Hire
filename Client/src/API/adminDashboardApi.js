@@ -1,22 +1,18 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
+import { adminAxios } from "./adminAuthApi";
 
-const API = import.meta?.env?.VITE_BACKEND_URL || "";
+const API = `/api/v1/admin/stats/get-stats`;
 
 export const fetchAdminDashboard = createAsyncThunk(
   "adminDashboard/fetch",
   async (_, { rejectWithValue }) => {
     try {
-      const res = await fetch(`${API}/api/v1/admin/stats/get-stats`, {
-        credentials: "include",
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        return rejectWithValue(err.message || "Failed to fetch admin stats");
-      }
-      const data = await res.json();
+      const { data } = await adminAxios.get(API);
       return data.data;
     } catch (err) {
-      return rejectWithValue(err.message);
+      return rejectWithValue(
+        err.response?.data?.message || "Failed to fetch admin stats",
+      );
     }
   },
 );

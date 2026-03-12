@@ -70,7 +70,10 @@ const msUntilAccessTokenExpires = () => {
 };
 
 // ─── Axios instance ───────────────────────────────────────────────────────────
-export const adminAxios = axios.create();
+// ✅ Added baseURL so callers only need to pass the path, e.g. "/api/v1/admin/..."
+export const adminAxios = axios.create({
+  baseURL: import.meta.env.VITE_BACKEND_URL,
+});
 
 let isRefreshing = false;
 let pendingQueue = []; // { resolve, reject }[]
@@ -373,3 +376,5 @@ const adminAuthSlice = createSlice({
 
 export const { clearError, clearAdmin } = adminAuthSlice.actions;
 export default adminAuthSlice.reducer;
+
+export { adminAxios as adminApi };
