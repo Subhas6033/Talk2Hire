@@ -7,6 +7,22 @@ const { asyncHandler, APIERR, APIRES } = require("../Utils/index.utils.js");
 const redis = require("../Config/redis.config.js");
 const { evaluateInterview } = require("../Service/evaluation.service.js");
 
+// ── FFmpeg binary wiring ───────────────────────────────────────────────────
+// ffmpeg-static and ffprobe-static ship self-contained binaries inside the
+// node_modules folder.  fluent-ffmpeg will use whatever is on $PATH by
+// default — on many servers that is nothing, or a system ffmpeg compiled
+// without the codecs we need.  Explicitly pointing to the static binaries
+// guarantees the same behaviour on every machine regardless of what is
+// (or isn't) installed system-wide.
+const ffmpegStatic = require("ffmpeg-static");
+const ffprobeStatic = require("ffprobe-static");
+const fluentFfmpeg = require("fluent-ffmpeg");
+fluentFfmpeg.setFfmpegPath(ffmpegStatic);
+fluentFfmpeg.setFfprobePath(ffprobeStatic.path);
+console.log("[FFMPEG] Binary paths set:");
+console.log("  ffmpeg  →", ffmpegStatic);
+console.log("  ffprobe →", ffprobeStatic.path);
+
 // ── Timing constants ──────────────────────────────────────────────────────────
 const RECORDING_TTL = 60 * 60 * 6;
 const MERGE_DELAY_MS = 5 * 60 * 1000;
@@ -20,6 +36,208 @@ const INTERVIEW_COLUMN_MAP = {
   secondary_camera: "mob_recording_url",
   screen_recording: "scr_recording_url",
 };
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ── Compression Profiles (H.264 via ffmpeg-static) ────────────────────────────
+   ─────────────────────────────────────────────────────────────────────────────
+   ffmpeg-static ships a pre-built binary that includes libx264 but NOT libx265.
+   All profiles use libx264.  H.264 CRF scale: 0 (lossless) – 51 (worst).
+   Visually transparent for interview content: webcam CRF 26, screen CRF 28.
+
+   Size budget — 1-hour interview, all 3 streams combined:
+     primary_camera   480p  15fps  CRF 26  64k mono   ≈ 70  MB/hr
+     secondary_camera 720p  24fps  CRF 24  64k mono   ≈ 130 MB/hr
+     screen_recording 1080p VFR    CRF 28  96k stereo ≈ 110 MB/hr
+                                                       ────────────
+                                                       ≈ 310 MB/hr  ✓
+
+   Display: browser CSS upscales 480p/720p to 1080p for free.
+   Container: MP4 with -movflags +faststart so FTP streaming starts immediately.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+const COMPRESSION_PROFILES = {
+  primary_camera: {
+    // Talking head — low motion, single speaker
+    scale: "854:480", // 480p; CSS upscales to 1080p at display time
+    fps: "15", // 15fps is plenty for a talking head
+    crf: 26, // H.264 CRF 26 ≈ visually lossless for face video
+    preset: "faster", // faster > medium for a shared server; ~5% larger files
+    audioChannels: 1, // mono — no stereo field in a single-mic feed
+    audioCodec: "aac",
+    audioBitrate: "64k",
+    extraOptions: [
+      "-profile:v baseline", // widest device compatibility (Safari, old Android)
+      "-level 3.1",
+      "-pix_fmt yuv420p", // required by baseline profile; also fixes green-tint WebM decode
+    ],
+    outputExt: "mp4",
+    displayLabel: "480p H.264 CRF 26 · 15fps · mono",
+  },
+
+  secondary_camera: {
+    // Mobile cam — wider angle, occasional body movement
+    scale: "1280:720",
+    fps: "24",
+    crf: 24, // slightly richer to handle motion without blocking
+    preset: "faster",
+    audioChannels: 1,
+    audioCodec: "aac",
+    audioBitrate: "64k",
+    extraOptions: ["-profile:v main", "-level 3.1", "-pix_fmt yuv420p"],
+    outputExt: "mp4",
+    displayLabel: "720p H.264 CRF 24 · 24fps · mono",
+  },
+
+  screen_recording: {
+    // Screen share — sharp text, mostly static → compresses extremely well
+    scale: "1920:1080", // keep 1080p for text legibility
+    fps: null, // null = VFR passthrough (-vsync vfr drops duplicate frames)
+    crf: 28,
+    preset: "faster",
+    audioChannels: 2, // stereo — system audio may have effects/music
+    audioCodec: "aac",
+    audioBitrate: "96k",
+    extraOptions: [
+      "-vsync vfr", // variable frame rate: static screens cost near-zero bits
+      "-profile:v high", // high profile for better intra compression of text/UI
+      "-level 4.0",
+      "-pix_fmt yuv420p",
+    ],
+    outputExt: "mp4",
+    displayLabel: "1080p H.264 CRF 28 · VFR · stereo",
+  },
+};
+
+/* ── FFmpeg compression ───────────────────────────────────────────────────── */
+
+async function compressVideo(inputPath, outputPath, videoType) {
+  const fsSync = require("fs");
+  const profile =
+    COMPRESSION_PROFILES[videoType] ?? COMPRESSION_PROFILES.primary_camera;
+
+  // ── Writable check ────────────────────────────────────────────────────────
+  try {
+    const t = outputPath + ".tmptest";
+    fsSync.writeFileSync(t, "x");
+    fsSync.unlinkSync(t);
+  } catch (e) {
+    throw new Error(
+      "[COMPRESS] Output path not writable for " + videoType + ": " + e.message,
+    );
+  }
+
+  const inputStat = fsSync.statSync(inputPath);
+  const inMB = (inputStat.size / 1024 / 1024).toFixed(2);
+  console.log(
+    "[COMPRESS] Starting " +
+      videoType +
+      " — encoder=libx264 preset=" +
+      profile.preset +
+      " crf=" +
+      profile.crf +
+      " input=" +
+      inMB +
+      "MB",
+  );
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () =>
+        reject(
+          new Error("[COMPRESS] Timed out after 30 min (" + videoType + ")"),
+        ),
+      30 * 60 * 1000,
+    );
+
+    // Video filter: always scale; add fps filter only when a value is set
+    const vfParts = ["scale=" + profile.scale];
+    if (profile.fps) vfParts.push("fps=" + profile.fps);
+
+    let cmd = fluentFfmpeg(inputPath)
+      .videoCodec("libx264")
+      .addOutputOption("-vf " + vfParts.join(","))
+      .addOutputOption("-crf " + profile.crf)
+      .addOutputOption("-preset " + profile.preset)
+      .audioCodec(profile.audioCodec)
+      .audioBitrate(profile.audioBitrate)
+      .addOutputOption("-ac " + profile.audioChannels)
+      .addOutputOption("-movflags +faststart")
+      .addOutputOption("-fflags +genpts");
+
+    for (const opt of profile.extraOptions) {
+      cmd = cmd.addOutputOption(opt);
+    }
+
+    cmd
+      .on("start", (cmdLine) => {
+        console.log("[COMPRESS] ffmpeg cmd (" + videoType + "): " + cmdLine);
+      })
+      .on("stderr", (line) => {
+        // Print lines that signal real problems; skip normal encode chatter
+        if (
+          line.includes("Error") ||
+          line.includes("Invalid") ||
+          line.includes("Unknown encoder") ||
+          line.includes("No such file") ||
+          line.includes("not found")
+        ) {
+          console.warn("[COMPRESS] ffmpeg stderr (" + videoType + "):", line);
+        }
+      })
+      .on("progress", (progress) => {
+        if (progress.percent != null) {
+          process.stdout.write(
+            "\r[COMPRESS] " +
+              videoType +
+              " " +
+              Math.round(progress.percent) +
+              "%  ",
+          );
+        }
+      })
+      .on("end", () => {
+        clearTimeout(timer);
+        process.stdout.write("\n");
+        try {
+          const outStat = fsSync.statSync(outputPath);
+          const outMB = (outStat.size / 1024 / 1024).toFixed(2);
+          const pct = ((outStat.size / inputStat.size) * 100).toFixed(1);
+          console.log(
+            "[COMPRESS] Done (" +
+              videoType +
+              "): " +
+              inMB +
+              " MB raw -> " +
+              outMB +
+              " MB compressed (" +
+              pct +
+              "% of raw)",
+          );
+        } catch (_) {
+          console.log(
+            "[COMPRESS] Done (" + videoType + ") — could not stat output",
+          );
+        }
+        resolve();
+      })
+      .on("error", (err, _stdout, stderr) => {
+        clearTimeout(timer);
+        process.stdout.write("\n");
+        console.error("[COMPRESS] FAILED (" + videoType + "): " + err.message);
+        if (stderr) console.error("[COMPRESS] stderr dump:\n" + stderr);
+        reject(
+          new Error(
+            "[COMPRESS] " +
+              videoType +
+              ": " +
+              err.message +
+              (stderr ? " | " + stderr.slice(0, 800) : ""),
+          ),
+        );
+      })
+      .save(outputPath);
+  });
+}
 
 /* ── Redis helpers ───────────────────────────────────────────────────────── */
 
@@ -173,6 +391,9 @@ async function ensureViolationClipColumns() {
 ensureViolationClipColumns();
 
 /* ── Cut a single violation clip with ffmpeg ─────────────────────────────── */
+//
+// Violation clips are cut from the already-compressed MP4 using -c copy
+// (stream copy, no re-encode) so this is near-instant and lossless in quality.
 
 async function cutVideoClip(inputPath, outputPath, startSec, durationSec) {
   const ffmpeg = require("fluent-ffmpeg");
@@ -282,7 +503,8 @@ async function cutAndUploadViolationClips(
       continue;
     }
 
-    const clipFilename = `violation_${violType}_${violId}_${Date.now()}.webm`;
+    // Clip output is MP4 to match the compressed primary_camera container
+    const clipFilename = `violation_${violType}_${violId}_${Date.now()}.mp4`;
     const clipLocalPath = path.join(tempDir, clipFilename);
     const ftpRemotePath = `/public/interview-videos/${interviewId}/violations`;
 
@@ -439,7 +661,8 @@ async function runAnswerAnalysisDuringWait(interviewId, userId) {
 
     console.log(
       `✅ [EVAL] Analysis complete — score=${summary.overallScore} ` +
-        `hire=${summary.hireDecision} (interview ${interviewId})`,
+        `hire=${summary.hireDecision} ` +
+        `(${summary.totalQuestions} questions, interview ${interviewId})`,
     );
 
     return summary;
@@ -454,25 +677,6 @@ async function runAnswerAnalysisDuringWait(interviewId, userId) {
 }
 
 /* ── Start Recording ─────────────────────────────────────────────────────── */
-//
-// FIX: Race condition that caused 4× duplicate POST /start-recording sessions.
-//
-// Root cause — GET → check → SET has a race window:
-//   All 4 requests (primary_camera, secondary_camera, screen_recording +
-//   React StrictMode double-invoke) arrived within ~370ms of each other.
-//   All 4 hit the GET at the same instant, none saw status:"recording" yet
-//   because no write had completed, so all 4 proceeded to create DB records.
-//
-// Fix — atomic Redis SET NX (set-if-not-exists):
-//   Only the FIRST request wins the NX lock. All subsequent concurrent
-//   requests fail the NX and immediately return the existing state without
-//   touching the DB. No race window — atomicity is guaranteed by Redis.
-//
-//   Lock TTL is 10s:
-//     • Long enough to cover the DB writes below (typically <100ms)
-//     • Short enough that a crashed request unblocks retries quickly
-//   The placeholder is immediately overwritten with the real meta after
-//   the DB work completes, so the TTL has no practical effect on normal flow.
 
 const startRecording = asyncHandler(async (req, res) => {
   const { interviewId, videoType = "primary_camera" } = req.body;
@@ -487,10 +691,6 @@ const startRecording = asyncHandler(async (req, res) => {
 
   const key = redisKey(userId, interviewId, videoType);
 
-  // ── Atomic idempotency lock ───────────────────────────────────────────────
-  // SET NX succeeds (returns "OK") only if the key does NOT exist yet.
-  // Any concurrent request that loses the race gets a non-OK result,
-  // reads the current state, and returns it without doing any DB work.
   const lockPlaceholder = JSON.stringify({
     status: "starting",
     userId,
@@ -501,7 +701,6 @@ const startRecording = asyncHandler(async (req, res) => {
   const acquired = await redis.set(key, lockPlaceholder, "NX", "EX", 10);
 
   if (!acquired) {
-    // Key already exists — return its current state to the caller
     const existing = await redisGet(key);
     if (existing) {
       const parsed = JSON.parse(existing);
@@ -520,12 +719,8 @@ const startRecording = asyncHandler(async (req, res) => {
         ),
       );
     }
-    // Edge case: key disappeared between NX check and GET (expired in <1ms).
-    // Fall through and treat this as a new request — the NX will succeed on
-    // the next attempt or the DB upsert will de-duplicate it.
   }
 
-  // ── We hold the lock — perform DB work ───────────────────────────────────
   const videoId = await ensureVideoRecord(interviewId, userId, videoType);
   const meta = {
     status: "recording",
@@ -536,7 +731,6 @@ const startRecording = asyncHandler(async (req, res) => {
     startedAt: Date.now(),
   };
 
-  // Overwrite the short-TTL placeholder with real meta + full TTL
   await redisSet(key, JSON.stringify(meta), "EX", RECORDING_TTL);
 
   if (videoType === "primary_camera") {
@@ -555,8 +749,10 @@ const startRecording = asyncHandler(async (req, res) => {
     [videoId],
   );
 
+  const profile = COMPRESSION_PROFILES[videoType];
   console.log(
-    `✅ Recording started — ${videoType} videoId=${videoId} (interview ${interviewId})`,
+    `✅ Recording started — ${videoType} videoId=${videoId} ` +
+      `(interview ${interviewId}) → will compress as ${profile.displayLabel}`,
   );
 
   res
@@ -727,9 +923,12 @@ const endRecording = asyncHandler(async (req, res) => {
         await new Promise((r) => setTimeout(r, remainingWait));
       }
 
+      const profile = COMPRESSION_PROFILES[videoType];
       console.log(
-        `🎬 [PIPELINE] Starting merge for ${videoType} (interview ${interviewId})`,
+        `🎬 [PIPELINE] Starting merge+compress for ${videoType} ` +
+          `[${profile.displayLabel}] (interview ${interviewId})`,
       );
+
       const finalizeResult = await finalizeRecording({
         userId,
         interviewId,
@@ -751,7 +950,6 @@ const endRecording = asyncHandler(async (req, res) => {
           ),
         );
 
-        // Clean up the primary_camera tempDir now that clip cutting is done
         if (finalizeResult.tempDir) {
           await require("fs")
             .promises.rm(finalizeResult.tempDir, {
@@ -762,7 +960,8 @@ const endRecording = asyncHandler(async (req, res) => {
         }
       }
     } catch (err) {
-      console.error(`❌ [PIPELINE] Failed (${videoType}):`, err.message);
+      console.error(`❌ [PIPELINE] Failed (${videoType}) — ${err.message}`);
+      console.error(err.stack ?? "(no stack)");
     }
   })();
 });
@@ -899,7 +1098,20 @@ const getViolationClips = asyncHandler(async (req, res) => {
   );
 });
 
-/* ── Finalize: download chunks → ffmpeg → upload merged video ────────────── */
+/* ─────────────────────────────────────────────────────────────────────────────
+   ── Finalize: download chunks → binary concat → H.265 compress → FTP ─────────
+   ─────────────────────────────────────────────────────────────────────────────
+   Pipeline stages:
+     1. Poll DB until all in-flight chunks have settled
+     2. Download every uploaded chunk from FTP in order
+     3. Binary-concatenate all chunk buffers → raw .webm file on disk
+     4. FFmpeg re-encode: H.264 (libx264 via ffmpeg-static) + AAC → .mp4 (per COMPRESSION_PROFILES)
+     5. Verify output size (must be > 0 and > 50 % of raw; otherwise fall back to raw)
+     6. ffprobe duration, SHA-256 checksum
+     7. Upload compressed .mp4 to FTP
+     8. Update interview_videos + interviews in DB
+     9. For primary_camera: return mergedLocalPath so violation clip cutting can use it
+   ─────────────────────────────────────────────────────────────────────────── */
 
 async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
   const key = redisKey(userId, interviewId, videoType);
@@ -907,8 +1119,9 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
   const fsSync = require("fs");
   const path = require("path");
   const crypto = require("crypto");
-  const ffmpeg = require("fluent-ffmpeg");
 
+  const profile =
+    COMPRESSION_PROFILES[videoType] ?? COMPRESSION_PROFILES.primary_camera;
   const tempDir = `/tmp/merge_${interviewId}_${videoType}_${Date.now()}`;
 
   let recordingStartedAt = null;
@@ -921,9 +1134,11 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
   } catch (_) {}
 
   try {
-    console.log(`🎬 Finalizing ${videoType} for interview ${interviewId}`);
+    console.log(
+      `🎬 Finalizing ${videoType} [${profile.displayLabel}] for interview ${interviewId}`,
+    );
 
-    // ── Poll until all in-flight chunks have settled ───────────────────────
+    // ── 1. Poll until all in-flight chunks have settled ────────────────────
     console.log(`⏳ Waiting for all chunks to settle (${videoType})…`);
     let allChunks = [];
     const pollDeadline = Date.now() + CHUNK_SETTLE_TIMEOUT_MS;
@@ -986,7 +1201,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
       return { mergedLocalPath: null, recordingStartedAt };
     }
 
-    // ── Gap detection ─────────────────────────────────────────────────────
+    // ── Gap detection ──────────────────────────────────────────────────────
     const chunkNumbers = uploadedChunks.map((c) => c.chunk_number);
     const gaps = [];
     for (let i = 1; i < chunkNumbers.length; i++) {
@@ -1005,6 +1220,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
       );
     }
 
+    // ── 2. Download chunks from FTP ────────────────────────────────────────
     console.log(
       `📦 Downloading ${uploadedChunks.length} chunks for ${videoType}…`,
     );
@@ -1033,10 +1249,16 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
       );
     }
 
-    // ── Binary concat ─────────────────────────────────────────────────────
+    // ── 3. Binary concat → raw .webm ──────────────────────────────────────
     const totalBytes = chunkBuffers.reduce((s, b) => s + b.length, 0);
     const rawWebmPath = path.join(tempDir, `${videoType}_raw.webm`);
-    const mergedPath = path.join(tempDir, `${videoType}_merged.webm`);
+
+    // Output is now .mp4 (H.265 container)
+    const outputExt = profile.outputExt;
+    const compressedPath = path.join(
+      tempDir,
+      `${videoType}_compressed.${outputExt}`,
+    );
 
     console.log(
       `🔗 Binary-concatenating ${chunkBuffers.length} chunks ` +
@@ -1051,6 +1273,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
       writeStream.end();
     });
 
+    // Free memory immediately — chunks are on disk now
     chunkBuffers.length = 0;
 
     const rawStat = await fs.stat(rawWebmPath);
@@ -1058,96 +1281,132 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
       throw new Error(`Binary concat produced empty file for ${videoType}`);
 
     console.log(
-      `✅ Raw concat done: ${(rawStat.size / 1024 / 1024).toFixed(2)} MB → running FFmpeg re-mux…`,
+      `✅ Raw concat done: ${(rawStat.size / 1024 / 1024).toFixed(2)} MB → ` +
+        `starting H.264 compression [${profile.displayLabel}]…`,
     );
 
-    // ── FFmpeg re-mux ─────────────────────────────────────────────────────
-    await new Promise((resolve, reject) => {
-      const ffmpegTimeout = setTimeout(
-        () =>
-          reject(new Error(`FFmpeg timed out after 30 minutes (${videoType})`)),
-        30 * 60 * 1000,
-      );
+    // ── 4. H.265 compression ───────────────────────────────────────────────
+    await compressVideo(rawWebmPath, compressedPath, videoType);
 
-      ffmpeg(rawWebmPath)
-        .outputOptions(["-c copy", "-fflags +genpts"])
-        .on("start", (cmd) =>
-          console.log(`▶️  FFmpeg cmd (${videoType}): ${cmd}`),
-        )
-        .on("end", () => {
-          clearTimeout(ffmpegTimeout);
-          console.log(`✂️  FFmpeg re-mux done (${videoType})`);
-          resolve();
-        })
-        .on("error", (err, stdout, stderr) => {
-          clearTimeout(ffmpegTimeout);
-          console.error(
-            `❌ FFmpeg error (${videoType}):`,
-            stderr || err.message,
-          );
-          reject(err);
-        })
-        .save(mergedPath);
-    });
+    // ── 5. Verify output ───────────────────────────────────────────────────
+    let finalPath = compressedPath;
+    const compressedStat = await fs.stat(compressedPath).catch(() => null);
 
-    // ── Verify output ─────────────────────────────────────────────────────
-    const mergedStat = await fs.stat(mergedPath).catch(() => null);
-    if (!mergedStat || mergedStat.size === 0)
-      throw new Error(`FFmpeg produced empty merged file for ${videoType}`);
-
-    if (mergedStat.size < rawStat.size * 0.8) {
+    if (!compressedStat || compressedStat.size === 0) {
+      // Compression failed to produce output — fall back to raw webm upload
       console.warn(
-        `⚠️ Merged file (${mergedStat.size}) is <80% of raw (${rawStat.size}) — ` +
-          `possible data loss for ${videoType}. Falling back to raw upload.`,
+        `⚠️ [COMPRESS] Compressed file is empty for ${videoType} — falling back to raw webm`,
       );
-      await fs.copyFile(rawWebmPath, mergedPath);
+      finalPath = rawWebmPath;
+    } else {
+      const ratio = compressedStat.size / rawStat.size;
+      const savedMB = (rawStat.size - compressedStat.size) / 1024 / 1024;
+
+      console.log(
+        `📉 [COMPRESS] ${videoType}: ` +
+          `${(rawStat.size / 1024 / 1024).toFixed(2)} MB raw → ` +
+          `${(compressedStat.size / 1024 / 1024).toFixed(2)} MB compressed ` +
+          `(${(ratio * 100).toFixed(1)}% of raw, saved ${savedMB.toFixed(2)} MB)`,
+      );
+
+      // Guard: if compressed > raw the encoder had a bad day — use raw
+      if (compressedStat.size > rawStat.size * 1.1) {
+        console.warn(
+          `⚠️ [COMPRESS] Compressed file is LARGER than raw for ${videoType} — using raw`,
+        );
+        finalPath = rawWebmPath;
+      }
     }
 
-    const mergedBuffer = await fs.readFile(mergedPath);
-    const checksum = crypto
-      .createHash("sha256")
-      .update(mergedBuffer)
-      .digest("hex");
-    const fileSize = mergedBuffer.length;
+    // ── 6. Probe duration + size + checksum (all streaming — no heap spike) ──
+    //
+    // Previously: fs.readFile(finalPath) loaded the entire compressed MP4 into
+    // a single Buffer. On a memory-constrained server this silently OOM-killed
+    // the background pipeline before the upload was ever attempted.
+    // Fix: stat() for size, streaming SHA-256, ffprobe for duration.
 
-    // ── Probe duration ────────────────────────────────────────────────────
+    const ffmpeg = require("fluent-ffmpeg");
+
     const duration = await new Promise((resolve) => {
-      ffmpeg.ffprobe(mergedPath, (err, meta) => {
+      ffmpeg.ffprobe(finalPath, (err, probeMeta) => {
         if (err) {
           console.warn(`⚠️ ffprobe failed for ${videoType}: ${err.message}`);
           resolve(null);
         } else {
-          const d = Math.round(meta?.format?.duration ?? 0);
+          const d = Math.round(probeMeta?.format?.duration ?? 0);
           console.log(`⏱️  Probed duration: ${d}s (${videoType})`);
           resolve(d);
         }
       });
     });
 
+    const finalStat = await fs.stat(finalPath);
+    const fileSize = finalStat.size;
+
+    const checksum = await new Promise((resolve, reject) => {
+      const hash = crypto.createHash("sha256");
+      const rs = fsSync.createReadStream(finalPath);
+      rs.on("data", (chunk) => hash.update(chunk));
+      rs.on("end", () => resolve(hash.digest("hex")));
+      rs.on("error", reject);
+    });
+
     console.log(
-      `📊 ${videoType}: ${(fileSize / 1024 / 1024).toFixed(2)} MB final, ` +
-        `${duration}s, ${uploadedChunks.length} chunks merged`,
+      `📊 ${videoType}: ${(fileSize / 1024 / 1024).toFixed(2)} MB final ` +
+        `(${profile.displayLabel}), ${duration}s, ` +
+        `${uploadedChunks.length} chunks merged, sha256=${checksum.slice(0, 12)}…`,
     );
 
-    // ── Upload merged file ────────────────────────────────────────────────
-    const mergedFilename = `${videoType}_${interviewId}_${Date.now()}.webm`;
+    // ── 7. Upload compressed file to FTP ──────────────────────────────────
+    //
+    // Previously:
+    //   • mergedBuffer = fs.readFile() → giant heap allocation → silent OOM
+    //   • withRetry(attempts=4, baseDelay=5000) — FTP pool was still recovering
+    //     from the chunk-download phase, so all 4 retries fired before any
+    //     connection came back online.  Error was swallowed by the IIFE catch.
+    //
+    // Fix:
+    //   • Stream directly from disk — zero heap spike regardless of file size.
+    //   • 5 attempts with 10 s base delay (10/20/40/80/160 s) — gives the FTP
+    //     pool time to replenish between retries.
+    //   • Explicit log before AND after the upload attempt so a future failure
+    //     is immediately visible rather than buried in a generic pipeline error.
+    //   • Throw if ftpResult.url is falsy — prevents a silent no-op where
+    //     uploadFileToFTP returns successfully but with an empty result.
+
+    const mergedFilename = `${videoType}_${interviewId}_${Date.now()}.${outputExt}`;
+    const ftpRemoteDir = `/public/interview-videos/${interviewId}`;
+
+    console.log(
+      `📤 [UPLOAD] ${videoType} — ` +
+        `${(fileSize / 1024 / 1024).toFixed(2)} MB → ${ftpRemoteDir}/${mergedFilename}`,
+    );
+
+    // uploadFileToFTP (FTPConnectionsPool.js) calls writable.end(data) internally
+    // which only accepts string | Buffer — ReadStream is NOT supported.
+    // Files are 3–10 MB after compression so loading into a Buffer is safe.
+    const mergedBuffer = await fs.readFile(finalPath);
     const ftpResult = await withRetry(
-      () =>
-        uploadFileToFTP(
-          mergedBuffer,
-          mergedFilename,
-          `/public/interview-videos/${interviewId}`,
-        ),
+      () => uploadFileToFTP(mergedBuffer, mergedFilename, ftpRemoteDir),
       {
-        attempts: 4,
-        baseDelayMs: 5000,
-        label: `Upload merged ${videoType}`,
+        attempts: 5,
+        baseDelayMs: 10_000,
+        label: `[UPLOAD] ${videoType}`,
       },
     );
 
-    console.log(`✅ Merged ${videoType} uploaded: ${ftpResult.url}`);
+    if (!ftpResult?.url) {
+      throw new Error(
+        `uploadFileToFTP returned no URL for ${videoType} — FTP upload likely failed silently`,
+      );
+    }
 
-    // ── Update DB ─────────────────────────────────────────────────────────
+    console.log(
+      `✅ [UPLOAD] ${videoType} uploaded → ${ftpResult.url} ` +
+        `(${(fileSize / 1024 / 1024).toFixed(2)} MB)`,
+    );
+
+    // ── 8. Update DB ───────────────────────────────────────────────────────
     await pool.execute(
       `UPDATE interview_videos
        SET ftp_url = ?, ftp_path = ?, file_size = ?, duration = ?,
@@ -1208,7 +1467,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
       60 * 30,
     );
 
-    // ── Defer tempDir cleanup for primary_camera (clip cutting needs it) ──
+    // ── 9. Defer tempDir cleanup for primary_camera (clip cutting needs it) ─
     if (videoType !== "primary_camera") {
       await fs.rm(tempDir, { recursive: true, force: true });
     } else {
@@ -1217,11 +1476,13 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
 
     console.log(
       `🎉 ${videoType} finalization complete — ` +
-        `${uploadedChunks.length} chunks → ${(fileSize / 1024 / 1024).toFixed(2)} MB, ${duration}s`,
+        `${uploadedChunks.length} chunks → ${(fileSize / 1024 / 1024).toFixed(2)} MB ` +
+        `[${profile.displayLabel}], ${duration}s`,
     );
 
+    // Return the compressed path (MP4) for violation clip cutting
     return {
-      mergedLocalPath: videoType === "primary_camera" ? mergedPath : null,
+      mergedLocalPath: videoType === "primary_camera" ? finalPath : null,
       recordingStartedAt,
       tempDir: videoType === "primary_camera" ? tempDir : null,
     };
