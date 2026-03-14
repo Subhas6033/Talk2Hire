@@ -203,6 +203,7 @@ const InterviewLive = () => {
   const streamsRef = useStreams();
 
   const stableRef = useRef(null);
+  const mobileTrackReceivedRef = useRef(false);
   if (!stableRef.current) {
     const src = streamStore.sessionData ? streamStore : streamsRef.current;
     if (src?.sessionData) {
@@ -422,10 +423,16 @@ const InterviewLive = () => {
         if (event.track.kind !== "video") return;
 
         // Guard: ignore tracks from stale PCs that were already replaced
+        if (event.track.kind !== "video") return;
         if (mobilePcRef.current !== pc) {
           console.warn("[MOBILE-VIDEO] ontrack from stale PC — ignoring");
           return;
         }
+
+        // FIX 1: Mark track received immediately — used to gate canvas recreation.
+        // ontrack fires during ICE "checking", well before connectionState reaches
+        // "connected", so we cannot rely on connectionState as the guard.
+        mobileTrackReceivedRef.current = true;
 
         const rs = new MediaStream([event.track]);
         pendingMobileStreamRef.current = rs;
@@ -478,8 +485,11 @@ const InterviewLive = () => {
           }, 100);
         }
 
+        // FIX 3: Reset the ref when the track ends so that a reconnect cycle
+        // allows the canvas fallback to run again before the new track arrives.
         event.track.onended = () => {
           console.warn("[MOBILE-VIDEO] track ended");
+          mobileTrackReceivedRef.current = false;
           setMobileTrackAttached(false);
         };
       };
@@ -488,9 +498,18 @@ const InterviewLive = () => {
         if (pc.connectionState === "connected") {
           // Tell the server WebRTC is truly live so it stops relaying JPEG frames
           interview.socketRef.current?.emit("mobile_webrtc_connected");
+          // FIX 2: Also remove the canvas here as a safety net — in case ontrack
+          // fired but _removeFallbackCanvas was called before _frameCvs was created
+          // (race between ontrack and the first mobile_camera_frame arriving).
+          mobilePcRef._removeFallbackCanvas?.();
         }
-        if (["disconnected", "failed", "closed"].includes(pc.connectionState))
+        if (["disconnected", "failed", "closed"].includes(pc.connectionState)) {
+          // FIX 2 (cont): Reset the ref on disconnect so that when mobile
+          // reconnects and sends a new offer, the canvas fallback can run again
+          // while the new WebRTC track is being negotiated.
+          mobileTrackReceivedRef.current = false;
           setMobileTrackAttached(false);
+        }
       };
 
       return pc;
@@ -688,15 +707,20 @@ const InterviewLive = () => {
         });
 
         // Fallback: render JPEG frames from socket while WebRTC is negotiating.
-        // Once WebRTC track is attached (mobileTrackAttached), these frames are
-        // ignored so there is no double-rendering or flicker.
+        // Once the WebRTC track is received (mobileTrackReceivedRef), these frames
+        // are ignored so there is no double-rendering or flicker.
         let _frameCvs = null;
         let _frameCtx = null;
         let _frameConnectedSet = false;
         socket.on("mobile_camera_frame", ({ frame }) => {
-          // Skip if WebRTC track already delivering video
-          if (!frame || mobilePcRef.current?.connectionState === "connected")
-            return;
+          // FIX 1: Guard on mobileTrackReceivedRef — NOT connectionState.
+          // ontrack fires while connectionState is still "checking", so using
+          // connectionState === "connected" here allows the canvas to be
+          // recreated after ontrack removes it, permanently blocking the video.
+          if (!frame || mobileTrackReceivedRef.current) return;
+          // Secondary guard: also skip once fully connected (belt-and-suspenders)
+          if (mobilePcRef.current?.connectionState === "connected") return;
+
           const el = mobileVideoRef.current;
           if (!el) return;
 
@@ -744,7 +768,7 @@ const InterviewLive = () => {
             _frameConnectedSet = false;
           }
         };
-        // Expose cleanup so ontrack can call it after attaching the stream
+        // Expose cleanup so ontrack and onconnectionstatechange can call it
         mobilePcRef._removeFallbackCanvas = _removeFallbackCanvas;
         socket.on("question", (d) => interview.handleQuestion(d));
         socket.on("next_question", (d) => interview.handleNextQuestion(d));
