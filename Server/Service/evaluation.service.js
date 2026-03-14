@@ -194,6 +194,8 @@ Return ONLY this JSON (no extra text):
 }
 `;
 
+  // evaluation.service.js — replace the try block inside generateSummary
+
   try {
     const res = await ollama.chat({
       model: "deepseek-v3.1:671b-cloud",
@@ -208,7 +210,45 @@ Return ONLY this JSON (no extra text):
     });
 
     const raw = res?.choices?.[0]?.message?.content ?? "";
-    return JSON.parse(raw.replace(/```json|```/g, "").trim());
+
+    // ── Robust JSON extraction ─────────────────────────────────────────────
+    // Models often wrap JSON in prose, markdown fences, or add trailing text.
+    // Find the first '{' and the LAST '}' to extract the JSON object reliably.
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+
+    if (start === -1 || end === -1 || end <= start) {
+      console.error(
+        "❌ generateSummary: no JSON object found in model response",
+      );
+      console.error("   Raw response was:", raw.slice(0, 500));
+      throw new Error("No JSON object in response");
+    }
+
+    const jsonStr = raw.slice(start, end + 1);
+
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch (parseErr) {
+      console.error("❌ generateSummary: JSON.parse failed:", parseErr.message);
+      console.error("   Extracted string was:", jsonStr.slice(0, 500));
+      throw parseErr;
+    }
+
+    // Validate required keys are present
+    if (!parsed.strengths || !parsed.weaknesses || !parsed.summary) {
+      console.warn(
+        "⚠️  generateSummary: parsed JSON missing expected keys:",
+        Object.keys(parsed),
+      );
+    }
+
+    return {
+      strengths: parsed.strengths ?? "Not available",
+      weaknesses: parsed.weaknesses ?? "Not available",
+      summary: parsed.summary ?? "Not available",
+    };
   } catch (err) {
     console.error("❌ Summary generation failed:", err.message);
     return {

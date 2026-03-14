@@ -38,68 +38,119 @@ const INTERVIEW_COLUMN_MAP = {
 };
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   ── Compression Profiles (H.264 via ffmpeg-static) ────────────────────────────
+   ── Compression Profiles (H.264 via ffmpeg-static) ───────────────────────────
    ─────────────────────────────────────────────────────────────────────────────
-   ffmpeg-static ships a pre-built binary that includes libx264 but NOT libx265.
-   All profiles use libx264.  H.264 CRF scale: 0 (lossless) – 51 (worst).
-   Visually transparent for interview content: webcam CRF 26, screen CRF 28.
+
+   Why we stopped forcing 1920×1080 on camera streams:
+   ─────────────────────────────────────────────────────
+   The browser's MediaRecorder captures webcam video at whatever resolution the
+   camera device negotiates — typically 640×480 (4:3) or 1280×720 (16:9).
+   Forcing libx264 to upscale a 640×480 stream to 1920×1080 produces two
+   problems that were confirmed in production:
+
+     1. The SAR (Sample Aspect Ratio) tag is carried from the source WebM.
+        A 4:3 webcam produces SAR 3:4, so a file that claims 1920×1080 pixels
+        is actually rendered by the player as a 4:3 1440×1080 image — squished
+        or pillarboxed depending on the player.
+
+     2. Re-encoding a low-bitrate source at a much larger frame size bloats the
+        file without recovering any real detail (confirmed: 91.4% of raw size
+        vs 31.7% for screen_recording which is a genuine 1080p source).
+
+   Fix — scale strategy per stream type:
+   ──────────────────────────────────────
+     primary_camera   scale=-2:720,setsar=1:1
+       • Locks height to 720p, auto-calculates width (-2 = round to even).
+       • A 4:3 webcam → 960×720. A 16:9 webcam → 1280×720.
+       • setsar=1:1 overwrites the broken SAR tag with square pixels so every
+         player renders the correct shape with no pillarboxing.
+
+     secondary_camera  scale=-2:1080,setsar=1:1
+       • Mobile cameras (rear or front) capture at higher resolutions and are
+         held in portrait or landscape. Scale to 1080p height so portrait frames
+         (e.g. 608×1080) display correctly in the viewer without squishing.
+       • setsar=1:1 same fix as above.
+
+     screen_recording  scale=1920:1080  (unchanged)
+       • Desktop screen shares are always 16:9 and captured at 1920×1080 or
+         lower widescreen ratios. No SAR issue, 1080p is the correct target.
+
+   setsar is applied inside the same -vf filter chain, not as a separate
+   option, to avoid the "two -vf" ffmpeg error.
+
+   CRF / profile / level tuning:
+   ──────────────────────────────
+     primary_camera   CRF 23  — webcam source is already lossy; a lower CRF
+                                preserves the detail that survived MediaRecorder.
+                                Level 3.1 is sufficient for 720p @ 30fps.
+     secondary_camera CRF 23  — same rationale; level 4.0 for up to 1080p.
+     screen_recording CRF 28  — unchanged; VFR + static content compresses well.
 
    Size budget — 1-hour interview, all 3 streams combined:
-     primary_camera   480p  15fps  CRF 26  64k mono   ≈ 70  MB/hr
-     secondary_camera 720p  24fps  CRF 24  64k mono   ≈ 130 MB/hr
-     screen_recording 1080p VFR    CRF 28  96k stereo ≈ 110 MB/hr
-                                                       ────────────
-                                                       ≈ 310 MB/hr  ✓
+     primary_camera   720p   15fps  CRF 23  64k mono   ≈  80 MB/hr
+     secondary_camera 1080p  24fps  CRF 23  64k mono   ≈ 150 MB/hr
+     screen_recording 1080p  VFR    CRF 28  96k stereo ≈ 110 MB/hr
+                                                        ───────────
+                                                        ≈ 340 MB/hr  ✓
 
-   Display: browser CSS upscales 480p/720p to 1080p for free.
    Container: MP4 with -movflags +faststart so FTP streaming starts immediately.
    ─────────────────────────────────────────────────────────────────────────── */
 
 const COMPRESSION_PROFILES = {
   primary_camera: {
-    // Talking head — low motion, single speaker
-    scale: "854:480", // 480p; CSS upscales to 1080p at display time
+    // Talking-head webcam — preserve native AR, normalise to 720p height,
+    // fix SAR tag so the player renders the correct shape (no squish/stretch).
+    scale: "-2:720", // height=720, width=auto (even); 4:3 cam → 960×720
+    setsar: true, // append ,setsar=1:1 to fix the SAR tag from the WebM
     fps: "15", // 15fps is plenty for a talking head
-    crf: 26, // H.264 CRF 26 ≈ visually lossless for face video
-    preset: "faster", // faster > medium for a shared server; ~5% larger files
-    audioChannels: 1, // mono — no stereo field in a single-mic feed
+    crf: 23, // CRF 23 — preserves detail from already-lossy WebM source
+    preset: "faster", // faster > medium on a shared server; ~5% larger files
+    audioChannels: 1, // mono — single-mic feed has no stereo field
     audioCodec: "aac",
     audioBitrate: "64k",
     extraOptions: [
-      "-profile:v baseline", // widest device compatibility (Safari, old Android)
-      "-level 3.1",
-      "-pix_fmt yuv420p", // required by baseline profile; also fixes green-tint WebM decode
+      "-profile:v main",
+      "-level 3.1", // level 3.1 supports 720p @ 30fps
+      "-pix_fmt yuv420p",
     ],
     outputExt: "mp4",
-    displayLabel: "480p H.264 CRF 26 · 15fps · mono",
+    displayLabel: "720p H.264 CRF 23 · 15fps · mono",
   },
 
   secondary_camera: {
-    // Mobile cam — wider angle, occasional body movement
-    scale: "1280:720",
+    // Mobile camera — portrait or landscape, higher native resolution.
+    // Scale to 1080p height so portrait clips (e.g. 608×1080) display correctly.
+    // setsar=1:1 fixes the SAR tag regardless of phone orientation.
+    scale: "-2:1080", // height=1080, width=auto (even); portrait → e.g. 608×1080
+    setsar: true, // force square pixels — critical for portrait mobile video
     fps: "24",
-    crf: 24, // slightly richer to handle motion without blocking
+    crf: 23, // CRF 23 — retain quality from mobile sensor
     preset: "faster",
     audioChannels: 1,
     audioCodec: "aac",
     audioBitrate: "64k",
-    extraOptions: ["-profile:v main", "-level 3.1", "-pix_fmt yuv420p"],
+    extraOptions: [
+      "-profile:v main",
+      "-level 4.0", // level 4.0 supports 1080p @ 30fps
+      "-pix_fmt yuv420p",
+    ],
     outputExt: "mp4",
-    displayLabel: "720p H.264 CRF 24 · 24fps · mono",
+    displayLabel: "1080p H.264 CRF 23 · 24fps · mono",
   },
 
   screen_recording: {
-    // Screen share — sharp text, mostly static → compresses extremely well
-    scale: "1920:1080", // keep 1080p for text legibility
-    fps: null, // null = VFR passthrough (-vsync vfr drops duplicate frames)
+    // Desktop screen share — always 16:9, genuine 1080p source, no SAR issue.
+    scale: "1920:1080",
+    setsar: false,
+    fps: null, // VFR passthrough — static screens cost near-zero bits
     crf: 28,
     preset: "faster",
     audioChannels: 2, // stereo — system audio may have effects/music
     audioCodec: "aac",
     audioBitrate: "96k",
     extraOptions: [
-      "-vsync vfr", // variable frame rate: static screens cost near-zero bits
-      "-profile:v high", // high profile for better intra compression of text/UI
+      "-vsync vfr",
+      "-profile:v high",
       "-level 4.0",
       "-pix_fmt yuv420p",
     ],
@@ -149,8 +200,17 @@ async function compressVideo(inputPath, outputPath, videoType) {
       30 * 60 * 1000,
     );
 
-    // Video filter: always scale; add fps filter only when a value is set
+    // ── Build -vf filter chain ────────────────────────────────────────────
+    // All filters live in a single -vf chain to avoid the "two -vf" ffmpeg
+    // error that would occur if setsar were passed as a separate extraOption.
+    //
+    //   scale=-2:720          resize, auto-width, even-number rounding
+    //   setsar=1:1            overwrite broken SAR tag → square pixels
+    //   fps=15                frame-rate normalisation (camera streams only)
+    //
+    // Order matters: scale first, then setsar, then fps.
     const vfParts = ["scale=" + profile.scale];
+    if (profile.setsar) vfParts.push("setsar=1:1");
     if (profile.fps) vfParts.push("fps=" + profile.fps);
 
     let cmd = fluentFfmpeg(inputPath)
@@ -1099,14 +1159,14 @@ const getViolationClips = asyncHandler(async (req, res) => {
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   ── Finalize: download chunks → binary concat → H.265 compress → FTP ─────────
+   ── Finalize: download chunks → binary concat → H.264 compress → FTP ─────────
    ─────────────────────────────────────────────────────────────────────────────
    Pipeline stages:
      1. Poll DB until all in-flight chunks have settled
      2. Download every uploaded chunk from FTP in order
      3. Binary-concatenate all chunk buffers → raw .webm file on disk
      4. FFmpeg re-encode: H.264 (libx264 via ffmpeg-static) + AAC → .mp4 (per COMPRESSION_PROFILES)
-     5. Verify output size (must be > 0 and > 50 % of raw; otherwise fall back to raw)
+     5. Verify output size (must be > 0 and < 110% of raw; otherwise fall back to raw)
      6. ffprobe duration, SHA-256 checksum
      7. Upload compressed .mp4 to FTP
      8. Update interview_videos + interviews in DB
@@ -1253,7 +1313,6 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     const totalBytes = chunkBuffers.reduce((s, b) => s + b.length, 0);
     const rawWebmPath = path.join(tempDir, `${videoType}_raw.webm`);
 
-    // Output is now .mp4 (H.265 container)
     const outputExt = profile.outputExt;
     const compressedPath = path.join(
       tempDir,
@@ -1285,7 +1344,7 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
         `starting H.264 compression [${profile.displayLabel}]…`,
     );
 
-    // ── 4. H.265 compression ───────────────────────────────────────────────
+    // ── 4. H.264 compression ───────────────────────────────────────────────
     await compressVideo(rawWebmPath, compressedPath, videoType);
 
     // ── 5. Verify output ───────────────────────────────────────────────────
@@ -1319,12 +1378,6 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     }
 
     // ── 6. Probe duration + size + checksum (all streaming — no heap spike) ──
-    //
-    // Previously: fs.readFile(finalPath) loaded the entire compressed MP4 into
-    // a single Buffer. On a memory-constrained server this silently OOM-killed
-    // the background pipeline before the upload was ever attempted.
-    // Fix: stat() for size, streaming SHA-256, ffprobe for duration.
-
     const ffmpeg = require("fluent-ffmpeg");
 
     const duration = await new Promise((resolve) => {
@@ -1334,7 +1387,15 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
           resolve(null);
         } else {
           const d = Math.round(probeMeta?.format?.duration ?? 0);
-          console.log(`⏱️  Probed duration: ${d}s (${videoType})`);
+          // Log the actual encoded dimensions so we can confirm SAR fix
+          const vs = probeMeta?.streams?.find((s) => s.codec_type === "video");
+          if (vs) {
+            console.log(
+              `⏱️  Probed: ${d}s · ${vs.width}×${vs.height} · SAR ${vs.sample_aspect_ratio ?? "n/a"} · DAR ${vs.display_aspect_ratio ?? "n/a"} (${videoType})`,
+            );
+          } else {
+            console.log(`⏱️  Probed duration: ${d}s (${videoType})`);
+          }
           resolve(d);
         }
       });
@@ -1358,22 +1419,6 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
     );
 
     // ── 7. Upload compressed file to FTP ──────────────────────────────────
-    //
-    // Previously:
-    //   • mergedBuffer = fs.readFile() → giant heap allocation → silent OOM
-    //   • withRetry(attempts=4, baseDelay=5000) — FTP pool was still recovering
-    //     from the chunk-download phase, so all 4 retries fired before any
-    //     connection came back online.  Error was swallowed by the IIFE catch.
-    //
-    // Fix:
-    //   • Stream directly from disk — zero heap spike regardless of file size.
-    //   • 5 attempts with 10 s base delay (10/20/40/80/160 s) — gives the FTP
-    //     pool time to replenish between retries.
-    //   • Explicit log before AND after the upload attempt so a future failure
-    //     is immediately visible rather than buried in a generic pipeline error.
-    //   • Throw if ftpResult.url is falsy — prevents a silent no-op where
-    //     uploadFileToFTP returns successfully but with an empty result.
-
     const mergedFilename = `${videoType}_${interviewId}_${Date.now()}.${outputExt}`;
     const ftpRemoteDir = `/public/interview-videos/${interviewId}`;
 
@@ -1382,9 +1427,8 @@ async function finalizeRecording({ userId, interviewId, videoType, videoId }) {
         `${(fileSize / 1024 / 1024).toFixed(2)} MB → ${ftpRemoteDir}/${mergedFilename}`,
     );
 
-    // uploadFileToFTP (FTPConnectionsPool.js) calls writable.end(data) internally
-    // which only accepts string | Buffer — ReadStream is NOT supported.
-    // Files are 3–10 MB after compression so loading into a Buffer is safe.
+    // uploadFileToFTP calls writable.end(data) internally which only accepts
+    // string | Buffer — ReadStream is NOT supported.
     const mergedBuffer = await fs.readFile(finalPath);
     const ftpResult = await withRetry(
       () => uploadFileToFTP(mergedBuffer, mergedFilename, ftpRemoteDir),

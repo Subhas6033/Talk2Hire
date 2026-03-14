@@ -85,7 +85,16 @@ Scoring guide:
   });
 
   const raw = res?.choices?.[0]?.message?.content ?? "";
-  return JSON.parse(raw.replace(/```json|```/g, "").trim());
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) {
+    console.error(
+      "❌ evaluateAnswer: no JSON in model response:",
+      raw.slice(0, 300),
+    );
+    throw new Error("No JSON object in model response");
+  }
+  return JSON.parse(raw.slice(start, end + 1));
 }
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
