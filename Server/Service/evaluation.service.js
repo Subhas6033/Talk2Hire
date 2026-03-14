@@ -21,40 +21,81 @@ async function evaluateInterview(interviewId) {
 
   const evaluations = [];
 
+  // FIX 1: Wrap each question in try/catch so one failure does not abort the
+  // entire evaluation run. Failed questions get a zero-score placeholder entry
+  // so the overall evaluation can still proceed with the successful ones.
   for (const q of answered) {
     console.log(`📝 Q${q.question_order}: evaluating…`);
 
-    const result = await evaluateAnswer({
-      question: q.question,
-      answer: q.answer,
-      technology: q.technology,
-    });
+    try {
+      const result = await evaluateAnswer({
+        question: q.question,
+        answer: q.answer,
+        technology: q.technology,
+      });
 
-    // Persist per-question evaluation
-    await Evaluation.saveQuestionEvaluation({
-      interviewId,
-      questionId: q.id,
-      score: result.score,
-      correctness: result.correctness,
-      depth: result.depth,
-      clarity: result.clarity,
-      feedback: result.feedback,
-      level: result.detected_level,
-    });
+      // Persist per-question evaluation
+      await Evaluation.saveQuestionEvaluation({
+        interviewId,
+        questionId: q.id,
+        score: result.score,
+        correctness: result.correctness,
+        depth: result.depth,
+        clarity: result.clarity,
+        feedback: result.feedback,
+        level: result.detected_level,
+      });
 
-    evaluations.push({
-      questionId: q.id,
-      questionOrder: q.question_order,
-      question: q.question,
-      answer: q.answer,
-      technology: q.technology,
-      ...result,
-    });
+      evaluations.push({
+        questionId: q.id,
+        questionOrder: q.question_order,
+        question: q.question,
+        answer: q.answer,
+        technology: q.technology,
+        ...result,
+        error: false,
+      });
 
-    console.log(
-      `   Q${q.question_order} scored ${result.score}/100 (${result.quality})`,
+      console.log(
+        `   Q${q.question_order} scored ${result.score}/100 (${result.quality})`,
+      );
+    } catch (err) {
+      // Log and continue — do not abort remaining questions
+      console.error(
+        `❌ Q${q.question_order} evaluation failed: ${err.message}`,
+      );
+
+      evaluations.push({
+        questionId: q.id,
+        questionOrder: q.question_order,
+        question: q.question,
+        answer: q.answer,
+        technology: q.technology,
+        score: 0,
+        correctness: 0,
+        depth: 0,
+        clarity: 0,
+        feedback: "Evaluation failed for this question",
+        detected_level: "UNKNOWN",
+        quality: "UNKNOWN",
+        error: true,
+      });
+    }
+  }
+
+  // FIX 1 (cont): If every single question failed, abort with a clear error
+  // rather than storing a meaningless overall evaluation with all-zero scores.
+  const successful = evaluations.filter((e) => !e.error);
+  if (!successful.length) {
+    throw new APIERR(
+      500,
+      "All question evaluations failed — cannot generate overall evaluation",
     );
   }
+
+  console.log(
+    `✅ ${successful.length}/${answered.length} questions evaluated successfully`,
+  );
 
   const overall = await generateOverallEvaluation(interviewId, evaluations);
 
@@ -66,15 +107,27 @@ async function evaluateInterview(interviewId) {
     questionEvaluations: evaluations,
     overallEvaluation: overall,
     totalQuestions: answered.length,
+    successfulEvaluations: successful.length,
   };
 }
 
 /* ── Build overall evaluation from per-question results ─────────────────── */
 
 async function generateOverallEvaluation(interviewId, evaluations) {
+  // FIX 3: Guard against an empty array — avg() would divide by zero and
+  // produce NaN, which gets stored silently or throws on strict DB schemas.
+  if (!evaluations.length) {
+    throw new APIERR(500, "No evaluations to summarise");
+  }
+
+  // Only include successfully evaluated questions in the averages so that
+  // zero-score error placeholders do not drag the overall score down unfairly.
+  const successful = evaluations.filter((e) => !e.error);
+  const scoreSource = successful.length ? successful : evaluations;
+
   const avg = (key) =>
     Math.round(
-      evaluations.reduce((s, e) => s + (e[key] ?? 0), 0) / evaluations.length,
+      scoreSource.reduce((s, e) => s + (e[key] ?? 0), 0) / scoreSource.length,
     );
 
   const avgScore = avg("score");
@@ -94,12 +147,14 @@ async function generateOverallEvaluation(interviewId, evaluations) {
   else if (avgScore >= 55) hireDecision = "MAYBE";
 
   const levelDist = evaluations.reduce((acc, e) => {
-    acc[e.detected_level] = (acc[e.detected_level] ?? 0) + 1;
+    if (e.detected_level && e.detected_level !== "UNKNOWN") {
+      acc[e.detected_level] = (acc[e.detected_level] ?? 0) + 1;
+    }
     return acc;
   }, {});
 
   const summary = await generateSummary({
-    evaluations,
+    evaluations: scoreSource,
     avgScore,
     avgCorrectness,
     avgDepth,
@@ -118,8 +173,8 @@ async function generateOverallEvaluation(interviewId, evaluations) {
     modelVersion: "deepseek-v3.1:671b-cloud",
   });
 
-  // Save per-technology skill scores
-  const byTech = evaluations.reduce((acc, e) => {
+  // Save per-technology skill scores (skip errored questions)
+  const byTech = scoreSource.reduce((acc, e) => {
     if (!e.technology) return acc;
     if (!acc[e.technology]) acc[e.technology] = [];
     acc[e.technology].push(e.score);
@@ -194,8 +249,6 @@ Return ONLY this JSON (no extra text):
 }
 `;
 
-  // evaluation.service.js — replace the try block inside generateSummary
-
   try {
     const res = await ollama.chat({
       model: "deepseek-v3.1:671b-cloud",
@@ -209,7 +262,22 @@ Return ONLY this JSON (no extra text):
       ],
     });
 
-    const raw = res?.choices?.[0]?.message?.content ?? "";
+    // FIX 2: Support both OpenAI SDK response shape (choices[0].message.content)
+    // and native Ollama SDK response shape (message.content).
+    // Whichever is populated wins; if neither is a non-empty string, raw = "".
+    const raw =
+      res?.choices?.[0]?.message?.content || res?.message?.content || "";
+
+    if (!raw) {
+      console.error(
+        "❌ generateSummary: empty response from model — raw was empty",
+      );
+      console.error(
+        "   Full response object:",
+        JSON.stringify(res ?? {}).slice(0, 500),
+      );
+      throw new Error("Empty response from model");
+    }
 
     // ── Robust JSON extraction ─────────────────────────────────────────────
     // Models often wrap JSON in prose, markdown fences, or add trailing text.
