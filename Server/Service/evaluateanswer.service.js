@@ -1,45 +1,41 @@
 const { ollama } = require("../Config/openai.config");
 
-/* ── Word / length guard (runs before touching the AI) ───────────────────── */
+function withTimeout(promise, ms, label = "operation") {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`⏱️ ${label} timed out after ${ms}ms`)),
+      ms,
+    );
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 function preValidate(answer) {
-  if (!answer || typeof answer !== "string") {
+  if (!answer || typeof answer !== "string")
     return {
       status: "invalid",
       score: 0,
       reason: "Answer is missing or not a string",
     };
-  }
-
   const trimmed = answer.trim();
-
-  if (trimmed.length < 8) {
+  if (trimmed.length < 8)
     return { status: "invalid", score: 0, reason: "Answer is too short" };
-  }
-
   const wordCount = trimmed.split(/\s+/).length;
-
-  if (wordCount < 5) {
+  if (wordCount < 5)
     return {
       status: "weak",
       score: 20,
       reason: "Answer lacks sufficient explanation",
     };
-  }
-
-  if (wordCount < 12) {
+  if (wordCount < 12)
     return {
       status: "average",
       score: 50,
       reason: "Answer is acceptable but needs more detail",
     };
-  }
-
-  // Passes to AI for full scoring
   return null;
 }
-
-/* ── AI scoring ──────────────────────────────────────────────────────────── */
 
 async function scoreWithAI({ question, answer, technology }) {
   const prompt = `
@@ -71,18 +67,22 @@ Scoring guide:
 - 0-39  : Poor — incorrect or irrelevant
 `;
 
-  const res = await ollama.chat({
-    model: "deepseek-v3.1:671b-cloud",
-    temperature: 0.2,
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are a senior technical interviewer. Return only valid JSON.",
-      },
-      { role: "user", content: prompt },
-    ],
-  });
+  const res = await withTimeout(
+    ollama.chat({
+      model: "deepseek-v3.1:671b-cloud",
+      temperature: 0.2,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a senior technical interviewer. Return only valid JSON.",
+        },
+        { role: "user", content: prompt },
+      ],
+    }),
+    90_000,
+    "scoreWithAI ollama.chat",
+  );
 
   const raw = res?.choices?.[0]?.message?.content ?? "";
   const start = raw.indexOf("{");
@@ -97,19 +97,7 @@ Scoring guide:
   return JSON.parse(raw.slice(start, end + 1));
 }
 
-/* ── Public API ──────────────────────────────────────────────────────────── */
-
-/**
- * evaluateAnswer
- *
- * Returns a normalised evaluation object.
- * Falls back gracefully if the AI call fails.
- *
- * @param {{ question: string, answer: string, technology?: string }} params
- * @returns {Promise<EvaluationResult>}
- */
 async function evaluateAnswer({ question, answer, technology }) {
-  // Fast path — catch obviously bad answers before spending AI tokens
   const preCheck = preValidate(answer);
   if (preCheck) {
     return {
@@ -129,10 +117,7 @@ async function evaluateAnswer({ question, answer, technology }) {
 
   try {
     const result = await scoreWithAI({ question, answer, technology });
-
-    // Clamp all numeric fields to 0-100 in case the AI drifts
     const clamp = (v) => Math.min(100, Math.max(0, Math.round(v ?? 0)));
-
     return {
       score: clamp(result.score),
       quality: result.quality ?? "average",
@@ -151,11 +136,8 @@ async function evaluateAnswer({ question, answer, technology }) {
       "❌ AI evaluation failed, using word-count fallback:",
       err.message,
     );
-
-    // Fallback: score by word count so we always return something
     const wordCount = answer.trim().split(/\s+/).length;
     const fallbackScore = Math.min(60, wordCount * 3);
-
     return {
       score: fallbackScore,
       quality: fallbackScore >= 50 ? "average" : "weak",

@@ -26,34 +26,44 @@ const CompanyInterview = {
 
     const where = conditions.join(" AND ");
 
+    // FIX: LEFT JOIN interview_evaluations to get experience_level and
+    // hire_decision. Also coalesce i.score with ie.overall_score so that
+    // even if interviews.score was never backfilled, we still show a value.
     const [rows] = await pool.execute(
       `SELECT
          i.id,
          i.user_id,
          i.status,
-         i.score,
+         COALESCE(i.score, ie.overall_score)          AS score,
          i.duration,
-         i.summary,
-         i.strengths,
-         i.improvements,
+         COALESCE(i.summary, ie.summary)              AS summary,
+         COALESCE(i.strengths, ie.strengths)          AS strengths,
+         COALESCE(i.improvements, ie.weaknesses)      AS improvements,
          i.color,
          i.scr_recording_url,
          i.pri_recording_url,
          i.mob_recording_url,
          i.created_at,
 
+         ie.overall_score                             AS eval_overall_score,
+         ie.experience_level                          AS eval_experience_level,
+         ie.hire_decision                             AS eval_hire_decision,
+
          u.fullName    AS candidate_name,
          u.email       AS candidate_email,
          u.mobile      AS candidate_phone,
          u.location    AS candidate_location,
          u.skills      AS candidate_skills,
+         u.experience  AS candidate_experience,
 
          j.id          AS job_id,
          j.title       AS job_title
 
        FROM interviews i
-       INNER JOIN jobs  j ON j.id = i.job_id
-       LEFT  JOIN users u ON u.id = i.user_id
+       INNER JOIN jobs  j  ON j.id  = i.job_id
+       LEFT  JOIN users u  ON u.id  = i.user_id
+       LEFT  JOIN interview_evaluations ie
+              ON ie.interview_id = i.id
        WHERE ${where}
        ORDER BY i.created_at DESC`,
       params,
@@ -63,35 +73,43 @@ const CompanyInterview = {
   },
 
   async findById(interviewId) {
+    // FIX: Same LEFT JOIN on interview_evaluations as findAll.
     const [[row]] = await pool.execute(
       `SELECT
          i.id,
          i.user_id,
          i.status,
-         i.score,
+         COALESCE(i.score, ie.overall_score)          AS score,
          i.duration,
-         i.summary,
-         i.strengths,
-         i.improvements,
+         COALESCE(i.summary, ie.summary)              AS summary,
+         COALESCE(i.strengths, ie.strengths)          AS strengths,
+         COALESCE(i.improvements, ie.weaknesses)      AS improvements,
          i.color,
          i.scr_recording_url,
          i.pri_recording_url,
          i.mob_recording_url,
          i.created_at,
 
+         ie.overall_score                             AS eval_overall_score,
+         ie.experience_level                          AS eval_experience_level,
+         ie.hire_decision                             AS eval_hire_decision,
+
          u.fullName    AS candidate_name,
          u.email       AS candidate_email,
          u.mobile      AS candidate_phone,
          u.location    AS candidate_location,
          u.skills      AS candidate_skills,
+         u.experience  AS candidate_experience,
 
          j.id          AS job_id,
          j.title       AS job_title,
          j.company_id  AS company_id
 
        FROM interviews i
-       INNER JOIN jobs  j ON j.id = i.job_id
-       LEFT  JOIN users u ON u.id = i.user_id
+       INNER JOIN jobs  j  ON j.id  = i.job_id
+       LEFT  JOIN users u  ON u.id  = i.user_id
+       LEFT  JOIN interview_evaluations ie
+              ON ie.interview_id = i.id
        WHERE i.id = ?
        LIMIT 1`,
       [interviewId],
@@ -107,9 +125,40 @@ const CompanyInterview = {
       [interviewId],
     );
 
+    // FIX: Also fetch per-question evaluations so the detail view can show
+    // individual scores and feedback alongside each question.
+    const [questionEvals] = await pool
+      .execute(
+        `SELECT qe.score, qe.feedback, qe.correctness, qe.depth, qe.clarity,
+              iq.question_order, iq.question, iq.answer, iq.technology
+       FROM question_evaluations qe
+       JOIN interview_questions iq ON qe.question_id = iq.id
+       WHERE qe.interview_id = ?
+       ORDER BY iq.question_order ASC`,
+        [interviewId],
+      )
+      .catch(() => [[]]);
+
+    // FIX: Also fetch per-skill evaluations for the detail view.
+    const [skillEvals] = await pool
+      .execute(
+        `SELECT technology, average_score AS score, level
+       FROM skill_evaluations
+       WHERE interview_id = ?
+       ORDER BY average_score DESC`,
+        [interviewId],
+      )
+      .catch(() => [[]]);
+
     const videos = _buildVideos(row);
 
-    return { ..._shape(row), answers, videos };
+    return {
+      ..._shape(row),
+      answers,
+      videos,
+      questionEvaluations: questionEvals ?? [],
+      skillEvaluations: skillEvals ?? [],
+    };
   },
 
   async getCounts(company_id) {
@@ -128,10 +177,13 @@ const CompanyInterview = {
       counts.all += Number(cnt);
     });
 
+    // FIX: Coalesce with interview_evaluations.overall_score for interviews
+    // where interviews.score was not yet backfilled from the evaluation run.
     const [[scoreRow]] = await pool.execute(
-      `SELECT ROUND(AVG(i.score), 0) AS avg_score
+      `SELECT ROUND(AVG(COALESCE(i.score, ie.overall_score)), 0) AS avg_score
        FROM interviews i
        INNER JOIN jobs j ON j.id = i.job_id
+       LEFT  JOIN interview_evaluations ie ON ie.interview_id = i.id
        WHERE j.company_id = ?`,
       [company_id],
     );
@@ -195,10 +247,31 @@ function _shape(row) {
       .map((w) => (w[0] ?? "").toUpperCase())
       .join("") || "??";
 
+  // FIX: score — prefer interviews.score (already COALESCE'd with
+  // ie.overall_score in the SQL), fall back to eval_overall_score.
+  const score =
+    row.score != null
+      ? Number(row.score)
+      : row.eval_overall_score != null
+        ? Number(row.eval_overall_score)
+        : 0;
+
+  // FIX: experience — read from users.experience column first; if that column
+  // doesn't exist on this deployment, fall back to the evaluated experience
+  // level from interview_evaluations.experience_level.
+  const experience =
+    row.candidate_experience != null
+      ? row.candidate_experience
+      : (row.eval_experience_level ?? null);
+
+  // FIX: hire_decision — read from interviews row (written by evaluation.service)
+  // or fall back to interview_evaluations join.
+  const hireDecision = row.hire_decision ?? row.eval_hire_decision ?? null;
+
   return {
     id: row.id,
     status: row.status ?? "pending",
-    score: row.score ?? 0,
+    score,
     duration: row.duration ?? null,
     summary: row.summary ?? null,
     strengths: _parse(row.strengths) ?? [],
@@ -207,6 +280,11 @@ function _shape(row) {
     created_at: row.created_at,
     company_id: row.company_id ?? null,
 
+    // FIX: expose evaluation fields at the top level so the UI can display them
+    // without digging into a nested object.
+    experienceLevel: row.eval_experience_level ?? null,
+    hireDecision,
+
     candidate: {
       id: row.user_id ?? null,
       name,
@@ -214,7 +292,9 @@ function _shape(row) {
       email: row.candidate_email ?? null,
       phone: row.candidate_phone ?? null,
       location: row.candidate_location ?? null,
-      experience: null,
+      // FIX: was hardcoded null — now populated from users.experience or
+      // interview_evaluations.experience_level as a fallback.
+      experience,
       skills,
     },
 

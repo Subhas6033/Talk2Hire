@@ -2,8 +2,26 @@ const { pool } = require("./Config/database.config.js");
 
 const MIGRATIONS = [
   {
-    table: "users",
-    sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id VARCHAR(255) NULL DEFAULT NULL COMMENT 'Google OAuth sub ID' AFTER id`,
+    table: "interviews (rebuild strengths as plain text)",
+    sql: `ALTER TABLE interviews
+      MODIFY COLUMN strengths    LONGTEXT NULL DEFAULT NULL,
+      MODIFY COLUMN improvements LONGTEXT NULL DEFAULT NULL,
+      MODIFY COLUMN summary      TEXT     NULL DEFAULT NULL`,
+  },
+  // Backfill after constraint is gone
+  {
+    table: "interviews (backfill eval columns)",
+    sql: `UPDATE interviews i
+      INNER JOIN interview_evaluations ie ON ie.interview_id = i.id
+      SET i.score            = ie.overall_score,
+          i.experience_level = ie.experience_level,
+          i.hire_decision    = ie.hire_decision,
+          i.strengths        = ie.strengths,
+          i.improvements     = ie.weaknesses,
+          i.summary          = ie.summary,
+          i.status           = 'completed',
+          i.updated_at       = NOW()
+      WHERE i.score IS NULL OR i.score = 0`,
   },
 ];
 
@@ -49,7 +67,7 @@ const migrate = async () => {
     console.log();
 
     console.log("🔍 Verifying columns…\n");
-    await inspectTable(connection, "users");
+    await inspectTable(connection, "interviews");
   } catch (err) {
     console.error("❌ Script failed:", err.message);
   } finally {

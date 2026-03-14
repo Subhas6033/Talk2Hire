@@ -26,6 +26,7 @@ const statsRoutes = require("./Admin/routes/adminStats.routes.js");
 const adminUserManagementRoutes = require("./Admin/routes/adminUser.routes.js");
 const adminCompanyManagementRoutes = require("./Admin/routes/adminCompany.routes.js");
 const adminJobManagementRoutes = require("./Admin/routes/AdminJob.routes.js");
+const evaluationRoutes = require("./Routes/result.routes.js");
 
 const app = express();
 
@@ -144,6 +145,7 @@ app.use("/api/v1/video", interviewVideoUpload);
 app.use("/api/v1/applications", applicationRoutes);
 app.use("/api/v1/review", userReviewRoutes);
 app.use("/api/v1/news", newsLetterRoutes);
+app.use("/api/v1/evaluation", evaluationRoutes);
 
 // Company Routes
 app.use("/api/v1/company/auth", companyAuthRoutes);

@@ -5,12 +5,35 @@ const { Evaluation } = require("../Models/answer.models.js");
 const { evaluateAnswer } = require("./evaluateanswer.service.js");
 const { APIERR } = require("../Utils/index.utils.js");
 
-/* ── Evaluate all answers for an interview ───────────────────────────────── */
+function withTimeout(promise, ms, label = "operation") {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`⏱️ ${label} timed out after ${ms}ms`)),
+      ms,
+    );
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+const safe = (v) => (v == null ? null : String(v));
+const safeInt = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
+/* ── evaluateInterview ───────────────────────────────────────────────────── */
 
 async function evaluateInterview(interviewId) {
   console.log(`🔍 Starting evaluation for interview ${interviewId}`);
+  console.log(`📖 [EVAL] Fetching session history…`);
 
-  const history = await Interview.getSessionHistory(interviewId);
+  const history = await withTimeout(
+    Interview.getSessionHistory(interviewId),
+    30_000,
+    "getSessionHistory",
+  );
+
   if (!history?.length) throw new APIERR(404, "No questions found");
 
   const answered = history.filter((q) => q.answer?.trim());
@@ -18,33 +41,36 @@ async function evaluateInterview(interviewId) {
     throw new APIERR(400, "No answered questions to evaluate");
 
   console.log(`📊 Evaluating ${answered.length} answered questions…`);
-
   const evaluations = [];
 
-  // FIX 1: Wrap each question in try/catch so one failure does not abort the
-  // entire evaluation run. Failed questions get a zero-score placeholder entry
-  // so the overall evaluation can still proceed with the successful ones.
   for (const q of answered) {
     console.log(`📝 Q${q.question_order}: evaluating…`);
-
     try {
-      const result = await evaluateAnswer({
-        question: q.question,
-        answer: q.answer,
-        technology: q.technology,
-      });
+      const result = await withTimeout(
+        evaluateAnswer({
+          question: q.question,
+          answer: q.answer,
+          technology: q.technology,
+        }),
+        90_000,
+        `evaluateAnswer Q${q.question_order}`,
+      );
 
-      // Persist per-question evaluation
-      await Evaluation.saveQuestionEvaluation({
-        interviewId,
-        questionId: q.id,
-        score: result.score,
-        correctness: result.correctness,
-        depth: result.depth,
-        clarity: result.clarity,
-        feedback: result.feedback,
-        level: result.detected_level,
-      });
+      console.log(`💾 [EVAL] Saving Q${q.question_order} to DB…`);
+      await withTimeout(
+        Evaluation.saveQuestionEvaluation({
+          interviewId,
+          questionId: q.id,
+          score: result.score,
+          correctness: result.correctness,
+          depth: result.depth,
+          clarity: result.clarity,
+          feedback: result.feedback,
+          level: result.detected_level,
+        }),
+        15_000,
+        `saveQuestionEvaluation Q${q.question_order}`,
+      );
 
       evaluations.push({
         questionId: q.id,
@@ -55,16 +81,13 @@ async function evaluateInterview(interviewId) {
         ...result,
         error: false,
       });
-
       console.log(
         `   Q${q.question_order} scored ${result.score}/100 (${result.quality})`,
       );
     } catch (err) {
-      // Log and continue — do not abort remaining questions
       console.error(
         `❌ Q${q.question_order} evaluation failed: ${err.message}`,
       );
-
       evaluations.push({
         questionId: q.id,
         questionOrder: q.question_order,
@@ -83,22 +106,19 @@ async function evaluateInterview(interviewId) {
     }
   }
 
-  // FIX 1 (cont): If every single question failed, abort with a clear error
-  // rather than storing a meaningless overall evaluation with all-zero scores.
   const successful = evaluations.filter((e) => !e.error);
-  if (!successful.length) {
+  if (!successful.length)
     throw new APIERR(
       500,
       "All question evaluations failed — cannot generate overall evaluation",
     );
-  }
 
   console.log(
     `✅ ${successful.length}/${answered.length} questions evaluated successfully`,
   );
+  console.log(`🧮 [EVAL] Generating overall evaluation…`);
 
   const overall = await generateOverallEvaluation(interviewId, evaluations);
-
   console.log(
     `✅ Evaluation complete — overall score: ${overall.overallScore}/100`,
   );
@@ -111,23 +131,18 @@ async function evaluateInterview(interviewId) {
   };
 }
 
-/* ── Build overall evaluation from per-question results ─────────────────── */
+/* ── generateOverallEvaluation ───────────────────────────────────────────── */
 
 async function generateOverallEvaluation(interviewId, evaluations) {
-  // FIX 3: Guard against an empty array — avg() would divide by zero and
-  // produce NaN, which gets stored silently or throws on strict DB schemas.
-  if (!evaluations.length) {
-    throw new APIERR(500, "No evaluations to summarise");
-  }
+  if (!evaluations.length) throw new APIERR(500, "No evaluations to summarise");
 
-  // Only include successfully evaluated questions in the averages so that
-  // zero-score error placeholders do not drag the overall score down unfairly.
   const successful = evaluations.filter((e) => !e.error);
   const scoreSource = successful.length ? successful : evaluations;
 
   const avg = (key) =>
     Math.round(
-      scoreSource.reduce((s, e) => s + (e[key] ?? 0), 0) / scoreSource.length,
+      scoreSource.reduce((s, e) => s + (Number(e[key]) || 0), 0) /
+        scoreSource.length,
     );
 
   const avgScore = avg("score");
@@ -135,23 +150,25 @@ async function generateOverallEvaluation(interviewId, evaluations) {
   const avgDepth = avg("depth");
   const avgClarity = avg("clarity");
 
-  // Decide experience level from depth + correctness
   let experienceLevel = "BEGINNER";
   if (avgDepth >= 70 && avgCorrectness >= 70) experienceLevel = "ADVANCED";
   else if (avgDepth >= 50 && avgCorrectness >= 50)
     experienceLevel = "INTERMEDIATE";
 
-  // Hire decision
   let hireDecision = "NO";
   if (avgScore >= 75) hireDecision = "YES";
   else if (avgScore >= 55) hireDecision = "MAYBE";
 
   const levelDist = evaluations.reduce((acc, e) => {
-    if (e.detected_level && e.detected_level !== "UNKNOWN") {
+    if (e.detected_level && e.detected_level !== "UNKNOWN")
       acc[e.detected_level] = (acc[e.detected_level] ?? 0) + 1;
-    }
     return acc;
   }, {});
+
+  console.log(
+    `📝 [EVAL] Scores computed — avg=${avgScore} level=${experienceLevel} hire=${hireDecision}`,
+  );
+  console.log(`🤖 [EVAL] Calling generateSummary (60s timeout)…`);
 
   const summary = await generateSummary({
     evaluations: scoreSource,
@@ -162,22 +179,58 @@ async function generateOverallEvaluation(interviewId, evaluations) {
     experienceLevel,
   });
 
-  await Evaluation.saveInterviewEvaluation({
-    interviewId,
-    overallScore: avgScore,
-    hireDecision,
-    experienceLevel,
-    strengths: summary.strengths,
-    weaknesses: summary.weaknesses,
-    summary: summary.summary,
-    modelVersion: "deepseek-v3.1:671b-cloud",
-  });
+  console.log(`💾 [EVAL] Saving to interview_evaluations…`);
+  await withTimeout(
+    Evaluation.saveInterviewEvaluation({
+      interviewId,
+      overallScore: avgScore,
+      hireDecision,
+      experienceLevel,
+      strengths: summary.strengths,
+      weaknesses: summary.weaknesses,
+      summary: summary.summary,
+      modelVersion: "deepseek-v3.1:671b-cloud",
+    }),
+    15_000,
+    "saveInterviewEvaluation",
+  );
+  console.log(`✅ [EVAL] interview_evaluations saved`);
 
-  // Save per-technology skill scores (skip errored questions)
+  console.log(`💾 [EVAL] Updating interviews table…`);
+  try {
+    await withTimeout(
+      pool.execute(
+        `UPDATE interviews
+         SET score=?, experience_level=?, hire_decision=?,
+             strengths=?, improvements=?, summary=?,
+             status='completed', updated_at=NOW()
+         WHERE id=?`,
+        [
+          safeInt(avgScore),
+          safe(experienceLevel),
+          safe(hireDecision),
+          safe(summary.strengths),
+          safe(summary.weaknesses),
+          safe(summary.summary),
+          safeInt(interviewId),
+        ],
+      ),
+      15_000,
+      "UPDATE interviews",
+    );
+    console.log(
+      `✅ interviews table updated — score=${avgScore} level=${experienceLevel} hire=${hireDecision} (interview ${interviewId})`,
+    );
+  } catch (err) {
+    console.warn(
+      `⚠️  Could not update interviews table for interview ${interviewId}: ${err.message}`,
+    );
+  }
+
   const byTech = scoreSource.reduce((acc, e) => {
     if (!e.technology) return acc;
     if (!acc[e.technology]) acc[e.technology] = [];
-    acc[e.technology].push(e.score);
+    acc[e.technology].push(Number(e.score) || 0);
     return acc;
   }, {});
 
@@ -187,12 +240,16 @@ async function generateOverallEvaluation(interviewId, evaluations) {
     );
     const techLevel =
       techAvg >= 75 ? "ADVANCED" : techAvg >= 50 ? "INTERMEDIATE" : "BEGINNER";
-    await Evaluation.saveSkillEvaluation({
-      interviewId,
-      technology: tech,
-      score: techAvg,
-      level: techLevel,
-    });
+    await withTimeout(
+      Evaluation.saveSkillEvaluation({
+        interviewId,
+        technology: tech,
+        score: techAvg,
+        level: techLevel,
+      }),
+      10_000,
+      `saveSkillEvaluation ${tech}`,
+    );
   }
 
   return {
@@ -212,7 +269,7 @@ async function generateOverallEvaluation(interviewId, evaluations) {
   };
 }
 
-/* ── AI narrative summary ────────────────────────────────────────────────── */
+/* ── generateSummary ─────────────────────────────────────────────────────── */
 
 async function generateSummary({
   evaluations,
@@ -222,12 +279,18 @@ async function generateSummary({
   avgClarity,
   experienceLevel,
 }) {
+  const fallback = {
+    strengths: `Completed ${evaluations.length} question(s) with an average score of ${avgScore}/100`,
+    weaknesses: "Detailed analysis unavailable",
+    summary: `Candidate answered ${evaluations.length} question(s). Average score: ${avgScore}/100. Experience level: ${experienceLevel}.`,
+  };
+
   const snippets = evaluations
     .map(
       (e) =>
         `Q${e.questionOrder} [${e.technology ?? "General"}]: score=${e.score} | ` +
         `correctness=${e.correctness} | depth=${e.depth} | clarity=${e.clarity}\n` +
-        `Feedback: ${e.feedback}`,
+        `Feedback: ${e.feedback ?? "N/A"}`,
     )
     .join("\n---\n");
 
@@ -241,7 +304,7 @@ Total questions: ${evaluations.length}
 Per-question breakdown:
 ${snippets}
 
-Return ONLY this JSON (no extra text):
+Return ONLY this JSON (no extra text, no markdown fences):
 {
   "strengths": "<3-5 bullet-pointed key strengths>",
   "weaknesses": "<3-5 bullet-pointed areas for improvement>",
@@ -250,84 +313,61 @@ Return ONLY this JSON (no extra text):
 `;
 
   try {
-    const res = await ollama.chat({
-      model: "deepseek-v3.1:671b-cloud",
-      temperature: 0.3,
-      messages: [
-        {
-          role: "system",
-          content: "You are a senior hiring manager. Return only valid JSON.",
-        },
-        { role: "user", content: prompt },
-      ],
-    });
+    console.log(`🤖 [SUMMARY] Sending prompt to model (timeout=60s)…`);
+    const res = await withTimeout(
+      ollama.chat({
+        model: "deepseek-v3.1:671b-cloud",
+        temperature: 0.3,
+        messages: [
+          {
+            role: "system",
+            content: "You are a senior hiring manager. Return only valid JSON.",
+          },
+          { role: "user", content: prompt },
+        ],
+      }),
+      60_000,
+      "generateSummary ollama.chat",
+    );
+    console.log(`✅ [SUMMARY] Model responded`);
 
-    // FIX 2: Support both OpenAI SDK response shape (choices[0].message.content)
-    // and native Ollama SDK response shape (message.content).
-    // Whichever is populated wins; if neither is a non-empty string, raw = "".
     const raw =
       res?.choices?.[0]?.message?.content || res?.message?.content || "";
-
     if (!raw) {
-      console.error(
-        "❌ generateSummary: empty response from model — raw was empty",
-      );
-      console.error(
-        "   Full response object:",
-        JSON.stringify(res ?? {}).slice(0, 500),
-      );
-      throw new Error("Empty response from model");
+      console.error("❌ generateSummary: empty response");
+      return fallback;
     }
 
-    // ── Robust JSON extraction ─────────────────────────────────────────────
-    // Models often wrap JSON in prose, markdown fences, or add trailing text.
-    // Find the first '{' and the LAST '}' to extract the JSON object reliably.
     const start = raw.indexOf("{");
     const end = raw.lastIndexOf("}");
-
     if (start === -1 || end === -1 || end <= start) {
       console.error(
-        "❌ generateSummary: no JSON object found in model response",
+        "❌ generateSummary: no JSON in response:",
+        raw.slice(0, 300),
       );
-      console.error("   Raw response was:", raw.slice(0, 500));
-      throw new Error("No JSON object in response");
+      return fallback;
     }
-
-    const jsonStr = raw.slice(start, end + 1);
 
     let parsed;
     try {
-      parsed = JSON.parse(jsonStr);
-    } catch (parseErr) {
-      console.error("❌ generateSummary: JSON.parse failed:", parseErr.message);
-      console.error("   Extracted string was:", jsonStr.slice(0, 500));
-      throw parseErr;
-    }
-
-    // Validate required keys are present
-    if (!parsed.strengths || !parsed.weaknesses || !parsed.summary) {
-      console.warn(
-        "⚠️  generateSummary: parsed JSON missing expected keys:",
-        Object.keys(parsed),
-      );
+      parsed = JSON.parse(raw.slice(start, end + 1));
+    } catch (e) {
+      console.error("❌ generateSummary: JSON.parse failed:", e.message);
+      return fallback;
     }
 
     return {
-      strengths: parsed.strengths ?? "Not available",
-      weaknesses: parsed.weaknesses ?? "Not available",
-      summary: parsed.summary ?? "Not available",
+      strengths: safe(parsed.strengths) || fallback.strengths,
+      weaknesses: safe(parsed.weaknesses) || fallback.weaknesses,
+      summary: safe(parsed.summary) || fallback.summary,
     };
   } catch (err) {
     console.error("❌ Summary generation failed:", err.message);
-    return {
-      strengths: `Completed ${evaluations.length} questions with an average score of ${avgScore}/100`,
-      weaknesses: "Detailed analysis unavailable",
-      summary: `Candidate answered ${evaluations.length} questions. Average score: ${avgScore}/100. Experience level: ${experienceLevel}.`,
-    };
+    return fallback;
   }
 }
 
-/* ── Fetch stored evaluation results ─────────────────────────────────────── */
+/* ── getEvaluationResults ────────────────────────────────────────────────── */
 
 async function getEvaluationResults(interviewId) {
   const [[interviewEvals], [questionEvals], [skillEvals]] = await Promise.all([
@@ -338,8 +378,7 @@ async function getEvaluationResults(interviewId) {
       `SELECT qe.*, iq.question, iq.answer, iq.question_order, iq.technology
        FROM question_evaluations qe
        JOIN interview_questions iq ON qe.question_id = iq.id
-       WHERE qe.interview_id = ?
-       ORDER BY iq.question_order ASC`,
+       WHERE qe.interview_id = ? ORDER BY iq.question_order ASC`,
       [interviewId],
     ),
     pool.execute(
