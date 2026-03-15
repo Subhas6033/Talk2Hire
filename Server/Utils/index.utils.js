@@ -1,6 +1,4 @@
-const APIERR = require("./apierr.utils.js");
-const APIRES = require("./apires.utils.js");
-const asyncHandler = require("./asynchandler.utils.js");
+const { asyncHandler, APIERR, APIRES } = require("./api.js");
 const sendMail = require("./mail/sendMail.utils.js");
 const {
   buildCompanyWelcomeEmail,

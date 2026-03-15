@@ -36,6 +36,7 @@ import {
   ShieldOff,
 } from "lucide-react";
 import { useCompanyInterviews } from "../Hooks/useCompanyInterviewHook";
+import InterviewPerformanceTab from "./CompanyInterviewperformance";
 
 /* ── String → Array helper ───────────────────────────────────────────────── */
 const toArray = (val) => {
@@ -629,6 +630,7 @@ const VideoCard = ({ icon: Icon, label, subtitle, video, color }) => {
 const TABS = [
   { id: "overview", label: "📋 Overview" },
   { id: "answers", label: "💬 Q&A Scores" },
+  { id: "performance", label: "📊 Performance" },
   { id: "recordings", label: "🎥 Recordings" },
   { id: "violations", label: "🛡️ Violations" },
 ];
@@ -1075,6 +1077,11 @@ const CandidateModal = ({
             </div>
           )}
 
+          {/* Graphs */}
+          {activeTab === "performance" && (
+            <InterviewPerformanceTab interview={interview} />
+          )}
+
           {/* RECORDINGS */}
           {activeTab === "recordings" && (
             <div className="space-y-5">
@@ -1179,7 +1186,9 @@ const CandidateModal = ({
                 ) : (
                   <CheckCircle size={15} />
                 )}
-                {confirming === "hire" ? "Confirm Hire" : "Hire Candidate"}
+                {confirming === "hire"
+                  ? "Confirm Hire"
+                  : "Approve for the Next Step"}
               </button>
             </div>
           </div>
@@ -1268,7 +1277,7 @@ const CandidateCard = ({ interview, onClick }) => {
 };
 
 /* ── Main Page ───────────────────────────────────────────────────────────── */
-const CompanyInterviews = () => {
+const CompanyInterviewPerformance = () => {
   const {
     interviews,
     counts,
@@ -1592,4 +1601,4 @@ const CompanyInterviews = () => {
   );
 };
 
-export default CompanyInterviews;
+export default CompanyInterviewPerformance;

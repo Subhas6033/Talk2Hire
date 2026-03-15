@@ -39,6 +39,8 @@ import AdminUserManagement from "./AdminUserManagement.jsx";
 import AdminCompanyManagement from "./AdminCompanyManage.jsx";
 import AdminJobManagement from "./AdminJobManagement.jsx";
 import AdminProfile from "./AdminProfile.jsx";
+import PerformanceGraph from "./PerformanceGraph.jsx";
+import CompanyInterviewPerformance from "./CompanyInterview.jsx";
 
 export {
   Home,
@@ -82,4 +84,6 @@ export {
   AdminCompanyManagement,
   AdminJobManagement,
   AdminProfile,
+  PerformanceGraph,
+  CompanyInterviewPerformance,
 };

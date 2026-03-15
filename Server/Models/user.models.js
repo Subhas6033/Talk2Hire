@@ -1,5 +1,5 @@
 const { pool } = require("../Config/database.config.js");
-const APIERR = require("../Utils/apierr.utils");
+const { APIERR } = require("../Utils/index.utils.js");
 
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 

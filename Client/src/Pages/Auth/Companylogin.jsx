@@ -5,15 +5,15 @@ import { Eye, EyeOff, Building2, AlertCircle } from "lucide-react";
 import { useCompany } from "../../Hooks/useCompanyAuthHook";
 import { useMicrosoftAuth } from "../../Hooks/useMicrosoftCompanyAuthHook";
 
-const TECHNICAL_PATTERNS =
-  /network|fetch|ECONNREFUSED|timeout|socket|cors|undefined|500|Internal/i;
-
-const sanitizeError = (err) => {
-  const message = err?.data?.message || err?.message || err?.error || "";
-  if (!message || TECHNICAL_PATTERNS.test(message)) {
-    return "Something went wrong. Please try again.";
-  }
-  return message;
+// The thunk now always passes a plain human-readable string to rejectWithValue.
+// unwrap() throws that string directly as the rejection value.
+// We just need to extract it safely from whatever shape RTK gives us.
+const getErrorMessage = (err) => {
+  if (!err) return "Something went wrong. Please try again.";
+  if (typeof err === "string") return err;
+  if (typeof err?.payload === "string") return err.payload;
+  if (typeof err?.message === "string") return err.message;
+  return "Something went wrong. Please try again.";
 };
 
 const MicrosoftLogo = ({ size = 18 }) => (
@@ -61,7 +61,7 @@ const Companylogin = () => {
         navigate("/", { replace: true });
       }
     } catch (err) {
-      setDisplayError(sanitizeError(err));
+      setDisplayError(getErrorMessage(err));
       console.error("Company login failed:", err);
     }
   };
@@ -78,11 +78,10 @@ const Companylogin = () => {
         : "border-slate-200 bg-white/70 text-slate-800 focus:border-amber-400 focus:bg-white focus:ring-2 focus:ring-amber-300/30 placeholder-slate-400"
     }`;
 
+  // displayError from catch takes priority; fallback to Redux error state
   const shownError =
-    displayError ||
-    (error && TECHNICAL_PATTERNS.test(error)
-      ? "Something went wrong. Please try again."
-      : error);
+    displayError ??
+    (error ? getErrorMessage(typeof error === "string" ? error : error) : null);
 
   return (
     <>
@@ -302,6 +301,7 @@ const Companylogin = () => {
                   <input
                     className={inputCls(!!errors.companyMail)}
                     placeholder="contact@company.com"
+                    autoComplete="email"
                     onChange={handleInputChange}
                     {...register("companyMail", {
                       required: "Email is required",
@@ -335,6 +335,7 @@ const Companylogin = () => {
                       type={showPassword ? "text" : "password"}
                       className={inputCls(!!errors.password) + " pr-12"}
                       placeholder="••••••••"
+                      autoComplete="current-password"
                       onChange={handleInputChange}
                       {...register("password", {
                         required: "Password is required",
@@ -366,8 +367,7 @@ const Companylogin = () => {
                 >
                   {loading ? (
                     <>
-                      <span className="co-spinner" />
-                      Signing in...
+                      <span className="co-spinner" /> Signing in...
                     </>
                   ) : (
                     "Sign In ✦"

@@ -1,6 +1,17 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import api from "./api";
 
+const extractError = (error) => {
+  if (!error.response) {
+    return "Unable to connect. Please check your connection and try again.";
+  }
+  return (
+    error.response?.data?.message ||
+    error.message ||
+    "Something went wrong. Please try again."
+  );
+};
+
 export const registerCompany = createAsyncThunk(
   "company/register",
   async (formData, { rejectWithValue }) => {
@@ -10,7 +21,7 @@ export const registerCompany = createAsyncThunk(
       });
       return response.data;
     } catch (error) {
-      return rejectWithValue(error.response?.data?.message || error.message);
+      return rejectWithValue(extractError(error));
     }
   },
 );
@@ -26,7 +37,7 @@ export const loginCompany = createAsyncThunk(
       );
       return response.data;
     } catch (error) {
-      return rejectWithValue(error.response?.data?.message || error.message);
+      return rejectWithValue(extractError(error));
     }
   },
 );
@@ -38,7 +49,7 @@ export const logoutCompany = createAsyncThunk(
       await api.post("/company/auth/logout", {}, { withCredentials: true });
       return null;
     } catch (error) {
-      return rejectWithValue(error.response?.data?.message || error.message);
+      return rejectWithValue(extractError(error));
     }
   },
 );
@@ -52,7 +63,6 @@ export const getCurrentCompany = createAsyncThunk(
       });
       return response.data;
     } catch (error) {
-      // Pass the status code through so the reducer can act on it
       return rejectWithValue({
         message: error.response?.data?.message || "Not authenticated",
         status: error.response?.status,
@@ -70,7 +80,7 @@ export const updateCompany = createAsyncThunk(
       });
       return response.data;
     } catch (error) {
-      return rejectWithValue(error.response?.data?.message || error.message);
+      return rejectWithValue(extractError(error));
     }
   },
 );
@@ -85,7 +95,7 @@ export const updateCompanyLogo = createAsyncThunk(
       });
       return response.data;
     } catch (error) {
-      return rejectWithValue(error.response?.data?.message || error.message);
+      return rejectWithValue(extractError(error));
     }
   },
 );
@@ -217,10 +227,6 @@ const companySlice = createSlice({
       .addCase(getCurrentCompany.rejected, (state, action) => {
         state.loading = false;
         state.hydrated = true;
-
-        // Only clear auth on a confirmed 401 (token invalid/expired).
-        // Any other failure (network error, 500) keeps the existing session
-        // so the user is not logged out due to a transient server error.
         if (action.payload?.status === 401) {
           state.company = null;
           state.isAuthenticated = false;

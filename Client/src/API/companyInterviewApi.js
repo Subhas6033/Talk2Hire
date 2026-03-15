@@ -3,11 +3,6 @@ import axios from "axios";
 
 const BASE = import.meta.env.VITE_BACKEND_URL;
 const INTERVIEW_API = `${BASE}/api/v1/company/interview`;
-
-// Recording router is mounted at /api/v1/video in app.js:
-//   app.use("/api/v1/video", interviewVideoUpload)
-// So the violations endpoint resolves to:
-//   GET /api/v1/video/:interviewId/violations
 const RECORDING_API = `${BASE}/api/v1/video`;
 
 /* ── Thunks ──────────────────────────────────────────────────────────────── */
@@ -25,7 +20,7 @@ export const fetchInterviews = createAsyncThunk(
         params,
         withCredentials: true,
       });
-      return data.data; // { interviews, counts, jobs }
+      return data.data;
     } catch (err) {
       return rejectWithValue(
         err.response?.data?.message ?? "Failed to fetch interviews",
@@ -54,8 +49,6 @@ export const fetchViolations = createAsyncThunk(
   "companyInterviews/fetchViolations",
   async (interviewId, { rejectWithValue }) => {
     try {
-      // ✅ Correct: matches app.use("/api/v1/video", interviewVideoUpload)
-      //            + router.get("/:interviewId/violations", getViolationClips)
       const { data } = await axios.get(
         `${RECORDING_API}/${interviewId}/violations`,
         { withCredentials: true },
@@ -81,7 +74,7 @@ export const hireCandidate = createAsyncThunk(
         {},
         { withCredentials: true },
       );
-      return data.data;
+      return { id, status: "hired", ...(data.data ?? {}) };
     } catch (err) {
       return rejectWithValue(
         err.response?.data?.message ?? "Failed to hire candidate",
@@ -99,7 +92,7 @@ export const rejectCandidate = createAsyncThunk(
         {},
         { withCredentials: true },
       );
-      return data.data;
+      return { id, status: "rejected", ...(data.data ?? {}) };
     } catch (err) {
       return rejectWithValue(
         err.response?.data?.message ?? "Failed to reject candidate",
@@ -121,9 +114,8 @@ const initialState = {
 
   selectedInterview: null,
 
-  // violations keyed by interviewId for caching
   violationsByInterview: {},
-  violationsStatus: "idle", // idle | loading | succeeded | failed
+  violationsStatus: "idle",
   violationsError: null,
 
   listStatus: "idle",
@@ -160,6 +152,7 @@ const companyInterviewSlice = createSlice({
     },
     clearDecisionError(state) {
       state.decisionError = null;
+      state.decisionStatus = "idle";
     },
     resetFilters(state) {
       state.filterStatus = "all";
@@ -258,15 +251,19 @@ const companyInterviewSlice = createSlice({
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
 function _patchInterview(state, updated) {
+  if (!updated?.id) return;
+
   const idx = state.interviews.findIndex((i) => i.id === updated.id);
-  if (idx !== -1)
+  if (idx !== -1) {
     state.interviews[idx] = { ...state.interviews[idx], ...updated };
+  }
 
   const counts = {
     all: 0,
     pending: 0,
     hired: 0,
     rejected: 0,
+    completed: 0,
     avg_score: state.counts.avg_score,
   };
   state.interviews.forEach((i) => {

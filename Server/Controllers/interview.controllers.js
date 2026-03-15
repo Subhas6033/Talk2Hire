@@ -1,6 +1,8 @@
 const { CompanyInterview } = require("../Models/companyInterview.models.js");
 const { asyncHandler, APIERR, APIRES } = require("../Utils/index.utils.js");
 
+const DECIDABLE_STATUSES = ["pending", "completed"];
+
 const getAllInterviews = asyncHandler(async (req, res) => {
   const { status, job_id, search } = req.query;
   const company_id = req.company.id;
@@ -36,7 +38,6 @@ const getInterviewById = asyncHandler(async (req, res) => {
   const interview = await CompanyInterview.findById(Number(id));
   if (!interview) throw new APIERR(404, "Interview not found");
 
-  // Ownership: company_id comes from jobs.company_id (joined in findById)
   if (interview.company_id !== req.company.id)
     throw new APIERR(403, "Access denied.");
 
@@ -53,7 +54,7 @@ const hireCandidate = asyncHandler(async (req, res) => {
   if (!interview) throw new APIERR(404, "Interview not found");
   if (interview.company_id !== req.company.id)
     throw new APIERR(403, "Access denied.");
-  if (interview.status !== "pending")
+  if (!DECIDABLE_STATUSES.includes(interview.status))
     throw new APIERR(
       400,
       `Cannot hire: current status is "${interview.status}"`,
@@ -73,7 +74,7 @@ const rejectCandidate = asyncHandler(async (req, res) => {
   if (!interview) throw new APIERR(404, "Interview not found");
   if (interview.company_id !== req.company.id)
     throw new APIERR(403, "Access denied.");
-  if (interview.status !== "pending")
+  if (!DECIDABLE_STATUSES.includes(interview.status))
     throw new APIERR(
       400,
       `Cannot reject: current status is "${interview.status}"`,

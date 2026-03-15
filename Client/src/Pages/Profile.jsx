@@ -2,6 +2,7 @@ import { useRef, useEffect, useState } from "react";
 import { useProfile } from "../Hooks/userProfileHook";
 import { Button, Modal, PreviousInterview } from "../Components/index";
 import { FormField } from "../Components/Common/Input";
+import { PerformanceGraph } from "./index.pages";
 
 // ─── Small helpers ────────────────────────────────────────────────────────────
 
@@ -594,6 +595,7 @@ const ProfilePage = () => {
           {/* ── Previous interviews ── */}
           <div style={anim(700)}>
             <PreviousInterview />
+            <PerformanceGraph />
           </div>
         </div>
       </div>
