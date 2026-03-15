@@ -37,6 +37,16 @@ import {
 } from "lucide-react";
 import { useCompanyInterviews } from "../Hooks/useCompanyInterviewHook";
 
+/* ── String → Array helper ───────────────────────────────────────────────── */
+const toArray = (val) => {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  return String(val)
+    .split(/\n|•|-(?=\s)/)
+    .map((s) => s.replace(/^[\s•\-*]+/, "").trim())
+    .filter(Boolean);
+};
+
 /* ── Violation type display config ───────────────────────────────────────── */
 const VTYPE = {
   NO_FACE: {
@@ -94,6 +104,11 @@ const STATUS = {
     label: "Under Review",
     cls: "bg-amber-50 text-amber-600 border border-amber-200",
   },
+  // After AI evaluation the backend sets status='completed' — show as "Evaluated"
+  completed: {
+    label: "Evaluated",
+    cls: "bg-indigo-50 text-indigo-600 border border-indigo-200",
+  },
   hired: {
     label: "Hired",
     cls: "bg-emerald-50 text-emerald-600 border border-emerald-200",
@@ -103,6 +118,9 @@ const STATUS = {
     cls: "bg-red-50 text-red-500 border border-red-200",
   },
 };
+
+/* ── Show hire/reject footer for every status except final decisions ─────── */
+const canDecide = (status) => status !== "hired" && status !== "rejected";
 
 /* ── Skeleton ────────────────────────────────────────────────────────────── */
 const Skeleton = ({ className }) => (
@@ -131,8 +149,6 @@ const ViolationClipPlayer = ({ clipUrl, violationType }) => {
   const [progress, setProgress] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-
-  const cfg = vtypeConfig(violationType);
 
   const togglePlay = (e) => {
     e.stopPropagation();
@@ -172,7 +188,6 @@ const ViolationClipPlayer = ({ clipUrl, violationType }) => {
 
   return (
     <div className="mt-3 rounded-xl overflow-hidden border border-gray-200 bg-black group/clip">
-      {/* Video element */}
       <div
         className="relative aspect-video cursor-pointer"
         onClick={togglePlay}
@@ -188,12 +203,8 @@ const ViolationClipPlayer = ({ clipUrl, violationType }) => {
           onEnded={onEnded}
           className="w-full h-full object-cover"
         />
-
-        {/* Play / Pause overlay */}
         <div
-          className={`absolute inset-0 flex items-center justify-center bg-black/20 transition-opacity duration-150 ${
-            playing ? "opacity-0 hover:opacity-100" : "opacity-100"
-          }`}
+          className={`absolute inset-0 flex items-center justify-center bg-black/20 transition-opacity duration-150 ${playing ? "opacity-0 hover:opacity-100" : "opacity-100"}`}
         >
           <div className="w-10 h-10 rounded-full bg-white/90 backdrop-blur-sm flex items-center justify-center shadow-lg group-hover/clip:scale-110 transition-transform">
             {playing ? (
@@ -203,8 +214,6 @@ const ViolationClipPlayer = ({ clipUrl, violationType }) => {
             )}
           </div>
         </div>
-
-        {/* Top-right controls */}
         <div className="absolute top-2 right-2 flex gap-1.5 opacity-0 group-hover/clip:opacity-100 transition-opacity">
           <button
             onClick={(e) => {
@@ -241,8 +250,6 @@ const ViolationClipPlayer = ({ clipUrl, violationType }) => {
             <Download size={11} className="text-white" />
           </a>
         </div>
-
-        {/* Bottom progress bar */}
         <div className="absolute bottom-0 left-0 right-0 px-2 pb-1.5 opacity-0 group-hover/clip:opacity-100 transition-opacity">
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-white/80 font-mono">
@@ -256,7 +263,6 @@ const ViolationClipPlayer = ({ clipUrl, violationType }) => {
                 className="h-full rounded-full transition-all"
                 style={{
                   width: `${progress}%`,
-                  // Use the violation type accent colour from cfg
                   background:
                     violationType === "NO_FACE"
                       ? "#ef4444"
@@ -276,27 +282,25 @@ const ViolationClipPlayer = ({ clipUrl, violationType }) => {
   );
 };
 
-/* ── Violations Tab Content (driven by hook data) ────────────────────────── */
+/* ── Violations Panel ────────────────────────────────────────────────────── */
 const ViolationsPanel = ({ violations, isLoading, error }) => {
-  if (isLoading) {
+  if (isLoading)
     return (
       <div className="flex items-center gap-2 py-10 justify-center text-gray-400 text-sm">
         <Loader2 size={16} className="animate-spin" /> Loading proctoring log…
       </div>
     );
-  }
 
-  if (error) {
+  if (error)
     return (
       <div className="flex items-center gap-2 py-4 px-4 bg-red-50 border border-red-100 rounded-2xl text-sm text-red-500">
         <AlertCircle size={15} /> {error}
       </div>
     );
-  }
 
   if (!violations) return null;
 
-  if (violations.length === 0) {
+  if (violations.length === 0)
     return (
       <div className="flex items-center gap-3 py-5 px-5 bg-emerald-50 border border-emerald-100 rounded-2xl">
         <ShieldCheck size={20} className="text-emerald-500 shrink-0" />
@@ -310,7 +314,6 @@ const ViolationsPanel = ({ violations, isLoading, error }) => {
         </div>
       </div>
     );
-  }
 
   const summary = violations.reduce((acc, v) => {
     acc[v.type ?? v.violation_type] =
@@ -320,7 +323,6 @@ const ViolationsPanel = ({ violations, isLoading, error }) => {
 
   return (
     <div className="space-y-5">
-      {/* Summary chips */}
       <div className="flex flex-wrap gap-2">
         {Object.entries(summary).map(([type, count]) => {
           const cfg = vtypeConfig(type);
@@ -336,11 +338,8 @@ const ViolationsPanel = ({ violations, isLoading, error }) => {
           );
         })}
       </div>
-
-      {/* Timeline */}
       <div className="space-y-2">
         {violations.map((v, i) => {
-          // Support both API shapes: { type } from getViolationClips, or { violation_type } from raw DB
           const violType = v.type ?? v.violation_type;
           const cfg = vtypeConfig(violType);
           const Icon = cfg.icon;
@@ -353,14 +352,12 @@ const ViolationsPanel = ({ violations, isLoading, error }) => {
               key={v.id ?? i}
               className="bg-white border border-gray-100 rounded-2xl p-3.5 shadow-sm"
             >
-              {/* ── Violation header row ─────────────────────────────── */}
               <div className="flex items-start gap-3">
                 <div
                   className={`w-8 h-8 rounded-xl border flex items-center justify-center shrink-0 ${cfg.cls}`}
                 >
                   <Icon size={14} />
                 </div>
-
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span
@@ -374,25 +371,13 @@ const ViolationsPanel = ({ violations, isLoading, error }) => {
                       </span>
                     )}
                     <span
-                      className={`text-[11px] font-semibold px-2 py-0.5 rounded-lg border ${
-                        v.resolved
-                          ? "bg-emerald-50 text-emerald-600 border-emerald-100"
-                          : "bg-red-50 text-red-500 border-red-100"
-                      }`}
+                      className={`text-[11px] font-semibold px-2 py-0.5 rounded-lg border ${v.resolved ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-red-50 text-red-500 border-red-100"}`}
                     >
                       {v.resolved ? "Resolved" : "Unresolved"}
                     </span>
-
-                    {/* Clip status badge */}
                     {clipStatus && clipStatus !== "completed" && (
                       <span
-                        className={`text-[11px] font-semibold px-2 py-0.5 rounded-lg border ${
-                          clipStatus === "processing"
-                            ? "bg-indigo-50 text-indigo-500 border-indigo-100"
-                            : clipStatus === "failed"
-                              ? "bg-red-50 text-red-400 border-red-100"
-                              : "bg-gray-50 text-gray-400 border-gray-100"
-                        }`}
+                        className={`text-[11px] font-semibold px-2 py-0.5 rounded-lg border ${clipStatus === "processing" ? "bg-indigo-50 text-indigo-500 border-indigo-100" : clipStatus === "failed" ? "bg-red-50 text-red-400 border-red-100" : "bg-gray-50 text-gray-400 border-gray-100"}`}
                       >
                         {clipStatus === "processing"
                           ? "⏳ Processing clip…"
@@ -402,7 +387,6 @@ const ViolationsPanel = ({ violations, isLoading, error }) => {
                       </span>
                     )}
                   </div>
-
                   <div className="flex items-center gap-3 mt-1.5 flex-wrap">
                     <span className="flex items-center gap-1 text-xs text-gray-400">
                       <Clock size={10} /> Start:{" "}
@@ -426,13 +410,10 @@ const ViolationsPanel = ({ violations, isLoading, error }) => {
                     )}
                   </div>
                 </div>
-
                 <span className="text-[11px] text-gray-300 font-mono shrink-0 mt-0.5">
                   #{i + 1}
                 </span>
               </div>
-
-              {/* ── Violation clip video (only when URL is ready) ────── */}
               {clipUrl && clipStatus === "completed" && (
                 <ViolationClipPlayer
                   clipUrl={clipUrl}
@@ -549,7 +530,6 @@ const VideoCard = ({ icon: Icon, label, subtitle, video, color }) => {
           onEnded={onEnded}
           className="w-full h-full object-cover"
         />
-
         {!playing && (
           <div
             className="absolute inset-0 pointer-events-none"
@@ -558,7 +538,6 @@ const VideoCard = ({ icon: Icon, label, subtitle, video, color }) => {
             }}
           />
         )}
-
         <div
           className={`absolute inset-0 flex items-center justify-center transition-opacity duration-150 ${playing ? "opacity-0 hover:opacity-100" : "opacity-100"}`}
         >
@@ -570,7 +549,6 @@ const VideoCard = ({ icon: Icon, label, subtitle, video, color }) => {
             )}
           </div>
         </div>
-
         <div className="absolute top-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
             onClick={(e) => {
@@ -598,7 +576,6 @@ const VideoCard = ({ icon: Icon, label, subtitle, video, color }) => {
             <Maximize2 size={12} className="text-white" />
           </button>
         </div>
-
         <div className="absolute bottom-0 left-0 right-0 px-2 pb-2 opacity-0 group-hover:opacity-100 transition-opacity">
           <div className="flex items-center gap-2 mb-1">
             <span className="text-[10px] text-white/80 font-mono">
@@ -619,7 +596,6 @@ const VideoCard = ({ icon: Icon, label, subtitle, video, color }) => {
           </div>
         </div>
       </div>
-
       <div className="p-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div
@@ -657,6 +633,24 @@ const TABS = [
   { id: "violations", label: "🛡️ Violations" },
 ];
 
+/* ── Sub-score pill ──────────────────────────────────────────────────────── */
+const SubScorePill = ({ label, value }) => {
+  const color =
+    value >= 85
+      ? "bg-emerald-50 text-emerald-600 border-emerald-200"
+      : value >= 70
+        ? "bg-amber-50 text-amber-600 border-amber-200"
+        : "bg-red-50 text-red-500 border-red-200";
+  return (
+    <div
+      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-semibold ${color}`}
+    >
+      <span className="text-gray-400 font-normal">{label}</span>
+      <span>{value}</span>
+    </div>
+  );
+};
+
 /* ── Candidate Detail Modal ──────────────────────────────────────────────── */
 const CandidateModal = ({
   interview,
@@ -671,6 +665,7 @@ const CandidateModal = ({
 }) => {
   const [activeTab, setActiveTab] = useState("overview");
   const [confirming, setConfirming] = useState(null);
+  const [expandedAnswer, setExpandedAnswer] = useState(null);
 
   const { candidate, job, answers = [], videos = {} } = interview;
 
@@ -694,6 +689,12 @@ const CandidateModal = ({
     setConfirming(null);
   };
 
+  const strengthsList = toArray(interview.strengths);
+  const improvementsList = toArray(interview.improvements);
+
+  // Show footer for pending, completed, or any unrecognised status — hide only when already decided
+  const showDecisionFooter = canDecide(interview.status);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
@@ -701,7 +702,7 @@ const CandidateModal = ({
         onClick={onClose}
       />
       <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden">
-        {/* Header */}
+        {/* ── Header ── */}
         <div className="flex items-start justify-between px-7 py-5 border-b border-gray-100">
           <div className="flex items-center gap-4">
             <div
@@ -718,9 +719,9 @@ const CandidateModal = ({
                   {candidate.name}
                 </h2>
                 <span
-                  className={`text-[11px] font-semibold px-2.5 py-1 rounded-full ${STATUS[interview.status]?.cls}`}
+                  className={`text-[11px] font-semibold px-2.5 py-1 rounded-full ${STATUS[interview.status]?.cls ?? STATUS.pending.cls}`}
                 >
-                  {STATUS[interview.status]?.label}
+                  {STATUS[interview.status]?.label ?? interview.status}
                 </span>
               </div>
               <p className="text-sm text-gray-500 mt-0.5">{job.title}</p>
@@ -765,7 +766,7 @@ const CandidateModal = ({
           </div>
         </div>
 
-        {/* Tabs */}
+        {/* ── Tabs ── */}
         <div className="flex items-center gap-1 px-7 pt-4 border-b border-gray-100">
           {TABS.map(({ id, label }) => (
             <button
@@ -782,7 +783,7 @@ const CandidateModal = ({
           ))}
         </div>
 
-        {/* Body */}
+        {/* ── Body ── */}
         <div className="flex-1 overflow-y-auto px-7 py-6">
           {/* OVERVIEW */}
           {activeTab === "overview" && (
@@ -867,17 +868,16 @@ const CandidateModal = ({
                 </div>
               )}
 
-              {(interview.strengths?.length > 0 ||
-                interview.improvements?.length > 0) && (
+              {(strengthsList.length > 0 || improvementsList.length > 0) && (
                 <div className="grid grid-cols-2 gap-4">
-                  {interview.strengths?.length > 0 && (
+                  {strengthsList.length > 0 && (
                     <div>
                       <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
                         <CheckCircle size={13} className="text-emerald-500" />{" "}
                         Strengths
                       </h3>
                       <div className="space-y-2">
-                        {interview.strengths.map((s) => (
+                        {strengthsList.map((s) => (
                           <div
                             key={s}
                             className="flex items-center gap-2 bg-emerald-50 border border-emerald-100 rounded-xl px-3 py-2"
@@ -891,14 +891,14 @@ const CandidateModal = ({
                       </div>
                     </div>
                   )}
-                  {interview.improvements?.length > 0 && (
+                  {improvementsList.length > 0 && (
                     <div>
                       <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
                         <AlertCircle size={13} className="text-amber-500" />{" "}
                         Areas to Improve
                       </h3>
                       <div className="space-y-2">
-                        {interview.improvements.map((s) => (
+                        {improvementsList.map((s) => (
                           <div
                             key={s}
                             className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2"
@@ -955,45 +955,122 @@ const CandidateModal = ({
                   No answer data available.
                 </div>
               ) : (
-                answers.map((a, i) => (
-                  <div
-                    key={a.id ?? i}
-                    className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm"
-                  >
-                    <div className="flex items-start justify-between gap-3 mb-3">
-                      <div className="flex items-start gap-3">
-                        <div className="w-7 h-7 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-xs font-bold text-indigo-600 shrink-0 mt-0.5">
-                          {i + 1}
+                answers.map((a, i) => {
+                  const isExpanded = expandedAnswer === (a.id ?? i);
+                  const hasAnswer = a.answer?.trim();
+                  const hasFeedback = a.feedback?.trim();
+                  const hasSubScores =
+                    a.correctness != null ||
+                    a.depth != null ||
+                    a.clarity != null;
+
+                  return (
+                    <div
+                      key={a.id ?? i}
+                      className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden"
+                    >
+                      <div className="p-5">
+                        <div className="flex items-start justify-between gap-3 mb-3">
+                          <div className="flex items-start gap-3">
+                            <div className="w-7 h-7 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-xs font-bold text-indigo-600 shrink-0 mt-0.5">
+                              {i + 1}
+                            </div>
+                            <p className="text-sm font-semibold text-gray-800 leading-snug">
+                              {a.question}
+                            </p>
+                          </div>
+                          <div
+                            className={`px-3 py-1.5 rounded-xl border text-center shrink-0 ${scoreBg(a.score)}`}
+                          >
+                            <p
+                              className={`text-base font-black ${scoreColor(a.score)}`}
+                            >
+                              {a.score}
+                            </p>
+                            <p className="text-[9px] text-gray-400 font-medium leading-none mt-0.5">
+                              /100
+                            </p>
+                          </div>
                         </div>
-                        <p className="text-sm font-semibold text-gray-800">
-                          {a.question}
-                        </p>
+                        <div className="flex items-center gap-4 ml-10">
+                          {a.time_taken && (
+                            <span className="flex items-center gap-1.5 text-xs text-gray-400 shrink-0">
+                              <Clock size={11} /> {a.time_taken}
+                            </span>
+                          )}
+                          <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all duration-500 ${scoreBar(a.score)}`}
+                              style={{ width: `${a.score}%` }}
+                            />
+                          </div>
+                        </div>
+                        {hasSubScores && (
+                          <div className="flex flex-wrap gap-2 mt-3 ml-10">
+                            {a.correctness != null && (
+                              <SubScorePill
+                                label="Correctness"
+                                value={a.correctness}
+                              />
+                            )}
+                            {a.depth != null && (
+                              <SubScorePill label="Depth" value={a.depth} />
+                            )}
+                            {a.clarity != null && (
+                              <SubScorePill label="Clarity" value={a.clarity} />
+                            )}
+                          </div>
+                        )}
+                        {(hasAnswer || hasFeedback) && (
+                          <button
+                            onClick={() =>
+                              setExpandedAnswer(isExpanded ? null : (a.id ?? i))
+                            }
+                            className="flex items-center gap-1.5 mt-3 ml-10 text-xs font-medium text-indigo-500 hover:text-indigo-700 transition-colors"
+                          >
+                            <ChevronRight
+                              size={13}
+                              className={`transition-transform duration-200 ${isExpanded ? "rotate-90" : ""}`}
+                            />
+                            {isExpanded
+                              ? "Hide details"
+                              : "Show answer & feedback"}
+                          </button>
+                        )}
                       </div>
-                      <div
-                        className={`px-3 py-1.5 rounded-xl border text-center shrink-0 ${scoreBg(a.score)}`}
-                      >
-                        <p
-                          className={`text-base font-black ${scoreColor(a.score)}`}
-                        >
-                          {a.score}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4 ml-10">
-                      {a.time_taken && (
-                        <span className="flex items-center gap-1.5 text-xs text-gray-400">
-                          <Clock size={11} /> Answered in {a.time_taken}
-                        </span>
+                      {isExpanded && (
+                        <div className="border-t border-gray-100 divide-y divide-gray-100">
+                          {hasAnswer && (
+                            <div className="px-5 py-4">
+                              <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                                <MessageSquare size={11} /> Candidate's Answer
+                              </p>
+                              <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                                {a.answer}
+                              </p>
+                            </div>
+                          )}
+                          {hasFeedback && (
+                            <div className="px-5 py-4 bg-indigo-50/40">
+                              <p className="text-[11px] font-bold text-indigo-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                                <Star size={11} fill="currentColor" /> AI
+                                Feedback
+                              </p>
+                              <p className="text-sm text-indigo-700 leading-relaxed">
+                                {a.feedback}
+                              </p>
+                            </div>
+                          )}
+                          {!hasAnswer && !hasFeedback && (
+                            <div className="px-5 py-4 text-xs text-gray-400 italic">
+                              No answer or feedback recorded for this question.
+                            </div>
+                          )}
+                        </div>
                       )}
-                      <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full ${scoreBar(a.score)}`}
-                          style={{ width: `${a.score}%` }}
-                        />
-                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           )}
@@ -1052,15 +1129,17 @@ const CandidateModal = ({
           )}
         </div>
 
-        {/* Footer */}
-        {interview.status === "pending" && (
-          <div className="flex items-center justify-between px-7 py-4 border-t border-gray-100 bg-gray-50">
+        {/* ── Footer: Hire / Reject ─────────────────────────────────────────── */}
+        {/* Visible for 'pending', 'completed', and any other undecided status  */}
+        {showDecisionFooter && (
+          <div className="flex items-center justify-between px-7 py-4 border-t border-gray-100 bg-gray-50/80">
             <p className="text-xs text-gray-400">
               {confirming
                 ? `Click "${confirming === "hire" ? "Hire" : "Reject"}" again to confirm.`
-                : "Make your decision based on the interview results"}
+                : "Make your hiring decision for this candidate"}
             </p>
             <div className="flex items-center gap-3">
+              {/* Reject */}
               <button
                 onClick={() => handleDecision("reject")}
                 disabled={isDeciding}
@@ -1077,6 +1156,8 @@ const CandidateModal = ({
                 )}
                 {confirming === "reject" ? "Confirm Reject" : "Reject"}
               </button>
+
+              {/* Hire */}
               <button
                 onClick={() => handleDecision("hire")}
                 disabled={isDeciding}
@@ -1223,20 +1304,13 @@ const CompanyInterviews = () => {
 
   return (
     <>
-      {/* Basic SEO */}
       <title>Company Interviews Dashboard | Talk2Hire Business Portal</title>
-
       <meta
         name="description"
         content="Review candidate interviews, watch recordings, analyze AI scores, and make hiring decisions inside the Talk2Hire company dashboard."
       />
-
-      {/* Prevent Search Engine Indexing */}
       <meta name="robots" content="noindex, nofollow, noarchive, nosnippet" />
-
       <link rel="canonical" href="https://talk2hire.com/company/interviews" />
-
-      {/* Open Graph (optional – internal sharing only) */}
       <meta
         property="og:title"
         content="Company Interviews Dashboard | Talk2Hire Business Portal"
@@ -1251,7 +1325,6 @@ const CompanyInterviews = () => {
         content="https://talk2hire.com/company/interviews"
       />
 
-      {/* Main component starts from here */}
       <div className="min-h-screen bg-gray-50">
         {/* Header */}
         <div className="bg-white border-b border-gray-200">
@@ -1359,11 +1432,7 @@ const CompanyInterviews = () => {
                 >
                   {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
                   <span
-                    className={`text-[11px] px-1.5 py-0.5 rounded-full font-semibold ${
-                      filterStatus === s
-                        ? "bg-indigo-100 text-indigo-600"
-                        : "bg-gray-100 text-gray-500"
-                    }`}
+                    className={`text-[11px] px-1.5 py-0.5 rounded-full font-semibold ${filterStatus === s ? "bg-indigo-100 text-indigo-600" : "bg-gray-100 text-gray-500"}`}
                   >
                     {counts[s] ?? 0}
                   </span>

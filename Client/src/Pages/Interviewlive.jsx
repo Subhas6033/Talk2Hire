@@ -12,6 +12,13 @@ import streamStore from "../Hooks/streamSingleton";
 // Module-level flags to survive React StrictMode double-invoke
 let _globalSocketInitialized = false;
 let _globalClientReadyEmitted = false;
+// ── RE-ENTRY GUARD ───────────────────────────────────────────────────────────
+// Set to true once the interview goes live. Only reset to false when the
+// interview is properly ended (handleEndInterview or interview_terminated).
+// If the user navigates away mid-session and comes back, this stays true and
+// the socket init effect redirects them to /dashboard instead of restarting.
+let _globalInterviewActive = false;
+// ────────────────────────────────────────────────────────────────────────────
 
 // ── Minimal style block: ONLY keyframes + font import  ──
 const STYLES = `
@@ -284,6 +291,9 @@ const InterviewLive = () => {
     return () => {
       _globalSocketInitialized = false;
       _globalClientReadyEmitted = false;
+      // NOTE: _globalInterviewActive is intentionally NOT reset here.
+      // It is only reset inside handleEndInterview and the interview_terminated
+      // socket handler — the two intentional exit paths. This prevents re-entry.
     };
   }, []); // eslint-disable-line
 
@@ -570,6 +580,20 @@ const InterviewLive = () => {
   useEffect(() => {
     if (_globalSocketInitialized || !sessionData || !preInitializedSocket)
       return;
+
+    // ── RE-ENTRY GUARD ─────────────────────────────────────────────────────
+    // If an interview was already active when the user navigated away
+    // (without going through handleEndInterview or interview_terminated),
+    // do not restart it — redirect to dashboard instead.
+    if (_globalInterviewActive) {
+      console.warn(
+        "[INTERVIEW] Re-entry detected — interview already active, redirecting to dashboard",
+      );
+      navigate("/dashboard", { replace: true });
+      return;
+    }
+    // ───────────────────────────────────────────────────────────────────────
+
     _globalSocketInitialized = true;
     const socket = preInitializedSocket;
 
@@ -797,6 +821,8 @@ const InterviewLive = () => {
           setFaceViolationWarning(null),
         );
         socket.on("interview_terminated", async () => {
+          // RE-ENTRY GUARD: reset flag — this is an intentional server-side end
+          _globalInterviewActive = false;
           setIsInterviewTerminated(true);
           interview.setMicStreamingActive(false);
           await cleanupAllRecordings();
@@ -831,6 +857,8 @@ const InterviewLive = () => {
           interviewId: sessionData.interviewId,
           userId: sessionData.userId,
         });
+        // RE-ENTRY GUARD: mark the interview as active now that it is fully live
+        _globalInterviewActive = true;
         setSocketReady(true);
         socket.emit("request_secondary_camera_status", {
           interviewId: sessionData.interviewId,
@@ -973,6 +1001,8 @@ const InterviewLive = () => {
 
   const handleEndInterview = async () => {
     if (!confirm("Are you sure you want to end the interview?")) return;
+    // RE-ENTRY GUARD: reset flag — this is an intentional user-initiated end
+    _globalInterviewActive = false;
     isLeavingRef.current = true;
     await cleanupAllRecordings();
     const socket = interview.socketRef.current;

@@ -291,7 +291,7 @@ async function compressVideo(inputPath, outputPath, videoType) {
 
       // Step 4 — S-curve: lift shadows (face), gently cap highlights (wall).
       //   Produces "face pops against background" without over-brightening.
-      vfParts.push("curves=master='0/0 0.25/0.30 0.55/0.60 0.85/0.90 1/1'");
+      vfParts.push("curves=master=0/0|0.25/0.30|0.55/0.60|0.85/0.90|1/1");
 
       // Step 5 — Sharpen luma after denoiser softened edges.
       //   la=0.5 on 5×5 kernel. ca=0 skips chroma to avoid colour fringing.
